@@ -8,8 +8,62 @@
 
 ## [Unreleased]
 
+### Changed
+- 全面校正專案文件與現行實作之落差：
+  - `docs/api.md`、`docs/api_en.md` 依實際路由重寫，補上 SSE 串流事件規格、自訂 API 工具與 MCP 端點、模型清單與管理後台端點，並移除已不存在之工作流（Workflow）與 `/api/documents/list`、`/api/documents/bulk_delete` 章節。
+  - `docs/architecture.md`、`docs/architecture_en.md` 更新分層架構圖（移除 Redis 與多 Agent 看板），新增外部工具與 MCP 整合架構、SSRF 防護與錯誤代碼機制章節。
+  - `README.md`、`README_en.md` 更新功能列表、目錄結構與環境變數矩陣，修正資料庫與前端埠號說明。
+  - `llms.txt`、`llms_en.txt` 補齊新增模組之檔案地圖與系統約束。
+
+---
+
+## [2.2.1] - 2026-09-19
+
+### Fixed
+- **錯誤回應改用錯誤代碼**：
+  - 新增 `app/core/error_response.py`，未預期例外之完整訊息與堆疊僅寫入伺服器日誌，對外僅回傳隨機錯誤代碼與 `error_id`（CWE-209 / CWE-497）。
+  - `api_tools.py`、`mcp.py`、`chat.py` 與 `openapi_parser.py` 全面套用；輸入驗證類錯誤改以 `SafeClientError` 標記後原樣回傳，保留可據以修正之診斷訊息。
+- **移除 RAG 串流中外洩之例外文字**：`rag/agent.py`、`rag/pipeline.py` 與 `rag/tools.py` 之串流輸出不再夾帶例外內容。
+
+---
+
+## [2.2.0] - 2026-09-01
+
+### Fixed
+- **修復 OpenAPI 解析與遠端請求之 SSRF 漏洞 (#25)**：
+  - 新增 `app/core/ssrf_protection.py`，對使用者提供之 URL 進行協定、連接埠、主機名稱與 DNS 解析後 IP 範圍驗證，阻擋私有網段、迴環與連結本地位址、雲端中繼資料端點與危險連接埠。
+  - `openapi_parser.py`、`rag/tools.py`（`web_fetch`）與 `api_tools.py` 全面改走 SSRF 防護閘門。
+  - 新增 `backend/tests/test_ssrf_protection.py` 覆蓋阻擋與放行情境。
+
+---
+
+## [2.1.0] - 2026-08-27
+
 ### Added
-- 完整更新全套系統規格文檔（`README.md`, `README_en.md`, `llms.txt`, `llms_en.txt`, `CHANGELOG.md`, `CHANGELOG_en.md`）。
+- **自訂 API 工具**：
+  - 新增 `custom_api_tools` 資料表與 `/api/api-tools` 端點，支援工具 CRUD、啟用切換與即時連通性測試。
+  - 通用 HTTP 執行器支援 Path 變數替換、Query 組裝、Header 與認證注入（Bearer / API Key / Basic）、JSON 與表單主體序列化及逾時隔離。
+- **OpenAPI / Swagger 匯入**：
+  - 新增 `services/openapi_parser.py`，支援 OAS 2.0、3.0、3.1 規格內容或規格 URL 解析，並可批次匯入選定端點為 AI 工具（同名覆寫更新）。
+- **MCP 伺服器整合**：
+  - 新增 `mcp_servers` 資料表與 `/api/mcp` 端點，支援伺服器 CRUD、範本清單、工具探索（`initialize` + `tools/list`）與單一工具調用測試。
+  - 新增 `services/mcp_service.py`，提供 `stdio` 子行程與 HTTP 兩種 JSON-RPC 傳輸用戶端。
+- **工具動態註冊**：`ResearchToolRegistry` 於組裝工具定義時自動載入啟用中的自訂 API 工具與 MCP 工具（命名慣例 `mcp_<伺服器>_<工具>`），變更後無需重啟後端。
+- **前端 AI 工具管理頁**：新增 `/tools` 路由與 `AiTools` 頁面，提供工具總覽、OpenAPI 匯入精靈與 MCP 伺服器管理。
+
+### Changed
+- 精簡 `.gitignore` 規則並自版本庫移除本地資料庫檔案。
+
+---
+
+## [2.0.1] - 2026-08-26
+
+### Added
+- **多模態對話管線**：對話支援附加圖片與文件；圖片以 `image_url` 內容區塊送入視覺模型，文字類附件抽取內容併入提問上下文。
+- **知識庫動態描述**：文件上傳時自動生成 AI 大綱與摘要，並提供重新生成與手動修訂端點。
+
+### Changed
+- 全面現代化前端介面與元件庫。
 
 ---
 

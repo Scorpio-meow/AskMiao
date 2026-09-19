@@ -18,11 +18,19 @@
 - [backend/app/core/jwt_auth.py](backend/app/core/jwt_auth.py): RSA-2048 JWT 簽署、令牌驗證與黑名單撤銷
 - [backend/app/core/security_logging.py](backend/app/core/security_logging.py): 敏感資料雙層脫敏日誌系統（物件遞迴與正則遮罩）
 - [backend/app/api/chat.py](backend/app/api/chat.py): 對話發送、自主研究生成與可用模型查詢端點
-- [backend/app/api/documents.py](backend/app/api/documents.py): 知識庫文件上傳、切分與管理端點
+- [backend/app/api/documents.py](backend/app/api/documents.py): 知識庫文件上傳、AI 摘要與索引管理端點
+- [backend/app/api/api_tools.py](backend/app/api/api_tools.py): 自訂 API 工具 CRUD、OpenAPI 匯入與通用 HTTP 工具執行器
+- [backend/app/api/mcp.py](backend/app/api/mcp.py): MCP 伺服器管理、工具探索與工具調用測試端點
+- [backend/app/services/openapi_parser.py](backend/app/services/openapi_parser.py): OpenAPI / Swagger 規格解析器（OAS 2.0 / 3.0 / 3.1）
+- [backend/app/services/mcp_service.py](backend/app/services/mcp_service.py): MCP stdio 與 HTTP JSON-RPC 用戶端與工具定義轉換
+- [backend/app/core/ssrf_protection.py](backend/app/core/ssrf_protection.py): 外部網址解析驗證與 SSRF 阻擋閘門
+- [backend/app/core/error_response.py](backend/app/core/error_response.py): 對外錯誤代碼機制與例外日誌對應
 - [frontend/src/App.jsx](frontend/src/App.jsx): React 19 頂層路由與佈局
 - [frontend/src/pages/Chat/index.tsx](frontend/src/pages/Chat/index.tsx): 對話主頁面、狀態控制與多模型/推理程度管理
 - [frontend/src/pages/Chat/ResearchTraceBlock.tsx](frontend/src/pages/Chat/ResearchTraceBlock.tsx): 自主研究歷程折疊時間軸元件
 - [frontend/src/pages/Chat/SourceBadges.tsx](frontend/src/pages/Chat/SourceBadges.tsx): 內部與外部參考來源徽章元件
+- [frontend/src/pages/AiTools.jsx](frontend/src/pages/AiTools.jsx): AI 工具管理頁（工具總覽、OpenAPI 匯入精靈、MCP 伺服器管理）
+- [frontend/src/services/api.ts](frontend/src/services/api.ts): Axios 請求封裝、Token 攔截器與各模組服務（chat / apiTool / mcp）
 
 ## 核心設計概念與系統約束
 
@@ -36,8 +44,17 @@
    - FAISS 稠密向量搜尋與 Whoosh BM25 稀疏文字檢索加權融合，最終經由 Cross-Encoder 加權重排序輸出高精準度上下文。
 4. **全系統安全日誌脫敏 (Security Redaction)**：
    - 日誌記錄全面實施物件層級與正則表達式雙層遮罩，密碼、Token 與 Authorization 標頭必須強制呈現為 `[REDACTED]`。
-5. **輕量化與現代化工具鏈**：
-   - 後端預設採用 SQLite 零依賴運作，前端全面基於 React 19 + Vite 7 + Bun 建構。
+5. **外部工具擴充與 MCP 整合 (Tool Extensibility)**：
+   - 自訂 HTTP API 工具與 OpenAPI 匯入結果存於 `custom_api_tools`；MCP 伺服器與其工具快取存於 `mcp_servers`。
+   - `ResearchToolRegistry.get_tool_definitions()` 於每次組裝時動態載入啟用中的外部工具，變更後無需重啟後端。
+   - MCP 工具統一採 `mcp_<伺服器名稱>_<工具名稱>` 命名，`execute_tool` 依此前綴路由至 `McpManager.execute_mcp_tool`。
+6. **SSRF 防護與錯誤代碼 (Outbound Safety)**：
+   - 所有使用者輸入驅動之外部請求（OpenAPI 規格 URL、`web_fetch`、MCP HTTP 傳輸、自訂 API 工具）必須先經 `ssrf_protection.py` 驗證。
+   - 未預期例外一律透過 `error_response.py` 轉為隨機錯誤代碼，禁止將例外訊息或堆疊回傳客戶端或寫入 SSE 串流。
+7. **串流介面約定 (SSE Contract)**：
+   - `POST /api/chat/send` 以 SSE 回應，事件序列為 `start` → `step_start` / `step_end` → `token` → `sources` → `done`，例外時回傳 `error`。
+8. **輕量化與現代化工具鏈**：
+   - 後端可用 SQLite 零依賴運作（`DATABASE_URL` 亦支援 PostgreSQL），快取與 Token 撤銷名單皆為行程內記憶體實作；前端全面基於 React 19 + Vite 7 + Bun 建構。
 
 ## 詳細文件導覽
 

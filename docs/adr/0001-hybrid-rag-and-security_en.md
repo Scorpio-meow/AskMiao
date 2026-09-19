@@ -54,3 +54,11 @@ After evaluation, the engineering team adopted the following architectural solut
 
 - **Increased System Complexity**: Backend must manage both FAISS vector indices and Whoosh text index files.
 - **Computation Latency**: Cross-Encoder re-ranking adds dozens of milliseconds per query, mitigated by caching frequent queries in Redis.
+
+---
+
+## Amendments
+
+- **2026-08-24 | Token revocation list moved in-process**: the architecture lightening pass dropped the Redis dependency; `TokenBlacklist` in `app/core/redis_client.py` now keeps the revocation list in process memory and prunes expired entries automatically. Trade-off: no external service is required, but the list resets on backend restart (unexpired tokens become valid again), and a multi-process deployment would need shared storage again.
+- **2026-08-24 | Multi-agent collaboration board removed**: the project focuses on knowledge base Q&A and agentic research; the discussion board and workflow module were retired.
+- **2026-09-01 | Outbound request safety**: the security design for external calls is now governed by [ADR-0002](./0002-external-tools-and-outbound-safety_en.md).

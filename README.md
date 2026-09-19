@@ -24,7 +24,7 @@
 | ----------| --------------------| ----------------------------------------------------------|
 | Python　 | 3.10 或更高版本　　| 後端 FastAPI 伺服器、RAG 向量索引與 Agentic 自主研究引擎 |
 | Bun　　　| 1.0 或更高版本　　 | 前端優先使用之套件管理與建構打包工具　　　　　　　　　　 |
-| SQLite　 | 3.x（Python 內建） | 預設關聯式資料庫，支援零依賴即時啟動　　　　　　　　　　 |
+| SQLite　 | 3.x（Python 內建） | 零依賴本機啟動之關聯式資料庫（亦支援 PostgreSQL）　　　 |
 
 ### 1. 複製專案倉庫
 
@@ -49,7 +49,9 @@ source .venv/bin/activate
 # 安裝後端依賴套件
 pip install -r requirements.txt
 
-# 設定環境變數檔 (預設即為 SQLite 零依賴配置)
+# 複製環境變數範本後依實際環境調整
+# 注意：.env.example 之 DATABASE_URL 預設指向 PostgreSQL，
+#      若要零依賴啟動請改為 DATABASE_URL=sqlite:///./chatbot.db
 cp .env.example .env
 
 # 初始化資料庫表格與管理員帳號
@@ -67,11 +69,12 @@ cd ../frontend
 # 使用 Bun 安裝前端依賴項目
 bun install
 
-# 啟動 Vite 前端開發伺服器 (Port 5173 / 3001)
+# 啟動 Vite 前端開發伺服器 (未設定 PORT 時為 3000)
 bun run dev
 ```
 
-伺服器啟動後，開啟瀏覽器造訪 `http://localhost:5173` 即可進入 AskMiao 知識庫對話系統。
+伺服器啟動後，開啟瀏覽器造訪 `http://localhost:3000` 即可進入 AskMiao 知識庫對話系統。
+若沿用 `frontend/.env.example` 的 `PORT=3001`（亦為後端 `ALLOWED_ORIGINS` 預設允許之來源），則改為 `http://localhost:3001`。
 
 ---
 
@@ -98,6 +101,18 @@ bun run dev
 5. **企業級安全與雙層日誌脫敏**：
    - 採用 RSA-2048 非對稱密鑰簽署之 JWT Access Token 與 HttpOnly 安全 Cookie。
    - 內建物件層級遞迴脫敏與字串正則遮罩防護（`security_logging.py`），嚴格防範密碼、Token 與機敏資料洩漏至系統日誌。
+   - 對外錯誤回應僅揭露隨機錯誤代碼（`error_response.py`），完整例外與堆疊只寫入伺服器日誌（CWE-209 / CWE-497）。
+   - 所有外部網址請求（OpenAPI 規格匯入、`web_fetch`、MCP HTTP 傳輸）皆經 `ssrf_protection.py` 解析後驗證，阻擋內網位址、雲端中繼資料端點與危險連接埠。
+
+6. **外部工具擴充與 MCP 生態整合**：
+   - 支援以表單自訂 HTTP API 工具，或直接貼上 OpenAPI / Swagger 規格（OAS 2.0 / 3.0 / 3.1）批次匯入端點為 AI 可調用工具。
+   - 支援 Bearer、API Key（Header / Query）與 Basic 三種認證方式，並可於管理頁面即時測試工具連通性。
+   - 內建 MCP（Model Context Protocol）用戶端，支援 `stdio` 與 HTTP 兩種傳輸，可探索伺服器工具清單並自動注入 Agent 工具集。
+   - 啟用中的自訂 API 工具與 MCP 工具會於每次組裝工具定義時動態載入，無需重啟後端。
+
+7. **多模態對話與知識庫智能摘要**：
+   - 對話支援附加圖片與文件，圖片以 `image_url` 形式傳入視覺模型，文字檔則自動抽取內容併入提問上下文。
+   - 文件上傳時自動生成 AI 文件大綱與摘要，並可於文件管理頁面重新生成或手動修訂。
 
 ---
 
@@ -106,24 +121,29 @@ bun run dev
 ```mermaid
 flowchart TB
     subgraph Client ["前端應用層 (React 19 + TypeScript + Vite + Bun)"]
-        UI["Chat 對話介面 (MUI v7)"]
+        UI["Chat 對話介面 (SSE 串流)"]
         TraceView["研究歷程摺疊卡片 (ResearchTraceBlock)"]
+        ToolsView["AI 工具管理頁 (AiTools：自訂 API / OpenAPI / MCP)"]
         DocManage["知識庫文件管理 (Documents)"]
         AdminView["系統管理後台 (AdminDashboard)"]
     end
 
     subgraph Backend ["後端服務層 (FastAPI + Python 3.10+)"]
-        SecurityMW["安全日誌中介軟體 (Security Logging)"]
+        SecurityMW["安全中介軟體 (CORS / 速率限制 / 日誌脫敏)"]
         AuthService["JWT 認證服務 (RSA-2048)"]
-        ChatAPI["對話 API 端點 (/api/chat)"]
+        ChatAPI["對話 SSE 端點 (/api/chat)"]
         DocAPI["文件上傳與索引端點 (/api/documents)"]
-        
+        ToolAPI["自訂 API 工具端點 (/api/api-tools)"]
+        McpAPI["MCP 伺服器端點 (/api/mcp)"]
+
         subgraph AgenticRAG ["Agentic RAG 核心管線"]
             Agent["自主研究 Agent (ResearchAgent)"]
             ToolRegistry["工具註冊中心 (ResearchToolRegistry)"]
             HybridRetriever["混合檢索器 (FAISS + BM25 + Cross-Encoder)"]
             LLMClient["統一 LLM 客戶端 (Azure / OpenAI / Claude / Gemini / Ollama)"]
         end
+
+        SSRF["SSRF 防護閘門 (ssrf_protection.py)"]
     end
 
     subgraph Storage ["資料與索引儲存層"]
@@ -134,20 +154,32 @@ flowchart TB
     end
 
     UI --> SecurityMW
+    ToolsView --> SecurityMW
+    DocManage --> SecurityMW
+    AdminView --> SecurityMW
     SecurityMW --> ChatAPI
     SecurityMW --> DocAPI
+    SecurityMW --> ToolAPI
+    SecurityMW --> McpAPI
     SecurityMW --> AuthService
-    
+
     ChatAPI --> Agent
+    ChatAPI -.-> |SSE 事件| TraceView
     Agent --> ToolRegistry
     ToolRegistry --> HybridRetriever
-    ToolRegistry -.-> |聯網搜尋| DuckDuckGo["DuckDuckGo / Ollama Web Search"]
-    ToolRegistry -.-> |網頁深度抓取| WebContent["外部網頁內容 (HTTP Fetch)"]
-    
+    ToolRegistry -.-> |自訂 API 工具| ToolAPI
+    ToolRegistry -.-> |MCP 工具| McpAPI
+    ToolRegistry --> SSRF
+    SSRF -.-> |聯網搜尋| DuckDuckGo["DuckDuckGo / Ollama Web Search"]
+    SSRF -.-> |網頁深度抓取| WebContent["外部網頁內容 (HTTP Fetch)"]
+    SSRF -.-> |外部 API 呼叫| ExternalAPI["自訂 API 工具 / 遠端 MCP 伺服器"]
+
     Agent --> LLMClient
     HybridRetriever --> FAISSStore
     HybridRetriever --> BM25Store
     DocAPI --> DocUploads
+    ToolAPI --> SQLiteDB
+    McpAPI --> SQLiteDB
     AuthService --> SQLiteDB
 ```
 
@@ -159,24 +191,37 @@ flowchart TB
 AskMiao/
 ├── backend/                        # 後端 FastAPI 專案
 │   ├── app/
-│   │   ├── api/                    # RESTful API 路由端點 (auth, chat, documents, admin)
+│   │   ├── api/                    # RESTful API 路由端點
+│   │   │   ├── auth.py             # 註冊、登入、刷新與登出
+│   │   │   ├── chat.py             # 對話 SSE 串流、模型與工具清單
+│   │   │   ├── documents.py        # 文件上傳、摘要與索引重建
+│   │   │   ├── api_tools.py        # 自訂 API 工具 CRUD、OpenAPI 解析與匯入
+│   │   │   ├── mcp.py              # MCP 伺服器管理、工具探索與測試
+│   │   │   ├── admin.py            # 管理後台統計與向量庫維運
+│   │   │   └── tags.py             # 相容 Ollama 之模型清單端點
 │   │   ├── core/                   # 核心設定、安全認證、日誌脫敏與 LLM 客戶端
 │   │   │   ├── config.py           # 系統全域環境變數配置
 │   │   │   ├── jwt_auth.py         # RSA-2048 JWT 簽章與驗證
 │   │   │   ├── llm_client.py       # 多提供商 LLM 統一調用層
-│   │   │   └── security_logging.py # 敏感資料雙層遮罩日誌系統
+│   │   │   ├── security_logging.py # 敏感資料雙層遮罩日誌系統
+│   │   │   ├── error_response.py   # 對外錯誤代碼與例外日誌對應機制
+│   │   │   └── ssrf_protection.py  # 外部網址解析驗證與 SSRF 阻擋
 │   │   ├── models/                 # SQLAlchemy ORM 與 Pydantic 驗證模型
 │   │   ├── rag/                    # 模組化 RAG 與 Agentic 研究核心
-│   │   │   ├── agent.py            # ReAct 自主研究 Agent
-│   │   │   ├── tools.py            # 本地 RAG、聯網搜尋與網頁解析工具集
+│   │   │   ├── agent.py            # ReAct 自主研究 Agent（含多模態輸入組裝）
+│   │   │   ├── tools.py            # 內建工具集與自訂 / MCP 工具動態註冊
 │   │   │   ├── pipeline.py         # RAG 執行管線與上下文組裝
 │   │   │   ├── contextual_rag.py   # HybridContextualRAG 門面模組
 │   │   │   ├── evaluator.py        # 檢索評估與自動 Alpha 調優
 │   │   │   ├── indices/            # FAISS 與 BM25 索引管理模組
 │   │   │   └── retrievers/         # 混合檢索與 Cross-Encoder 重排序器
-│   │   ├── services/               # 業務邏輯服務層 (ChatService, DocumentService)
+│   │   ├── services/               # 業務邏輯服務層
+│   │   │   ├── chat_service.py     # 對話與訊息持久化
+│   │   │   ├── document_processor.py # 文件解析與 AI 摘要生成
+│   │   │   ├── openapi_parser.py   # OpenAPI / Swagger 規格解析器
+│   │   │   └── mcp_service.py      # MCP stdio / HTTP 用戶端與工具轉換
 │   │   └── tasks/                  # 背景排程任務 (定時索引重建、上傳監控)
-│   ├── tests/                      # 後端單元測試與自主研究驗收測試
+│   ├── tests/                      # 後端測試（自主研究、工具、MCP、SSRF）
 │   ├── main.py                     # FastAPI 應用程式主進入點
 │   ├── init_db.py                  # 資料庫初始化與預設管理員建立腳本
 │   └── requirements.txt            # Python 依賴清單
@@ -184,13 +229,14 @@ AskMiao/
 │   ├── src/
 │   │   ├── pages/                  # 前端頁面元件
 │   │   │   ├── Chat/               # Chat 模組 (MessageItem, TraceBlock, SourceBadges, Header)
-│   │   │   ├── Documents/          # 知識庫文件上傳與管理頁面
-│   │   │   ├── Admin/              # 系統管理後台
-│   │   │   ├── Login/ & Register/  # 登入與註冊頁面
-│   │   │   └── Profile/            # 個人資料頁面
-│   │   ├── hooks/                  # React 自訂 Hooks (useChat, useAuth)
+│   │   │   ├── AiTools.jsx         # AI 工具管理（自訂 API、OpenAPI 匯入、MCP 伺服器）
+│   │   │   ├── Documents.jsx       # 知識庫文件上傳與管理頁面
+│   │   │   ├── AdminDashboard.jsx  # 系統管理後台
+│   │   │   ├── LoginPage.jsx / RegisterPage.jsx # 登入與註冊頁面
+│   │   │   └── ProfilePage.jsx     # 個人資料頁面
+│   │   ├── hooks/                  # React 自訂 Hooks (useChat, useAuth, useDocuments)
 │   │   ├── services/               # Axios API 請求封裝與 Token 攔截器
-│   │   └── components/             # 通用元件與 Layout
+│   │   └── components/             # 通用 UI 元件與 Layout
 │   ├── package.json                # 前端專案設定 (使用 Bun 管理)
 │   └── vite.config.js              # Vite 建構配置
 ├── docs/                           # 詳細系統規格與架構文件
@@ -214,28 +260,44 @@ AskMiao/
 
 | 變數名稱 | 描述 | 範例 / 預設值 | 必填 |
 |---|---|---|---|
+| `DATABASE_URL` | 資料庫連線字串（無預設值，必須提供） | `sqlite:///./chatbot.db`、`postgresql+psycopg2://...` | 是 |
+| `JWT_SECRET_KEY` | JWT 簽署金鑰 | `cb_jwt_sec_...` | 是 |
+| `ADMIN_API_KEY` | 系統管理員 API 金鑰 | `cb_admin_key_...` | 是 |
+| `LLM_API_BASE` | 本地 Ollama 服務端點 URL | `http://localhost:11434` | 否 |
+| `MODEL_NAME` | 預設模型名稱（未設定時取第一個可用模型） | 空值 | 否 |
 | `ENABLE_WEB_SEARCH` | 是否啟用 Agent 聯網搜尋工具 | `true` | 否 |
 | `AGENT_MAX_TURNS` | Agent 自主研究最大工具調用輪數 | `5` | 否 |
 | `AZURE_OPENAI_API_KEY` | Azure OpenAI API 金鑰 | `your_azure_api_key` | 否 |
-| `AZURE_OPENAI_ENDPOINT` | Azure OpenAI v1 服務端點 URL | `https://your-resource.services.ai.azure.com` | 否 |
-| `AZURE_OPENAI_DEPLOYMENT`| Azure OpenAI 部署名稱 (支援逗號分隔多模型) | `gpt-5.6-luna,gpt-5.6-terra` | 否 |
-| `OPENAI_API_KEY` | OpenAI 官方 API 金鑰 (選填) | `sk-...` | 否 |
-| `ANTHROPIC_API_KEY` | Anthropic Claude API 金鑰 (選填) | `sk-ant-...` | 否 |
-| `GEMINI_API_KEY` | Google Gemini API 金鑰 (選填) | `AIza...` | 否 |
-| `LLM_API_BASE` | 本地 Ollama 服務端點 URL | `http://localhost:5000` | 否 |
-| `MODEL_NAME` | 本地預設模型名稱 | `gemma4:26b` | 否 |
-| `JWT_SECRET_KEY` | JWT 簽署金鑰 | `cb_jwt_sec_...` | 是 |
-| `ADMIN_API_KEY` | 系統管理員 API 金鑰 | `cb_admin_key_...` | 是 |
-| `DATABASE_URL` | 資料庫連線字串 | `sqlite:///./chatbot.db` | 否 |
-| `EMBEDDING_MODEL` | 向量嵌入模型名稱 | `paraphrase-multilingual-MiniLM-L12-v2` | 否 |
-| `RERANKER_MODEL` | 重排序模型名稱 | `cross-encoder/ms-marco-MiniLM-L-6-v2` | 否 |
+| `AZURE_OPENAI_ENDPOINT` | Azure OpenAI v1 服務端點 URL | `https://your-resource.openai.azure.com` | 否 |
+| `AZURE_OPENAI_DEPLOYMENT` | Azure OpenAI 部署名稱（支援逗號分隔多模型） | `gpt-4o,gpt-4o-mini` | 否 |
+| `OPENAI_API_KEY` | OpenAI 官方 API 金鑰 | `sk-...` | 否 |
+| `OPENAI_VISION_MODEL` | 多模態圖片理解所用之 OpenAI 模型 | `gpt-4o` | 否 |
+| `ANTHROPIC_API_KEY` | Anthropic Claude API 金鑰 | `sk-ant-...` | 否 |
+| `GEMINI_API_KEY` | Google Gemini API 金鑰 | `AIza...` | 否 |
+| `GEMINI_VISION_MODEL` | 多模態圖片理解所用之 Gemini 模型 | `gemini-2.5-flash` | 否 |
+| `AVAILABLE_MODELS` | 手動指定前端可選模型清單（逗號分隔） | 空值 | 否 |
+| `EMBEDDING_MODEL` | 向量嵌入模型名稱 | `BAAI/bge-small-zh-v1.5` | 否 |
+| `RERANKER_MODEL` | Cross-Encoder 重排序模型名稱 | `BAAI/bge-reranker-base` | 否 |
+| `CHUNK_SIZE` / `CHUNK_OVERLAP` | 文件切塊大小與重疊字元數 | `300` / `100` | 否 |
+| `HYBRID_ALPHA` | 向量與 BM25 分數融合權重 | `0.75` | 否 |
+| `FINAL_K` | 最終送入 LLM 之片段數量 | `8` | 否 |
+| `MAX_FILE_SIZE_MB` | 單一上傳檔案大小上限 | `10` | 否 |
+| `ACCESS_TOKEN_EXPIRE_MINUTES` | Access Token 有效分鐘數 | `30` | 否 |
+| `REFRESH_TOKEN_EXPIRE_DAYS` | Refresh Token 有效天數 | `7` | 否 |
+| `ALLOWED_ORIGINS` | CORS 允許來源（逗號分隔） | `http://localhost:3001` | 否 |
+| `RATE_LIMIT_ENABLED` / `RATE_LIMIT_PER_MINUTE` | 速率限制開關與每分鐘上限 | `true` / `60` | 否 |
+
+> 完整變數清單請參閱 [`backend/.env.example`](./backend/.env.example) 與 [`backend/app/core/config.py`](./backend/app/core/config.py)。
 
 ### 前端環境變數 (`frontend/.env`)
 
 | 變數名稱 | 描述 | 預設值 | 必填 |
 |---|---|---|---|
-| `VITE_API_BASE` | 後端 API 代理或基礎路徑 | `/api` | 否 |
-| `VITE_API_URL` | 後端伺服器絕對端點 (若跨域直連) | `http://localhost:8001` | 否 |
+| `VITE_API_BASE` | 後端 API 基礎路徑（未設定時回退至 `/api`） | `http://localhost:8001` | 否 |
+| `VITE_API_URL` | 後端伺服器絕對端點（`VITE_API_BASE` 未設定時採用） | `http://localhost:8001` | 否 |
+| `VITE_TAGS_URL` | 外部模型清單來源 URL | 空值 | 否 |
+| `VITE_MODEL_POLL_INTERVAL_MS` | 前端模型清單輪詢間隔（毫秒） | `300000` | 否 |
+| `PORT` | Vite 開發伺服器埠號 | `3001` | 否 |
 
 ---
 

@@ -11,6 +11,7 @@ This directory documents major architectural decisions, technology evaluations, 
 | ADR ID | Title | Status | Date | Summary |
 |---|---|---|---|---|
 | [ADR-0001](./0001-hybrid-rag-and-security_en.md) | Contextual Hybrid RAG & Dual-Token Security Architecture | Accepted | 2026-08-01 | Adopts FAISS + Whoosh + Cross-Encoder RAG and RSA-2048 JWT dual-token defense |
+| [ADR-0002](./0002-external-tools-and-outbound-safety_en.md) | External Tool Extensibility & Outbound Request Safety | Accepted | 2026-09-01 | Database-driven custom API / MCP tool registration with a centralized SSRF guard and error code mechanism |
 
 ---
 
