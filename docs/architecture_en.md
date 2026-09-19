@@ -1,163 +1,278 @@
-# AskMiao System Architecture & Design
+# AskMiao Architecture & Design
 
 [繁體中文](architecture.md) | [English](architecture_en.md)
 
-> This document details the overall system architecture, core module relationships, Contextual Hybrid RAG retrieval pipeline, RSA-2048 dual-token authentication, and multi-Agent collaboration design for AskMiao.
+> This document covers the overall AskMiao architecture, module relationships, the enhanced hybrid RAG retrieval flow, the agentic research pipeline, external tool and MCP extensibility, and the RSA-2048 dual-token security design.
 
 ---
 
-## 1. High-Level Layered Architecture
+## 1. Layered System Architecture
 
-AskMiao adopts a decoupled frontend-backend architecture. The frontend is built with React 19 and Vite 7, while the backend is powered by FastAPI delivering asynchronous RESTful APIs and WebSocket services. PostgreSQL 17.9 handles relational persistence, and Redis manages caching and token blacklists.
+AskMiao separates frontend and backend. The frontend runs on React 19 and Vite 7 (built with Bun); the backend exposes asynchronous RESTful APIs, SSE streaming, and WebSocket endpoints through FastAPI. Persistence goes through SQLAlchemy against the database named by `DATABASE_URL` (SQLite or PostgreSQL). Caching and token revocation are in-process memory structures, with no external Redis dependency.
 
 ```mermaid
 flowchart TB
-    subgraph Client ["Client Layer (React 19 + Vite + Bun)"]
-        UI["User Interface (MUI v7)"]
-        Board["Multi-Agent Board (React Flow)"]
+    subgraph Client ["Frontend (React 19 + Vite 7 + Bun)"]
+        UI["Chat interface (SSE consumer)"]
+        ToolsUI["AI tools management (AiTools)"]
+        DocsUI["Knowledge base management (Documents)"]
+        AdminUI["Admin dashboard"]
     end
 
-    subgraph Gateway ["API Gateway & Middleware Layer"]
-        CORSMiddleware["CORS & Rate Limiting Middleware"]
-        SecurityLogging["Security Logging Middleware (security_logging.py)"]
+    subgraph Gateway ["API Gateway & Middleware"]
+        SecHeaders["Security headers (SecurityHeadersMiddleware)"]
+        RateLimit["Rate limiting (RateLimitMiddleware)"]
+        CORS["CORS allowlist"]
+        Redact["Two-layer log redaction (security_logging.py)"]
     end
 
     subgraph Backend ["FastAPI Core Services"]
-        AuthModule["Auth Module (RSA-2048 JWT)"]
-        RAGModule["Hybrid RAG Retriever (contextual_rag.py)"]
-        WorkflowModule["Workflow Service (workflow_service.py)"]
-        ChatModule["Chat & History Handler"]
+        AuthModule["Authentication (RSA-2048 JWT)"]
+        ChatModule["Chat & SSE streaming handler"]
+        RAGModule["Hybrid RAG retriever (contextual_rag.py)"]
+        AgentModule["Research agent (agent.py)"]
+        ToolModule["Tool registry (tools.py)"]
+        ApiToolModule["Custom API tools (api_tools.py / openapi_parser.py)"]
+        McpModule["MCP client (mcp_service.py)"]
+        SSRFGuard["SSRF guard (ssrf_protection.py)"]
+        ErrModule["Error code mechanism (error_response.py)"]
     end
 
-    subgraph Storage ["Storage & Indexing Layer"]
-        DB[(PostgreSQL 17.9 Database)]
-        RedisCache[(Redis Cache & JTI Blacklist)]
-        FAISSIndex["FAISS Vector Index (Dense Retrieval)"]
-        BM25Index["Whoosh BM25 Index (Sparse Retrieval)"]
+    subgraph Storage ["Data & Retrieval Engines"]
+        DB[(SQLite / PostgreSQL)]
+        MemCache[("In-memory cache & token revocation list")]
+        FAISSIndex["FAISS vector index (dense retrieval)"]
+        BM25Index["Whoosh BM25 index (sparse retrieval)"]
+        Uploads["Upload directory (data/uploads)"]
     end
 
-    UI --> CORSMiddleware
-    Board --> WorkflowModule
-    CORSMiddleware --> SecurityLogging
-    SecurityLogging --> AuthModule
-    SecurityLogging --> RAGModule
-    SecurityLogging --> ChatModule
+    UI --> SecHeaders
+    ToolsUI --> SecHeaders
+    DocsUI --> SecHeaders
+    AdminUI --> SecHeaders
+    SecHeaders --> RateLimit --> CORS --> Redact
+    Redact --> AuthModule
+    Redact --> ChatModule
+    Redact --> ApiToolModule
+    Redact --> McpModule
+
+    ChatModule --> AgentModule
+    AgentModule --> ToolModule
+    ToolModule --> RAGModule
+    ToolModule --> ApiToolModule
+    ToolModule --> McpModule
+    ApiToolModule --> SSRFGuard
+    McpModule --> SSRFGuard
+    ToolModule --> SSRFGuard
+
     AuthModule --> DB
-    AuthModule --> RedisCache
+    AuthModule --> MemCache
+    ChatModule --> DB
+    ApiToolModule --> DB
+    McpModule --> DB
     RAGModule --> FAISSIndex
     RAGModule --> BM25Index
-    ChatModule --> DB
+    RAGModule --> Uploads
+    ApiToolModule -.-> ErrModule
+    McpModule -.-> ErrModule
+    ChatModule -.-> ErrModule
 ```
 
 ---
 
-## 2. Contextual Hybrid RAG Retrieval & Re-ranking Pipeline
+## 2. Enhanced Hybrid RAG Retrieval & Reranking
 
-The system employs parallel dual-track retrieval combining dense vector search (FAISS) and sparse keyword search (Whoosh BM25). Candidates are merged via score normalization and re-ranked using a Cross-Encoder model.
+Dense vector search and sparse keyword search run in parallel; their normalized scores are fused and the candidates are then reranked by a Cross-Encoder.
 
 ```mermaid
 flowchart LR
-    Query["User Query Input"] --> Strategy{"Retrieval Strategy Dispatcher"}
-    
-    subgraph ParallelRetrieval ["Parallel Dual-Track Retrieval"]
-        Strategy -->|Vector Search| FAISS["FAISS Dense Search (Inner Product, BGE-Small)"]
-        Strategy -->|Keyword Search| BM25["Whoosh BM25 (Jieba Segmentation)"]
+    Query["User query"] --> Strategy{"Retrieval strategy"}
+
+    subgraph ParallelRetrieval ["Parallel dual-track retrieval"]
+        Strategy -->|vector match| FAISS["FAISS search (inner product, IndexFlatIP)"]
+        Strategy -->|keyword match| BM25["Whoosh BM25 (Jieba tokenizer)"]
     end
 
-    FAISS --> Merge["Score Normalization Fusion (HYBRID_ALPHA Weighted)"]
+    FAISS --> Merge["Normalized score fusion (HYBRID_ALPHA)"]
     BM25 --> Merge
-    
-    Merge --> Reranker["Cross-Encoder Re-ranking (bge-reranker-base)"]
-    Reranker --> TopK["Select Top-K Context Passages"]
-    TopK --> LLM["LLM Context Assembly & Generation"]
+
+    Merge --> Reranker["Cross-Encoder reranking (RERANKER_MODEL)"]
+    Reranker --> TopK["Select top FINAL_K chunks"]
+    TopK --> LLM["Context assembly and generation"]
 ```
 
-### Retrieval Pipeline Details
+### Pipeline details
 
-1. **Text Chunking**: Uploaded documents are processed via `RecursiveCharacterTextSplitter` (default 300 characters chunk size, 100 characters overlap).
-2. **Vector Embedding**: Uses 384-dimensional vector space powered by `BAAI/bge-small-zh-v1.5`.
-3. **Keyword Retrieval (BM25)**: Powered by `Whoosh` and `Jieba` custom domain dictionary.
-4. **Re-ranking**: Cross-Encoder (`bge-reranker-base`) computes cross-attention relevance scores, filtering irrelevant chunks and maximizing accuracy.
+1. **Chunking**: uploaded documents run through `RecursiveCharacterTextSplitter`, sized by `CHUNK_SIZE` / `CHUNK_OVERLAP` (300 / 100 characters in the shipped template). Structured and JSON records are additionally stored as atomic record chunks so per-record counting stays exact.
+2. **Embedding**: `BAAI/bge-small-zh-v1.5` by default (`EMBEDDING_MODEL`); the vector dimension is read from the loaded model and FAISS builds an `IndexFlatIP` inner-product index.
+3. **Keyword retrieval (BM25)**: `Whoosh` plus `Jieba` tokenization compensates for the weakness of vector search on proper nouns and identifiers.
+4. **Fusion**: both tracks are normalized per `NORMALIZATION` and merged with the `HYBRID_ALPHA` weight.
+5. **Reranking**: the Cross-Encoder (`BAAI/bge-reranker-base` by default) scores candidates with cross-attention; after `RERANK_WEIGHT` and `FINAL_THRESHOLD` filtering, the top `FINAL_K` chunks form the context.
+6. **Evaluation**: `evaluator.py` provides Hit Rate, MRR, and the signal used for Alpha auto-tuning.
 
 ---
 
-## 3. RSA-2048 Dual-Token Auth & Blacklist Lifecycle
+## 3. RSA-2048 Dual-Token Authentication & Revocation Lifecycle
 
-Short-lived Access Tokens (30 min) signed with RSA-2048 private key are paired with Refresh Tokens (7 days) stored in HttpOnly / Secure / SameSite Cookies, backed by Redis instant revocation.
+Access tokens last 30 minutes by default (`ACCESS_TOKEN_EXPIRE_MINUTES`); refresh tokens live in an HttpOnly cookie for 7 days (`REFRESH_TOKEN_EXPIRE_DAYS`). Logging out adds both to the in-process revocation list (`TokenBlacklist`).
 
 ```mermaid
 sequenceDiagram
     autonumber
-    actor User as Client / User
-    participant API as FastAPI Server
-    participant Redis as Redis Blacklist
-    participant DB as PostgreSQL
+    actor User as User / Frontend
+    participant API as FastAPI server
+    participant Blacklist as In-memory revocation list (TokenBlacklist)
+    participant DB as Database (SQLite / PostgreSQL)
 
-    User->>API: 1. POST /api/auth/login (Credentials)
-    API->>DB: 2. Verify Password Hash
-    DB-->>API: 3. Authentication Succeeded
-    API->>User: 4. Return Access Token (JSON) + Set Refresh Token (HttpOnly Cookie)
+    User->>API: 1. POST /api/auth/login (credentials)
+    API->>DB: 2. Verify password hash
+    DB-->>API: 3. Verified
+    API->>User: 4. Return access token (JSON) + set refresh token (HttpOnly cookie)
 
-    User->>API: 5. GET /api/auth/me (With Authorization Header)
-    API->>Redis: 6. Check if Access Token JTI is in Blacklist
-    Redis-->>API: 7. Not Blacklisted (Valid)
-    API-->>User: 8. Return User Profile
+    User->>API: 5. GET /api/auth/me (Authorization header)
+    API->>Blacklist: 6. Check whether the token was revoked
+    Blacklist-->>API: 7. Not revoked
+    API-->>User: 8. Return user profile
 
-    User->>API: 9. POST /api/auth/logout (Logout Request)
-    API->>Redis: 10. Write Access Token JTI to Redis Blacklist (TTL 30 min)
-    API-->>User: 11. Clear Refresh Cookie & Return Success
+    User->>API: 9. POST /api/auth/logout
+    API->>Blacklist: 10. Record access / refresh tokens until their expiry
+    API-->>User: 11. Clear the refresh cookie and confirm logout
 ```
+
+> The revocation list is an in-process structure that prunes expired entries automatically. It resets when the backend restarts, so tokens that have not yet expired become valid again after a restart.
 
 ---
 
-## 4. Agentic RAG Autonomous Research & Tool Pipeline
+## 4. Agentic RAG Research & Multi-Turn Tool Calling
 
-The system employs a ReAct autonomous agent architecture (`ResearchAgent`), using Native Tool Calling for multi-turn dynamic research and contextual synthesis.
+The ReAct research agent (`ResearchAgent`) uses native tool calling to gather context over multiple turns, bounded by `AGENT_MAX_TURNS`.
 
 ```mermaid
 flowchart LR
-    UserQuery["User Query"] --> Agent["Autonomous Research Agent (ResearchAgent)"]
-    
-    subgraph ToolLoop ["Multi-Turn Tool Calling Loop (Up to 5 Turns)"]
-        Agent -->|Decisions & Args| Tools{"Tool Registry (ResearchToolRegistry)"}
-        Tools -->|Internal Search| LocalRAG["search_knowledge_base\n(FAISS + BM25 + Cross-Encoder)"]
-        Tools -->|Live Web Search| WebSearch["web_search\n(DuckDuckGo / Ollama Dual Engine)"]
-        Tools -->|Deep Fetch| WebFetch["web_fetch\n(HTTP Fetch & Parser)"]
-        
-        LocalRAG -->|Document Chunks| ToolResult["Tool Execution Results"]
-        WebSearch -->|Live Snippets & URLs| ToolResult
-        WebFetch -->|Extracted Page Text| ToolResult
-        ToolResult -->|Observations Injected| Agent
+    UserQuery["User question + optional attachments"] --> Agent["Research agent (ResearchAgent)"]
+
+    subgraph ToolLoop ["Tool calling loop (AGENT_MAX_TURNS)"]
+        Agent -->|decision & arguments| Tools{"Tool registry (ResearchToolRegistry)"}
+        Tools -->|internal retrieval| LocalRAG["search_knowledge_base<br/>(FAISS + BM25 + Cross-Encoder)"]
+        Tools -->|counting & filtering| Filter["filter_and_count_records<br/>(date / author / keyword exact counts)"]
+        Tools -->|live web| WebSearch["web_search<br/>(Ollama / DuckDuckGo)"]
+        Tools -->|deep read| WebFetch["web_fetch<br/>(HTTP fetch and text extraction)"]
+        Tools -->|external systems| Extern["Custom API tools / mcp_* tools"]
+
+        LocalRAG --> ToolResult["Tool outputs"]
+        Filter --> ToolResult
+        WebSearch --> ToolResult
+        WebFetch --> ToolResult
+        Extern --> ToolResult
+        ToolResult -->|observe & inject context| Agent
     end
 
-    Agent -->|Synthesizes Trace & Citations| FinalAnswer["Structured Response Output\n(Answer + Research Trace + Sources)"]
+    Agent -->|SSE event stream| FinalAnswer["Structured response<br/>(Answer + Research Trace + Sources)"]
 ```
 
-### Key Autonomous Capabilities
+### Core mechanics
 
-1. **Context-Aware Decision Making**: The agent autonomously determines whether internal documentation, live web search, or full web page scraping is required to answer the query accurately.
-2. **Research Trace Auditing**: Every tool step, arguments, execution duration, and output preview are captured in structured format for real-time visualization in the frontend timeline component.
-3. **Interactive Source Attribution**: Integrates internal knowledge chunks with external web links, allowing users to verify facts and open primary sources with one click.
-
----
-
-## 5. Security & Two-Layer Sensitive Data Redaction
-
-To enforce security standards and resolve CodeQL warnings (`py/clear-text-logging-sensitive-data`), two mandatory redaction defenses are implemented in `backend/app/core/security_logging.py`:
-
-1. **Object-Level Recursive Masking (`sanitize_sensitive_data`)**:
-   - Recursively traverses dictionaries and lists.
-   - Matches sensitive key names (case-insensitive `password`, `token`, `secret`, `authorization`, `cookie`, etc.).
-   - Replaces matching values with `[REDACTED]`.
-2. **Regex String-Level Defense**:
-   - Secondary regex filter executed prior to JSON serialization and log emission.
-   - Guarantees zero leak of sensitive credentials in system logs.
+1. **Autonomous decisions**: the model decides per question whether to query the knowledge base, run exact counting, search the web, deep-read a URL, or call an external API / MCP tool.
+2. **Research trace**: every turn records the step, tool name, arguments, output summary, and duration, streamed live to the collapsible frontend timeline via `step_start` / `step_end` SSE events.
+3. **Source badges**: internal chunks and external links are merged into clickable source badges for verification.
+4. **Multimodal input**: image attachments are passed as `image_url` content parts to vision models; text attachments are extracted into the prompt context.
 
 ---
 
-## 6. Architecture Decision Records (ADR)
+## 5. External Tool Extensibility & MCP Integration
 
-Major architectural decisions are recorded in standalone ADR documents:
+Beyond the built-in toolset, two extension paths feed the agent. Both are loaded from the database whenever tool definitions are assembled, so changes take effect without a backend restart.
 
-- [ADR Index](./adr/README_en.md)
-- [ADR-0001: Contextual Hybrid RAG & Dual-Token Security Architecture](./adr/0001-hybrid-rag-and-security_en.md)
+```mermaid
+flowchart TB
+    subgraph Registry ["ResearchToolRegistry.get_tool_definitions()"]
+        Builtin["Built-in tool definitions"]
+        DynamicApi["Enabled custom API tools (custom_api_tools)"]
+        DynamicMcp["Cached MCP tools (mcp_servers.discovered_tools)"]
+    end
+
+    subgraph ImportFlow ["Custom API tool creation"]
+        Spec["OpenAPI / Swagger spec (content or URL)"] --> Parser["OpenApiParser (OAS 2.0 / 3.0 / 3.1)"]
+        Parser --> Select["Select endpoints in the UI"]
+        Select --> Import["POST /api/api-tools/import"]
+        Import --> DB[(custom_api_tools)]
+        Manual["Manual form entry"] --> DB
+    end
+
+    subgraph McpFlow ["MCP server onboarding"]
+        Server["MCP server config (stdio / HTTP)"] --> Discover["initialize + tools/list"]
+        Discover --> McpDB[(mcp_servers)]
+    end
+
+    DB --> DynamicApi
+    McpDB --> DynamicMcp
+    Builtin --> Agent["Agent toolset"]
+    DynamicApi --> Agent
+    DynamicMcp --> Agent
+
+    Agent -->|dispatch| Exec{"execute_tool(name, arguments)"}
+    Exec -->|built-in| Internal["Internal tool implementations"]
+    Exec -->|custom API| Http["execute_http_api_tool (httpx)"]
+    Exec -->|mcp_* prefix| McpCall["McpManager.execute_mcp_tool (tools/call)"]
+```
+
+### Design notes
+
+1. **Naming and routing**: custom API tools register under their own `name`; MCP tools use `mcp_<server_name>_<tool_name>`, and `execute_tool` routes on that prefix.
+2. **HTTP executor**: `execute_http_api_tool` handles path variable substitution, query assembly, header and auth injection (Bearer / API Key / Basic), JSON or form body serialization, plus timeout and error isolation.
+3. **MCP transports**: `McpStdioClient` speaks JSON-RPC over a subprocess's stdio, `McpHttpClient` over HTTP; both support `initialize`, `tools/list`, and `tools/call`.
+4. **Tool caching**: discovered MCP tools are stored in `discovered_tools` at creation or manual discovery time, so assembling tool definitions does not require reconnecting.
+
+---
+
+## 6. Security Design
+
+### 6.1 Two-layer sensitive data redaction
+
+To satisfy security review (fixing the CodeQL `py/clear-text-logging-sensitive-data` alert), `backend/app/core/security_logging.py` applies two masking passes:
+
+1. **Recursive object masking (`sanitize_sensitive_data`)**: walks dictionaries and lists, matches sensitive keys (`password`, `token`, `secret`, `authorization`, `cookie`, case-insensitive) and replaces the values with `[REDACTED]`.
+2. **String-level regex masking**: a second scan before JSON serialization or log output, so no secret survives in any shape.
+
+### 6.2 Error code mechanism (CWE-209 / CWE-497)
+
+`error_response.py` keeps full exception messages and stack traces in the server log and returns only a random code to clients:
+
+- `log_and_get_error_id()`: logs the exception and produces a 12-character identifier.
+- `format_client_error()` / `build_error_payload()`: build the client-facing message and `error_id` without internal details.
+- `SafeClientError`: marks validation errors whose message only describes the user's own input, so it can be returned verbatim to help them fix it.
+
+The same mechanism backs the SSE `error` event, so exception text cannot leak through the stream.
+
+### 6.3 SSRF protection
+
+Every outbound request driven by user input (OpenAPI spec URLs, `web_fetch`, MCP HTTP transport, custom API tools) passes through `ssrf_protection.py`:
+
+```mermaid
+flowchart LR
+    Input["User-supplied URL"] --> Scheme{"Scheme check (http / https)"}
+    Scheme --> Port{"Port check (block dangerous ports)"}
+    Port --> Host{"Hostname check (localhost, .internal, ...)"}
+    Host --> Resolve["Resolve DNS to all addresses"]
+    Resolve --> IPCheck{"IP range check"}
+    IPCheck -->|private / loopback / link-local / cloud metadata| Block["Reject (SSRFProtectionError)"]
+    IPCheck -->|public address| Allow["Allow and send via safe_fetch_text"]
+```
+
+Blocked targets include IPv4 / IPv6 private and reserved ranges, loopback and link-local addresses, cloud metadata endpoints (such as `169.254.169.254`), internal domain suffixes, and a dangerous port list. The behaviour is covered by `backend/tests/test_ssrf_protection.py`.
+
+### 6.4 Other protections
+
+- **Security headers**: `SecurityHeadersMiddleware` injects hardened response headers.
+- **Rate limiting**: `RateLimitMiddleware` enforces `RATE_LIMIT_PER_MINUTE`.
+- **CORS allowlist**: only `ALLOWED_ORIGINS` (optionally plus `DEVTUNNEL_URL`) may call the API, with credentials allowed.
+- **Input validation**: `input_validator.py` checks filenames, extensions, and path traversal patterns.
+
+---
+
+## 7. Architecture Decision Records (ADR)
+
+Significant architectural decisions are recorded separately:
+
+- [ADR index](./adr/README.md)
+- [ADR-0001: Enhanced hybrid RAG retrieval and dual-token security](./adr/0001-hybrid-rag-and-security.md)
