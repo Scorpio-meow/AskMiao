@@ -17,6 +17,7 @@ from app.models import (
 )
 from app.core.jwt_auth import get_current_active_user as get_current_user
 from app.services.openapi_parser import OpenApiParser
+from app.core.error_response import SafeClientError, log_and_get_error_id, format_client_error
 logger = logging.getLogger(__name__)
 router = APIRouter()
 def _serialize_tool_model(tool: CustomApiTool) -> Dict[str, Any]:
@@ -175,13 +176,16 @@ async def execute_http_api_tool(tool_dict: Dict[str, Any], arguments: Dict[str, 
             }
     except Exception as e:
         duration = round(time.time() - start_time, 3)
-        logger.error(f"執行自訂 API 工具 {tool_dict.get('name')} 失敗: {e}")
+        error_id = log_and_get_error_id(
+            logger, f"執行自訂 API 工具 {tool_dict.get('name')} 失敗", e
+        )
         return {
             "status_code": 500,
             "is_success": False,
             "duration_seconds": duration,
             "url": path_replaced_url,
-            "error": f"API 請求連線失敗: {str(e)}"
+            "error": format_client_error(error_id),
+            "error_id": error_id
         }
 @router.post("/parse-spec")
 async def parse_openapi_spec(
@@ -198,9 +202,11 @@ async def parse_openapi_spec(
             "status": "success",
             "data": parsed_result
         }
-    except Exception as e:
-        logger.error(f"OpenAPI 規格解析失敗: {e}")
+    except SafeClientError as e:
         raise HTTPException(status_code=400, detail=f"OpenAPI 規格解析失敗: {str(e)}")
+    except Exception as e:
+        error_id = log_and_get_error_id(logger, "OpenAPI 規格解析失敗", e)
+        raise HTTPException(status_code=500, detail=format_client_error(error_id))
 @router.post("/import")
 async def import_openapi_tools(
     import_data: OpenApiImportRequest,

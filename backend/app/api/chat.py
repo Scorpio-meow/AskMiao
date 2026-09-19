@@ -6,6 +6,7 @@ from app.models import MessageCreate, MessageResponse, ChatResponse, Conversatio
 from app.services.chat_service import ChatService
 from app.core.rag_manager import get_rag_system
 from app.core.user_context import get_current_user_id, get_default_user_id
+from app.core.error_response import build_error_payload
 from typing import List
 import logging
 logger = logging.getLogger(__name__)
@@ -65,13 +66,14 @@ async def get_available_tools():
             "tools": tool_defs
         }
     except Exception as e:
-        logger.error(f"取得可用工具清單失敗: {e}")
+        error_payload = build_error_payload(logger, "取得可用工具清單失敗", e)
         from app.rag.tools import ResearchToolRegistry
         tool_defs = ResearchToolRegistry().get_tool_definitions()
         return {
             "status": "partial",
             "tools": tool_defs,
-            "error": str(e)
+            "error": error_payload["detail"],
+            "error_id": error_payload["error_id"]
         }
 @router.post("/send")
 async def send_message(
@@ -156,8 +158,7 @@ async def send_message(
             }
             yield f"event: done\ndata: {json.dumps(done_payload, ensure_ascii=False)}\n\n"
         except Exception as e:
-            logger.exception("處理訊息串流時發生錯誤")
-            err_payload = {"detail": f"處理訊息時發生錯誤: {str(e)}"}
+            err_payload = build_error_payload(logger, "處理訊息串流時發生錯誤", e)
             yield f"event: error\ndata: {json.dumps(err_payload, ensure_ascii=False)}\n\n"
     return StreamingResponse(
         sse_generator(),
@@ -240,5 +241,5 @@ async def websocket_endpoint(websocket: WebSocket, user_id: int):
     except WebSocketDisconnect:
         manager.disconnect(websocket, user_id)
     except Exception as e:
-        print(f"WebSocket 錯誤: {e}")
+        logger.exception("WebSocket 連線發生錯誤")
         manager.disconnect(websocket, user_id)
