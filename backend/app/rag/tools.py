@@ -4,6 +4,7 @@ import re
 from typing import Any, Dict, List, Optional
 import httpx
 from app.core.config import settings
+from app.core.error_response import log_and_get_error_id
 logger = logging.getLogger(__name__)
 def clean_html(html_content: str) -> str:
     """清理 HTML 標籤並擷取核心文字內容"""
@@ -59,8 +60,8 @@ class ResearchToolRegistry:
                 "documents": docs_info
             }
         except Exception as e:
-            logger.error(f"search_knowledge_base 執行失敗: {e}")
-            return {"error": f"檢索知識庫時發生錯誤: {str(e)}", "documents": []}
+            error_id = log_and_get_error_id(logger, "search_knowledge_base 執行失敗", e)
+            return {"error": f"檢索知識庫時發生錯誤（錯誤代碼：{error_id}）", "documents": []}
     async def filter_and_count_records(
         self,
         date_range: Optional[str] = None,
@@ -151,8 +152,8 @@ class ResearchToolRegistry:
                 "records": returned_records
             }
         except Exception as e:
-            logger.error(f"filter_and_count_records 執行失敗: {e}")
-            return {"error": f"統計篩選時發生錯誤: {str(e)}", "total_count": 0, "records": []}
+            error_id = log_and_get_error_id(logger, "filter_and_count_records 執行失敗", e)
+            return {"error": f"統計篩選時發生錯誤（錯誤代碼：{error_id}）", "total_count": 0, "records": []}
     async def web_search(self, query: str, max_results: int = 5) -> Dict[str, Any]:
         """執行聯網搜尋以獲取外部即時資訊（優先調用 Ollama 官方搜尋 API，失敗時自動調用 DuckDuckGo 備援）"""
         ollama_key = settings.OLLAMA_API_KEY or ''
@@ -224,8 +225,8 @@ class ResearchToolRegistry:
                 else:
                     return {"query": query, "error": f"搜尋失敗，狀態碼: {resp.status_code}", "results": []}
         except Exception as e:
-            logger.error(f"DuckDuckGo 搜尋失敗: {e}")
-            return {"query": query, "error": f"外部搜尋發生錯誤: {str(e)}", "results": []}
+            error_id = log_and_get_error_id(logger, "DuckDuckGo 搜尋失敗", e)
+            return {"query": query, "error": f"外部搜尋發生錯誤（錯誤代碼：{error_id}）", "results": []}
     async def web_fetch(self, url: str) -> Dict[str, Any]:
         """深入讀取指定網頁全文（優先使用 Ollama Web Fetch，失敗時使用具備 SSRF 防護之 HTTP 抓取並解析 HTML）"""
         from app.core.ssrf_protection import safe_fetch_text, validate_url_ssrf, SSRFProtectionError
@@ -271,10 +272,11 @@ class ResearchToolRegistry:
                 "content": clean_text[:3500]
             }
         except (SSRFProtectionError, ValueError) as e:
-            return {"url": url, "error": f"網頁讀取失敗: {str(e)}", "content": ""}
+            error_id = log_and_get_error_id(logger, f"web_fetch 遭安全防護或格式驗證拒絕 ({url})", e)
+            return {"url": url, "error": f"網頁讀取失敗：該網址遭安全防護拒絕或格式無效（錯誤代碼：{error_id}）", "content": ""}
         except Exception as e:
-            logger.error(f"web_fetch 失敗 ({url}): {e}")
-            return {"url": url, "error": f"無法存取該網址: {str(e)}", "content": ""}
+            error_id = log_and_get_error_id(logger, f"web_fetch 失敗 ({url})", e)
+            return {"url": url, "error": f"無法存取該網址（錯誤代碼：{error_id}）", "content": ""}
     def _generate_knowledge_base_description(self) -> str:
         """根據知識庫收錄的每一份文件內容結構，純動態生成互不相同且專屬之主題描述（無任何硬編碼）"""
         from app.services.document_processor import DocumentProcessor
@@ -515,8 +517,8 @@ class ResearchToolRegistry:
                 db.close()
                 return {"error": f"找不到對應且啟用的 MCP 伺服器工具: {name}"}
             except Exception as e:
-                logger.error(f"執行 MCP 工具 {name} 時發生異常: {e}")
-                return {"error": f"執行 MCP 工具失敗: {str(e)}"}
+                error_id = log_and_get_error_id(logger, f"執行 MCP 工具 {name} 時發生異常", e)
+                return {"error": f"執行 MCP 工具失敗（錯誤代碼：{error_id}）"}
         else:
 
             try:
@@ -531,6 +533,6 @@ class ResearchToolRegistry:
                     return await execute_http_api_tool(tool_dict, arguments)
                 db.close()
             except Exception as e:
-                logger.error(f"執行自訂 API 工具 {name} 時發生異常: {e}")
-                return {"error": f"執行自訂 API 工具失敗: {str(e)}"}
+                error_id = log_and_get_error_id(logger, f"執行自訂 API 工具 {name} 時發生異常", e)
+                return {"error": f"執行自訂 API 工具失敗（錯誤代碼：{error_id}）"}
             return {"error": f"未知的工具名稱: {name}"}

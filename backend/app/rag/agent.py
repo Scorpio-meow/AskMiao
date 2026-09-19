@@ -6,6 +6,7 @@ from typing import Any, Dict, List, Optional, AsyncGenerator
 import httpx
 from app.core.config import settings
 from app.rag.tools import ResearchToolRegistry
+from app.core.error_response import log_and_get_error_id
 
 logger = logging.getLogger(__name__)
 
@@ -309,9 +310,9 @@ class ResearchAgent:
                 else:
                     assistant_msg = await self._call_ollama(messages, tools_def, model_name)
             except Exception as e:
-                logger.error(f"模型調用失敗 (第 {turns_used} 輪): {e}")
+                error_id = log_and_get_error_id(logger, f"模型調用失敗 (第 {turns_used} 輪)", e)
                 if not final_answer and not research_trace:
-                    err_msg = f"在執行自主研究時遇到連線異常: {str(e)}"
+                    err_msg = f"在執行自主研究時遇到連線異常（錯誤代碼：{error_id}）"
                     yield {"event": "token", "data": {"content": err_msg}}
                     final_answer = err_msg
                 break
@@ -436,8 +437,8 @@ class ResearchAgent:
                         final_answer += chunk
                         yield {"event": "token", "data": {"content": chunk}}
             except Exception as e:
-                logger.error(f"串流生成最終答案失敗: {e}")
-                err_msg = f"\n[回答生成中斷: {str(e)}]"
+                error_id = log_and_get_error_id(logger, "串流生成最終答案失敗", e)
+                err_msg = f"\n[回答生成中斷（錯誤代碼：{error_id}）]"
                 final_answer += err_msg
                 yield {"event": "token", "data": {"content": err_msg}}
 
