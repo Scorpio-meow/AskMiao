@@ -13,6 +13,7 @@ from .retrievers.hybrid import HybridRetriever
 from .tools import ResearchToolRegistry
 from .agent import ResearchAgent
 from app.core.config import settings
+from app.core.error_response import log_and_get_error_id
 
 logger = logging.getLogger(__name__)
 
@@ -181,13 +182,15 @@ class RAGPipeline:
                 error_detail = e.response.text if e.response else ""
             except Exception:
                 pass
-            logger.error(f"LLM API HTTP error {status_code}: {e}, detail: {error_detail[:200]}")
+            error_id = log_and_get_error_id(
+                logger, f"LLM API HTTP error {status_code}, detail: {error_detail[:200]}", e
+            )
             if status_code == 500:
                 return f"抱歉，模型服務器錯誤 (500)。可能是模型 '{model_to_use}' 負載過重，建議切換到較小的模型。"
-            return f"抱歉，模型 API 返回錯誤 ({status_code}): {str(e)}"
+            return f"抱歉，模型 API 返回錯誤 ({status_code})（錯誤代碼：{error_id}）。"
         except Exception as e:
-            logger.error(f"LLM API unexpected error: {type(e).__name__}: {e}")
-            return f"抱歉，生成回應時出現錯誤: {str(e)}"
+            error_id = log_and_get_error_id(logger, "LLM API unexpected error", e)
+            return f"抱歉，生成回應時出現錯誤（錯誤代碼：{error_id}）。"
 
     async def generate_response(
         self,
