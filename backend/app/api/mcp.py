@@ -13,6 +13,7 @@ from app.models import (
 )
 from app.core.jwt_auth import get_current_active_user as get_current_user
 from app.services.mcp_service import McpManager
+from app.core.error_response import log_and_get_error_id, format_client_error
 logger = logging.getLogger(__name__)
 router = APIRouter()
 def _serialize_mcp_server(server: McpServer) -> Dict[str, Any]:
@@ -121,9 +122,9 @@ async def create_server(
         db.commit()
         db.refresh(new_server)
     except Exception as e:
-        logger.warning(f"初次探索 MCP 工具失敗: {e}")
+        error_id = log_and_get_error_id(logger, "初次探索 MCP 工具失敗", e, logging.WARNING)
         new_server.status = "error"
-        new_server.last_error = str(e)
+        new_server.last_error = format_client_error(error_id)
         db.commit()
         db.refresh(new_server)
     return {
@@ -226,12 +227,12 @@ async def discover_server_tools(
             "server": _serialize_mcp_server(server)
         }
     except Exception as e:
-        logger.error(f"探索 MCP 伺服器工具失敗: {e}")
+        error_id = log_and_get_error_id(logger, "探索 MCP 伺服器工具失敗", e)
         server.status = "error"
-        server.last_error = str(e)
+        server.last_error = format_client_error(error_id)
         db.commit()
         db.refresh(server)
-        raise HTTPException(status_code=400, detail=f"連線與探索 MCP 工具失敗: {str(e)}")
+        raise HTTPException(status_code=400, detail=format_client_error(error_id))
 @router.patch("/servers/{server_id}/toggle")
 async def toggle_server(
     server_id: int,

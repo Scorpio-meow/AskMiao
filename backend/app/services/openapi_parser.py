@@ -4,6 +4,7 @@ import re
 from typing import Any, Dict, List, Optional, Tuple, Union
 import yaml
 from app.core.ssrf_protection import safe_fetch_text, SSRFProtectionError
+from app.core.error_response import SafeClientError, log_and_get_error_id
 
 logger = logging.getLogger(__name__)
 
@@ -44,12 +45,16 @@ class OpenApiParser:
                     max_size_bytes=10 * 1024 * 1024
                 )
             except SSRFProtectionError as e:
-                raise ValueError(f"安全防護拒絕存取該 URL: {str(e)}")
+                raise SafeClientError(f"安全防護拒絕存取該 URL: {str(e)}")
             except Exception as e:
-                raise ValueError(f"獲取遠端 OpenAPI 規格失敗: {str(e)}")
+                error_id = log_and_get_error_id(logger, "獲取遠端 OpenAPI 規格失敗", e)
+                raise SafeClientError(
+                    "獲取遠端 OpenAPI 規格失敗，請確認該 URL 可公開存取且能正常回應"
+                    f"（錯誤代碼：{error_id}）"
+                )
         spec_dict = cls._parse_raw_text_to_dict(raw_text)
         if not isinstance(spec_dict, dict):
-            raise ValueError("OpenAPI 規格格式無效，必須是合法的 JSON 或 YAML 物件。")
+            raise SafeClientError("OpenAPI 規格格式無效，必須是合法的 JSON 或 YAML 物件。")
         spec_version = cls._detect_spec_version(spec_dict)
         info = spec_dict.get("info", {})
         title = info.get("title", "未命名 API")
@@ -81,7 +86,7 @@ class OpenApiParser:
             try:
                 return json.loads(text)
             except Exception:
-                raise ValueError(f"無法將內容解析為 JSON 或 YAML: {str(e)}")
+                raise SafeClientError(f"無法將內容解析為 JSON 或 YAML: {str(e)}")
     @classmethod
     def _detect_spec_version(cls, spec: Dict[str, Any]) -> str:
         """偵測 OpenAPI 規格版本"""
@@ -102,7 +107,7 @@ class OpenApiParser:
             if "definitions" in spec or "host" in spec:
                 return "swagger_2.0"
             return "openapi_3.0"
-        raise ValueError("無法識別 OpenAPI 或 Swagger 規格版本，請確認包含 'openapi' 或 'swagger' 宣告欄位。")
+        raise SafeClientError("無法識別 OpenAPI 或 Swagger 規格版本，請確認包含 'openapi' 或 'swagger' 宣告欄位。")
     @classmethod
     def _extract_base_url(cls, spec: Dict[str, Any], version: str) -> str:
         """從規格中提取基礎 URL (Base URL)"""
