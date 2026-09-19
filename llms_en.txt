@@ -18,11 +18,19 @@
 - [backend/app/core/jwt_auth.py](backend/app/core/jwt_auth.py): RSA-2048 JWT signing, token verification, and revocation
 - [backend/app/core/security_logging.py](backend/app/core/security_logging.py): Two-layer sensitive data redaction logging system
 - [backend/app/api/chat.py](backend/app/api/chat.py): Chat, autonomous research, and available models API endpoints
-- [backend/app/api/documents.py](backend/app/api/documents.py): Knowledge document upload, indexing, and management endpoints
+- [backend/app/api/documents.py](backend/app/api/documents.py): Knowledge document upload, AI summaries, and index management endpoints
+- [backend/app/api/api_tools.py](backend/app/api/api_tools.py): Custom API tool CRUD, OpenAPI import, and the generic HTTP tool executor
+- [backend/app/api/mcp.py](backend/app/api/mcp.py): MCP server management, tool discovery, and invocation test endpoints
+- [backend/app/services/openapi_parser.py](backend/app/services/openapi_parser.py): OpenAPI / Swagger spec parser (OAS 2.0 / 3.0 / 3.1)
+- [backend/app/services/mcp_service.py](backend/app/services/mcp_service.py): MCP stdio and HTTP JSON-RPC clients plus tool definition conversion
+- [backend/app/core/ssrf_protection.py](backend/app/core/ssrf_protection.py): Outbound URL resolution, validation, and SSRF blocking
+- [backend/app/core/error_response.py](backend/app/core/error_response.py): Client-facing error codes mapped to server-side exception logs
 - [frontend/src/App.jsx](frontend/src/App.jsx): React 19 top-level routes and global layout
 - [frontend/src/pages/Chat/index.tsx](frontend/src/pages/Chat/index.tsx): Main chat page, model selection & reasoning effort controller
 - [frontend/src/pages/Chat/ResearchTraceBlock.tsx](frontend/src/pages/Chat/ResearchTraceBlock.tsx): Collapsible research trace timeline component
 - [frontend/src/pages/Chat/SourceBadges.tsx](frontend/src/pages/Chat/SourceBadges.tsx): Interactive reference source badge component
+- [frontend/src/pages/AiTools.jsx](frontend/src/pages/AiTools.jsx): AI tools page (tool overview, OpenAPI import wizard, MCP server management)
+- [frontend/src/services/api.ts](frontend/src/services/api.ts): Axios wrappers, token interceptors, and per-module services (chat / apiTool / mcp)
 
 ## Key Architectural Invariants & Concepts
 
@@ -36,8 +44,17 @@
    - FAISS dense vector search and Whoosh BM25 sparse keyword search combined and re-ranked via Cross-Encoder for high precision.
 4. **System-Wide Security Redaction**:
    - Recursive object masking and regex-based string redaction. Passwords and bearer tokens MUST appear as `[REDACTED]` in logs.
-5. **Modern Lightweight Stack**:
-   - Zero-dependency local setup with built-in SQLite, React 19 + Vite 7 frontend built with Bun.
+5. **Tool Extensibility & MCP Integration**:
+   - Custom HTTP API tools and OpenAPI imports live in `custom_api_tools`; MCP servers and their cached tools live in `mcp_servers`.
+   - `ResearchToolRegistry.get_tool_definitions()` loads enabled external tools on every assembly, so changes apply without a backend restart.
+   - MCP tools are named `mcp_<server_name>_<tool_name>`; `execute_tool` routes on that prefix to `McpManager.execute_mcp_tool`.
+6. **Outbound Safety: SSRF Guard & Error Codes**:
+   - Every outbound request driven by user input (OpenAPI spec URLs, `web_fetch`, MCP HTTP transport, custom API tools) MUST pass `ssrf_protection.py` first.
+   - Unexpected exceptions are converted by `error_response.py` into random error codes; exception text and stack traces MUST NOT reach clients or the SSE stream.
+7. **SSE Contract**:
+   - `POST /api/chat/send` responds with SSE, emitting `start` -> `step_start` / `step_end` -> `token` -> `sources` -> `done`, or `error` on failure.
+8. **Modern Lightweight Stack**:
+   - Zero-dependency local setup with SQLite (`DATABASE_URL` also supports PostgreSQL); caching and the token revocation list are in-process memory structures. React 19 + Vite 7 frontend built with Bun.
 
 ## Documentation Index
 

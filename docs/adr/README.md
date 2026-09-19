@@ -11,6 +11,7 @@
 | ADR 編號 | 標題 | 狀態 | 決策日期 | 摘要 |
 |---|---|---|---|---|
 | [ADR-0001](./0001-hybrid-rag-and-security.md) | 增強型混合 RAG 檢索架構與雙 Token 安全防護決策 | 已通過 (Accepted) | 2026-08-01 | 採用 FAISS + Whoosh + Cross-Encoder 混合 RAG 與 RSA-2048 JWT 雙 Token 防護 |
+| [ADR-0002](./0002-external-tools-and-outbound-safety.md) | 外部工具擴充機制與出站請求安全防護決策 | 已通過 (Accepted) | 2026-09-01 | 以資料庫驅動之自訂 API / MCP 工具註冊，並集中實施 SSRF 防護與錯誤代碼機制 |
 
 ---
 
