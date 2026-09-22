@@ -1,0 +1,656 @@
+<!DOCTYPE html>
+<html lang="zh-Hant-TW" class="no-js">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>AskMiao：企業級 Agentic RAG 智慧知識庫對話系統</title>
+  <meta name="description" content="AskMiao 是開源的企業級知識庫對話系統：FAISS 與 BM25 混合檢索、ReAct 自主研究 Agent、五檔推理深度、自訂 API 工具與 MCP 整合，並內建 RSA-2048 JWT、日誌脫敏與 SSRF 防護。">
+  <meta name="theme-color" media="(prefers-color-scheme: light)" content="#f7f9fc">
+  <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#090d16">
+  <link rel="canonical" href="https://scorpio-meow.github.io/AskMiao/">
+  <link rel="icon" type="image/png" sizes="32x32" href="assets/favicon-32.png">
+  <link rel="icon" type="image/png" sizes="64x64" href="assets/favicon-64.png">
+  <link rel="apple-touch-icon" href="assets/apple-touch-icon.png">
+
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="AskMiao">
+  <meta property="og:title" content="AskMiao：自主研究，答案有出處">
+  <meta property="og:description" content="開源的企業級 Agentic RAG 知識庫對話系統。混合檢索內部文件、Agent 自主聯網查證，每一步研究歷程與來源即時呈現。">
+  <meta property="og:url" content="https://scorpio-meow.github.io/AskMiao/">
+  <meta property="og:image" content="https://scorpio-meow.github.io/AskMiao/assets/og-image.png">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta property="og:locale" content="zh_TW">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="AskMiao：自主研究，答案有出處">
+  <meta name="twitter:description" content="開源的企業級 Agentic RAG 知識庫對話系統。">
+  <meta name="twitter:image" content="https://scorpio-meow.github.io/AskMiao/assets/og-image.png">
+
+  <script>
+    (function () {
+      try {
+        var theme = localStorage.getItem('askmiao-site-theme');
+        if (!theme) theme = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+        document.documentElement.setAttribute('data-theme', theme);
+      } catch (error) { /* 無法讀取儲存時交給 CSS 媒體查詢決定 */ }
+    })();
+  </script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@400;500;600&family=Noto+Sans+TC:wght@400;500;700&display=swap">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body id="top">
+<svg xmlns="http://www.w3.org/2000/svg" style="display:none" aria-hidden="true"><symbol id="i-brain" viewBox="0 0 256 256"><path d="M248,124a56.11,56.11,0,0,0-32-50.61V72a48,48,0,0,0-88-26.49A48,48,0,0,0,40,72v1.39a56,56,0,0,0,0,101.2V176a48,48,0,0,0,88,26.49A48,48,0,0,0,216,176v-1.41A56.09,56.09,0,0,0,248,124ZM88,208a32,32,0,0,1-31.81-28.56A55.87,55.87,0,0,0,64,180h8a8,8,0,0,0,0-16H64A40,40,0,0,1,50.67,86.27,8,8,0,0,0,56,78.73V72a32,32,0,0,1,64,0v68.26A47.8,47.8,0,0,0,88,128a8,8,0,0,0,0,16,32,32,0,0,1,0,64Zm104-44h-8a8,8,0,0,0,0,16h8a55.87,55.87,0,0,0,7.81-.56A32,32,0,1,1,168,144a8,8,0,0,0,0-16,47.8,47.8,0,0,0-32,12.26V72a32,32,0,0,1,64,0v6.73a8,8,0,0,0,5.33,7.54A40,40,0,0,1,192,164Zm16-52a8,8,0,0,1-8,8h-4a36,36,0,0,1-36-36V80a8,8,0,0,1,16,0v4a20,20,0,0,0,20,20h4A8,8,0,0,1,208,112ZM60,120H56a8,8,0,0,1,0-16h4A20,20,0,0,0,80,84V80a8,8,0,0,1,16,0v4A36,36,0,0,1,60,120Z"/></symbol><symbol id="i-magnifying-glass" viewBox="0 0 256 256"><path d="M229.66,218.34l-50.07-50.06a88.11,88.11,0,1,0-11.31,11.31l50.06,50.07a8,8,0,0,0,11.32-11.32ZM40,112a72,72,0,1,1,72,72A72.08,72.08,0,0,1,40,112Z"/></symbol><symbol id="i-globe" viewBox="0 0 256 256"><path d="M128,24h0A104,104,0,1,0,232,128,104.12,104.12,0,0,0,128,24Zm88,104a87.61,87.61,0,0,1-3.33,24H174.16a157.44,157.44,0,0,0,0-48h38.51A87.61,87.61,0,0,1,216,128ZM102,168H154a115.11,115.11,0,0,1-26,45A115.27,115.27,0,0,1,102,168Zm-3.9-16a140.84,140.84,0,0,1,0-48h59.88a140.84,140.84,0,0,1,0,48ZM40,128a87.61,87.61,0,0,1,3.33-24H81.84a157.44,157.44,0,0,0,0,48H43.33A87.61,87.61,0,0,1,40,128ZM154,88H102a115.11,115.11,0,0,1,26-45A115.27,115.27,0,0,1,154,88Zm52.33,0H170.71a135.28,135.28,0,0,0-22.3-45.6A88.29,88.29,0,0,1,206.37,88ZM107.59,42.4A135.28,135.28,0,0,0,85.29,88H49.63A88.29,88.29,0,0,1,107.59,42.4ZM49.63,168H85.29a135.28,135.28,0,0,0,22.3,45.6A88.29,88.29,0,0,1,49.63,168Zm98.78,45.6a135.28,135.28,0,0,0,22.3-45.6h35.66A88.29,88.29,0,0,1,148.41,213.6Z"/></symbol><symbol id="i-shield-check" viewBox="0 0 256 256"><path d="M208,40H48A16,16,0,0,0,32,56v56c0,52.72,25.52,84.67,46.93,102.19,23.06,18.86,46,25.26,47,25.53a8,8,0,0,0,4.2,0c1-.27,23.91-6.67,47-25.53C198.48,196.67,224,164.72,224,112V56A16,16,0,0,0,208,40Zm0,72c0,37.07-13.66,67.16-40.6,89.42A129.3,129.3,0,0,1,128,223.62a128.25,128.25,0,0,1-38.92-21.81C61.82,179.51,48,149.3,48,112l0-56,160,0ZM82.34,141.66a8,8,0,0,1,11.32-11.32L112,148.69l50.34-50.35a8,8,0,0,1,11.32,11.32l-56,56a8,8,0,0,1-11.32,0Z"/></symbol><symbol id="i-plugs-connected" viewBox="0 0 256 256"><path d="M237.66,18.34a8,8,0,0,0-11.32,0l-52.4,52.41-5.37-5.38a32.05,32.05,0,0,0-45.26,0L100,88.69l-6.34-6.35A8,8,0,0,0,82.34,93.66L88.69,100,65.37,123.31a32,32,0,0,0,0,45.26l5.38,5.37-52.41,52.4a8,8,0,0,0,11.32,11.32l52.4-52.41,5.37,5.38a32,32,0,0,0,45.26,0L156,167.31l6.34,6.35a8,8,0,0,0,11.32-11.32L167.31,156l23.32-23.31a32,32,0,0,0,0-45.26l-5.38-5.37,52.41-52.4A8,8,0,0,0,237.66,18.34Zm-116.29,161a16,16,0,0,1-22.62,0L76.69,157.25a16,16,0,0,1,0-22.62L100,111.31,144.69,156Zm57.94-57.94L156,144.69,111.31,100l23.32-23.31a16,16,0,0,1,22.62,0l22.06,22A16,16,0,0,1,179.31,121.37ZM88.57,35A8,8,0,0,1,103.43,29l8,20A8,8,0,0,1,96.57,55ZM24.57,93A8,8,0,0,1,35,88.57l20,8A8,8,0,0,1,49,111.43l-20-8A8,8,0,0,1,24.57,93ZM231.43,163a8,8,0,0,1-10.4,4.46l-20-8A8,8,0,1,1,207,144.57l20,8A8,8,0,0,1,231.43,163Zm-64,58.06A8,8,0,0,1,152.57,227l-8-20A8,8,0,0,1,159.43,201Z"/></symbol><symbol id="i-stack" viewBox="0 0 256 256"><path d="M230.91,172A8,8,0,0,1,228,182.91l-96,56a8,8,0,0,1-8.06,0l-96-56A8,8,0,0,1,36,169.09l92,53.65,92-53.65A8,8,0,0,1,230.91,172ZM220,121.09l-92,53.65L36,121.09A8,8,0,0,0,28,134.91l96,56a8,8,0,0,0,8.06,0l96-56A8,8,0,1,0,220,121.09ZM24,80a8,8,0,0,1,4-6.91l96-56a8,8,0,0,1,8.06,0l96,56a8,8,0,0,1,0,13.82l-96,56a8,8,0,0,1-8.06,0l-96-56A8,8,0,0,1,24,80Zm23.88,0L128,126.74,208.12,80,128,33.26Z"/></symbol><symbol id="i-gauge" viewBox="0 0 256 256"><path d="M207.06,72.67A111.24,111.24,0,0,0,128,40h-.4C66.07,40.21,16,91,16,153.13V176a16,16,0,0,0,16,16H224a16,16,0,0,0,16-16V152A111.25,111.25,0,0,0,207.06,72.67ZM224,176H119.71l54.76-75.3a8,8,0,0,0-12.94-9.42L99.92,176H32V153.13c0-3.08.15-6.12.43-9.13H56a8,8,0,0,0,0-16H35.27c10.32-38.86,44-68.24,84.73-71.66V80a8,8,0,0,0,16,0V56.33A96.14,96.14,0,0,1,221,128H200a8,8,0,0,0,0,16h23.67c.21,2.65.33,5.31.33,8Z"/></symbol><symbol id="i-files" viewBox="0 0 256 256"><path d="M213.66,66.34l-40-40A8,8,0,0,0,168,24H88A16,16,0,0,0,72,40V56H56A16,16,0,0,0,40,72V216a16,16,0,0,0,16,16H168a16,16,0,0,0,16-16V200h16a16,16,0,0,0,16-16V72A8,8,0,0,0,213.66,66.34ZM168,216H56V72h76.69L168,107.31v84.53c0,.06,0,.11,0,.16s0,.1,0,.16V216Zm32-32H184V104a8,8,0,0,0-2.34-5.66l-40-40A8,8,0,0,0,136,56H88V40h76.69L200,75.31Zm-56-32a8,8,0,0,1-8,8H88a8,8,0,0,1,0-16h48A8,8,0,0,1,144,152Zm0,32a8,8,0,0,1-8,8H88a8,8,0,0,1,0-16h48A8,8,0,0,1,144,184Z"/></symbol><symbol id="i-image" viewBox="0 0 256 256"><path d="M216,40H40A16,16,0,0,0,24,56V200a16,16,0,0,0,16,16H216a16,16,0,0,0,16-16V56A16,16,0,0,0,216,40Zm0,16V158.75l-26.07-26.06a16,16,0,0,0-22.63,0l-20,20-44-44a16,16,0,0,0-22.62,0L40,149.37V56ZM40,172l52-52,80,80H40Zm176,28H194.63l-36-36,20-20L216,181.38V200ZM144,100a12,12,0,1,1,12,12A12,12,0,0,1,144,100Z"/></symbol><symbol id="i-lock-key" viewBox="0 0 256 256"><path d="M128,112a28,28,0,0,0-8,54.83V184a8,8,0,0,0,16,0V166.83A28,28,0,0,0,128,112Zm0,40a12,12,0,1,1,12-12A12,12,0,0,1,128,152Zm80-72H176V56a48,48,0,0,0-96,0V80H48A16,16,0,0,0,32,96V208a16,16,0,0,0,16,16H208a16,16,0,0,0,16-16V96A16,16,0,0,0,208,80ZM96,56a32,32,0,0,1,64,0V80H96ZM208,208H48V96H208V208Z"/></symbol><symbol id="i-git-branch" viewBox="0 0 256 256"><path d="M232,64a32,32,0,1,0-40,31v17a8,8,0,0,1-8,8H96a23.84,23.84,0,0,0-8,1.38V95a32,32,0,1,0-16,0v66a32,32,0,1,0,16,0V144a8,8,0,0,1,8-8h88a24,24,0,0,0,24-24V95A32.06,32.06,0,0,0,232,64ZM64,64A16,16,0,1,1,80,80,16,16,0,0,1,64,64ZM96,192a16,16,0,1,1-16-16A16,16,0,0,1,96,192ZM200,80a16,16,0,1,1,16-16A16,16,0,0,1,200,80Z"/></symbol><symbol id="i-book-open" viewBox="0 0 256 256"><path d="M232,48H160a40,40,0,0,0-32,16A40,40,0,0,0,96,48H24a8,8,0,0,0-8,8V200a8,8,0,0,0,8,8H96a24,24,0,0,1,24,24,8,8,0,0,0,16,0,24,24,0,0,1,24-24h72a8,8,0,0,0,8-8V56A8,8,0,0,0,232,48ZM96,192H32V64H96a24,24,0,0,1,24,24V200A39.81,39.81,0,0,0,96,192Zm128,0H160a39.81,39.81,0,0,0-24,8V88a24,24,0,0,1,24-24h64Z"/></symbol><symbol id="i-arrow-right" viewBox="0 0 256 256"><path d="M221.66,133.66l-72,72a8,8,0,0,1-11.32-11.32L196.69,136H40a8,8,0,0,1,0-16H196.69L138.34,61.66a8,8,0,0,1,11.32-11.32l72,72A8,8,0,0,1,221.66,133.66Z"/></symbol><symbol id="i-github-logo" viewBox="0 0 256 256"><path d="M208.31,75.68A59.78,59.78,0,0,0,202.93,28,8,8,0,0,0,196,24a59.75,59.75,0,0,0-48,24H124A59.75,59.75,0,0,0,76,24a8,8,0,0,0-6.93,4,59.78,59.78,0,0,0-5.38,47.68A58.14,58.14,0,0,0,56,104v8a56.06,56.06,0,0,0,48.44,55.47A39.8,39.8,0,0,0,96,192v8H72a24,24,0,0,1-24-24A40,40,0,0,0,8,136a8,8,0,0,0,0,16,24,24,0,0,1,24,24,40,40,0,0,0,40,40H96v16a8,8,0,0,0,16,0V192a24,24,0,0,1,48,0v40a8,8,0,0,0,16,0V192a39.8,39.8,0,0,0-8.44-24.53A56.06,56.06,0,0,0,216,112v-8A58.14,58.14,0,0,0,208.31,75.68ZM200,112a40,40,0,0,1-40,40H112a40,40,0,0,1-40-40v-8a41.74,41.74,0,0,1,6.9-22.48A8,8,0,0,0,80,73.83a43.81,43.81,0,0,1,.79-33.58,43.88,43.88,0,0,1,32.32,20.06A8,8,0,0,0,119.82,64h32.35a8,8,0,0,0,6.74-3.69,43.87,43.87,0,0,1,32.32-20.06A43.81,43.81,0,0,1,192,73.83a8.09,8.09,0,0,0,1,7.65A41.72,41.72,0,0,1,200,104Z"/></symbol><symbol id="i-sun" viewBox="0 0 256 256"><path d="M120,40V16a8,8,0,0,1,16,0V40a8,8,0,0,1-16,0Zm72,88a64,64,0,1,1-64-64A64.07,64.07,0,0,1,192,128Zm-16,0a48,48,0,1,0-48,48A48.05,48.05,0,0,0,176,128ZM58.34,69.66A8,8,0,0,0,69.66,58.34l-16-16A8,8,0,0,0,42.34,53.66Zm0,116.68-16,16a8,8,0,0,0,11.32,11.32l16-16a8,8,0,0,0-11.32-11.32ZM192,72a8,8,0,0,0,5.66-2.34l16-16a8,8,0,0,0-11.32-11.32l-16,16A8,8,0,0,0,192,72Zm5.66,114.34a8,8,0,0,0-11.32,11.32l16,16a8,8,0,0,0,11.32-11.32ZM48,128a8,8,0,0,0-8-8H16a8,8,0,0,0,0,16H40A8,8,0,0,0,48,128Zm80,80a8,8,0,0,0-8,8v24a8,8,0,0,0,16,0V216A8,8,0,0,0,128,208Zm112-88H216a8,8,0,0,0,0,16h24a8,8,0,0,0,0-16Z"/></symbol><symbol id="i-moon" viewBox="0 0 256 256"><path d="M233.54,142.23a8,8,0,0,0-8-2,88.08,88.08,0,0,1-109.8-109.8,8,8,0,0,0-10-10,104.84,104.84,0,0,0-52.91,37A104,104,0,0,0,136,224a103.09,103.09,0,0,0,62.52-20.88,104.84,104.84,0,0,0,37-52.91A8,8,0,0,0,233.54,142.23ZM188.9,190.34A88,88,0,0,1,65.66,67.11a89,89,0,0,1,31.4-26A106,106,0,0,0,96,56,104.11,104.11,0,0,0,200,160a106,106,0,0,0,14.92-1.06A89,89,0,0,1,188.9,190.34Z"/></symbol><symbol id="i-lightning" viewBox="0 0 256 256"><path d="M215.79,118.17a8,8,0,0,0-5-5.66L153.18,90.9l14.66-73.33a8,8,0,0,0-13.69-7l-112,120a8,8,0,0,0,3,13l57.63,21.61L88.16,238.43a8,8,0,0,0,13.69,7l112-120A8,8,0,0,0,215.79,118.17ZM109.37,214l10.47-52.38a8,8,0,0,0-5-9.06L62,132.71l84.62-90.66L136.16,94.43a8,8,0,0,0,5,9.06l52.8,19.8Z"/></symbol><symbol id="i-database" viewBox="0 0 256 256"><path d="M128,24C74.17,24,32,48.6,32,80v96c0,31.4,42.17,56,96,56s96-24.6,96-56V80C224,48.6,181.83,24,128,24Zm80,104c0,9.62-7.88,19.43-21.61,26.92C170.93,163.35,150.19,168,128,168s-42.93-4.65-58.39-13.08C55.88,147.43,48,137.62,48,128V111.36c17.06,15,46.23,24.64,80,24.64s62.94-9.68,80-24.64ZM69.61,53.08C85.07,44.65,105.81,40,128,40s42.93,4.65,58.39,13.08C200.12,60.57,208,70.38,208,80s-7.88,19.43-21.61,26.92C170.93,115.35,150.19,120,128,120s-42.93-4.65-58.39-13.08C55.88,99.43,48,89.62,48,80S55.88,60.57,69.61,53.08ZM186.39,202.92C170.93,211.35,150.19,216,128,216s-42.93-4.65-58.39-13.08C55.88,195.43,48,185.62,48,176V159.36c17.06,15,46.23,24.64,80,24.64s62.94-9.68,80-24.64V176C208,185.62,200.12,195.43,186.39,202.92Z"/></symbol><symbol id="i-tree-structure" viewBox="0 0 256 256"><path d="M160,112h48a16,16,0,0,0,16-16V48a16,16,0,0,0-16-16H160a16,16,0,0,0-16,16V64H128a24,24,0,0,0-24,24v32H72v-8A16,16,0,0,0,56,96H24A16,16,0,0,0,8,112v32a16,16,0,0,0,16,16H56a16,16,0,0,0,16-16v-8h32v32a24,24,0,0,0,24,24h16v16a16,16,0,0,0,16,16h48a16,16,0,0,0,16-16V160a16,16,0,0,0-16-16H160a16,16,0,0,0-16,16v16H128a8,8,0,0,1-8-8V88a8,8,0,0,1,8-8h16V96A16,16,0,0,0,160,112ZM56,144H24V112H56v32Zm104,16h48v48H160Zm0-112h48V96H160Z"/></symbol><symbol id="i-code" viewBox="0 0 256 256"><path d="M69.12,94.15,28.5,128l40.62,33.85a8,8,0,1,1-10.24,12.29l-48-40a8,8,0,0,1,0-12.29l48-40a8,8,0,0,1,10.24,12.3Zm176,27.7-48-40a8,8,0,1,0-10.24,12.3L227.5,128l-40.62,33.85a8,8,0,1,0,10.24,12.29l48-40a8,8,0,0,0,0-12.29ZM162.73,32.48a8,8,0,0,0-10.25,4.79l-64,176a8,8,0,0,0,4.79,10.26A8.14,8.14,0,0,0,96,224a8,8,0,0,0,7.52-5.27l64-176A8,8,0,0,0,162.73,32.48Z"/></symbol><symbol id="i-terminal-window" viewBox="0 0 256 256"><path d="M128,128a8,8,0,0,1-3,6.25l-40,32a8,8,0,1,1-10-12.5L107.19,128,75,102.25a8,8,0,1,1,10-12.5l40,32A8,8,0,0,1,128,128Zm48,24H136a8,8,0,0,0,0,16h40a8,8,0,0,0,0-16Zm56-96V200a16,16,0,0,1-16,16H40a16,16,0,0,1-16-16V56A16,16,0,0,1,40,40H216A16,16,0,0,1,232,56ZM216,200V56H40V200H216Z"/></symbol><symbol id="i-check-circle" viewBox="0 0 256 256"><path d="M173.66,98.34a8,8,0,0,1,0,11.32l-56,56a8,8,0,0,1-11.32,0l-24-24a8,8,0,0,1,11.32-11.32L112,148.69l50.34-50.35A8,8,0,0,1,173.66,98.34ZM232,128A104,104,0,1,1,128,24,104.11,104.11,0,0,1,232,128Zm-16,0a88,88,0,1,0-88,88A88.1,88.1,0,0,0,216,128Z"/></symbol><symbol id="i-x-circle" viewBox="0 0 256 256"><path d="M165.66,101.66,139.31,128l26.35,26.34a8,8,0,0,1-11.32,11.32L128,139.31l-26.34,26.35a8,8,0,0,1-11.32-11.32L116.69,128,90.34,101.66a8,8,0,0,1,11.32-11.32L128,116.69l26.34-26.35a8,8,0,0,1,11.32,11.32ZM232,128A104,104,0,1,1,128,24,104.11,104.11,0,0,1,232,128Zm-16,0a88,88,0,1,0-88,88A88.1,88.1,0,0,0,216,128Z"/></symbol><symbol id="i-arrow-square-out" viewBox="0 0 256 256"><path d="M224,104a8,8,0,0,1-16,0V59.32l-66.33,66.34a8,8,0,0,1-11.32-11.32L196.68,48H152a8,8,0,0,1,0-16h64a8,8,0,0,1,8,8Zm-40,24a8,8,0,0,0-8,8v72H48V80h72a8,8,0,0,0,0-16H48A16,16,0,0,0,32,80V208a16,16,0,0,0,16,16H176a16,16,0,0,0,16-16V136A8,8,0,0,0,184,128Z"/></symbol><symbol id="i-list" viewBox="0 0 256 256"><path d="M224,128a8,8,0,0,1-8,8H40a8,8,0,0,1,0-16H216A8,8,0,0,1,224,128ZM40,72H216a8,8,0,0,0,0-16H40a8,8,0,0,0,0,16ZM216,184H40a8,8,0,0,0,0,16H216a8,8,0,0,0,0-16Z"/></symbol><symbol id="i-x" viewBox="0 0 256 256"><path d="M205.66,194.34a8,8,0,0,1-11.32,11.32L128,139.31,61.66,205.66a8,8,0,0,1-11.32-11.32L116.69,128,50.34,61.66A8,8,0,0,1,61.66,50.34L128,116.69l66.34-66.35a8,8,0,0,1,11.32,11.32L139.31,128Z"/></symbol><symbol id="i-funnel" viewBox="0 0 256 256"><path d="M230.6,49.53A15.81,15.81,0,0,0,216,40H40A16,16,0,0,0,28.19,66.76l.08.09L96,139.17V216a16,16,0,0,0,24.87,13.32l32-21.34A16,16,0,0,0,160,194.66V139.17l67.74-72.32.08-.09A15.8,15.8,0,0,0,230.6,49.53ZM40,56h0Zm106.18,74.58A8,8,0,0,0,144,136v58.66L112,216V136a8,8,0,0,0-2.16-5.47L40,56H216Z"/></symbol><symbol id="i-scales" viewBox="0 0 256 256"><path d="M239.43,133l-32-80h0a8,8,0,0,0-9.16-4.84L136,62V40a8,8,0,0,0-16,0V65.58L54.26,80.19A8,8,0,0,0,48.57,85h0v.06L16.57,165a7.92,7.92,0,0,0-.57,3c0,23.31,24.54,32,40,32s40-8.69,40-32a7.92,7.92,0,0,0-.57-3L66.92,93.77,120,82V208H104a8,8,0,0,0,0,16h48a8,8,0,0,0,0-16H136V78.42L187,67.1,160.57,133a7.92,7.92,0,0,0-.57,3c0,23.31,24.54,32,40,32s40-8.69,40-32A7.92,7.92,0,0,0,239.43,133ZM56,184c-7.53,0-22.76-3.61-23.93-14.64L56,109.54l23.93,59.82C78.76,180.39,63.53,184,56,184Zm144-32c-7.53,0-22.76-3.61-23.93-14.64L200,77.54l23.93,59.82C222.76,148.39,207.53,152,200,152Z"/></symbol><symbol id="i-sparkle" viewBox="0 0 256 256"><path d="M197.58,129.06,146,110l-19-51.62a15.92,15.92,0,0,0-29.88,0L78,110l-51.62,19a15.92,15.92,0,0,0,0,29.88L78,178l19,51.62a15.92,15.92,0,0,0,29.88,0L146,178l51.62-19a15.92,15.92,0,0,0,0-29.88ZM137,164.22a8,8,0,0,0-4.74,4.74L112,223.85,91.78,169A8,8,0,0,0,87,164.22L32.15,144,87,123.78A8,8,0,0,0,91.78,119L112,64.15,132.22,119a8,8,0,0,0,4.74,4.74L191.85,144ZM144,40a8,8,0,0,1,8-8h16V16a8,8,0,0,1,16,0V32h16a8,8,0,0,1,0,16H184V64a8,8,0,0,1-16,0V48H152A8,8,0,0,1,144,40ZM248,88a8,8,0,0,1-8,8h-8v8a8,8,0,0,1-16,0V96h-8a8,8,0,0,1,0-16h8V72a8,8,0,0,1,16,0v8h8A8,8,0,0,1,248,88Z"/></symbol><symbol id="i-cpu" viewBox="0 0 256 256"><path d="M152,96H104a8,8,0,0,0-8,8v48a8,8,0,0,0,8,8h48a8,8,0,0,0,8-8V104A8,8,0,0,0,152,96Zm-8,48H112V112h32Zm88,0H216V112h16a8,8,0,0,0,0-16H216V56a16,16,0,0,0-16-16H160V24a8,8,0,0,0-16,0V40H112V24a8,8,0,0,0-16,0V40H56A16,16,0,0,0,40,56V96H24a8,8,0,0,0,0,16H40v32H24a8,8,0,0,0,0,16H40v40a16,16,0,0,0,16,16H96v16a8,8,0,0,0,16,0V216h32v16a8,8,0,0,0,16,0V216h40a16,16,0,0,0,16-16V160h16a8,8,0,0,0,0-16Zm-32,56H56V56H200v95.87s0,.09,0,.13,0,.09,0,.13V200Z"/></symbol><symbol id="i-file-text" viewBox="0 0 256 256"><path d="M213.66,82.34l-56-56A8,8,0,0,0,152,24H56A16,16,0,0,0,40,40V216a16,16,0,0,0,16,16H200a16,16,0,0,0,16-16V88A8,8,0,0,0,213.66,82.34ZM160,51.31,188.69,80H160ZM200,216H56V40h88V88a8,8,0,0,0,8,8h48V216Zm-32-80a8,8,0,0,1-8,8H96a8,8,0,0,1,0-16h64A8,8,0,0,1,168,136Zm0,32a8,8,0,0,1-8,8H96a8,8,0,0,1,0-16h64A8,8,0,0,1,168,168Z"/></symbol><symbol id="i-eye-slash" viewBox="0 0 256 256"><path d="M53.92,34.62A8,8,0,1,0,42.08,45.38L61.32,66.55C25,88.84,9.38,123.2,8.69,124.76a8,8,0,0,0,0,6.5c.35.79,8.82,19.57,27.65,38.4C61.43,194.74,93.12,208,128,208a127.11,127.11,0,0,0,52.07-10.83l22,24.21a8,8,0,1,0,11.84-10.76Zm47.33,75.84,41.67,45.85a32,32,0,0,1-41.67-45.85ZM128,192c-30.78,0-57.67-11.19-79.93-33.25A133.16,133.16,0,0,1,25,128c4.69-8.79,19.66-33.39,47.35-49.38l18,19.75a48,48,0,0,0,63.66,70l14.73,16.2A112,112,0,0,1,128,192Zm6-95.43a8,8,0,0,1,3-15.72,48.16,48.16,0,0,1,38.77,42.64,8,8,0,0,1-7.22,8.71,6.39,6.39,0,0,1-.75,0,8,8,0,0,1-8-7.26A32.09,32.09,0,0,0,134,96.57Zm113.28,34.69c-.42.94-10.55,23.37-33.36,43.8a8,8,0,1,1-10.67-11.92A132.77,132.77,0,0,0,231.05,128a133.15,133.15,0,0,0-23.12-30.77C185.67,75.19,158.78,64,128,64a118.37,118.37,0,0,0-19.36,1.57A8,8,0,1,1,106,49.79,134,134,0,0,1,128,48c34.88,0,66.57,13.26,91.66,38.35,18.83,18.83,27.3,37.62,27.65,38.41A8,8,0,0,1,247.31,131.26Z"/></symbol><symbol id="i-shield-warning" viewBox="0 0 256 256"><path d="M120,136V96a8,8,0,0,1,16,0v40a8,8,0,0,1-16,0Zm8,48a12,12,0,1,0-12-12A12,12,0,0,0,128,184ZM224,56v56c0,52.72-25.52,84.67-46.93,102.19-23.06,18.86-46,25.27-47,25.53a8,8,0,0,1-4.2,0c-1-.26-23.91-6.67-47-25.53C57.52,196.67,32,164.72,32,112V56A16,16,0,0,1,48,40H208A16,16,0,0,1,224,56Zm-16,0L48,56l0,56c0,37.3,13.82,67.51,41.07,89.81A128.25,128.25,0,0,0,128,223.62a129.3,129.3,0,0,0,39.41-22.2C194.34,179.16,208,149.07,208,112Z"/></symbol><symbol id="i-arrows-split" viewBox="0 0 256 256"><path d="M229.66,189.66l-32,32a8,8,0,0,1-11.32,0l-32-32a8,8,0,0,1,11.32-11.32L184,196.69V139.31l-56-56-56,56v57.38l18.34-18.35a8,8,0,0,1,11.32,11.32l-32,32a8,8,0,0,1-11.32,0l-32-32a8,8,0,0,1,11.32-11.32L56,196.69V136a8,8,0,0,1,2.34-5.66L120,68.69V24a8,8,0,0,1,16,0V68.69l61.66,61.65A8,8,0,0,1,200,136v60.69l18.34-18.35a8,8,0,0,1,11.32,11.32Z"/></symbol><symbol id="i-key" viewBox="0 0 256 256"><path d="M216.57,39.43A80,80,0,0,0,83.91,120.78L28.69,176A15.86,15.86,0,0,0,24,187.31V216a16,16,0,0,0,16,16H72a8,8,0,0,0,8-8V208H96a8,8,0,0,0,8-8V184h16a8,8,0,0,0,5.66-2.34l9.56-9.57A79.73,79.73,0,0,0,160,176h.1A80,80,0,0,0,216.57,39.43ZM224,98.1c-1.09,34.09-29.75,61.86-63.89,61.9H160a63.7,63.7,0,0,1-23.65-4.51,8,8,0,0,0-8.84,1.68L116.69,168H96a8,8,0,0,0-8,8v16H72a8,8,0,0,0-8,8v16H40V187.31l58.83-58.82a8,8,0,0,0,1.68-8.84A63.72,63.72,0,0,1,96,95.92c0-34.14,27.81-62.8,61.9-63.89A64,64,0,0,1,224,98.1ZM192,76a12,12,0,1,1-12-12A12,12,0,0,1,192,76Z"/></symbol><symbol id="i-path" viewBox="0 0 256 256"><path d="M200,168a32.06,32.06,0,0,0-31,24H72a32,32,0,0,1,0-64h96a40,40,0,0,0,0-80H72a8,8,0,0,0,0,16h96a24,24,0,0,1,0,48H72a48,48,0,0,0,0,96h97a32,32,0,1,0,31-40Zm0,48a16,16,0,1,1,16-16A16,16,0,0,1,200,216Z"/></symbol><symbol id="i-clock-counter-clockwise" viewBox="0 0 256 256"><path d="M136,80v43.47l36.12,21.67a8,8,0,0,1-8.24,13.72l-40-24A8,8,0,0,1,120,128V80a8,8,0,0,1,16,0Zm-8-48A95.44,95.44,0,0,0,60.08,60.15C52.81,67.51,46.35,74.59,40,82V64a8,8,0,0,0-16,0v40a8,8,0,0,0,8,8H72a8,8,0,0,0,0-16H49c7.15-8.42,14.27-16.35,22.39-24.57a80,80,0,1,1,1.66,114.75,8,8,0,1,0-11,11.64A96,96,0,1,0,128,32Z"/></symbol><symbol id="i-chats-circle" viewBox="0 0 256 256"><path d="M232.07,186.76a80,80,0,0,0-62.5-114.17A80,80,0,1,0,23.93,138.76l-7.27,24.71a16,16,0,0,0,19.87,19.87l24.71-7.27a80.39,80.39,0,0,0,25.18,7.35,80,80,0,0,0,108.34,40.65l24.71,7.27a16,16,0,0,0,19.87-19.86ZM62,159.5a8.28,8.28,0,0,0-2.26.32L32,168l8.17-27.76a8,8,0,0,0-.63-6,64,64,0,1,1,26.26,26.26A8,8,0,0,0,62,159.5Zm153.79,28.73L224,216l-27.76-8.17a8,8,0,0,0-6,.63,64.05,64.05,0,0,1-85.87-24.88A79.93,79.93,0,0,0,174.7,89.71a64,64,0,0,1,41.75,92.48A8,8,0,0,0,215.82,188.23Z"/></symbol><symbol id="i-flow-arrow" viewBox="0 0 256 256"><path d="M245.66,74.34l-32-32a8,8,0,0,0-11.32,11.32L220.69,72H208c-49.33,0-61.05,28.12-71.38,52.92-9.38,22.51-16.92,40.59-49.48,42.84a40,40,0,1,0,.1,16c43.26-2.65,54.34-29.15,64.14-52.69C161.41,107,169.33,88,208,88h12.69l-18.35,18.34a8,8,0,0,0,11.32,11.32l32-32A8,8,0,0,0,245.66,74.34ZM48,200a24,24,0,1,1,24-24A24,24,0,0,1,48,200Z"/></symbol></svg>
+
+<header class="nav">
+  <div class="container nav__inner">
+    <a class="brand" href="#top">
+      <img src="assets/logo-192.png" alt="" width="30" height="30">
+      <span>AskMiao</span>
+    </a>
+    <nav class="nav__links" aria-label="主要導覽">
+      <a href="#features">功能</a>
+      <a href="#how">運作方式</a>
+      <a href="#architecture">架構</a>
+      <a href="#security">安全</a>
+      <a href="#quickstart">快速開始</a>
+      <a href="#docs">文件</a>
+    </nav>
+    <div class="nav__actions">
+      <button class="icon-btn" type="button" data-theme-toggle aria-label="切換深色模式">
+        <svg class="icon only-light" aria-hidden="true"><use href="#i-moon"></use></svg>
+        <svg class="icon only-dark" aria-hidden="true"><use href="#i-sun"></use></svg>
+      </button>
+      <a class="icon-btn" href="https://github.com/Scorpio-meow/AskMiao" target="_blank" rel="noopener" aria-label="GitHub 儲存庫">
+        <svg class="icon" aria-hidden="true"><use href="#i-github-logo"></use></svg>
+      </a>
+      <button class="icon-btn nav__toggle" type="button" data-nav-toggle aria-expanded="false" aria-controls="nav-menu" aria-label="開啟選單">
+        <svg class="icon" aria-hidden="true"><use href="#i-list"></use></svg>
+      </button>
+    </div>
+  </div>
+  <nav class="nav__menu" id="nav-menu" data-nav-menu data-open="false" aria-label="行動版導覽">
+    <a href="#features">功能</a>
+    <a href="#how">運作方式</a>
+    <a href="#architecture">架構</a>
+    <a href="#security">安全</a>
+    <a href="#quickstart">快速開始</a>
+    <a href="#docs">文件</a>
+  </nav>
+</header>
+
+<main>
+  <!-- Hero -->
+  <section class="hero">
+    <div class="container hero__grid">
+      <div>
+        <h1 data-anim style="--i:0"><span class="nowrap">自主研究，</span><span class="nowrap">答案有出處。</span></h1>
+        <p class="hero__lede" data-anim style="--i:1">AskMiao 是開源的企業級知識庫對話系統。混合 RAG 精準檢索內部文件，Agent 自主聯網查證，每一步研究歷程與參考來源即時串流呈現。</p>
+        <div class="hero__cta" data-anim style="--i:2">
+          <a class="btn btn--primary" href="https://github.com/Scorpio-meow/AskMiao" target="_blank" rel="noopener">
+            <svg class="icon" aria-hidden="true"><use href="#i-github-logo"></use></svg>
+            查看 GitHub 儲存庫
+          </a>
+          <a class="btn btn--ghost" href="#quickstart">
+            快速開始
+            <svg class="icon" aria-hidden="true"><use href="#i-arrow-right"></use></svg>
+          </a>
+        </div>
+      </div>
+      <div class="hero__art" data-anim style="--i:2">
+        <div class="shot-frame">
+          <picture data-theme-pic>
+            <source media="(prefers-color-scheme: dark)" srcset="assets/screens/hero-chat-dark.webp">
+            <img src="assets/screens/hero-chat-light.webp" width="1600" height="1000" fetchpriority="high"
+                 alt="AskMiao 對話介面：AI 回答資安政策與 NIST 建議的差異，下方列出內部文件段落與外部網頁等參考來源標籤。">
+          </picture>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 技術堆疊 -->
+  <section class="stack" aria-label="技術堆疊">
+    <div class="container">
+      <p class="stack__title">以成熟且熟悉的技術打造</p>
+      <div class="marquee">
+        <div class="marquee__track">
+          <ul class="marquee__group">
+            <li><span class="logo" style="--m:url(assets/logos/fastapi.svg)" role="img" aria-label="FastAPI"></span></li>
+            <li><span class="logo" style="--m:url(assets/logos/python.svg)" role="img" aria-label="Python"></span></li>
+            <li><span class="logo" style="--m:url(assets/logos/react.svg)" role="img" aria-label="React"></span></li>
+            <li><span class="logo" style="--m:url(assets/logos/typescript.svg)" role="img" aria-label="TypeScript"></span></li>
+            <li><span class="logo" style="--m:url(assets/logos/vite.svg)" role="img" aria-label="Vite"></span></li>
+            <li><span class="logo" style="--m:url(assets/logos/bun.svg)" role="img" aria-label="Bun"></span></li>
+            <li><span class="logo" style="--m:url(assets/logos/sqlite.svg)" role="img" aria-label="SQLite"></span></li>
+            <li><span class="logo" style="--m:url(assets/logos/postgresql.svg)" role="img" aria-label="PostgreSQL"></span></li>
+            <li><span class="logo" style="--m:url(assets/logos/langchain.svg)" role="img" aria-label="LangChain"></span></li>
+            <li><span class="logo" style="--m:url(assets/logos/huggingface.svg)" role="img" aria-label="Hugging Face"></span></li>
+            <li><span class="logo" style="--m:url(assets/logos/ollama.svg)" role="img" aria-label="Ollama"></span></li>
+            <li><span class="logo" style="--m:url(assets/logos/openai.svg)" role="img" aria-label="OpenAI"></span></li>
+            <li><span class="logo" style="--m:url(assets/logos/anthropic.svg)" role="img" aria-label="Anthropic"></span></li>
+            <li><span class="logo" style="--m:url(assets/logos/googlegemini.svg)" role="img" aria-label="Google Gemini"></span></li>
+            <li><span class="logo" style="--m:url(assets/logos/modelcontextprotocol.svg)" role="img" aria-label="Model Context Protocol"></span></li>
+            <li><span class="logo" style="--m:url(assets/logos/duckduckgo.svg)" role="img" aria-label="DuckDuckGo"></span></li>
+          </ul>
+          <ul class="marquee__group" aria-hidden="true">
+            <li><span class="logo" style="--m:url(assets/logos/fastapi.svg)"></span></li>
+            <li><span class="logo" style="--m:url(assets/logos/python.svg)"></span></li>
+            <li><span class="logo" style="--m:url(assets/logos/react.svg)"></span></li>
+            <li><span class="logo" style="--m:url(assets/logos/typescript.svg)"></span></li>
+            <li><span class="logo" style="--m:url(assets/logos/vite.svg)"></span></li>
+            <li><span class="logo" style="--m:url(assets/logos/bun.svg)"></span></li>
+            <li><span class="logo" style="--m:url(assets/logos/sqlite.svg)"></span></li>
+            <li><span class="logo" style="--m:url(assets/logos/postgresql.svg)"></span></li>
+            <li><span class="logo" style="--m:url(assets/logos/langchain.svg)"></span></li>
+            <li><span class="logo" style="--m:url(assets/logos/huggingface.svg)"></span></li>
+            <li><span class="logo" style="--m:url(assets/logos/ollama.svg)"></span></li>
+            <li><span class="logo" style="--m:url(assets/logos/openai.svg)"></span></li>
+            <li><span class="logo" style="--m:url(assets/logos/anthropic.svg)"></span></li>
+            <li><span class="logo" style="--m:url(assets/logos/googlegemini.svg)"></span></li>
+            <li><span class="logo" style="--m:url(assets/logos/modelcontextprotocol.svg)"></span></li>
+            <li><span class="logo" style="--m:url(assets/logos/duckduckgo.svg)"></span></li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 核心功能 -->
+  <section class="section" id="features">
+    <div class="container">
+      <div class="section__head reveal">
+        <h2>一套系統，涵蓋企業問答需要的每一環</h2>
+        <p>從檢索、推理到工具擴充與安全防護，AskMiao 把企業導入 AI 助理時真正會遇到的問題，一次處理好。</p>
+      </div>
+
+      <div class="bento">
+        <article class="cell cell--a reveal">
+          <div class="cell__icon"><svg class="icon" aria-hidden="true"><use href="#i-brain"></use></svg></div>
+          <h3>Agentic RAG 自主研究</h3>
+          <p>內建 ReAct 研究代理人，依問題自行決定要檢索知識庫、統計篩選、聯網搜尋或深入閱讀網頁，最多五輪工具調用。研究歷程以可折疊時間軸即時呈現，每個步驟的參數、耗時與輸出摘要都看得到。</p>
+          <div class="cell__media">
+            <picture data-theme-pic>
+              <source media="(prefers-color-scheme: dark)" srcset="assets/screens/feature-trace-dark.webp">
+              <img src="assets/screens/feature-trace-light.webp" width="1200" height="855" loading="lazy"
+                   alt="展開的 AI 自主研究歷程：步驟一檢索內部知識庫、步驟二外部聯網搜尋、步驟三深度閱讀網頁，各自標示耗時與輸出摘要。">
+            </picture>
+          </div>
+        </article>
+
+        <article class="cell cell--b reveal">
+          <div class="cell__icon"><svg class="icon" aria-hidden="true"><use href="#i-gauge"></use></svg></div>
+          <h3>五檔推理深度，隨問題調整</h3>
+          <p>直接在對話頂欄切換，透傳給 Azure OpenAI v1 與 OpenAI 推理模型（GPT-5 系列、o 系列），並依 Foundry 規範自動處理與工具調用的相容性。</p>
+          <div class="seg" data-seg role="group" aria-label="推理深度示意">
+            <button type="button" data-value="none" aria-pressed="false">無</button>
+            <button type="button" data-value="low" aria-pressed="false">輕度</button>
+            <button type="button" data-value="medium" aria-pressed="true">標準</button>
+            <button type="button" data-value="high" aria-pressed="false">深度</button>
+            <button type="button" data-value="xhigh" aria-pressed="false">極致</button>
+          </div>
+          <p class="seg-desc" data-seg-desc aria-live="polite"><b>標準推理（Medium / 預設）</b><br>系統預設檔位，知識庫問答與一般研究的平衡點。</p>
+        </article>
+
+        <article class="cell cell--c reveal">
+          <div class="cell__icon"><svg class="icon" aria-hidden="true"><use href="#i-magnifying-glass"></use></svg></div>
+          <h3>混合檢索與重排序</h3>
+          <p>FAISS 稠密向量與 Whoosh BM25（Jieba 中文分詞）並行檢索，歸一化分數融合後交給 Cross-Encoder 重排，只把最相關的片段送進模型。內建 Hit Rate 與 MRR 評估，可自動調整融合權重。</p>
+          <div class="flow" aria-label="檢索流程">
+            <div class="flow__pair">
+              <span class="chip">FAISS 向量</span>
+              <span class="chip">BM25 關鍵字</span>
+            </div>
+            <svg class="icon" aria-hidden="true"><use href="#i-arrow-right"></use></svg>
+            <span class="chip">分數融合 α 0.75</span>
+            <svg class="icon" aria-hidden="true"><use href="#i-arrow-right"></use></svg>
+            <span class="chip">Cross-Encoder</span>
+            <svg class="icon" aria-hidden="true"><use href="#i-arrow-right"></use></svg>
+            <span class="chip chip--accent">Top 8 片段</span>
+          </div>
+        </article>
+
+        <article class="cell cell--e cell--tint reveal">
+          <div class="cell__icon"><svg class="icon" aria-hidden="true"><use href="#i-shield-check"></use></svg></div>
+          <h3>企業級安全，從日誌到出站請求</h3>
+          <p>RSA-2048 簽署的 JWT 與 HttpOnly Cookie、雙層日誌脫敏、對外只揭露錯誤代碼，所有外部網址都先通過 SSRF 防護閘門。</p>
+          <pre class="redact" aria-label="日誌脫敏範例">"password": <b>"[REDACTED]"</b>
+"Authorization": <b>"[REDACTED]"</b>
+"error_id": "k7Qm2xP9vL3a"</pre>
+        </article>
+
+        <article class="cell cell--d reveal">
+          <div class="cell__icon"><svg class="icon" aria-hidden="true"><use href="#i-arrows-split"></use></svg></div>
+          <h3>多模型提供商，一層抽象切換</h3>
+          <p>統一的 LLM 調用層支援 Azure OpenAI v1、OpenAI、Anthropic Claude、Google Gemini 與本地 Ollama，逗號分隔即可提供多個模型讓使用者在介面中切換。</p>
+          <div class="providers">
+            <span class="logo" style="--m:url(assets/logos/openai.svg)" role="img" aria-label="OpenAI"></span>
+            <span class="logo" style="--m:url(assets/logos/anthropic.svg)" role="img" aria-label="Anthropic"></span>
+            <span class="logo" style="--m:url(assets/logos/googlegemini.svg)" role="img" aria-label="Google Gemini"></span>
+            <span class="logo" style="--m:url(assets/logos/ollama.svg)" role="img" aria-label="Ollama"></span>
+            <span class="chip">Azure OpenAI v1</span>
+          </div>
+        </article>
+
+        <article class="cell cell--f reveal">
+          <div class="cell__icon"><svg class="icon" aria-hidden="true"><use href="#i-plugs-connected"></use></svg></div>
+          <h3>自訂 API 工具與 MCP 生態</h3>
+          <p>貼上 OpenAPI 或 Swagger 規格即可批次匯入端點成為 AI 工具，支援 Bearer、API Key 與 Basic 認證；內建 MCP 用戶端支援 stdio 與 HTTP 傳輸。啟用中的工具每次組裝時動態載入，不必重啟後端。</p>
+          <div class="cell__media">
+            <picture data-theme-pic>
+              <source media="(prefers-color-scheme: dark)" srcset="assets/screens/feature-tools-dark.webp">
+              <img src="assets/screens/feature-tools-light.webp" width="1400" height="531" loading="lazy"
+                   alt="AI 工具管理頁：內建核心工具、MCP 伺服器與自訂 API 工具的總覽卡片，以及匯入 OpenAPI 規格與新增 MCP 伺服器的按鈕。">
+            </picture>
+          </div>
+        </article>
+
+        <article class="cell cell--g cell--wide reveal">
+          <div class="cell__body">
+            <div class="cell__icon"><svg class="icon" aria-hidden="true"><use href="#i-files"></use></svg></div>
+            <h3>多模態對話與知識庫智能摘要</h3>
+            <p>對話可附加圖片與文件：圖片以 image_url 送入視覺模型，文字檔自動抽取內容併入提問。文件上傳時自動生成 AI 大綱與摘要，管理頁可重新生成或手動修訂，讓 Agent 更清楚每份文件收錄什麼。</p>
+          </div>
+          <div class="cell__media">
+            <picture data-theme-pic>
+              <source media="(prefers-color-scheme: dark)" srcset="assets/screens/feature-docs-dark.webp">
+              <img src="assets/screens/feature-docs-light.webp" width="1400" height="651" loading="lazy"
+                   alt="知識庫管理頁：每份已上傳文件顯示檔案類型、處理狀態與 AI 智能大綱與摘要。">
+            </picture>
+          </div>
+        </article>
+      </div>
+    </div>
+  </section>
+
+  <!-- 運作方式 -->
+  <section class="section section--tint" id="how">
+    <div class="container">
+      <div class="section__head reveal">
+        <h2>一個問題，在 AskMiao 裡怎麼走</h2>
+        <p>從提問到有出處的答案，每個階段都對應到程式碼裡的一個模組。</p>
+      </div>
+      <div class="journey">
+        <aside class="journey__rail reveal">
+          <ul class="rail" aria-label="流程階段">
+            <li data-rail class="is-active"><span class="rail__dot"><svg class="icon" aria-hidden="true"><use href="#i-chats-circle"></use></svg></span>提問與附件</li>
+            <li data-rail><span class="rail__dot"><svg class="icon" aria-hidden="true"><use href="#i-brain"></use></svg></span>Agent 自主決策</li>
+            <li data-rail><span class="rail__dot"><svg class="icon" aria-hidden="true"><use href="#i-magnifying-glass"></use></svg></span>混合檢索與重排序</li>
+            <li data-rail><span class="rail__dot"><svg class="icon" aria-hidden="true"><use href="#i-lightning"></use></svg></span>SSE 事件串流</li>
+            <li data-rail><span class="rail__dot"><svg class="icon" aria-hidden="true"><use href="#i-check-circle"></use></svg></span>有出處的答案</li>
+          </ul>
+        </aside>
+        <div class="steps">
+          <article class="step reveal" data-step="0">
+            <span class="step__label">POST /api/chat/send</span>
+            <h3>提問與附件</h3>
+            <p>使用者在對話框輸入問題，可一併附上圖片或文件。圖片以 image_url 內容區塊送入視覺模型；文字類附件抽取內容後併入提問上下文。同一則請求也帶著選用的模型與推理深度。</p>
+          </article>
+          <article class="step reveal" data-step="1">
+            <span class="step__label">backend/app/rag/agent.py</span>
+            <h3>Agent 自主決策</h3>
+            <p>ResearchAgent 以 ReAct 模式判斷該調用哪些工具，每輪工具結果回饋給模型再決定下一步，最多 AGENT_MAX_TURNS 輪（預設 5）。啟用中的自訂 API 工具與 MCP 工具會在組裝工具定義時動態載入。</p>
+            <div class="chips" aria-label="可用工具">
+              <span class="chip">search_knowledge_base</span>
+              <span class="chip">filter_and_count_records</span>
+              <span class="chip">web_search</span>
+              <span class="chip">web_fetch</span>
+              <span class="chip">自訂 API 工具</span>
+              <span class="chip">mcp_&lt;伺服器&gt;_&lt;工具&gt;</span>
+            </div>
+          </article>
+          <article class="step reveal" data-step="2">
+            <span class="step__label">backend/app/rag/retrievers/hybrid.py</span>
+            <h3>混合檢索與重排序</h3>
+            <p>知識庫檢索由 FAISS 向量搜尋與 BM25 關鍵字搜尋並行完成，分數歸一化後以 HYBRID_ALPHA 加權融合，再由 Cross-Encoder 重排，取前 FINAL_K 段組成上下文。文件切塊、融合權重與片段數量都可由環境變數調整。</p>
+            <div class="chips" aria-label="預設參數">
+              <span class="chip">CHUNK_SIZE 300</span>
+              <span class="chip">CHUNK_OVERLAP 100</span>
+              <span class="chip">HYBRID_ALPHA 0.75</span>
+              <span class="chip">FINAL_K 8</span>
+              <span class="chip">bge-small-zh-v1.5</span>
+              <span class="chip">bge-reranker-base</span>
+            </div>
+          </article>
+          <article class="step reveal" data-step="3">
+            <span class="step__label">text/event-stream</span>
+            <h3>SSE 事件串流</h3>
+            <p>後端以 Server-Sent Events 回應。前端一收到 step_start 就在時間軸上顯示進行中的步驟，token 逐字渲染 Markdown，sources 到達時掛上來源標籤；例外只會以錯誤代碼出現在 error 事件。</p>
+            <pre class="code" aria-label="SSE 事件序列"><span class="k">event: start</span>       <span class="c">{"conversation_id": 42, "user_message_id": 814}</span>
+<span class="k">event: step_start</span>  <span class="c">{"step": 1, "tool": "search_knowledge_base", "arguments": {...}}</span>
+<span class="k">event: step_end</span>    <span class="c">{"step": 1, "duration_seconds": 1.42, "status": "success", ...}</span>
+<span class="k">event: token</span>       <span class="c">{"content": "依據"}</span>
+<span class="k">event: sources</span>     <span class="c">{"sources": [...], "sources_detail": [...]}</span>
+<span class="k">event: done</span>        <span class="c">{"message_id": 815, "answer": "...", "research_trace": [...]}</span></pre>
+            <div class="shot-frame">
+              <picture data-theme-pic>
+                <source media="(prefers-color-scheme: dark)" srcset="assets/screens/flow-running-dark.webp">
+                <img src="assets/screens/flow-running-light.webp" width="1440" height="900" loading="lazy"
+                     alt="研究進行中的對話畫面：步驟一已完成檢索內部知識庫，步驟二外部聯網搜尋標示進行中。">
+              </picture>
+            </div>
+          </article>
+          <article class="step reveal" data-step="4">
+            <span class="step__label">ResearchTraceBlock、SourceBadges</span>
+            <h3>有出處的答案</h3>
+            <p>答案、研究歷程與來源明細一起持久化。內部片段標示文件名與段落，點開可看匹配分數與內容；外部來源點擊即另開原網頁。之後重新開啟對話，時間軸與來源仍然完整。</p>
+          </article>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 系統架構 -->
+  <section class="section" id="architecture">
+    <div class="container">
+      <div class="section__head reveal">
+        <h2>前後端分離、模組化的分層架構</h2>
+        <p>React 19 前端透過 REST 與 SSE 和 FastAPI 後端溝通；Agentic RAG 核心、安全中介層與儲存層各自獨立。預設以 SQLite 零依賴啟動，也能切換至 PostgreSQL。</p>
+      </div>
+      <div class="arch reveal">
+        <div class="layer">
+          <div class="layer__name">前端應用層<small>React 19 + TypeScript + Vite 7 + Bun</small></div>
+          <div class="layer__items">
+            <span class="chip">對話介面（SSE 接收）</span>
+            <span class="chip">研究歷程時間軸</span>
+            <span class="chip">來源標籤</span>
+            <span class="chip">AI 工具管理</span>
+            <span class="chip">知識庫文件管理</span>
+            <span class="chip">系統管理後台</span>
+          </div>
+        </div>
+        <div class="arch__link"><svg class="icon" aria-hidden="true"><use href="#i-flow-arrow"></use></svg>REST / SSE</div>
+        <div class="layer">
+          <div class="layer__name">API 閘道與中介層<small>FastAPI middleware</small></div>
+          <div class="layer__items">
+            <span class="chip">安全回應標頭</span>
+            <span class="chip">速率限制</span>
+            <span class="chip">CORS 白名單</span>
+            <span class="chip">日誌雙層脫敏</span>
+            <span class="chip">RSA-2048 JWT 認證</span>
+          </div>
+        </div>
+        <div class="layer layer--core">
+          <div class="layer__name">Agentic RAG 核心<small>backend/app/rag、backend/app/core</small></div>
+          <div class="layer__items">
+            <span class="chip chip--accent">ResearchAgent</span>
+            <span class="chip chip--accent">ResearchToolRegistry</span>
+            <span class="chip chip--accent">HybridRetriever（FAISS + BM25 + Cross-Encoder）</span>
+            <span class="chip chip--accent">統一 LLM 客戶端</span>
+            <span class="chip chip--accent">SSRF 防護閘門</span>
+            <span class="chip chip--accent">錯誤代碼機制</span>
+          </div>
+        </div>
+        <div class="layer">
+          <div class="layer__name">資料與索引儲存層<small>SQLAlchemy、FAISS、Whoosh</small></div>
+          <div class="layer__items">
+            <span class="chip">SQLite / PostgreSQL</span>
+            <span class="chip">FAISS 向量索引</span>
+            <span class="chip">Whoosh BM25 索引</span>
+            <span class="chip">data/uploads 文件目錄</span>
+          </div>
+        </div>
+        <div class="arch__link"><svg class="icon" aria-hidden="true"><use href="#i-shield-check"></use></svg>所有出站請求先經 SSRF 防護閘門驗證</div>
+        <div class="layer layer--ext">
+          <div class="layer__name">外部系統<small>由 Agent 工具觸發</small></div>
+          <div class="layer__items">
+            <span class="chip">DuckDuckGo / Ollama Web Search</span>
+            <span class="chip">外部網頁（web_fetch）</span>
+            <span class="chip">自訂 API 端點</span>
+            <span class="chip">遠端 MCP 伺服器</span>
+          </div>
+        </div>
+      </div>
+      <a class="link-more reveal" href="https://github.com/Scorpio-meow/AskMiao/blob/HEAD/docs/architecture.md" target="_blank" rel="noopener">
+        閱讀完整架構文件
+        <svg class="icon" aria-hidden="true"><use href="#i-arrow-square-out"></use></svg>
+      </a>
+    </div>
+  </section>
+
+  <!-- 安全設計 -->
+  <section class="section section--tint" id="security">
+    <div class="container">
+      <div class="section__head reveal">
+        <h2>安全不是附加功能，而是預設路徑</h2>
+        <p>認證、日誌、錯誤回應與出站請求，四條路徑都有對應的防護模組，並有測試覆蓋。</p>
+      </div>
+      <div class="sec-grid">
+        <div class="panel reveal">
+          <h3>SSRF 防護閘門，試試看</h3>
+          <p>依 <span class="mono">ssrf_protection.py</span> 的檢查順序在瀏覽器端重現（示意）。最後一關的 DNS 解析與 IP 比對由伺服器執行。</p>
+          <div class="field">
+            <label for="ssrf-url">要抓取的網址</label>
+            <div class="field__row">
+              <input id="ssrf-url" type="url" data-ssrf-input placeholder="https://example.com/openapi.json" autocomplete="off" spellcheck="false">
+            </div>
+            <span class="field__help">OpenAPI 規格來源、web_fetch 目標、遠端 MCP 伺服器與自訂 API 端點都走同一道閘門。</span>
+          </div>
+          <div class="examples" aria-label="範例網址">
+            <button class="chip" type="button" data-ssrf-example="https://api.github.com/repos/Scorpio-meow/AskMiao">公開 API</button>
+            <button class="chip" type="button" data-ssrf-example="http://169.254.169.254/latest/meta-data/">雲端中繼資料</button>
+            <button class="chip" type="button" data-ssrf-example="http://localhost:6379/">localhost:6379</button>
+            <button class="chip" type="button" data-ssrf-example="https://erp.corp/openapi.json">內網網域 .corp</button>
+            <button class="chip" type="button" data-ssrf-example="http://10.0.0.8:5432/">私有 IP</button>
+            <button class="chip" type="button" data-ssrf-example="ftp://files.example.com/spec.yaml">ftp 協定</button>
+          </div>
+          <ul class="checks" aria-live="polite">
+            <li class="check" data-check="scheme" data-state="idle"><svg class="icon" aria-hidden="true"><use href="#i-check-circle"></use></svg><div><b>協定</b><span class="check__msg">等待輸入</span></div></li>
+            <li class="check" data-check="port" data-state="idle"><svg class="icon" aria-hidden="true"><use href="#i-check-circle"></use></svg><div><b>連接埠</b><span class="check__msg">等待輸入</span></div></li>
+            <li class="check" data-check="host" data-state="idle"><svg class="icon" aria-hidden="true"><use href="#i-check-circle"></use></svg><div><b>主機名稱</b><span class="check__msg">等待輸入</span></div></li>
+            <li class="check" data-check="ip" data-state="idle"><svg class="icon" aria-hidden="true"><use href="#i-check-circle"></use></svg><div><b>IP 位址</b><span class="check__msg">等待輸入</span></div></li>
+            <li class="check" data-check="dns" data-state="idle"><svg class="icon" aria-hidden="true"><use href="#i-check-circle"></use></svg><div><b>DNS 解析後 IP</b><span class="check__msg">等待輸入</span></div></li>
+          </ul>
+          <div class="verdict verdict--pending" data-ssrf-verdict>輸入一個網址，或點選上方範例。</div>
+        </div>
+        <div class="tiles reveal">
+          <article class="tile">
+            <div class="cell__icon"><svg class="icon" aria-hidden="true"><use href="#i-key"></use></svg></div>
+            <h3>RSA-2048 雙 Token 認證</h3>
+            <p>Access Token 有效 30 分鐘，Refresh Token 7 天並存於 HttpOnly Cookie；登出即寫入撤銷名單，前端靜默刷新無感接續。</p>
+          </article>
+          <article class="tile">
+            <div class="cell__icon"><svg class="icon" aria-hidden="true"><use href="#i-eye-slash"></use></svg></div>
+            <h3>雙層日誌脫敏</h3>
+            <p>物件層遞迴替換 password、token、authorization 等欄位，序列化前再以正則二次遮罩，敏感值只會以 [REDACTED] 出現。</p>
+          </article>
+          <article class="tile">
+            <div class="cell__icon"><svg class="icon" aria-hidden="true"><use href="#i-shield-warning"></use></svg></div>
+            <h3>錯誤代碼機制</h3>
+            <p>未預期例外只回傳 12 碼隨機 error_id，完整堆疊留在伺服器日誌；SSE 串流同樣不外洩例外文字（CWE-209 / CWE-497）。</p>
+          </article>
+          <article class="tile">
+            <div class="cell__icon"><svg class="icon" aria-hidden="true"><use href="#i-shield-check"></use></svg></div>
+            <h3>中介層防護</h3>
+            <p>統一注入安全回應標頭、每分鐘速率限制、CORS 白名單，並驗證檔名、副檔名與路徑遍歷樣態。</p>
+          </article>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 快速開始 -->
+  <section class="section" id="quickstart">
+    <div class="container">
+      <div class="section__head reveal">
+        <h2>三個步驟，本機跑起來</h2>
+        <p>預設使用 SQLite，不需要 Docker、PostgreSQL 或 Redis。環境需求：Python 3.10 以上、Bun 1.0 以上。</p>
+      </div>
+      <div class="qs">
+        <div class="qs__step reveal">
+          <div>
+            <h3>複製儲存庫</h3>
+            <p>取得原始碼並進入專案目錄。</p>
+          </div>
+          <div class="codebox">
+            <pre class="code" id="code-clone"><span data-cmd>git clone https://github.com/Scorpio-meow/AskMiao.git</span>
+<span data-cmd>cd AskMiao</span></pre>
+            <button class="copy" type="button" data-copy="code-clone" data-copied="false"><svg class="icon" aria-hidden="true"><use href="#i-code"></use></svg><span>複製</span></button>
+          </div>
+        </div>
+        <div class="qs__step reveal">
+          <div>
+            <h3>啟動後端</h3>
+            <p>建立虛擬環境、安裝依賴、初始化資料庫與管理員帳號，FastAPI 會在 8001 埠啟動。</p>
+            <div class="note">
+              <svg class="icon" aria-hidden="true"><use href="#i-key"></use></svg>
+              <span><b>必填環境變數：</b>DATABASE_URL、JWT_SECRET_KEY、ADMIN_API_KEY。零依賴啟動請把 DATABASE_URL 設為 <span class="mono">sqlite:///./chatbot.db</span>，LLM 提供商金鑰擇一設定即可。</span>
+            </div>
+          </div>
+          <div class="codebox">
+            <pre class="code" id="code-backend"><span data-cmd>cd backend</span>
+<span data-cmd>py -m venv .venv</span>
+<span class="c"># Windows PowerShell；Linux / macOS 改用 source .venv/bin/activate</span>
+<span data-cmd>.\.venv\Scripts\Activate.ps1</span>
+<span data-cmd>pip install -r requirements.txt</span>
+<span data-cmd>cp .env.example .env</span>
+<span data-cmd>py init_db.py</span>
+<span data-cmd>py main.py</span></pre>
+            <button class="copy" type="button" data-copy="code-backend" data-copied="false"><svg class="icon" aria-hidden="true"><use href="#i-code"></use></svg><span>複製</span></button>
+          </div>
+        </div>
+        <div class="qs__step reveal">
+          <div>
+            <h3>啟動前端</h3>
+            <p>以 Bun 安裝依賴並啟動 Vite 開發伺服器，開啟 <span class="mono">http://localhost:3000</span> 即可登入；若沿用 .env.example 的 PORT=3001，則改為 3001。</p>
+          </div>
+          <div class="codebox">
+            <pre class="code" id="code-frontend"><span data-cmd>cd ../frontend</span>
+<span data-cmd>bun install</span>
+<span data-cmd>bun run dev</span></pre>
+            <button class="copy" type="button" data-copy="code-frontend" data-copied="false"><svg class="icon" aria-hidden="true"><use href="#i-code"></use></svg><span>複製</span></button>
+          </div>
+        </div>
+      </div>
+      <a class="link-more reveal" href="https://github.com/Scorpio-meow/AskMiao#環境配置矩陣" target="_blank" rel="noopener">
+        查看完整環境變數矩陣
+        <svg class="icon" aria-hidden="true"><use href="#i-arrow-square-out"></use></svg>
+      </a>
+    </div>
+  </section>
+
+  <!-- 版本演進 -->
+  <section class="section section--tint" id="changelog">
+    <div class="container">
+      <div class="section__head reveal">
+        <h2>版本演進</h2>
+        <p>從混合 RAG 出發，一路長成能自主研究、可擴充工具、防護完整的系統。</p>
+      </div>
+      <div class="timeline reveal" aria-label="版本時間軸">
+        <article class="tl">
+          <span class="tl__ver">1.0.0</span><span class="tl__date">2026-08-01</span>
+          <h3>混合 RAG 與安全基礎</h3>
+          <ul><li>FAISS + Whoosh BM25 + Cross-Encoder 重排序</li><li>RSA-2048 JWT 與令牌撤銷</li><li>日誌雙層脫敏</li></ul>
+        </article>
+        <article class="tl">
+          <span class="tl__ver">2.0.0</span><span class="tl__date">2026-08-24</span>
+          <h3>Agentic RAG 自主研究</h3>
+          <ul><li>ReAct ResearchAgent 與原生工具調用</li><li>五檔推理深度</li><li>SQLite 零依賴啟動，移除 Redis 依賴</li></ul>
+        </article>
+        <article class="tl">
+          <span class="tl__ver">2.0.1</span><span class="tl__date">2026-08-26</span>
+          <h3>多模態與智能摘要</h3>
+          <ul><li>圖片與文件附件進入對話</li><li>上傳時自動生成 AI 大綱與摘要</li><li>前端介面全面現代化</li></ul>
+        </article>
+        <article class="tl">
+          <span class="tl__ver">2.1.0</span><span class="tl__date">2026-08-27</span>
+          <h3>外部工具與 MCP</h3>
+          <ul><li>自訂 HTTP API 工具</li><li>OpenAPI 2.0 / 3.0 / 3.1 匯入</li><li>MCP stdio 與 HTTP 用戶端</li></ul>
+        </article>
+        <article class="tl">
+          <span class="tl__ver">2.2.0</span><span class="tl__date">2026-09-01</span>
+          <h3>出站請求防護</h3>
+          <ul><li>集中式 SSRF 防護閘門</li><li>OpenAPI 解析、web_fetch 與自訂工具全面套用</li><li>新增防護測試</li></ul>
+        </article>
+        <article class="tl tl--current">
+          <span class="tl__ver">2.2.1</span><span class="tl__date">2026-09-19</span>
+          <h3>錯誤代碼機制</h3>
+          <ul><li>對外只回傳隨機 error_id</li><li>RAG 串流不再夾帶例外文字</li><li>文件與實作全面校正</li></ul>
+        </article>
+      </div>
+      <a class="link-more reveal" href="https://github.com/Scorpio-meow/AskMiao/blob/HEAD/CHANGELOG.md" target="_blank" rel="noopener">
+        完整版本變更紀錄
+        <svg class="icon" aria-hidden="true"><use href="#i-arrow-square-out"></use></svg>
+      </a>
+    </div>
+  </section>
+
+  <!-- 文件導覽 -->
+  <section class="section" id="docs">
+    <div class="container">
+      <div class="section__head reveal">
+        <h2>文件導覽</h2>
+        <p>繁體中文為主，每份文件都有英文版對照。</p>
+      </div>
+      <div class="docs reveal">
+        <a class="doc" href="https://github.com/Scorpio-meow/AskMiao#readme" target="_blank" rel="noopener">
+          <div class="cell__icon"><svg class="icon" aria-hidden="true"><use href="#i-book-open"></use></svg></div>
+          <div><h3>README</h3><p>快速開始、功能特色、目錄結構與環境變數矩陣</p></div>
+          <svg class="icon doc__arrow" aria-hidden="true"><use href="#i-arrow-square-out"></use></svg>
+        </a>
+        <a class="doc" href="https://github.com/Scorpio-meow/AskMiao/blob/HEAD/docs/api.md" target="_blank" rel="noopener">
+          <div class="cell__icon"><svg class="icon" aria-hidden="true"><use href="#i-terminal-window"></use></svg></div>
+          <div><h3>API 參考手冊</h3><p>RESTful 端點、SSE 事件規格、自訂工具與 MCP 端點</p></div>
+          <svg class="icon doc__arrow" aria-hidden="true"><use href="#i-arrow-square-out"></use></svg>
+        </a>
+        <a class="doc" href="https://github.com/Scorpio-meow/AskMiao/blob/HEAD/docs/architecture.md" target="_blank" rel="noopener">
+          <div class="cell__icon"><svg class="icon" aria-hidden="true"><use href="#i-tree-structure"></use></svg></div>
+          <div><h3>系統架構與設計</h3><p>分層架構圖、檢索管線、認證生命週期與安全設計</p></div>
+          <svg class="icon doc__arrow" aria-hidden="true"><use href="#i-arrow-square-out"></use></svg>
+        </a>
+        <a class="doc" href="https://github.com/Scorpio-meow/AskMiao/blob/HEAD/docs/adr/README.md" target="_blank" rel="noopener">
+          <div class="cell__icon"><svg class="icon" aria-hidden="true"><use href="#i-scales"></use></svg></div>
+          <div><h3>架構決策紀錄（ADR）</h3><p>混合 RAG 與安全防護、外部工具與出站請求防護的決策脈絡</p></div>
+          <svg class="icon doc__arrow" aria-hidden="true"><use href="#i-arrow-square-out"></use></svg>
+        </a>
+        <a class="doc" href="https://github.com/Scorpio-meow/AskMiao/blob/HEAD/llms.txt" target="_blank" rel="noopener">
+          <div class="cell__icon"><svg class="icon" aria-hidden="true"><use href="#i-sparkle"></use></svg></div>
+          <div><h3>llms.txt</h3><p>專供 AI Agent 讀取的檔案地圖與系統約束</p></div>
+          <svg class="icon doc__arrow" aria-hidden="true"><use href="#i-arrow-square-out"></use></svg>
+        </a>
+        <a class="doc" href="https://github.com/Scorpio-meow/AskMiao/blob/HEAD/CHANGELOG.md" target="_blank" rel="noopener">
+          <div class="cell__icon"><svg class="icon" aria-hidden="true"><use href="#i-clock-counter-clockwise"></use></svg></div>
+          <div><h3>版本變更紀錄</h3><p>遵循 Keep a Changelog 與語意化版本</p></div>
+          <svg class="icon doc__arrow" aria-hidden="true"><use href="#i-arrow-square-out"></use></svg>
+        </a>
+      </div>
+    </div>
+  </section>
+
+  <!-- 結尾 CTA -->
+  <section class="cta">
+    <div class="container">
+      <div class="cta__box reveal">
+        <div>
+          <h2>把公司的文件，變成會自己查證的同事。</h2>
+          <p>MIT 授權，複製下來就能在本機跑；歡迎透過 Issue 與 Pull Request 參與改進。</p>
+        </div>
+        <a class="btn btn--primary" href="https://github.com/Scorpio-meow/AskMiao" target="_blank" rel="noopener">
+          <svg class="icon" aria-hidden="true"><use href="#i-github-logo"></use></svg>
+          查看 GitHub 儲存庫
+        </a>
+      </div>
+    </div>
+  </section>
+</main>
+
+<footer class="footer">
+  <div class="container footer__row">
+    <a class="brand" href="#top">
+      <img src="assets/logo-192.png" alt="" width="28" height="28">
+      <span>AskMiao</span>
+    </a>
+    <ul class="footer__links">
+      <li><a href="https://github.com/Scorpio-meow/AskMiao/blob/HEAD/README.md" target="_blank" rel="noopener">README（繁體中文）</a></li>
+      <li><a href="https://github.com/Scorpio-meow/AskMiao/blob/HEAD/README_en.md" target="_blank" rel="noopener">README (English)</a></li>
+      <li><a href="https://github.com/Scorpio-meow/AskMiao/issues" target="_blank" rel="noopener">Issues</a></li>
+      <li><a href="https://github.com/Scorpio-meow/AskMiao/blob/HEAD/LICENSE" target="_blank" rel="noopener">MIT 授權條款</a></li>
+    </ul>
+    <span>2026 Scorpio-meow</span>
+  </div>
+</footer>
+
+<script src="main.js" defer></script>
+</body>
+</html>
