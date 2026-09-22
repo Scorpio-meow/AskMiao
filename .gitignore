@@ -16,3 +16,4 @@ build
 data
 modelcontextprotocol
 OpenAPI Specification
+.vscode
