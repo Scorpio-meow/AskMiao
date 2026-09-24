@@ -63,3 +63,4 @@ AskMiao 作為智慧對話與多 Agent 協作系統，在知識庫檢索與安�
 - **2026-08-24｜移除多 Agent 協作看板**：專案聚焦於知識庫問答與 Agentic 自主研究，原多 Agent 討論看板與工作流模組已下線。
 - **2026-09-01｜出站請求安全防護**：外部呼叫之安全設計改由 [ADR-0002](./0002-external-tools-and-outbound-safety.md) 規範。
 - **2026-09-24｜分數歸一化融合已被取代**：檢索融合改為兩軌必跑的標準 RRF，相關性門檻改套在重排模型機率上，重排模型成為必要元件，詳見 [ADR-0003](./0003-rrf-relevance-citations-and-tool-trust.md)。實測 CPU 重排每對約 0.2 至 0.4 秒，遠高於上文估計的數十毫秒。
+- **2026-09-24｜片段改以資料庫 chunk_id 為準**：片段存於 `rag_chunks` 資料表，FAISS 改用 `IndexIDMap2` 並與 BM25 一同以 chunk_id 對應，啟動時依資料庫校正，取代依清單位置對齊的 `documents.pkl`，詳見 [ADR-0005](./0005-chunk-id-index-and-database-source-of-truth.md)。

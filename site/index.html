@@ -891,7 +891,7 @@ AZURE_OPENAI_DEPLOYMENT=gpt-6-sol,gpt-6-luna</pre>
         <li class="qs__step reveal">
           <div class="qs__text">
             <h3>啟動後端</h3>
-            <p>建立虛擬環境、安裝依賴、初始化資料庫與管理員帳號，FastAPI 會在 8001 埠啟動。第一次啟動會下載嵌入與重排模型；重排模型是必要元件，載入失敗時後端不會啟動。</p>
+            <p>建立虛擬環境、安裝依賴後啟動 FastAPI（8001 埠），資料表會在第一次啟動時自動建立。第一次啟動也會下載嵌入與重排模型（約 1.2 GB）；重排模型是必要元件，載入失敗時後端不會啟動。</p>
             <div class="note">
               <svg class="icon" aria-hidden="true"><use href="#i-warning-circle"></use></svg>
               <span><b>先改 .env：</b><span class="mono">.env.example</span> 的 DATABASE_URL 預設指向 PostgreSQL，零依賴啟動請改成 <span class="mono">sqlite:///./chatbot.db</span>，並替換 JWT_SECRET_KEY 與 ADMIN_API_KEY。LLM 提供商金鑰擇一設定即可。</span>
@@ -904,7 +904,6 @@ AZURE_OPENAI_DEPLOYMENT=gpt-6-sol,gpt-6-luna</pre>
 <span data-cmd>.\.venv\Scripts\Activate.ps1</span>
 <span data-cmd>pip install -r requirements.txt</span>
 <span data-cmd>cp .env.example .env</span>
-<span data-cmd>py init_db.py</span>
 <span data-cmd>py main.py</span></pre>
             <button class="copy" type="button" data-copy="code-backend" data-copied="false"><svg class="icon" aria-hidden="true"><use href="#i-copy"></use></svg><span>複製</span></button>
           </div>
@@ -913,6 +912,10 @@ AZURE_OPENAI_DEPLOYMENT=gpt-6-sol,gpt-6-luna</pre>
           <div class="qs__text">
             <h3>啟動前端</h3>
             <p>以 Bun 安裝依賴並啟動 Vite 開發伺服器，開啟 <span class="mono">http://localhost:3000</span> 即可登入；若沿用 <span class="mono">frontend/.env.example</span> 的 PORT=3001，則改為 3001。</p>
+            <div class="note">
+              <svg class="icon" aria-hidden="true"><use href="#i-info"></use></svg>
+              <span><b>第一位管理員：</b>系統不會預先建立管理員。先在註冊頁建立帳號，再依 <a href="https://github.com/Scorpio-meow/AskMiao#4-建立第一位管理員" target="_blank" rel="noopener">README 的指令</a>把它設為管理員，才看得到知識庫與 AI 工具。</span>
+            </div>
           </div>
           <div class="codebox">
             <pre class="code" id="code-frontend"><span data-cmd>cd ../frontend</span>
@@ -946,12 +949,12 @@ AZURE_OPENAI_DEPLOYMENT=gpt-6-sol,gpt-6-luna</pre>
 <span data-cmd>DOMAIN_PROFILE_PATH=config/domain_profile.json</span></pre>
             <button class="copy" type="button" data-copy="code-env" data-copied="false"><svg class="icon" aria-hidden="true"><use href="#i-copy"></use></svg><span>複製</span></button>
           </div>
-          <p class="envref__note">其餘設定都有預設值，完整清單見 <a href="https://github.com/Scorpio-meow/AskMiao/blob/HEAD/backend/.env.example" target="_blank" rel="noopener">backend/.env.example</a>。<span class="mono">HYBRID_ALPHA</span>、<span class="mono">NORMALIZATION</span>、<span class="mono">FINAL_THRESHOLD</span> 已移除，留在 .env 中會被忽略；從舊版升級時首次啟動會自動重建 BM25 索引，向量不需重算。</p>
+          <p class="envref__note">其餘設定都有預設值，逐項說明見 <a href="https://github.com/Scorpio-meow/AskMiao/blob/HEAD/docs/configuration.md" target="_blank" rel="noopener">設定參考</a>。<span class="mono">HYBRID_ALPHA</span>、<span class="mono">NORMALIZATION</span>、<span class="mono">FINAL_THRESHOLD</span> 已移除，留在 .env 中會被忽略；從 2.x 升級需要重建一次索引，步驟見 <a href="https://github.com/Scorpio-meow/AskMiao/blob/HEAD/docs/upgrading.md" target="_blank" rel="noopener">升級指南</a>。</p>
         </div>
       </details>
 
-      <a class="link-more reveal" href="https://github.com/Scorpio-meow/AskMiao#環境配置矩陣" target="_blank" rel="noopener">
-        查看完整環境變數矩陣
+      <a class="link-more reveal" href="https://github.com/Scorpio-meow/AskMiao/blob/HEAD/docs/configuration.md" target="_blank" rel="noopener">
+        查看完整設定參考
         <svg class="icon" aria-hidden="true"><use href="#i-arrow-square-out"></use></svg>
       </a>
     </div>
@@ -990,14 +993,14 @@ AZURE_OPENAI_DEPLOYMENT=gpt-6-sol,gpt-6-luna</pre>
           <h3>出站請求防護</h3>
           <ul><li>集中式 SSRF 防護閘門</li><li>OpenAPI 解析、web_fetch 與自訂工具全面套用</li><li>新增防護測試</li></ul>
         </article>
-        <article class="tl tl--release">
+        <article class="tl">
           <span class="tl__ver">2.2.1</span><span class="tl__date">2026-09-19</span>
-          <span class="tl__flag">最新發行</span>
           <h3>錯誤代碼機制</h3>
           <ul><li>對外只回傳隨機 error_id</li><li>RAG 串流不再夾帶例外文字</li><li>文件與實作全面校正</li></ul>
         </article>
-        <article class="tl tl--next">
-          <span class="tl__ver">Unreleased</span><span class="tl__date">New 分支</span>
+        <article class="tl tl--release">
+          <span class="tl__ver">3.0.0</span><span class="tl__date">2026-09-25</span>
+          <span class="tl__flag">最新發行</span>
           <span class="tl__flag tl__flag--warn">含破壞性變更</span>
           <h3>引用出處、信任邊界與工具權限</h3>
           <ul><li>chunk_id 索引、RRF 融合與重排機率門檻</li><li>答案 [n] 引用對應來源</li><li>工具輸出信任邊界與聯網限制</li><li>工具管理只限管理員、子行程隔離</li><li>前端 UI/UX 全面修整</li></ul>
@@ -1021,7 +1024,7 @@ AZURE_OPENAI_DEPLOYMENT=gpt-6-sol,gpt-6-luna</pre>
         <ul class="docs__main">
           <li><a class="doc" href="https://github.com/Scorpio-meow/AskMiao#readme" target="_blank" rel="noopener">
             <svg class="icon doc__icon" aria-hidden="true"><use href="#i-book-open"></use></svg>
-            <span><b>README</b><span>快速開始、功能特色、目錄結構與環境變數矩陣</span></span>
+            <span><b>README</b><span>快速開始、功能特色、建立管理員與疑難排解</span></span>
             <svg class="icon doc__arrow" aria-hidden="true"><use href="#i-arrow-up-right"></use></svg>
           </a></li>
           <li><a class="doc" href="https://github.com/Scorpio-meow/AskMiao/blob/HEAD/docs/api.md" target="_blank" rel="noopener">
@@ -1031,7 +1034,17 @@ AZURE_OPENAI_DEPLOYMENT=gpt-6-sol,gpt-6-luna</pre>
           </a></li>
           <li><a class="doc" href="https://github.com/Scorpio-meow/AskMiao/blob/HEAD/docs/architecture.md" target="_blank" rel="noopener">
             <svg class="icon doc__icon" aria-hidden="true"><use href="#i-tree-structure"></use></svg>
-            <span><b>系統架構與設計</b><span>分層架構、檢索管線、認證生命週期與安全設計</span></span>
+            <span><b>系統架構與設計</b><span>啟動流程、資料模型、檢索管線、Agent 迴圈與安全設計</span></span>
+            <svg class="icon doc__arrow" aria-hidden="true"><use href="#i-arrow-up-right"></use></svg>
+          </a></li>
+          <li><a class="doc" href="https://github.com/Scorpio-meow/AskMiao/blob/HEAD/docs/configuration.md" target="_blank" rel="noopener">
+            <svg class="icon doc__icon" aria-hidden="true"><use href="#i-sliders-horizontal"></use></svg>
+            <span><b>設定參考</b><span>每個環境變數的預設值與作用、供應商路由、門檻校準</span></span>
+            <svg class="icon doc__arrow" aria-hidden="true"><use href="#i-arrow-up-right"></use></svg>
+          </a></li>
+          <li><a class="doc" href="https://github.com/Scorpio-meow/AskMiao/blob/HEAD/docs/upgrading.md" target="_blank" rel="noopener">
+            <svg class="icon doc__icon" aria-hidden="true"><use href="#i-arrows-clockwise"></use></svg>
+            <span><b>升級指南</b><span>從 2.x 升級到 3.0.0 的步驟、回退與常見問題</span></span>
             <svg class="icon doc__arrow" aria-hidden="true"><use href="#i-arrow-up-right"></use></svg>
           </a></li>
           <li><a class="doc" href="https://github.com/Scorpio-meow/AskMiao/blob/HEAD/llms.txt" target="_blank" rel="noopener">
@@ -1052,6 +1065,7 @@ AZURE_OPENAI_DEPLOYMENT=gpt-6-sol,gpt-6-luna</pre>
             <li><a href="https://github.com/Scorpio-meow/AskMiao/blob/HEAD/docs/adr/0002-external-tools-and-outbound-safety.md" target="_blank" rel="noopener"><span class="adr__num">0002</span><span class="adr__text">外部工具擴充與出站請求安全防護<small>2026-09-01</small></span></a></li>
             <li><a href="https://github.com/Scorpio-meow/AskMiao/blob/HEAD/docs/adr/0003-rrf-relevance-citations-and-tool-trust.md" target="_blank" rel="noopener"><span class="adr__num">0003</span><span class="adr__text">RRF 融合、相關性門檻、引用對應與工具輸出信任邊界<small>2026-09-24</small></span></a></li>
             <li><a href="https://github.com/Scorpio-meow/AskMiao/blob/HEAD/docs/adr/0004-tool-admin-permissions-and-subprocess-isolation.md" target="_blank" rel="noopener"><span class="adr__num">0004</span><span class="adr__text">工具管理權限、MCP 子行程隔離與逐跳 SSRF 驗證<small>2026-09-25</small></span></a></li>
+            <li><a href="https://github.com/Scorpio-meow/AskMiao/blob/HEAD/docs/adr/0005-chunk-id-index-and-database-source-of-truth.md" target="_blank" rel="noopener"><span class="adr__num">0005</span><span class="adr__text">以資料庫 chunk_id 為準的片段索引<small>2026-09-24</small></span></a></li>
           </ol>
         </div>
       </div>

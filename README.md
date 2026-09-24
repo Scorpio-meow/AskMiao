@@ -1,347 +1,593 @@
-# AskMiao (AI ChatBot)
+<div align="center">
 
-基於增強型混合 RAG（檢索增強生成）與 Agentic 自主研究架構的企業級智慧知識庫對話系統。
+<img src="site/assets/logo-256.png" alt="AskMiao 吉祥物：長著蠍子尾巴的黑貓" width="120" height="120">
+
+# AskMiao
+
+**會自己查證、答案附出處的企業知識庫對話系統**
+
+以混合檢索（FAISS + BM25 + Cross-Encoder）與 Agentic RAG 自主研究回答問題，<br>答案中的每個論點都能追溯到文件段落或網頁；知識庫查不到時照實說。
 
 [繁體中文](README.md) | [English](README_en.md)
 
-[![FastAPI](https://img.shields.io/badge/FastAPI-0.109+-005571?style=flat&logo=fastapi)](https://fastapi.tiangolo.com/)
-[![React](https://img.shields.io/badge/React-19.0-61DAFB?style=flat&logo=react&logoColor=black)](https://react.dev/)
+[![Version](https://img.shields.io/badge/version-3.0.0-2563eb?style=flat)](CHANGELOG.md)
 [![Python](https://img.shields.io/badge/Python-3.10+-3776AB?style=flat&logo=python&logoColor=white)](https://www.python.org/)
-[![Vite](https://img.shields.io/badge/Vite-7.0-646CFF?style=flat&logo=vite&logoColor=white)](https://vitejs.dev/)
-[![Bun](https://img.shields.io/badge/Bun-1.0+-FBF0DF?style=flat&logo=bun&logoColor=black)](https://bun.sh/)
-[![SQLite](https://img.shields.io/badge/SQLite-3.x-003B57?style=flat&logo=sqlite&logoColor=white)](https://www.sqlite.org/)
-[![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
+[![FastAPI](https://img.shields.io/badge/FastAPI-005571?style=flat&logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
+[![React](https://img.shields.io/badge/React-19.2-61DAFB?style=flat&logo=react&logoColor=black)](https://react.dev/)
+[![TypeScript](https://img.shields.io/badge/TypeScript-7-3178C6?style=flat&logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
+[![Vite](https://img.shields.io/badge/Vite-8-646CFF?style=flat&logo=vite&logoColor=white)](https://vite.dev/)
+[![Bun](https://img.shields.io/badge/Bun-1.x-000000?style=flat&logo=bun&logoColor=white)](https://bun.sh/)
+[![License](https://img.shields.io/badge/License-MIT-16a34a?style=flat)](LICENSE)
 
-[快速開始](#快速開始) | [核心功能特色](#核心功能特色) | [系統架構與設計](#系統架構與設計) | [專案目錄結構](#專案目錄結構) | [環境配置矩陣](#環境配置矩陣) | [文件導覽](#文件導覽) | [貢獻指南](#貢獻指南) | [授權條款](#授權條款)
+[介紹網站](https://scorpio-meow.github.io/AskMiao/) · [快速開始](#快速開始) · [文件導覽](#文件導覽) · [版本變更紀錄](CHANGELOG.md) · [升級指南](docs/upgrading.md)
+
+</div>
+
+<br>
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="site/assets/screens/hero-chat-dark.webp">
+  <img src="site/assets/screens/hero-chat-light.webp" alt="AskMiao 聊天畫面：回答比較 NIST SP 800-63B-4 與公司密碼政策，句末以 [n] 標註出處，下方列出實際引用的網頁與文件段落" width="1440" height="900">
+</picture>
+
+> [!IMPORTANT]
+> **3.0.0 含破壞性變更**：新增 8 個必填設定、索引改以 chunk_id 對應（升級後需重建一次索引）、工具管理只限管理員。從 2.x 升級請先閱讀 [升級指南](docs/upgrading.md)。
+
+## 目錄
+
+- [特色一覽](#特色一覽)
+- [功能特色](#功能特色)
+- [畫面預覽](#畫面預覽)
+- [系統架構](#系統架構)
+- [快速開始](#快速開始)
+- [設定](#設定)
+- [專案結構](#專案結構)
+- [開發與測試](#開發與測試)
+- [疑難排解](#疑難排解)
+- [文件導覽](#文件導覽)
+- [版本資訊](#版本資訊)
+- [貢獻指南](#貢獻指南)
+- [授權條款](#授權條款)
 
 ---
 
+## 特色一覽
+
+| | 能力 | 說明 |
+|---|---|---|
+| 1 | **答案可追溯** | 答案以 `[n]` 標註出處，來源標籤只列實際引用的文件段落或網頁，點開即可核對原文 |
+| 2 | **查不到就照實說** | 重排機率低於門檻的片段一律濾除，全部未通過時明確回報「知識庫中查無相關資料」，不硬湊答案 |
+| 3 | **自主研究** | ReAct Agent 自行決定查知識庫、精確統計記錄、上網搜尋或深入閱讀網頁，研究歷程即時顯示 |
+| 4 | **混合檢索** | 向量與 BM25 每次必跑，以 RRF 依名次融合，再由 Cross-Encoder 重排；片段以資料庫 chunk_id 為準 |
+| 5 | **五家模型供應商** | Ollama、OpenAI、Azure OpenAI、Anthropic Claude、Google Gemini 都能呼叫工具與串流 |
+| 6 | **外部工具與 MCP** | 貼上 OpenAPI 規格即可匯入 API 工具，也能接入 MCP 伺服器；只限管理員管理 |
+| 7 | **防護完整** | RSA JWT、Argon2 密碼雜湊、逐跳 SSRF 驗證、工具輸出信任邊界、對外只回錯誤代碼 |
+
+## 功能特色
+
+### Agentic RAG 自主研究
+
+- **ReAct 研究迴圈**：`ResearchAgent` 以原生工具呼叫（Native Tool Calling）多輪蒐集資料，輪數上限由 `AGENT_MAX_TURNS` 控制；模型不再呼叫工具時，該次內容就是最終答案。
+- **四個內建工具**：
+
+  | 工具 | 用途 |
+  |---|---|
+  | `search_knowledge_base` | 檢索知識庫片段，可用 `target_document` 限定文件 |
+  | `filter_and_count_records` | 依日期、作者、關鍵字精確統計結構化記錄（例如某月的貼文總數） |
+  | `web_search` | 聯網搜尋，設定 `OLLAMA_API_KEY` 時優先使用 Ollama Web Search，否則使用 DuckDuckGo |
+  | `web_fetch` | 深入閱讀網頁全文，只能讀取使用者訊息或本次工具結果中原樣出現過的網址 |
+
+- **研究歷程**：每一步的工具、參數、結果摘要與耗時以 SSE 即時推送，前端以可折疊時間軸呈現。
+- **多模態提問**：對話可附圖片與檔案，圖片以 `image_url` 交給視覺模型，文字類附件抽取內容併入提問。
+- **對話前文**：每次提問從資料庫帶入最近 `CONVERSATION_HISTORY_MESSAGES` 則訊息，後端重啟不會遺失上下文。
+
+### 可追溯的答案
+
+- 每次提問建立一張引用編號表：知識庫片段以 chunk_id、網頁以網址為鍵，第一次出現時配號，模型以 `[n]` 標註出處。
+- 來源標籤只列答案實際引用的條目，依第一次引用的順序排列，例如「[2] 員工手冊.pdf（段落 3）」；沒有引用就不顯示來源。
+- 工具結果一律包在每次提問 id 不同的 `<untrusted_tool_result>` 標記內，模型只把它當資料看，文件或網頁中夾帶的指令不會被執行。
+
+### 混合檢索引擎
+
+```mermaid
+flowchart LR
+    Q["提問"] --> V["FAISS 向量搜尋<br/>TOP_K"]
+    Q --> B["BM25 關鍵字搜尋<br/>jieba 斷詞，TOP_K"]
+    Q --> E["精確比對<br/>網址／貼文 ID／日期／@帳號"]
+    V --> F["RRF 融合<br/>Σ 1 / (RRF_K + 名次)"]
+    B --> F
+    F --> R["Cross-Encoder 重排<br/>前 RERANK_TOP_K 筆"]
+    E --> R
+    R --> T{"重排機率 ≥<br/>RERANK_RELEVANCE_THRESHOLD"}
+    T -->|通過| K["取前 FINAL_K 筆<br/>交給模型"]
+    T -->|全部未通過| N["回報查無相關資料"]
+```
+
+- **兩軌必跑**：只有單一軌道找到的片段也能進入重排候選，專有名詞與代碼查詢不再被淹沒。
+- **相關性門檻看重排機率**：精確比對到網址、貼文 ID、日期的片段不受門檻限制，並排在最前面。
+- **以資料庫為準**：片段存於 `rag_chunks` 資料表，FAISS（`IndexIDMap2`）與 BM25 皆以 chunk_id 對應；後端啟動時自動校正兩份索引，刪除文件只移除該文件的向量。
+- **可量測**：`scripts/evaluate_retrieval.py` 以問答集計算 hit@k、recall@k、MRR 與反例拒絕率，並能一次比較多個門檻。
+
+### 多供應商 LLM
+
+- 統一呼叫層支援 **Ollama、OpenAI、Azure OpenAI v1、Anthropic Claude（官方 SDK）、Google Gemini**，依模型名稱自動路由，五家都支援工具呼叫與串流。
+- 前端可切換模型與五檔推理程度：`無 (None)`、`輕度 (Low)`、`標準 (Medium)`、`深度 (High)`、`極致 (X-High)`；推理程度會傳給 OpenAI 與 Azure OpenAI 的推理模型。
+- 模型清單可由 `AVAILABLE_MODELS` 指定，或依已設定的金鑰自動產生，詳見 [設定參考](docs/configuration.md#llm-供應商與模型)。
+
+### 知識庫與文件處理
+
+- 支援 27 種副檔名：`.txt`、`.md`、`.markdown`、`.pdf`、`.docx`、`.pptx`、`.xlsx`、`.csv`、`.json`、`.yaml`、`.yml`、`.xml`、`.html`、`.htm`、`.log`、`.py`、`.js`、`.ts`、`.tsx`、`.jsx`、`.java`、`.cpp`、`.c`、`.sql`、`.sh`、`.ini`、`.env`。
+- **PDF 強化擷取**：PyMuPDF 擷取並修復缺少 ToUnicode 的內嵌字型；空白或亂碼頁改以視覺模型 OCR（Azure OpenAI、OpenAI 或 Gemini），最後以 pypdf 備援。
+- **智慧切塊**：Q&A 文件一問一答成一個片段，結構化記錄與 JSON 逐筆成為獨立片段，其餘依中文標點遞迴切塊。
+- **AI 大綱與摘要**：上傳時自動生成文件摘要，可重新生成或手動修訂；LLM 失敗時改用規則摘要。摘要也會組成知識庫目錄，幫助 Agent 判斷該查哪份文件。
+
+### 外部工具與 MCP
+
+- **自訂 API 工具**：以表單建立，或貼上 OpenAPI / Swagger 規格（OAS 2.0、3.0、3.1）批次匯入，支援 Bearer、API Key（Header / Query）與 Basic 認證，可即時測試。
+- **MCP 用戶端**：支援 `stdio` 與 HTTP 傳輸，自動探索工具並以 `mcp_<伺服器>_<工具>` 名稱加入 Agent 工具集；內建時間、檔案系統與網頁擷取三個範本。
+- **動態載入**：啟用中的工具在每次組裝工具定義時從資料庫載入，變更後不需重啟。
+- **只限管理員**：工具由所有使用者的 Agent 共用，`/api/api-tools`、`/api/mcp` 與「AI 工具」頁只開放管理員；`stdio` 子行程只繼承 `PATH` 等系統變數，拿不到後端的金鑰（[ADR-0004](docs/adr/0004-tool-admin-permissions-and-subprocess-isolation.md)）。
+
+### 安全設計
+
+- **認證**：RSA-2048 簽署的 JWT 存取權杖，重新整理權杖存於 HttpOnly Cookie；登出時兩者寫入撤銷名單；密碼以 Argon2 雜湊（舊的 bcrypt 雜湊在登入時自動升級）。
+- **出站請求**：OpenAPI 規格網址、`web_fetch`、自訂 API 工具與 MCP HTTP 傳輸都經 `ssrf_protection.py` 驗證，每一次轉址都重新檢查，阻擋內網、雲端中繼資料端點與危險連接埠。
+- **錯誤代碼**：未預期例外只對外回傳隨機錯誤代碼，完整堆疊只寫入伺服器日誌（CWE-209 / CWE-497）。
+- **日誌脫敏**：物件遞迴與正規表示式雙層遮罩，密碼、權杖與 Authorization 標頭一律呈現為 `[REDACTED]`。
+- **其他**：安全回應標頭、依來源 IP 的速率限制、CORS 白名單、檔名與路徑遍歷檢查。
+
+### 前端體驗
+
+- 串流中可停止回答、失敗可重新傳送；注音與倉頡等輸入法按 Enter 選字不會誤送。
+- 淺色、深色與跟隨系統三種外觀，第一次繪製前套用，不會閃白。
+- 鍵盤與讀螢幕軟體可完整操作，文字對比達 WCAG AA；手機版面單列頂欄、聊天頁固定一個視窗高度。
+- 刪除前一律確認，網路離線與恢復時提示，非管理員進入管理頁時顯示「沒有權限」頁面。
+
+## 畫面預覽
+
+<table>
+  <tr>
+    <td width="33%" valign="top">
+      <picture>
+        <source media="(prefers-color-scheme: dark)" srcset="site/assets/screens/feature-trace-dark.webp">
+        <img src="site/assets/screens/feature-trace-light.webp" alt="AI 自主研究歷程：依序執行聯網搜尋、深度閱讀網頁與檢索內部知識庫，每步顯示參數、結果摘要與耗時">
+      </picture>
+      <p align="center"><b>研究歷程</b><br>每一步的工具、參數與結果</p>
+    </td>
+    <td width="33%" valign="top">
+      <picture>
+        <source media="(prefers-color-scheme: dark)" srcset="site/assets/screens/feature-docs-dark.webp">
+        <img src="site/assets/screens/feature-docs-light.webp" alt="知識庫管理頁：已上傳文件清單，每份文件附 AI 智能大綱與摘要，可編輯、重新生成或刪除">
+      </picture>
+      <p align="center"><b>知識庫管理</b><br>上傳、AI 摘要與重建索引</p>
+    </td>
+    <td width="33%" valign="top">
+      <picture>
+        <source media="(prefers-color-scheme: dark)" srcset="site/assets/screens/feature-tools-dark.webp">
+        <img src="site/assets/screens/feature-tools-light.webp" alt="AI 工具總覽：內建核心工具、MCP 伺服器與自訂 API 工具的數量統計與管理入口">
+      </picture>
+      <p align="center"><b>AI 工具</b><br>OpenAPI 匯入與 MCP 伺服器</p>
+    </td>
+  </tr>
+</table>
+
+> 截圖以真實前端搭配示範資料擷取，畫面中的文件、對話與數字皆為示範用途。
+
+## 系統架構
+
+```mermaid
+flowchart TB
+    subgraph Client ["前端 · React 19 + TypeScript + Vite 8（Bun）"]
+        ChatUI["聊天頁<br/>SSE 串流、研究歷程、引用來源"]
+        DocsUI["知識庫（管理員）"]
+        ToolsUI["AI 工具（管理員）"]
+        AdminUI["管理後台（管理員）"]
+    end
+
+    subgraph Backend ["後端 · FastAPI（Python 3.10+）"]
+        MW["中介軟體<br/>安全標頭、速率限制、CORS"]
+        Auth["認證 /api/auth<br/>RSA JWT、撤銷名單"]
+        ChatAPI["對話 /api/chat（SSE）"]
+        DocAPI["文件 /api/documents"]
+        ToolAPI["工具 /api/api-tools、/api/mcp"]
+
+        subgraph Core ["Agentic RAG 核心"]
+            Agent["ResearchAgent<br/>ReAct 工具迴圈"]
+            Session["ResearchSession<br/>引用編號、網址來源、信任邊界"]
+            Registry["ResearchToolRegistry<br/>內建、自訂 API、MCP 工具"]
+            Retriever["HybridRetriever<br/>RRF、精確比對、重排、門檻"]
+            LLM["llm_client<br/>Ollama、OpenAI、Azure、Claude、Gemini"]
+        end
+
+        SSRF["SSRF 防護<br/>逐跳驗證"]
+    end
+
+    subgraph Storage ["資料層"]
+        DB[("SQLite / PostgreSQL<br/>使用者、對話、文件、rag_chunks、工具")]
+        FAISS["FAISS IndexIDMap2<br/>以 chunk_id 為鍵"]
+        BM25["Whoosh BM25<br/>以 chunk_id 為鍵"]
+        Files["上傳檔 data/uploads"]
+    end
+
+    Client --> MW
+    MW --> Auth & ChatAPI & DocAPI & ToolAPI
+    ChatAPI --> Agent
+    Agent --> Session
+    Agent --> Registry
+    Agent --> LLM
+    Registry --> Retriever
+    Registry --> SSRF
+    SSRF -.-> Ext["外部網站、API 與 MCP 伺服器"]
+    Retriever --> FAISS & BM25
+    DocAPI --> Files
+    DocAPI --> DB
+    Retriever -.->|啟動時校正| DB
+    Auth --> DB
+    ToolAPI --> DB
+```
+
+一次提問的完整旅程：
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor U as 使用者
+    participant FE as 前端
+    participant API as POST /api/chat/send
+    participant AG as ResearchAgent
+    participant LLM as 模型供應商
+    participant T as 工具
+
+    U->>FE: 輸入問題（可附圖片或檔案）
+    FE->>API: 送出訊息
+    API->>API: 儲存使用者訊息、讀取最近前文
+    API-->>FE: event: start
+    loop 最多 AGENT_MAX_TURNS 輪
+        AG->>LLM: 對話與工具定義
+        LLM-->>AG: 工具呼叫
+        API-->>FE: event: step_start
+        AG->>T: 執行工具（先檢查網址來源與聯網限制）
+        T-->>AG: 結果（配上引用編號、包進不可信資料標記）
+        API-->>FE: event: step_end
+    end
+    LLM-->>AG: 最終答案（以 [n] 標註出處）
+    API-->>FE: event: token
+    API-->>FE: event: sources（只列被引用的來源）
+    API->>API: 儲存回答、來源與研究歷程
+    API-->>FE: event: done
+```
+
+各模組的設計細節見 [系統架構與設計](docs/architecture.md)。
+
 ## 快速開始
 
-### 環境要求
+### 環境需求
 
-| 組件名稱 | 最低版本要求　　　 | 建議工具與用途說明　　　　　　　　　　　　　　　　　　　 |
-| ----------| --------------------| ----------------------------------------------------------|
-| Python　 | 3.10 或更高版本　　| 後端 FastAPI 伺服器、RAG 向量索引與 Agentic 自主研究引擎 |
-| Bun　　　| 1.0 或更高版本　　 | 前端優先使用之套件管理與建構打包工具　　　　　　　　　　 |
-| SQLite　 | 3.x（Python 內建） | 零依賴本機啟動之關聯式資料庫（亦支援 PostgreSQL）　　　 |
+| 項目 | 需求 | 說明 |
+|---|---|---|
+| Python | 3.10 以上 | 後端 |
+| Bun | 1.x | 前端套件管理、開發伺服器與建置 |
+| 資料庫 | SQLite（Python 內建）或 PostgreSQL | 預設可零依賴使用 SQLite |
+| 模型 | 首次啟動下載約 1.2 GB | 嵌入模型 `BAAI/bge-small-zh-v1.5` 與重排模型 `BAAI/bge-reranker-base` |
+| LLM | 擇一 | 本機 Ollama，或 OpenAI、Azure OpenAI、Anthropic、Gemini 的 API 金鑰 |
 
-### 1. 複製專案倉庫
+### 1. 取得原始碼
 
 ```bash
 git clone https://github.com/Scorpio-meow/AskMiao.git
 cd AskMiao
 ```
 
-### 2. 後端服務設定與啟動
+### 2. 設定並啟動後端
 
 ```bash
 cd backend
 
-# 建立並啟用 Python 虛擬環境
-py -m venv .venv
-
-# Windows PowerShell 啟用：
+# 建立並啟用虛擬環境（Windows 可用 py -m venv .venv）
+python -m venv .venv
+# Windows PowerShell
 .\.venv\Scripts\Activate.ps1
-# Linux/macOS 啟用：
+# Linux / macOS
 source .venv/bin/activate
 
-# 安裝後端依賴套件
 pip install -r requirements.txt
-
-# 複製環境變數範本後依實際環境調整
-# 注意：.env.example 之 DATABASE_URL 預設指向 PostgreSQL，
-#      若要零依賴啟動請改為 DATABASE_URL=sqlite:///./chatbot.db
 cp .env.example .env
-
-# 初始化資料庫表格與管理員帳號
-py init_db.py
-
-# 啟動 FastAPI 開發伺服器 (Port 8001)
-py main.py
 ```
 
-### 3. 前端服務設定與啟動 (使用 Bun)
+啟動前先編輯 `backend/.env`：
+
+1. **資料庫**：範本的 `DATABASE_URL` 指向 PostgreSQL；零依賴啟動請改為 `DATABASE_URL=sqlite:///./chatbot.db`。
+2. **金鑰**：把 `JWT_SECRET_KEY` 與 `ADMIN_API_KEY` 換成隨機字串，可用 `python -c "import secrets; print(secrets.token_urlsafe(32))"` 產生。
+3. **模型**：使用本機 Ollama 時保持 `LLM_API_BASE=http://localhost:11434`；使用雲端模型時填入對應的 API 金鑰，使用 Claude 另需 `ANTHROPIC_MAX_TOKENS`。
+
+範本已包含其餘必填設定，保持範本值即可啟動。接著啟動後端：
 
 ```bash
-cd ../frontend
+python main.py
+```
 
-# 使用 Bun 安裝前端依賴項目
+首次啟動會自動建立資料表、產生 JWT 用的 RSA 金鑰（`backend/keys/`），並下載嵌入與重排模型。啟動完成後：
+
+- API：`http://localhost:8001`
+- 互動式 API 文件（Swagger UI）：`http://localhost:8001/docs`
+
+> [!NOTE]
+> `init_db.py` 是替舊版 PostgreSQL 資料庫補欄位與索引的相容腳本，全新安裝不需要執行；SQLite 也不支援其中的 `ADD COLUMN IF NOT EXISTS` 語法。
+
+### 3. 啟動前端
+
+開啟另一個終端機：
+
+```bash
+cd frontend
 bun install
-
-# 啟動 Vite 前端開發伺服器 (未設定 PORT 時為 3000)
 bun run dev
 ```
 
-伺服器啟動後，開啟瀏覽器造訪 `http://localhost:3000` 即可進入 AskMiao 知識庫對話系統。
-若沿用 `frontend/.env.example` 的 `PORT=3001`（亦為後端 `ALLOWED_ORIGINS` 預設允許之來源），則改為 `http://localhost:3001`。
+以瀏覽器開啟 `http://localhost:3000`。沒有 `frontend/.env` 時，前端呼叫相對路徑 `/api`，由 Vite 開發伺服器代理到 `http://127.0.0.1:8001`，不需要設定 CORS。若複製了 `frontend/.env.example`（`PORT=3001`、直接呼叫後端），改開 `http://localhost:3001`。
 
----
+### 4. 建立第一位管理員
 
-## 核心功能特色
+「知識庫」、「AI 工具」與「管理後台」只限管理員，而系統不會預先建立管理員帳號：
 
-1. **Agentic RAG 多輪自主研究**：
-   - 內建 ReAct 自主研究 Agent（`ResearchAgent`），支援原生工具調用（Native Tool Calling）。
-   - 提供內部知識庫搜尋（`search_knowledge_base`）、外部即時聯網搜尋（`web_search`，支援 Ollama 與 DuckDuckGo 雙引擎備援）與深度網頁抓取（`web_fetch`）。
-   - 前端即時呈現可折疊之結構化研究歷程（Research Trace Timeline）與可點擊跳轉之來源標籤（Source Badges）。
-   - 回答以 `[n]` 標註出處，來源標籤只列出答案實際引用的片段或網頁；知識庫查無相關資料時照實回報。
-   - 工具結果一律標記為不可信資料；`web_fetch` 只能讀取使用者訊息或本次工具結果中原樣出現過的網址，並可限制網域、在讀取知識庫內容後停用聯網工具。
+1. 在前端「註冊」頁建立帳號。密碼至少 8 個字元，需包含大寫字母、小寫字母與數字。
+2. 在 `backend/`（已啟用虛擬環境）執行下列指令，把 `your_username` 換成剛註冊的使用者名稱：
 
-2. **多檔位模型推理程度（Reasoning Effort）選擇**：
-   - 頂部導覽列支援切換五種推理深度檔位：`無 (None)`、`輕度 (Low)`、`標準 (Medium)`、`深度 (High)`、`極致 (X-High)`。
-   - 完整支援 Azure OpenAI v1 與 OpenAI 推理模型（如 GPT-6、GPT-5.6 系列與 o-series）。
-   - 依微軟 Foundry 規範自動處理工具調用與推理相容性限制。
+   ```bash
+   python -c "from sqlalchemy import text; from app.models.database import engine; conn = engine.connect(); conn.execute(text('UPDATE users SET is_admin = :flag WHERE username = :name'), {'flag': True, 'name': 'your_username'}); conn.commit()"
+   ```
 
-3. **模組化增強型混合 RAG 檢索引擎**：
-   - 結合 FAISS 稠密向量搜尋（Dense Retrieval）與 Whoosh BM25 中文稀疏文字檢索（Sparse Retrieval），兩軌每次必跑並以 RRF（Reciprocal Rank Fusion）依名次融合。
-   - 搭配 Cross-Encoder（`bge-reranker-base`）重排序，並以重排模型機率套用相關性門檻，過濾無關片段。
-   - 提供 RAG 檢索評估指標（Hit Rate、MRR、反例拒絕率），可用同一次重排結果比較多個相關性門檻。
+3. 登出後重新登入，導覽列就會出現管理功能。之後可在「管理後台」直接把其他使用者設為管理員。
 
-4. **多模型提供商彈性整合**：
-   - 提供統一的 LLM 調用抽象層，支援 Azure OpenAI v1、OpenAI 官方 API、Anthropic Claude、Google Gemini 與本地 Ollama 模型動態切換與自動多模型清單拆分。
+這個指令透過後端的資料庫設定執行，SQLite 與 PostgreSQL 都適用。
 
-5. **企業級安全與雙層日誌脫敏**：
-   - 採用 RSA-2048 非對稱密鑰簽署之 JWT Access Token 與 HttpOnly 安全 Cookie。
-   - 內建物件層級遞迴脫敏與字串正則遮罩防護（`security_logging.py`），嚴格防範密碼、Token 與機敏資料洩漏至系統日誌。
-   - 對外錯誤回應僅揭露隨機錯誤代碼（`error_response.py`），完整例外與堆疊只寫入伺服器日誌（CWE-209 / CWE-497）。
-   - 所有外部網址請求（OpenAPI 規格匯入、`web_fetch`、MCP HTTP 傳輸）皆經 `ssrf_protection.py` 解析後驗證，阻擋內網位址、雲端中繼資料端點與危險連接埠。
+### 5. 上傳文件並開始提問
 
-6. **外部工具擴充與 MCP 生態整合**：
-   - 支援以表單自訂 HTTP API 工具，或直接貼上 OpenAPI / Swagger 規格（OAS 2.0 / 3.0 / 3.1）批次匯入端點為 AI 可調用工具。
-   - 支援 Bearer、API Key（Header / Query）與 Basic 三種認證方式，並可於管理頁面即時測試工具連通性。
-   - 內建 MCP（Model Context Protocol）用戶端，支援 `stdio` 與 HTTP 兩種傳輸，可探索伺服器工具清單並自動注入 Agent 工具集。
-   - 啟用中的自訂 API 工具與 MCP 工具會於每次組裝工具定義時動態載入，無需重啟後端。
-   - 工具由所有使用者的 Agent 共用，因此只有管理員能管理；`stdio` 子行程只繼承 `PATH` 等系統變數，不會取得後端的金鑰與資料庫設定（見 [ADR-0004](docs/adr/0004-tool-admin-permissions-and-subprocess-isolation.md)）。
+1. 以管理員進入「知識庫」，上傳文件（單次最多 10 個檔案，單檔上限由 `MAX_FILE_SIZE_MB` 決定）。系統會擷取文字、生成 AI 摘要並建立索引。
+2. 回到「聊天」，選擇模型與推理程度後提問。答案中的 `[n]` 可對應下方的來源標籤。
 
-7. **多模態對話與知識庫智能摘要**：
-   - 對話支援附加圖片與文件，圖片以 `image_url` 形式傳入視覺模型，文字檔則自動抽取內容併入提問上下文。
-   - 文件上傳時自動生成 AI 文件大綱與摘要，並可於文件管理頁面重新生成或手動修訂。
+### 使用 PostgreSQL（選用）
 
----
+`backend/docker-compose.yml` 提供 PostgreSQL 17，初始化時會套用 `init.sql`：
 
-## 系統架構與設計
-
-```mermaid
-flowchart TB
-    subgraph Client ["前端應用層 (React 19 + TypeScript + Vite + Bun)"]
-        UI["Chat 對話介面 (SSE 串流)"]
-        TraceView["研究歷程摺疊卡片 (ResearchTraceBlock)"]
-        ToolsView["AI 工具管理頁 (AiTools：自訂 API / OpenAPI / MCP)"]
-        DocManage["知識庫文件管理 (Documents)"]
-        AdminView["系統管理後台 (AdminDashboard)"]
-    end
-
-    subgraph Backend ["後端服務層 (FastAPI + Python 3.10+)"]
-        SecurityMW["安全中介軟體 (CORS / 速率限制 / 日誌脫敏)"]
-        AuthService["JWT 認證服務 (RSA-2048)"]
-        ChatAPI["對話 SSE 端點 (/api/chat)"]
-        DocAPI["文件上傳與索引端點 (/api/documents)"]
-        ToolAPI["自訂 API 工具端點 (/api/api-tools)"]
-        McpAPI["MCP 伺服器端點 (/api/mcp)"]
-
-        subgraph AgenticRAG ["Agentic RAG 核心管線"]
-            Agent["自主研究 Agent (ResearchAgent)"]
-            ToolRegistry["工具註冊中心 (ResearchToolRegistry)"]
-            HybridRetriever["混合檢索器 (FAISS + BM25 + Cross-Encoder)"]
-            LLMClient["統一 LLM 客戶端 (Azure / OpenAI / Claude / Gemini / Ollama)"]
-        end
-
-        SSRF["SSRF 防護閘門 (ssrf_protection.py)"]
-    end
-
-    subgraph Storage ["資料與索引儲存層"]
-        SQLiteDB[(SQLite / PostgreSQL 資料庫)]
-        FAISSStore["FAISS 向量索引庫 (faiss_index.bin)"]
-        BM25Store["Whoosh BM25 關鍵字索引目錄"]
-        DocUploads["文件儲存目錄 (data/uploads)"]
-    end
-
-    UI --> SecurityMW
-    ToolsView --> SecurityMW
-    DocManage --> SecurityMW
-    AdminView --> SecurityMW
-    SecurityMW --> ChatAPI
-    SecurityMW --> DocAPI
-    SecurityMW --> ToolAPI
-    SecurityMW --> McpAPI
-    SecurityMW --> AuthService
-
-    ChatAPI --> Agent
-    ChatAPI -.-> |SSE 事件| TraceView
-    Agent --> ToolRegistry
-    ToolRegistry --> HybridRetriever
-    ToolRegistry -.-> |自訂 API 工具| ToolAPI
-    ToolRegistry -.-> |MCP 工具| McpAPI
-    ToolRegistry --> SSRF
-    SSRF -.-> |聯網搜尋| DuckDuckGo["DuckDuckGo / Ollama Web Search"]
-    SSRF -.-> |網頁深度抓取| WebContent["外部網頁內容 (HTTP Fetch)"]
-    SSRF -.-> |外部 API 呼叫| ExternalAPI["自訂 API 工具 / 遠端 MCP 伺服器"]
-
-    Agent --> LLMClient
-    HybridRetriever --> FAISSStore
-    HybridRetriever --> BM25Store
-    DocAPI --> DocUploads
-    ToolAPI --> SQLiteDB
-    McpAPI --> SQLiteDB
-    AuthService --> SQLiteDB
+```bash
+cd backend
+docker compose up -d
 ```
 
----
+容器對外埠號為 **7690**，`.env` 請設為：
 
-## 專案目錄結構
+```dotenv
+DATABASE_URL=postgresql+psycopg2://postgres:postgres@localhost:7690/chatbot
+```
+
+## 設定
+
+後端設定集中在 `backend/.env`，以下 11 項沒有預設值，缺少任一項後端就無法啟動（範本已提供建議值）：
+
+| 變數 | 範本值 | 說明 |
+|---|---|---|
+| `DATABASE_URL` | PostgreSQL 範例 | 資料庫連線字串；SQLite 用 `sqlite:///./chatbot.db` |
+| `JWT_SECRET_KEY` | 佔位字串 | RSA 金鑰無法使用時的 HS256 簽署金鑰 |
+| `ADMIN_API_KEY` | 佔位字串 | 管理用 API 金鑰（目前沒有路由使用，但設定驗證要求此值） |
+| `ENABLE_WEB_SEARCH` | `true` | 是否提供 `web_search` 與 `web_fetch` |
+| `AGENT_MAX_TURNS` | `5` | 單次提問的工具呼叫輪數上限（≥ 1） |
+| `CONVERSATION_HISTORY_MESSAGES` | `6` | 帶入的前文訊息數（0 表示不帶） |
+| `WEB_FETCH_ALLOWED_DOMAINS` | `*` | `web_fetch` 可讀取的網域；明確寫 `*` 才表示不限制 |
+| `BLOCK_WEB_TOOLS_AFTER_KB` | `true` | 讀過知識庫內容後停用聯網工具 |
+| `RRF_K` | `60` | RRF 融合常數 |
+| `RERANK_RELEVANCE_THRESHOLD` | `0.2` | 重排機率門檻（暫定值，建議以問答集校準） |
+| `DOMAIN_PROFILE_PATH` | `config/domain_profile.json` | 領域設定檔（領域詞、日期欄位、摘要備援規則） |
+
+常用的選填設定：
+
+| 變數 | 說明 |
+|---|---|
+| `LLM_API_BASE` | Ollama 服務位址（範本 `http://localhost:11434`） |
+| `OPENAI_API_KEY`、`AZURE_OPENAI_*`、`ANTHROPIC_API_KEY`、`GEMINI_API_KEY` | 雲端模型金鑰；設定後自動加入模型清單 |
+| `ANTHROPIC_MAX_TOKENS` | Claude 單次回應的輸出上限（使用 Claude 時必填） |
+| `MODEL_NAME`、`AVAILABLE_MODELS` | 預設模型與自訂模型清單 |
+| `CHUNK_SIZE`、`CHUNK_OVERLAP` | 切塊長度與重疊（範本 300 / 100） |
+| `HF_HOME`、`HF_HUB_OFFLINE` | 模型快取位置與離線模式 |
+| `ALLOWED_ORIGINS` | CORS 允許來源（前端直接呼叫後端時需要） |
+
+所有設定（含預設值、範本值、供應商路由規則與前端環境變數）請見 **[設定參考](docs/configuration.md)**。
+
+## 專案結構
 
 ```text
 AskMiao/
-├── backend/                        # 後端 FastAPI 專案
+├── backend/                          # FastAPI 後端
+│   ├── main.py                       # 進入點（python main.py）
 │   ├── app/
-│   │   ├── api/                    # RESTful API 路由端點
-│   │   │   ├── auth.py             # 註冊、登入、刷新與登出
-│   │   │   ├── chat.py             # 對話 SSE 串流、模型與工具清單
-│   │   │   ├── documents.py        # 文件上傳、摘要與索引重建
-│   │   │   ├── api_tools.py        # 自訂 API 工具 CRUD、OpenAPI 解析與匯入
-│   │   │   ├── mcp.py              # MCP 伺服器管理、工具探索與測試
-│   │   │   ├── admin.py            # 管理後台統計與向量庫維運
-│   │   │   └── tags.py             # 相容 Ollama 之模型清單端點
-│   │   ├── core/                   # 核心設定、安全認證、日誌脫敏與 LLM 客戶端
-│   │   │   ├── config.py           # 系統全域環境變數配置
-│   │   │   ├── domain_profile.py   # 領域設定檔載入與格式驗證
-│   │   │   ├── jwt_auth.py         # RSA-2048 JWT 簽章與驗證
-│   │   │   ├── llm_client.py       # 多提供商 LLM 統一調用層
-│   │   │   ├── security_logging.py # 敏感資料雙層遮罩日誌系統
-│   │   │   ├── error_response.py   # 對外錯誤代碼與例外日誌對應機制
-│   │   │   └── ssrf_protection.py  # 外部網址解析驗證與 SSRF 阻擋
-│   │   ├── models/                 # SQLAlchemy ORM 與 Pydantic 驗證模型
-│   │   ├── rag/                    # 模組化 RAG 與 Agentic 研究核心
-│   │   │   ├── agent.py            # ReAct 自主研究 Agent（含多模態輸入組裝）
-│   │   │   ├── research_session.py # 單次提問的引用編號、網址來源限制與不可信資料包裝
-│   │   │   ├── tools.py            # 內建工具集與自訂 / MCP 工具動態註冊
-│   │   │   ├── pipeline.py         # RAG 執行管線與上下文組裝
-│   │   │   ├── contextual_rag.py   # HybridContextualRAG 門面模組
-│   │   │   ├── evaluator.py        # 檢索評估與相關性門檻比較
-│   │   │   ├── indices/            # FAISS 與 BM25 索引管理模組
-│   │   │   └── retrievers/         # 混合檢索與 Cross-Encoder 重排序器
-│   │   ├── services/               # 業務邏輯服務層
-│   │   │   ├── chat_service.py     # 對話與訊息持久化
-│   │   │   ├── document_processor.py # 文件解析與 AI 摘要生成
-│   │   │   ├── openapi_parser.py   # OpenAPI / Swagger 規格解析器
-│   │   │   └── mcp_service.py      # MCP stdio / HTTP 用戶端與工具轉換
-│   │   └── tasks/                  # 背景排程任務 (定時索引重建、上傳監控)
-│   ├── tests/                      # 後端測試（自主研究、工具、MCP、SSRF）
-│   ├── config/                     # 領域設定檔（domain_profile.json）
-│   ├── main.py                     # FastAPI 應用程式主進入點
-│   ├── init_db.py                  # 資料庫初始化與預設管理員建立腳本
-│   └── requirements.txt            # Python 依賴清單
-├── frontend/                       # 前端 React 19 + Vite 專案
+│   │   ├── __init__.py               # 後端版本號 __version__
+│   │   ├── api/                      # 路由：auth、chat、documents、api_tools、mcp、admin、tags
+│   │   ├── core/                     # 設定、認證、安全與 LLM 呼叫層
+│   │   │   ├── config.py             # Settings：所有環境變數與驗證規則
+│   │   │   ├── lifespan.py           # 啟動流程：建表、初始化 RAG、上傳檔監看
+│   │   │   ├── llm_client.py         # 五家供應商的統一呼叫層（工具呼叫、串流）
+│   │   │   ├── jwt_auth.py           # RSA JWT、Argon2 密碼雜湊、撤銷名單檢查
+│   │   │   ├── ssrf_protection.py    # 出站網址驗證與逐跳 SSRF 檢查
+│   │   │   ├── error_response.py     # 對外錯誤代碼
+│   │   │   ├── security_logging.py   # 日誌雙層脫敏
+│   │   │   └── domain_profile.py     # 領域設定檔載入與驗證
+│   │   ├── models/                   # SQLAlchemy 資料表與 Pydantic 請求模型
+│   │   ├── rag/                      # 檢索與 Agentic RAG 核心
+│   │   │   ├── contextual_rag.py     # HybridContextualRAG：索引校正、寫入與檢索的門面
+│   │   │   ├── agent.py              # ResearchAgent：ReAct 工具迴圈與串流事件
+│   │   │   ├── research_session.py   # 單次提問的引用編號、網址來源限制與不可信資料包裝
+│   │   │   ├── tools.py              # 內建工具與自訂 API / MCP 工具的註冊與執行
+│   │   │   ├── pipeline.py           # 切塊與 Agent 串流管線
+│   │   │   ├── tokenizers.py         # jieba 斷詞與斷詞簽章
+│   │   │   ├── evaluator.py          # 檢索評估（hit@k、MRR、反例拒絕率）
+│   │   │   ├── indices/              # chunk_store（rag_chunks）、vector_store（FAISS）、bm25_store
+│   │   │   └── retrievers/hybrid.py  # RRF 融合、精確比對、重排與相關性門檻
+│   │   ├── services/                 # 對話、文件處理（含 PDF OCR）、OpenAPI 解析、MCP 用戶端
+│   │   └── tasks/uploads_watcher.py  # 上傳檔遺失監看（只記警告）
+│   ├── config/domain_profile.json    # 領域設定檔
+│   ├── eval/                         # 檢索評估問答集
+│   ├── scripts/                      # 維運腳本
+│   ├── tests/                        # pytest 測試
+│   ├── docker-compose.yml            # 選用的 PostgreSQL 17（對外埠 7690）
+│   ├── init.sql                      # PostgreSQL 初始化結構
+│   ├── init_db.py                    # 舊版 PostgreSQL 資料庫的相容補丁
+│   ├── requirements.txt
+│   └── .env.example                  # 後端設定範本
+├── frontend/                         # React 19 + TypeScript + Vite 8
 │   ├── src/
-│   │   ├── pages/                  # 前端頁面元件
-│   │   │   ├── Chat/               # Chat 模組 (MessageItem, TraceBlock, SourceBadges, Header)
-│   │   │   ├── AiTools.jsx         # AI 工具管理（自訂 API、OpenAPI 匯入、MCP 伺服器）
-│   │   │   ├── Documents.jsx       # 知識庫文件上傳與管理頁面
-│   │   │   ├── AdminDashboard.jsx  # 系統管理後台
-│   │   │   ├── LoginPage.jsx / RegisterPage.jsx # 登入與註冊頁面
-│   │   │   └── ProfilePage.jsx     # 個人資料頁面
-│   │   ├── hooks/                  # React 自訂 Hooks (useChat, useAuth, useDocuments)
-│   │   ├── services/               # Axios API 請求封裝與 Token 攔截器
-│   │   └── components/             # 通用 UI 元件與 Layout
-│   ├── package.json                # 前端專案設定 (使用 Bun 管理)
-│   └── vite.config.js              # Vite 建構配置
-├── docs/                           # 詳細系統規格與架構文件
-│   ├── api.md                      # API 參考文件 (繁體中文)
-│   ├── api_en.md                   # API 參考文件 (英文)
-│   ├── architecture.md             # 系統架構與設計 (繁體中文)
-│   ├── architecture_en.md          # 系統架構與設計 (英文)
-│   └── adr/                        # 架構決策紀錄 (ADR)
-├── llms.txt                        # AI 友善結構索引 (繁體中文)
-├── llms_en.txt                     # AI 友善結構索引 (英文)
-├── CHANGELOG.md                    # 版本變更紀錄 (繁體中文)
-├── CHANGELOG_en.md                 # 版本變更紀錄 (英文)
-└── LICENSE                         # MIT 授權條款
+│   │   ├── pages/                    # Chat/、Documents、AiTools、AdminDashboard、登入、註冊、個人資料
+│   │   ├── components/               # Layout、路由守衛與 ui/ 元件庫
+│   │   ├── hooks/                    # useChat（串流、停止與重送）、useAuth、useDocuments
+│   │   ├── services/                 # api.ts（Axios 與權杖更新）、sse.ts（SSE 解析器）
+│   │   ├── contexts/ThemeContext.tsx # 淺色／深色／跟隨系統
+│   │   └── styles/                   # 設計 token 與 reset
+│   ├── package.json                  # 前端版本號與指令
+│   └── .env.example
+├── site/                             # GitHub Pages 介紹頁（純靜態）
+├── docs/
+│   ├── api.md                        # API 參考
+│   ├── architecture.md               # 系統架構與設計
+│   ├── configuration.md              # 設定參考
+│   ├── upgrading.md                  # 升級指南
+│   └── adr/                          # 架構決策紀錄
+├── .github/workflows/deploy-pages.yml # site/ 有變更時部署到 GitHub Pages
+├── llms.txt                          # 給 AI Agent 的專案導覽
+├── CHANGELOG.md                      # 版本變更紀錄
+└── LICENSE
 ```
 
----
+每份文件都有 `_en` 結尾的英文版。
 
-## 環境配置矩陣
+## 開發與測試
 
-### 後端環境變數 (`backend/.env`)
+### 後端測試
 
-| 變數名稱 | 描述 | 範例 / 預設值 | 必填 |
-|---|---|---|---|
-| `DATABASE_URL` | 資料庫連線字串（無預設值，必須提供） | `sqlite:///./chatbot.db`、`postgresql+psycopg2://...` | 是 |
-| `JWT_SECRET_KEY` | JWT 簽署金鑰 | `cb_jwt_sec_...` | 是 |
-| `ADMIN_API_KEY` | 系統管理員 API 金鑰 | `cb_admin_key_...` | 是 |
-| `LLM_API_BASE` | 本地 Ollama 服務端點 URL | `http://localhost:11434` | 否 |
-| `OLLAMA_TEMPERATURE` / `OLLAMA_NUM_PREDICT` | Ollama 生成參數（未設定時使用模型預設值） | `0.3` / `2048` | 否 |
-| `MODEL_NAME` | 預設模型名稱（未設定時取第一個可用模型） | 空值 | 否 |
-| `ENABLE_WEB_SEARCH` | 是否啟用 Agent 聯網工具（同時控制 `web_search` 與 `web_fetch`） | `true` | 是 |
-| `AGENT_MAX_TURNS` | Agent 單次提問的工具調用輪數上限（≥1） | `5` | 是 |
-| `CONVERSATION_HISTORY_MESSAGES` | 提問時從資料庫帶入的前文訊息數（0 表示不帶前文） | `6` | 是 |
-| `WEB_FETCH_ALLOWED_DOMAINS` | `web_fetch` 可讀取的網域（含子網域，逗號分隔）；明確寫 `*` 才表示不限制 | `*` | 是 |
-| `BLOCK_WEB_TOOLS_AFTER_KB` | 同一次提問中知識庫工具回傳過內容後，拒絕 `web_search` 與 `web_fetch` | `true` | 是 |
-| `AZURE_OPENAI_API_KEY` | Azure OpenAI API 金鑰 | `your_azure_api_key` | 否 |
-| `AZURE_OPENAI_ENDPOINT` | Azure OpenAI v1 服務端點 URL | `https://your-resource.openai.azure.com` | 否 |
-| `AZURE_OPENAI_DEPLOYMENT` | Azure OpenAI 部署名稱（支援逗號分隔多模型） | `gpt-6-sol,gpt-6-luna` | 否 |
-| `OPENAI_API_KEY` | OpenAI 官方 API 金鑰 | `sk-...` | 否 |
-| `OPENAI_VISION_MODEL` | 多模態圖片理解所用之 OpenAI 模型 | `gpt-6-sol` | 否 |
-| `ANTHROPIC_API_KEY` | Anthropic Claude API 金鑰 | `sk-ant-...` | 否 |
-| `ANTHROPIC_MAX_TOKENS` | Claude 單次回應的輸出 token 上限（使用 Claude 模型時必填） | `16000` | 否 |
-| `GEMINI_API_KEY` | Google Gemini API 金鑰 | `AIza...` | 否 |
-| `GEMINI_VISION_MODEL` | 多模態圖片理解所用之 Gemini 模型 | `gemini-3.5-flash` | 否 |
-| `AVAILABLE_MODELS` | 手動指定前端可選模型清單（逗號分隔） | 空值 | 否 |
-| `EMBEDDING_MODEL` | 向量嵌入模型名稱 | `BAAI/bge-small-zh-v1.5` | 否 |
-| `RERANKER_MODEL` | Cross-Encoder 重排序模型名稱（必要元件，載入失敗時後端無法啟動） | `BAAI/bge-reranker-base` | 否 |
-| `HF_HOME` | Hugging Face 模型快取目錄（未設定時使用 `~/.cache/huggingface`） | `./data/hf_home` | 否 |
-| `HF_HUB_OFFLINE` | 只從快取離線載入模型，啟動時不連線檢查更新 | `true` | 否 |
-| `CHUNK_SIZE` / `CHUNK_OVERLAP` | 文件切塊大小與重疊字元數 | `300` / `100` | 否 |
-| `RRF_K` | RRF 融合常數，分數 = Σ 1 / (`RRF_K` + 名次) | `60` | 是 |
-| `RERANK_TOP_K` | 融合後送入重排的候選數（重排耗時與此值及片段長度成正比） | `20` | 否 |
-| `RERANK_RELEVANCE_THRESHOLD` | 重排模型機率低於此值的片段視為無關；精確比對到網址、貼文 ID、日期者不受限制 | `0.2` | 是 |
-| `FINAL_K` | 最終送入 LLM 之片段數量 | `8` | 否 |
-| `DOMAIN_PROFILE_PATH` | 領域設定檔（領域詞、記錄日期欄位、摘要備援規則） | `config/domain_profile.json` | 是 |
-| `JIEBA_DICTIONARY` | 替換 jieba 主詞典（例如繁體較友善的 `dict.txt.big`）；變更後 BM25 索引自動重建 | 空值 | 否 |
-| `MAX_FILE_SIZE_MB` | 單一上傳檔案大小上限 | `10` | 否 |
-| `ACCESS_TOKEN_EXPIRE_MINUTES` | Access Token 有效分鐘數 | `30` | 否 |
-| `REFRESH_TOKEN_EXPIRE_DAYS` | Refresh Token 有效天數 | `7` | 否 |
-| `ALLOWED_ORIGINS` | CORS 允許來源（逗號分隔） | `http://localhost:3001` | 否 |
-| `RATE_LIMIT_ENABLED` / `RATE_LIMIT_PER_MINUTE` | 速率限制開關與每分鐘上限 | `true` / `60` | 否 |
+```bash
+cd backend
+python -m pytest
+```
 
-> 完整變數清單請參閱 [`backend/.env.example`](./backend/.env.example) 與 [`backend/app/core/config.py`](./backend/app/core/config.py)。路徑類設定（`DATA_DIR`、`UPLOAD_DIR`、索引路徑、`HF_*`、`DOMAIN_PROFILE_PATH`、`JIEBA_DICTIONARY`）若為相對路徑，一律以 `backend/` 為基準。`HYBRID_ALPHA`、`NORMALIZATION`、`FINAL_THRESHOLD` 已移除，留在 `.env` 中會被忽略。
+- 測試會載入設定，必填設定須存在於 `backend/.env` 或環境變數中。
+- 部分測試會載入實際的嵌入與重排模型（需要模型快取），完整執行約需數分鐘。
+- Windows 使用者名稱含中文等非 ASCII 字元時，請加上 `--basetemp=C:\pytest-tmp` 之類的 ASCII 路徑，否則 FAISS 寫入暫存索引會失敗。
 
-### 前端環境變數 (`frontend/.env`)
+### 前端檢查
 
-| 變數名稱 | 描述 | 預設值 | 必填 |
-|---|---|---|---|
-| `VITE_API_BASE` | 後端 API 基礎路徑（未設定時回退至 `/api`） | `http://localhost:8001` | 否 |
-| `VITE_API_URL` | 後端伺服器絕對端點（`VITE_API_BASE` 未設定時採用） | `http://localhost:8001` | 否 |
-| `VITE_TAGS_URL` | 外部模型清單來源 URL | 空值 | 否 |
-| `VITE_MODEL_POLL_INTERVAL_MS` | 前端模型清單輪詢間隔（毫秒） | `300000` | 否 |
-| `PORT` | Vite 開發伺服器埠號 | `3001` | 否 |
+```bash
+cd frontend
+bun run test --run   # Vitest 單元測試（SSE 解析器）
+bun run lint         # ESLint（JS / JSX）
+bun x tsc --noEmit   # TypeScript 型別檢查
+bun run build        # 產出 build/
+```
 
----
+### 維運腳本
+
+在 `backend/` 以 `python scripts/<腳本>` 執行：
+
+| 腳本 | 用途 |
+|---|---|
+| `evaluate_retrieval.py` | 以問答集評估檢索品質並比較相關性門檻（唯讀，可與後端同時執行），見 [校準相關性門檻](docs/configuration.md#校準相關性門檻) |
+| `reprocess_existing_docs.py` | 離線重建：重新擷取文字、生成摘要、切塊並寫入索引。請先停止後端 |
+| `reset_faiss.py` | 刪除 `backend/data` 內的 FAISS 與 BM25 索引檔，再依 `rag_chunks` 重新計算（會先詢問確認） |
+| `test_llm_clients.py` | 以模擬回應檢查模型清單與各供應商的呼叫格式，不會真的呼叫 API |
+| `docx_to_txt.py` | 把上傳目錄中的 `.docx` 轉成 `.txt` |
+| `migrate_sqlite_to_postgres.py` | 已知問題：引用了已移除的 `app.models.custom_agent`，目前無法執行 |
+
+## 疑難排解
+
+<details>
+<summary><b>後端啟動失敗，出現 <code>Field required</code></b></summary>
+
+`.env` 缺少必填設定，錯誤訊息會列出欄位名稱。對照 [設定](#設定) 補上即可；從 2.x 升級請參考 [升級指南](docs/upgrading.md)。
+
+</details>
+
+<details>
+<summary><b>後端啟動失敗，訊息為「無法載入重排模型」</b></summary>
+
+重排模型是必要元件。首次啟動需要連上 Hugging Face 下載模型，請確認網路可用且 `HF_HUB_OFFLINE` 不是 `true`；已下載過模型時，確認 `HF_HOME` 指向原本的快取目錄。
+
+</details>
+
+<details>
+<summary><b>執行 <code>python init_db.py</code> 出現 <code>near "EXISTS": syntax error</code></b></summary>
+
+使用 SQLite 時不需要執行 `init_db.py`，資料表會在後端啟動時自動建立。這個腳本只用於替舊版 PostgreSQL 資料庫補欄位與索引。
+
+</details>
+
+<details>
+<summary><b>登入後看不到「知識庫」、「AI 工具」與「管理後台」</b></summary>
+
+這些頁面只限管理員。請依 [建立第一位管理員](#4-建立第一位管理員) 設定後重新登入。
+
+</details>
+
+<details>
+<summary><b>每個問題都回報「知識庫中查無相關資料」</b></summary>
+
+先確認已上傳文件，且管理員呼叫 `GET /api/admin/vector-store/info` 時 `total_vectors` 大於 0。索引正常時，可能是相關性門檻太高，請依 [校準相關性門檻](docs/configuration.md#校準相關性門檻) 以實際問答集調整。
+
+</details>
+
+<details>
+<summary><b>前端出現網路錯誤或 CORS 錯誤</b></summary>
+
+- 沒有 `frontend/.env` 時，前端經 Vite 代理連到 `http://127.0.0.1:8001`，請確認後端已在該埠啟動。
+- 設定了 `VITE_API_BASE` 等絕對網址時，瀏覽器會直接呼叫後端，後端的 `ALLOWED_ORIGINS` 必須包含前端的來源（例如 `http://localhost:3001`）。
+
+</details>
+
+<details>
+<summary><b>Windows 上 <code>bun install</code> 出現 EPERM，或在 frontend 內產生名為 <code>~</code> 的資料夾</b></summary>
+
+`frontend/bunfig.toml` 的快取路徑 `~/.bun/install/cache` 在 Windows 上不會展開。請改為指定快取目錄：`bun install --cache-dir <快取路徑>`。
+
+</details>
+
+<details>
+<summary><b>API 回傳 <code>429 Too Many Requests</code></b></summary>
+
+速率限制依來源 IP 計算，預設每 60 秒 60 次。經由 Vite 開發代理或反向代理時所有使用者共用同一個 IP，可視需要調高 `RATE_LIMIT_PER_MINUTE`。
+
+</details>
 
 ## 文件導覽
 
-- [API 參考文件](./docs/api.md) — 完整 RESTful 端點、請求回應 JSON 規格與參數說明
-- [系統架構與設計文件](./docs/architecture.md) — 模組關係圖、Agentic RAG 管線與安全架構
-- [架構決策紀錄 (ADR)](./docs/adr/README.md) — 專案架構演進與技術選型紀錄
-- [AI 友善結構導覽](./llms.txt) — 專供 AI Agent 與 LLM 讀取之結構導覽與約束
-- [版本變更紀錄](./CHANGELOG.md) — 系統版本演進歷史
+| 文件 | 內容 |
+|---|---|
+| [API 參考](docs/api.md) | 所有端點的權限、請求與回應格式、SSE 事件規格與錯誤代碼 |
+| [系統架構與設計](docs/architecture.md) | 分層架構、資料模型、檢索管線、Agent 迴圈、認證與安全設計 |
+| [設定參考](docs/configuration.md) | 每個環境變數的預設值與作用、供應商路由、門檻校準、前端設定 |
+| [升級指南](docs/upgrading.md) | 從 2.x 升級到 3.0.0 的步驟、回退方式與常見問題 |
+| [架構決策紀錄（ADR）](docs/adr/README.md) | 重大設計的背景、取捨與後續修訂 |
+| [llms.txt](llms.txt) | 給 AI Agent 讀的檔案地圖、系統約束與驗證方式 |
+| [版本變更紀錄](CHANGELOG.md) | 每個版本的新增、變更、移除與修正 |
+| [介紹網站](https://scorpio-meow.github.io/AskMiao/) | 以互動示範說明引用、檢索門檻與安全機制 |
 
----
+## 版本資訊
+
+- **目前版本**：3.0.0（2026-09-25），變更內容見 [CHANGELOG](CHANGELOG.md)。
+- **版本規則**：遵循 [語意化版本](https://semver.org/lang/zh-TW/)。不相容的變更（例如新增必填設定、改變 API 權限或索引格式）升主版號。
+- **版本號位置**：後端 `backend/app/__init__.py` 的 `__version__`（OpenAPI 文件與 MCP 交握皆引用）、前端 `frontend/package.json`，發行時與 `CHANGELOG.md` 一併更新。
 
 ## 貢獻指南
 
-歡迎參與 AskMiao 的開發與改進！請遵循以下流程：
+歡迎透過 Issue 與 Pull Request 參與改進：
 
-1. Fork 本專案倉庫並建立您的功能分支 (`git checkout -b feature/amazing-feature`)。
-2. 確保程式碼通過前端與後端型別檢查及測試：
-   - 後端測試：`pytest tests/`
-   - 前端型別檢查與測試：`bun x tsc --noEmit`、`bun run build`、`bun run lint`
-3. 提交您的變更 (`git commit -m 'feat: Add amazing feature'`)。
-4. 推送至分支 (`git push origin feature/amazing-feature`)。
-5. 開啟 Pull Request 並詳細說明變更內容。
-
----
+1. Fork 本專案並建立功能分支。
+2. Commit 訊息遵循 [Conventional Commits](https://www.conventionalcommits.org/zh-hant/v1.0.0/)（例如 `feat(rag): …`、`fix: …`，破壞性變更加上 `!` 並寫明 `BREAKING CHANGE`）。
+3. 提交前確認後端 `python -m pytest` 與前端 `bun run test --run`、`bun run lint`、`bun x tsc --noEmit` 皆通過。
+4. 文件採中英雙語：修改任何文件時，請同步更新對應的 `_en` 版本，並在 `CHANGELOG.md` 的 `[Unreleased]` 記下變更。
+5. 介紹頁的互動示範在瀏覽器端重現後端規則。修改下列檔案的規則時，請同步更新 `site/index.html` 與 `site/main.js`：
+   - `rag/research_session.py`：引用配號、網址來源限制
+   - `rag/retrievers/hybrid.py`：RRF 融合、混合分數、相關性門檻
+   - `rag/tools.py`、`core/config.py`：`WEB_FETCH_ALLOWED_DOMAINS`
+   - `core/ssrf_protection.py`：SSRF 檢查順序與封鎖清單
+   - `services/mcp_service.py`：`INHERITED_ENV_VARS`
+6. 開啟 Pull Request，說明變更內容與驗證方式。
 
 ## 授權條款
 
-本專案基於 MIT 授權條款發行。詳情請參閱 [LICENSE](LICENSE) 檔案。
+本專案以 [MIT 授權條款](LICENSE) 發行。
