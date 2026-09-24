@@ -26,6 +26,7 @@ export interface Message {
     score?: number | null;
     snippet?: string;
     url?: string;
+    citation?: number;
   }>;
   research_trace?: Array<{
     step: number;

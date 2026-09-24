@@ -1,12 +1,16 @@
 from typing import Callable, Dict, List, Tuple, Optional
 import os
+import json
 import time
 import shutil
 import logging
 from ..types import Document
-from ..tokenizers import get_chinese_analyzer, HAS_WHOOSH
+from ..tokenizers import get_chinese_analyzer, tokenizer_signature, HAS_WHOOSH
 
 logger = logging.getLogger(__name__)
+
+# 建立索引時的斷詞簽章；與目前設定不同時，索引裡的詞項已不可信，需重建
+SIGNATURE_FILENAME = "tokenizer_signature.json"
 
 if HAS_WHOOSH:
     from whoosh import fields, scoring
@@ -72,12 +76,27 @@ class BM25StoreManager:
                 pass
             self.bm25_searcher = None
 
+    def _signature_path(self) -> str:
+        return os.path.join(self.bm25_index_dir, SIGNATURE_FILENAME)
+
+    def tokenizer_matches(self) -> bool:
+        """索引建立時的斷詞簽章是否與目前設定相同；尚無索引時視為相同"""
+        if self.bm25_index is None:
+            return True
+        try:
+            with open(self._signature_path(), encoding="utf-8") as f:
+                return json.load(f) == tokenizer_signature()
+        except (FileNotFoundError, ValueError):
+            return False
+
     def _write(self, apply: Callable, action: str) -> None:
         try:
             if self.bm25_index is None:
                 os.makedirs(self.bm25_index_dir, exist_ok=True)
                 storage = FileStorage(self.bm25_index_dir)
                 self.bm25_index = storage.create_index(self._create_bm25_schema())
+                with open(self._signature_path(), "w", encoding="utf-8") as f:
+                    json.dump(tokenizer_signature(), f, ensure_ascii=False)
             self._close_searcher()
 
             lock_path = os.path.join(self.bm25_index_dir, "bm25_write.lock")
@@ -173,6 +192,10 @@ class BM25StoreManager:
 
     def ensure_aligned(self, chunks: Dict[int, Document]) -> None:
         if not HAS_WHOOSH:
+            return
+        if not self.tokenizer_matches():
+            logger.warning("BM25 索引的斷詞簽章與目前設定不同（斷詞規則、主詞典或領域詞已變更），依資料庫片段重建 BM25 索引")
+            self.rebuild(chunks)
             return
         indexed = self.indexed_ids()
         expected = {str(chunk_id) for chunk_id in chunks}

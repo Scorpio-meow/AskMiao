@@ -1,21 +1,23 @@
 import pytest
 from app.core.config import settings
+from app.rag.retrievers.hybrid import RetrievedChunk
 from app.rag.types import Document
 from app.rag.tools import ResearchToolRegistry
 from app.rag.agent import ResearchAgent
 class MockRetriever:
-    def __init__(self):
-        self.last_retrieval_strategy = "mock_hybrid"
-    def smart_search(self, query: str):
+    def smart_search(self, query: str, target_document=None):
         doc1 = Document(
             page_content="員工特休假每年依年資計算，滿半年享3天，滿一年享7天特休。",
-            metadata={"source": "勞工休假辦法.pdf", "chunk_index": 1}
+            metadata={"source": "勞工休假辦法.pdf", "chunk_index": 1, "chunk_id": 11}
         )
         doc2 = Document(
             page_content="加班應事先於系統填寫加班申請單，經主管核准後生效。",
-            metadata={"source": "加班管理辦法.pdf", "chunk_index": 0}
+            metadata={"source": "加班管理辦法.pdf", "chunk_index": 0, "chunk_id": 12}
         )
-        return [(doc1, 0.95), (doc2, 0.82)]
+        return [
+            RetrievedChunk(document=doc1, score=0.95, relevance=0.95, pinned=False),
+            RetrievedChunk(document=doc2, score=0.82, relevance=0.82, pinned=False),
+        ]
 @pytest.mark.asyncio
 async def test_research_tool_registry(monkeypatch):
     monkeypatch.setattr(settings, "ENABLE_WEB_SEARCH", True)

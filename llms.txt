@@ -8,6 +8,8 @@
 
 - [backend/main.py](backend/main.py): FastAPI 後端進入點與全域路由中介軟體註冊
 - [backend/app/rag/agent.py](backend/app/rag/agent.py): ReAct 自主研究 Agent（多輪工具調用與研究思考歷程紀錄）
+- [backend/app/rag/research_session.py](backend/app/rag/research_session.py): 單次提問的引用編號表、web_fetch 網址來源限制、讀過知識庫後停用聯網與不可信資料包裝
+- [backend/config/domain_profile.json](backend/config/domain_profile.json): 領域設定檔（領域詞、記錄日期欄位、摘要備援規則），由 `app/core/domain_profile.py` 驗證載入
 - [backend/app/rag/tools.py](backend/app/rag/tools.py): 自主研究工具註冊中心（內部知識庫檢索、DuckDuckGo/Ollama 聯網搜尋、網頁深入抓取）
 - [backend/app/rag/pipeline.py](backend/app/rag/pipeline.py): RAG 執行管線、上下文組裝與 Agent 整合
 - [backend/app/rag/contextual_rag.py](backend/app/rag/contextual_rag.py): HybridContextualRAG 門面模組
@@ -36,12 +38,14 @@
 
 1. **Agentic RAG 自主研究管線**：
    - 採用 ReAct 自主研究模式，模型可根據問題自動決定調用內部知識庫檢索、外部即時聯網搜尋或網頁深度內容抓取。
-   - 每次問答產出結構化 `research_trace`（步驟、工具、參數、耗時與摘要）以及可點擊跳轉之 `sources_detail`。
+   - 每次問答產出結構化 `research_trace`（步驟、工具、參數、耗時與摘要）以及可點擊跳轉之 `sources_detail`；`sources_detail` 只列答案以 `[n]` 實際引用的條目。
+   - 工具結果一律以 `<untrusted_tool_result>` 標記為不可信資料；`web_fetch` 只能讀使用者訊息或本次工具結果中原樣出現過的網址（`WEB_FETCH_ALLOWED_DOMAINS`、`BLOCK_WEB_TOOLS_AFTER_KB` 另加限制）。
 2. **多檔位推理程度 (Reasoning Effort)**：
    - 支援 `none`, `low`, `medium`, `high`, `xhigh` 五種思考深度，透傳至 Azure OpenAI v1 / OpenAI 推理模型。
    - 遵循微軟 Foundry 規範，於結合 Function Tools 時自動保持相容性。
 3. **混合檢索與重排序 (Hybrid Retrieval)**：
-   - FAISS 稠密向量搜尋與 Whoosh BM25 稀疏文字檢索加權融合，最終經由 Cross-Encoder 加權重排序輸出高精準度上下文。
+   - FAISS 稠密向量搜尋與 Whoosh BM25 稀疏文字檢索每次必跑，以標準 RRF（`RRF_K`）依名次融合，再由 Cross-Encoder（必要元件）重排序。
+   - 相關性門檻 `RERANK_RELEVANCE_THRESHOLD` 直接套在重排機率上（精確比對到網址、貼文 ID、日期者除外），全部未通過時回報「知識庫中查無相關資料」。
 4. **全系統安全日誌脫敏 (Security Redaction)**：
    - 日誌記錄全面實施物件層級與正則表達式雙層遮罩，密碼、Token 與 Authorization 標頭必須強制呈現為 `[REDACTED]`。
 5. **外部工具擴充與 MCP 整合 (Tool Extensibility)**：

@@ -210,8 +210,8 @@ Sends a chat message and starts the ReAct research agent. **This endpoint stream
 | `start` | Stream opens | `{"conversation_id": 42, "user_message_id": 107}` |
 | `step_start` | A tool call begins | Tool name and input arguments |
 | `step_end` | A tool call finishes | Step summary and duration; accumulated into `research_trace` |
-| `token` | Incremental model output | `{"content": "partial text"}` |
-| `sources` | Reference sources resolved | `{"sources": [...], "sources_detail": [...]}` |
+| `token` | Model output (an answer produced after tool use arrives in one piece) | `{"content": "partial text"}` |
+| `sources` | After the answer completes, the sources it actually cites as `[n]` | `{"sources": [...], "sources_detail": [...]}` |
 | `done` | Stream finished and the message persisted | Final answer, sources, and research trace |
 | `error` | Unexpected exception during streaming | `{"detail": "...(error code: xxxxxxxx)", "error_id": "xxxxxxxx"}` |
 
@@ -228,16 +228,16 @@ event: step_end
 data: {"step": 1, "tool": "search_knowledge_base", "duration_seconds": 0.83, "status": "success"}
 
 event: token
-data: {"content": "According to the handbook, "}
+data: {"content": "According to the handbook, leave requests need a form in the system and manager approval [1]."}
 
 event: sources
-data: {"sources": ["handbook_2026.pdf"], "sources_detail": [{"source": "handbook_2026.pdf", "score": 0.92}]}
+data: {"sources": ["handbook_2026.pdf"], "sources_detail": [{"citation": 1, "source": "handbook_2026.pdf", "chunk": 3, "score": 0.92, "snippet": "Annual leave requests are filed in the system..."}]}
 
 event: done
 data: {"message_id": 108, "conversation_id": 42, "answer": "According to the handbook, ...", "sources": ["handbook_2026.pdf"], "sources_detail": [...], "research_trace": [...]}
 ```
 
-> When the stream completes, the assistant message is persisted together with `sources`, `sources_detail`, and `research_trace` inside the message's `context_used` field.
+> `sources_detail` lists only the entries the answer actually cites, in order of first citation; `citation` matches the `[n]` in the answer, and web sources also carry `url`. Both arrays are empty when the answer cites nothing. When the stream completes, the assistant message is persisted together with `sources`, `sources_detail`, and `research_trace` inside the message's `context_used` field.
 
 ---
 

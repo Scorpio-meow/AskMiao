@@ -4,8 +4,9 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from app.models import RagChunk
 from app.models.database import Base
+from app.core.domain_profile import domain_profile
 from app.rag.types import Document, RecursiveCharacterTextSplitter
-from app.rag.tokenizers import init_domain_dictionary, get_chinese_analyzer
+from app.rag.tokenizers import configure_tokenizer, get_chinese_analyzer
 from app.rag.contextual_rag import HybridContextualRAG, ContextualRAG
 @pytest.fixture(autouse=True)
 def setup_env():
@@ -50,7 +51,7 @@ def test_document_and_splitter():
     chunks = splitter.split_text("神通資訊科技股份有限公司知識庫系統測試")
     assert len(chunks) > 0
 def test_tokenizers():
-    init_domain_dictionary("tests_data")
+    configure_tokenizer(None, domain_profile.domain_words)
     analyzer = get_chinese_analyzer()
     assert analyzer is not None or analyzer is None
 def test_rag_facade_lifecycle(session_factory):

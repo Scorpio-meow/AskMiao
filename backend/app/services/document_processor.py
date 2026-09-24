@@ -11,6 +11,7 @@ from docx import Document as DocxDocument
 from pptx import Presentation
 import openpyxl
 from app.core.config import settings
+from app.core.domain_profile import domain_profile
 logger = logging.getLogger(__name__)
 class _HTMLTextExtractor(HTMLParser):
     def __init__(self):
@@ -525,24 +526,27 @@ class DocumentProcessor:
         line_date_matches = len(re.findall(r'\d{4}[./-]\d{2}[./-]\d{2}\s+(?:星期|週|Mon|Tue|Wed|Thu|Fri|Sat|Sun)', header_preview))
         chat_time_user_matches = len(re.findall(r'\n\d{1,2}:\d{2}\s+[\u4e00-\u9fa5a-zA-Z0-9_]{2,12}', header_preview))
         
+        summary_rules = domain_profile.summary_fallback
         if is_line_file or (line_date_matches >= 1 and chat_time_user_matches >= 2):
             members = set(re.findall(r'\n\d{1,2}:\d{2}\s+([\u4e00-\u9fa5a-zA-Z0-9_]{2,10})', header_preview))
-            members_filtered = [m for m in members if m not in ('All', '收到', '好的', '已預借', '已新增', '二位') and not m.isdigit()][:5]
+            noise_words = set(summary_rules.chat_member_noise_words)
+            members_filtered = [m for m in members if m not in noise_words and not m.isdigit()][:5]
             members_str = '、'.join(members_filtered) if members_filtered else '專案團隊成員'
             
             topics = []
-            for kw in ('Agent', '建置', '部署', 'OpenClaude', 'Open Data', '會議', '簡報', '教育', '測試', '研發', '進度'):
+            for kw in summary_rules.chat_topic_keywords:
                 if kw in content and kw not in topics:
                     topics.append(kw)
             topic_str = '、'.join(topics[:5]) if topics else '專案工作事項'
             return f"本文件為內部通訊工作討論紀錄（參與人員包括：{members_str}），主要聚焦討論 {topic_str} 等相關任務與進度追蹤。"
         cleaned_lines = []
         noise_prefixes = ("---", "[", ">", "http://", "https://", "www.", "tel:", "fax:", "email:", "@")
+        boilerplate_prefixes = tuple(p.lower() for p in summary_rules.boilerplate_line_prefixes)
         for line in raw_lines:
             line_str = line.strip()
             if any(line_str.startswith(np) for np in noise_prefixes):
                 continue
-            if re.search(r'^(?:mitac|copyright|all rights reserved|\(02\)|www\.)', line_str, re.IGNORECASE):
+            if line_str.lower().startswith(boilerplate_prefixes):
                 continue
             if line_str in ("[本頁為圖檔或無可提取純文字]", "[SVG_ICON_OMITTED]", "[BASE64_IMAGE_OMITTED]"):
                 continue

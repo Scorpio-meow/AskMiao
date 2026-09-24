@@ -84,6 +84,8 @@ If you keep `PORT=3001` from `frontend/.env.example` (the origin allowed by the 
    - Built-in ReAct research agent (`ResearchAgent`) supporting Native Tool Calling.
    - Comprehensive toolset including internal knowledge search (`search_knowledge_base`), real-time web search (`web_search` with Ollama & DuckDuckGo dual-engine fallback), and deep web fetch (`web_fetch`).
    - Collapsible research trace timeline (`ResearchTraceBlock`) and clickable reference badges (`SourceBadges`) in frontend UI.
+   - Answers cite their evidence as `[n]`; the badges list only the chunks or pages the answer actually cites, and the agent reports plainly when the knowledge base has nothing relevant.
+   - Every tool result is marked as untrusted data; `web_fetch` only reads URLs that appear verbatim in the user's message or in this question's tool results, with an optional domain allowlist and a switch that disables web tools once knowledge-base content has been read.
 
 2. **Reasoning Effort Multi-Tier Selection**:
    - Navigation header selector with 5 reasoning depth levels: `None (none)`, `Low (low)`, `Medium (medium)`, `High (high)`, and `Extreme (xhigh)`.
@@ -91,9 +93,9 @@ If you keep `PORT=3001` from `frontend/.env.example` (the origin allowed by the 
    - Automatic compatibility enforcement with tool calls per Microsoft Foundry specifications.
 
 3. **Modular Contextual Hybrid RAG Pipeline**:
-   - Integrates dense vector search (FAISS) and sparse Chinese keyword search (Whoosh BM25).
-   - Re-ranked dynamically by Cross-Encoder (`ms-marco-MiniLM-L-6-v2` / `bge-reranker-base`) for optimal precision.
-   - Automated dynamic Alpha tuning and quantitative RAG evaluation metrics (Hit Rate, MRR).
+   - Integrates dense vector search (FAISS) and sparse Chinese keyword search (Whoosh BM25); both tracks always run and are merged by rank with RRF (Reciprocal Rank Fusion).
+   - Re-ranked by a Cross-Encoder (`bge-reranker-base`), with a relevance threshold applied to the reranker's probability to drop irrelevant chunks.
+   - Quantitative retrieval evaluation (Hit Rate, MRR, negative rejection rate), including a comparison of several relevance thresholds over a single rerank pass.
 
 4. **Multi-Provider LLM Integration**:
    - Unified abstraction layer supporting dynamic switching between Azure OpenAI v1, OpenAI Official, Anthropic Claude, Google Gemini, and local Ollama models with automatic multi-model list normalization.
@@ -201,6 +203,7 @@ AskMiao/
 │   │   │   └── tags.py             # Ollama-compatible model listing endpoints
 │   │   ├── core/                   # Config, auth, log redaction, LLM client
 │   │   │   ├── config.py           # Global environment configuration
+│   │   │   ├── domain_profile.py   # Domain profile loading and validation
 │   │   │   ├── jwt_auth.py         # RSA-2048 JWT signing and verification
 │   │   │   ├── llm_client.py       # Unified multi-provider LLM layer
 │   │   │   ├── security_logging.py # Two-layer sensitive data redaction
@@ -209,10 +212,11 @@ AskMiao/
 │   │   ├── models/                 # SQLAlchemy ORM and Pydantic schemas
 │   │   ├── rag/                    # Modular RAG and agentic research core
 │   │   │   ├── agent.py            # ReAct research agent (incl. multimodal input)
+│   │   │   ├── research_session.py # Per-question citations, URL provenance, untrusted-data wrapping
 │   │   │   ├── tools.py            # Built-in tools plus custom / MCP tool registration
 │   │   │   ├── pipeline.py         # RAG execution pipeline and context assembly
 │   │   │   ├── contextual_rag.py   # HybridContextualRAG facade
-│   │   │   ├── evaluator.py        # Retrieval evaluation and Alpha auto-tuning
+│   │   │   ├── evaluator.py        # Retrieval evaluation and relevance-threshold comparison
 │   │   │   ├── indices/            # FAISS and BM25 index management
 │   │   │   └── retrievers/         # Hybrid retrieval and Cross-Encoder reranking
 │   │   ├── services/               # Business logic services
@@ -222,6 +226,7 @@ AskMiao/
 │   │   │   └── mcp_service.py      # MCP stdio / HTTP clients and tool conversion
 │   │   └── tasks/                  # Background jobs (index rebuild, upload watcher)
 │   ├── tests/                      # Backend tests (research, tools, MCP, SSRF)
+│   ├── config/                     # Domain profile (domain_profile.json)
 │   ├── main.py                     # FastAPI application entry point
 │   ├── init_db.py                  # Database bootstrap and default admin creation
 │   └── requirements.txt            # Python dependencies
@@ -269,6 +274,8 @@ AskMiao/
 | `ENABLE_WEB_SEARCH` | Enable the agent's web tools (controls both `web_search` and `web_fetch`) | `true` | Yes |
 | `AGENT_MAX_TURNS` | Maximum tool-calling turns per question (>= 1) | `5` | Yes |
 | `CONVERSATION_HISTORY_MESSAGES` | Prior messages loaded from the database as context (0 disables) | `6` | Yes |
+| `WEB_FETCH_ALLOWED_DOMAINS` | Domains `web_fetch` may read (subdomains included, comma-separated); only an explicit `*` means unrestricted | `*` | Yes |
+| `BLOCK_WEB_TOOLS_AFTER_KB` | Refuse `web_search` and `web_fetch` once a knowledge-base tool has returned content in the same question | `true` | Yes |
 | `AZURE_OPENAI_API_KEY` | Azure OpenAI API key | `your_azure_api_key` | No |
 | `AZURE_OPENAI_ENDPOINT` | Azure OpenAI v1 endpoint URL | `https://your-resource.openai.azure.com` | No |
 | `AZURE_OPENAI_DEPLOYMENT` | Azure deployment names (comma-separated for multiple models) | `gpt-4o,gpt-4o-mini` | No |
@@ -280,19 +287,23 @@ AskMiao/
 | `GEMINI_VISION_MODEL` | Gemini model used for image understanding | `gemini-2.5-flash` | No |
 | `AVAILABLE_MODELS` | Explicit model list exposed to the frontend (comma-separated) | empty | No |
 | `EMBEDDING_MODEL` | Embedding model name | `BAAI/bge-small-zh-v1.5` | No |
-| `RERANKER_MODEL` | Cross-Encoder reranking model | `BAAI/bge-reranker-base` | No |
+| `RERANKER_MODEL` | Cross-Encoder reranking model (required component: the backend refuses to start if it cannot load) | `BAAI/bge-reranker-base` | No |
 | `HF_HOME` | Hugging Face model cache directory (`~/.cache/huggingface` when unset) | `./data/hf_home` | No |
 | `HF_HUB_OFFLINE` | Load cached models offline without update checks at startup | `true` | No |
 | `CHUNK_SIZE` / `CHUNK_OVERLAP` | Document chunk size and overlap | `300` / `100` | No |
-| `HYBRID_ALPHA` | Fusion weight between vector and BM25 scores | `0.75` | No |
+| `RRF_K` | RRF fusion constant: score = Σ 1 / (`RRF_K` + rank) | `60` | Yes |
+| `RERANK_TOP_K` | Fused candidates sent to the reranker (rerank time grows with this and with chunk length) | `20` | No |
+| `RERANK_RELEVANCE_THRESHOLD` | Chunks whose reranker probability is below this are dropped; exact URL, post ID, and date matches are exempt | `0.2` | Yes |
 | `FINAL_K` | Number of chunks passed to the LLM | `8` | No |
+| `DOMAIN_PROFILE_PATH` | Domain profile (domain words, record date fields, summary fallback rules) | `config/domain_profile.json` | Yes |
+| `JIEBA_DICTIONARY` | Replacement jieba main dictionary (e.g. the Traditional-Chinese-friendly `dict.txt.big`); changing it rebuilds BM25 automatically | empty | No |
 | `MAX_FILE_SIZE_MB` | Per-file upload size limit | `10` | No |
 | `ACCESS_TOKEN_EXPIRE_MINUTES` | Access token lifetime in minutes | `30` | No |
 | `REFRESH_TOKEN_EXPIRE_DAYS` | Refresh token lifetime in days | `7` | No |
 | `ALLOWED_ORIGINS` | Allowed CORS origins (comma-separated) | `http://localhost:3001` | No |
 | `RATE_LIMIT_ENABLED` / `RATE_LIMIT_PER_MINUTE` | Rate limiting switch and per-minute cap | `true` / `60` | No |
 
-> For the complete list see [`backend/.env.example`](./backend/.env.example) and [`backend/app/core/config.py`](./backend/app/core/config.py).
+> For the complete list see [`backend/.env.example`](./backend/.env.example) and [`backend/app/core/config.py`](./backend/app/core/config.py). Relative paths in path settings (`DATA_DIR`, `UPLOAD_DIR`, index paths, `HF_*`, `DOMAIN_PROFILE_PATH`, `JIEBA_DICTIONARY`) are always resolved against `backend/`. `HYBRID_ALPHA`, `NORMALIZATION`, and `FINAL_THRESHOLD` were removed and are ignored if left in `.env`.
 
 ### Frontend Configuration (`frontend/.env`)
 

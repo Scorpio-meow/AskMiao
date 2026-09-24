@@ -8,16 +8,20 @@ from types import SimpleNamespace
 import faiss
 import numpy as np
 import pytest
+import torch
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from app.api import admin as admin_api
 from app.api import documents as documents_api
 from app.core.config import settings
+from app.core.domain_profile import domain_profile
 from app.models import Document as DbDocument, RagChunk
 from app.models.database import Base
+from app.rag import tokenizers
 from app.rag.contextual_rag import HybridContextualRAG
 from app.rag.indices import vector_store as vector_store_module
+from app.rag.indices.bm25_store import SIGNATURE_FILENAME
 from app.rag.indices.vector_store import VectorStoreManager
 from app.rag.retrievers import hybrid as hybrid_module
 from app.rag.types import Document
@@ -41,9 +45,15 @@ class FakeEmbedder:
         return vectors
 
 
-class UnavailableCrossEncoder:
+class ConstantCrossEncoder:
+    """把每個片段都判為相關的重排模型替身；索引一致性測試不涉及相關性判斷"""
+    activation_fn = torch.nn.Sigmoid()
+
     def __init__(self, model_name, device=None):
-        raise RuntimeError("reranker is not needed for index consistency tests")
+        pass
+
+    def predict(self, pairs):
+        return [0.9 for _ in pairs]
 
 
 class FakeQuery:
@@ -93,8 +103,13 @@ def index_dir(tmp_path, monkeypatch):
     monkeypatch.setattr(settings, "BM25_INDEX_DIR", str(tmp_path / "bm25_index"))
     monkeypatch.setattr(settings, "CHUNK_SIZE", 300)
     monkeypatch.setattr(settings, "CHUNK_OVERLAP", 100)
+    monkeypatch.setattr(settings, "RRF_K", 60)
+    monkeypatch.setattr(settings, "RERANK_TOP_K", 20)
+    monkeypatch.setattr(settings, "FINAL_K", 8)
+    monkeypatch.setattr(settings, "RERANK_RELEVANCE_THRESHOLD", 0.5)
+    monkeypatch.setattr(settings, "JIEBA_DICTIONARY", None)
     monkeypatch.setattr(vector_store_module, "SentenceTransformer", FakeEmbedder)
-    monkeypatch.setattr(hybrid_module, "CrossEncoder", UnavailableCrossEncoder)
+    monkeypatch.setattr(hybrid_module, "CrossEncoder", ConstantCrossEncoder)
     return tmp_path
 
 
@@ -322,6 +337,33 @@ def test_read_only_mode_refuses_inconsistent_indices_without_writing(make_rag, s
     assert len(db_chunk_ids(session_factory)) == 2
 
 
+def test_startup_rebuilds_only_bm25_when_tokenizer_changes(make_rag, session_factory, monkeypatch):
+    rag = make_rag()
+    add_indexed_document(rag, session_factory, 1, "overtime.txt", OVERTIME)
+    rag.bm25_store.bm25_searcher.close()
+    monkeypatch.setattr(domain_profile, "domain_words", [*domain_profile.domain_words, "overtime requests"])
+
+    reloaded = make_rag()
+
+    assert reloaded.vector_store.local_embeddings.encoded_texts == 0
+    assert reloaded.bm25_store.tokenizer_matches()
+    signature_path = os.path.join(settings.BM25_INDEX_DIR, SIGNATURE_FILENAME)
+    with open(signature_path, encoding="utf-8") as f:
+        assert json.load(f) == tokenizers.tokenizer_signature()
+    assert bm25_sources(reloaded, "approval") == ["overtime.txt"]
+    assert_indices_match_database(reloaded, session_factory)
+
+
+def test_read_only_mode_refuses_changed_tokenizer(make_rag, session_factory, monkeypatch):
+    rag = make_rag()
+    add_indexed_document(rag, session_factory, 1, "overtime.txt", OVERTIME)
+    rag.bm25_store.bm25_searcher.close()
+    monkeypatch.setattr(domain_profile, "domain_words", [*domain_profile.domain_words, "overtime requests"])
+
+    with pytest.raises(RuntimeError, match="斷詞簽章"):
+        HybridContextualRAG(session_factory=session_factory, read_only=True)
+
+
 def load_evaluate_cli():
     path = Path(__file__).resolve().parent.parent / "scripts" / "evaluate_retrieval.py"
     spec = importlib.util.spec_from_file_location("evaluate_retrieval_cli", path)
@@ -352,10 +394,38 @@ def test_evaluate_retrieval_cli_runs_on_index_snapshot(make_rag, session_factory
     assert os.path.getmtime(live_faiss_path) == live_faiss_mtime
 
 
+def test_evaluate_retrieval_cli_compares_relevance_thresholds(make_rag, session_factory, index_dir, monkeypatch, capsys):
+    rag = make_rag()
+    add_indexed_document(rag, session_factory, 1, "overtime.txt", OVERTIME)
+    add_indexed_document(rag, session_factory, 2, "leave.txt", LEAVE)
+    rag.bm25_store.bm25_searcher.close()
+    golden = index_dir / "golden.jsonl"
+    golden.write_text(
+        json.dumps({"query": "seniority", "relevant_sources": ["leave.txt"]}) + "\n"
+        + json.dumps({"query": "parking", "relevant_sources": []}) + "\n",
+        encoding="utf-8",
+    )
+    cli = load_evaluate_cli()
+    monkeypatch.setattr(cli, "SessionLocal", session_factory)
+    monkeypatch.setattr(sys, "argv", [
+        "evaluate_retrieval.py", "--golden", str(golden), "--k", "1", "--relevance-thresholds", "0.5", "0.95",
+    ])
+
+    exit_code = cli.main()
+
+    out = capsys.readouterr().out
+    assert exit_code == 0
+    assert "門檻 0.5：MRR 1.000　hit@1 1.000　反例拒絕率 0.000" in out
+    assert "門檻 0.95：MRR 0.000　hit@1 0.000　反例拒絕率 1.000" in out
+
+
 @pytest.mark.asyncio
-async def test_rag_config_endpoint_reports_batch_size(rag, monkeypatch):
+async def test_rag_config_endpoint_reports_retrieval_settings(rag, monkeypatch):
     monkeypatch.setattr(admin_api, "get_rag_system", lambda: rag)
 
     config = await admin_api.get_rag_config(current_user={"username": "admin"})
 
     assert config["batch_size"] == rag.vector_store.batch_size
+    assert config["rrf_k"] == 60
+    assert config["rerank_relevance_threshold"] == 0.5
+    assert not {"hybrid_alpha", "normalization", "final_threshold"} & set(config)
