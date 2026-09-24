@@ -138,7 +138,7 @@
   - 提供 `ResearchToolRegistry` 原生工具集：內部知識庫搜尋（`search_knowledge_base`）、外部聯網搜尋（`web_search`，具備 Ollama 與 DuckDuckGo 雙引擎備援）與外部網頁內容深度抓取（`web_fetch`）。
 - **模型推理程度（Reasoning Effort）選擇機制**：
   - 前端頂部導覽列提供 5 檔位切換：`無 (None)`、`輕度 (Low)`、`標準 (Medium)`、`深度 (High)`、`極致 (X-High)`。
-  - 後端全面適配 Azure OpenAI v1 及 OpenAI 官方推理模型（GPT-5 系列、o1/o3/o4 系列），並依微軟 Foundry 規範自動處理工具調用時之相容性。
+  - 後端全面適配 Azure OpenAI v1 及 OpenAI 官方推理模型，並依微軟 Foundry 規範自動處理工具調用時之相容性。
 - **全新前端視覺與研究歷程展示**：
   - 新增 `ResearchTraceBlock`：可折疊之研究步驟時間軸與工具調用日誌展示。
   - 新增 `SourceBadges`：外部參考連結徽章，支援點擊直接另開視窗閱讀來源。

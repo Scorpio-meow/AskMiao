@@ -249,8 +249,8 @@ Returns the available language models and the default selection.
 
 ```json
 {
-  "models": ["gpt-4o", "gpt-4o-mini"],
-  "default": "gpt-4o"
+  "models": ["gpt-6-sol", "gpt-6-luna"],
+  "default": "gpt-6-sol"
 }
 ```
 
@@ -667,7 +667,7 @@ Ollama-compatible model listing endpoints used by the frontend model selector an
 
 ### 6.1 GET /api/tags
 
-**Response:** **200 OK** `{"tags": ["gpt-4o", "gpt-4o-mini"], "default": "gpt-4o"}`
+**Response:** **200 OK** `{"tags": ["gpt-6-sol", "gpt-6-luna"], "default": "gpt-6-sol"}`
 
 If no cloud provider key is configured, the backend tries to read the model list from `LLM_API_BASE` and finally falls back to the built-in list.
 

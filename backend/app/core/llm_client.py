@@ -31,9 +31,9 @@ async def close_llm_http_client():
     if _http_client is not None and not _http_client.is_closed:
         await _http_client.aclose()
         _http_client = None
-DEFAULT_OPENAI_MODELS = ["gpt-5.5", "gpt-5.4", "gpt-5.2", "gpt-4o", "gpt-4o-mini", "o3", "o3-mini", "o1"]
-DEFAULT_CLAUDE_MODELS = ["claude-opus-5", "claude-opus-4-8", "claude-opus-4-7", "claude-sonnet-4-6", "claude-sonnet-4-5", "claude-haiku-4-5", "claude-fable-5"]
-DEFAULT_GEMINI_MODELS = ["gemini-3.5-flash", "gemini-3.1-flash-lite", "gemini-3-pro", "gemini-2.5-flash"]
+DEFAULT_OPENAI_MODELS = ["gpt-6-sol", "gpt-6-luna", "gpt-6-astra", "gpt-5.6-sol", "gpt-5.6-luna", "gpt-5.6-terra", "gpt-5.4", "gpt-5.4-mini"]
+DEFAULT_CLAUDE_MODELS = ["claude-opus-5-5", "claude-fable-5-1", "claude-sonnet-5", "claude-opus-5", "claude-fable-5", "claude-opus-4-8", "claude-haiku-4-5"]
+DEFAULT_GEMINI_MODELS = ["gemini-3.5-flash", "gemini-3.1-flash-lite", "gemini-3-pro"]
 def is_azure_openai_enabled() -> bool:
     return bool(settings.AZURE_OPENAI_API_KEY and settings.AZURE_OPENAI_ENDPOINT)
 def get_available_models() -> List[str]:
@@ -50,7 +50,7 @@ def get_available_models() -> List[str]:
                 if dep not in models:
                     models.append(dep)
         else:
-            models.append("gpt-4o")
+            models.append("gpt-6-sol")
 
     if settings.OPENAI_API_KEY:
         for m in DEFAULT_OPENAI_MODELS:
