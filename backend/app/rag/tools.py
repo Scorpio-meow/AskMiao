@@ -1,3 +1,4 @@
+import asyncio
 import json
 import logging
 import re
@@ -6,6 +7,7 @@ import httpx
 from app.core.config import settings
 from app.core.error_response import log_and_get_error_id
 logger = logging.getLogger(__name__)
+WEB_TOOL_NAMES = ("web_search", "web_fetch")
 def clean_html(html_content: str) -> str:
     """清理 HTML 標籤並擷取核心文字內容"""
     if not html_content:
@@ -29,7 +31,7 @@ class ResearchToolRegistry:
             return {"error": "知識庫檢索器尚未初始化", "documents": []}
         
         try:
-            doc_score_pairs = self.retriever.smart_search(query)
+            doc_score_pairs = await asyncio.to_thread(self.retriever.smart_search, query)
             if target_document:
                 target_clean = target_document.strip().lower()
                 filtered = [
@@ -417,6 +419,8 @@ class ResearchToolRegistry:
                 }
             }
         ]
+        if not settings.ENABLE_WEB_SEARCH:
+            base_tools = [t for t in base_tools if t["function"]["name"] not in WEB_TOOL_NAMES]
 
         try:
             from app.models.database import SessionLocal
@@ -462,6 +466,8 @@ class ResearchToolRegistry:
         return base_tools
     async def execute_tool(self, name: str, arguments: Dict[str, Any]) -> Any:
         """執行指定名稱之工具並回傳結果"""
+        if name in WEB_TOOL_NAMES and not settings.ENABLE_WEB_SEARCH:
+            return {"error": f"聯網工具已停用（ENABLE_WEB_SEARCH=false）: {name}"}
         if name == "search_knowledge_base":
             query = arguments.get("query", "")
             top_k = int(arguments.get("top_k", 3))

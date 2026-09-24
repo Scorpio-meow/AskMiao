@@ -1,4 +1,5 @@
 import pytest
+from app.core.config import settings
 from app.rag.types import Document
 from app.rag.tools import ResearchToolRegistry
 from app.rag.agent import ResearchAgent
@@ -16,7 +17,8 @@ class MockRetriever:
         )
         return [(doc1, 0.95), (doc2, 0.82)]
 @pytest.mark.asyncio
-async def test_research_tool_registry():
+async def test_research_tool_registry(monkeypatch):
+    monkeypatch.setattr(settings, "ENABLE_WEB_SEARCH", True)
     retriever = MockRetriever()
     registry = ResearchToolRegistry(retriever=retriever)
     

@@ -1,73 +1,94 @@
-from typing import List, Dict, Any, Optional
+import json
+from dataclasses import dataclass
 from datetime import datetime
-import numpy as np
+from typing import Any, Dict, List, Sequence
+
 from .retrievers.hybrid import HybridRetriever
+
+
+@dataclass
+class RetrievalCase:
+    query: str
+    relevant_sources: List[str]
+
+
+def load_golden_set(path: str) -> List[RetrievalCase]:
+    """讀取 JSONL 標準問答集：每行 {"query": "...", "relevant_sources": ["檔名", ...]}"""
+    cases: List[RetrievalCase] = []
+    with open(path, encoding="utf-8") as f:
+        for line_number, line in enumerate(f, start=1):
+            line = line.strip()
+            if not line:
+                continue
+            record = json.loads(line)
+            query = record.get("query")
+            sources = record.get("relevant_sources")
+            if not isinstance(query, str) or not query.strip():
+                raise ValueError(f"{path} 第 {line_number} 行缺少 query")
+            if not isinstance(sources, list) or not sources or not all(isinstance(s, str) and s for s in sources):
+                raise ValueError(f"{path} 第 {line_number} 行的 relevant_sources 必須是非空的檔名陣列")
+            cases.append(RetrievalCase(query=query.strip(), relevant_sources=sources))
+    if not cases:
+        raise ValueError(f"{path} 沒有任何評估案例")
+    return cases
+
+
+def ranked_sources(doc_score_pairs) -> List[str]:
+    """依排名取出不重複的來源檔名（同一文件的多個片段只算一次）"""
+    sources: List[str] = []
+    for doc, _ in doc_score_pairs:
+        source = doc.metadata.get("source")
+        if source and source not in sources:
+            sources.append(source)
+    return sources
 
 
 class RAGEvaluator:
     def __init__(self, retriever: HybridRetriever):
         self.retriever = retriever
 
-    def evaluate_retrieval(
-        self,
-        test_queries: List[str],
-        gold_doc_ids: List[List[int]],
-        k_values: List[int] = [1, 3, 5, 10]
-    ) -> Dict[str, Any]:
-        if len(test_queries) != len(gold_doc_ids):
-            raise ValueError("Number of queries must match number of gold standard lists")
+    def evaluate(self, cases: Sequence[RetrievalCase], k_values: Sequence[int]) -> Dict[str, Any]:
+        """以線上實際使用的 smart_search 計算文件層級的 hit@k、recall@k 與 MRR"""
+        per_query = []
+        for case in cases:
+            ranking = ranked_sources(self.retriever.smart_search(case.query))
+            relevant = set(case.relevant_sources)
+            first_hit_rank = next((rank for rank, source in enumerate(ranking, start=1) if source in relevant), None)
+            per_query.append({
+                "query": case.query,
+                "relevant_sources": case.relevant_sources,
+                "retrieved_sources": ranking,
+                "first_hit_rank": first_hit_rank,
+                "hit": {k: bool(relevant & set(ranking[:k])) for k in k_values},
+                "recall": {k: len(relevant & set(ranking[:k])) / len(relevant) for k in k_values},
+                "reciprocal_rank": 1.0 / first_hit_rank if first_hit_rank else 0.0,
+            })
 
-        results: Dict[str, List[float]] = {f"recall@{k}": [] for k in k_values}
-        results.update({f"precision@{k}": [] for k in k_values})
-        results["mrr"] = []
-
-        for query, gold_ids in zip(test_queries, gold_doc_ids):
-            doc_score_pairs = self.retriever.hybrid_search(query, alpha=self.retriever.hybrid_alpha)
-            doc_score_pairs = self.retriever.rerank_with_cross_encoder(query, doc_score_pairs)
-            retrieved_doc_ids = [
-                doc.metadata.get("document_id", doc.metadata.get("original_doc_id", -1))
-                for doc, _ in doc_score_pairs
-            ]
-
-            for k in k_values:
-                top_k_retrieved = retrieved_doc_ids[:k]
-                relevant_retrieved = len(set(top_k_retrieved) & set(gold_ids))
-                recall = relevant_retrieved / len(gold_ids) if gold_ids else 0
-                results[f"recall@{k}"].append(recall)
-
-                precision = relevant_retrieved / k if k > 0 else 0
-                results[f"precision@{k}"].append(precision)
-
-            mrr = 0
-            for i, doc_id in enumerate(retrieved_doc_ids):
-                if doc_id in gold_ids:
-                    mrr = 1 / (i + 1)
-                    break
-            results["mrr"].append(mrr)
-
-        avg_results: Dict[str, Any] = {}
-        for metric, values in results.items():
-            avg_results[f"avg_{metric}"] = float(sum(values) / len(values)) if values else 0.0
-            avg_results[f"{metric}_std"] = float(np.std(values)) if values else 0.0
-
-        avg_results["num_queries"] = len(test_queries)
-        avg_results["evaluation_timestamp"] = datetime.now().isoformat()
-        return avg_results
+        total = len(per_query)
+        return {
+            "num_queries": total,
+            "hit_rate": {k: sum(q["hit"][k] for q in per_query) / total for k in k_values},
+            "recall": {k: sum(q["recall"][k] for q in per_query) / total for k in k_values},
+            "mrr": sum(q["reciprocal_rank"] for q in per_query) / total,
+            "per_query": per_query,
+            "evaluation_timestamp": datetime.now().isoformat(),
+        }
 
     def auto_tune_alpha(
         self,
-        test_queries: List[str],
-        gold_doc_ids: List[List[int]],
-        alphas: Optional[List[float]] = None
+        cases: Sequence[RetrievalCase],
+        k_values: Sequence[int],
+        alphas: Sequence[float]
     ) -> Dict[str, Any]:
-        if alphas is None:
-            alphas = [round(x, 2) for x in np.linspace(0.3, 0.9, 13)]
-
-        best: Dict[str, Any] = {"alpha": None, "avg_mrr": -1.0, "metrics": None}
-        for a in alphas:
-            self.retriever.hybrid_alpha = a
-            metrics = self.evaluate_retrieval(test_queries, gold_doc_ids)
-            if metrics.get("avg_mrr", 0) > best["avg_mrr"]:
-                best = {"alpha": a, "avg_mrr": metrics.get("avg_mrr", 0), "metrics": metrics}
-
+        """逐一嘗試 hybrid_alpha 並回傳 MRR 最高者；結束後還原原本的 alpha，是否套用由呼叫端決定"""
+        original_alpha = self.retriever.hybrid_alpha
+        best: Dict[str, Any] = {}
+        try:
+            for alpha in alphas:
+                self.retriever.hybrid_alpha = alpha
+                report = self.evaluate(cases, k_values)
+                if not best or report["mrr"] > best["mrr"]:
+                    best = {"alpha": alpha, "mrr": report["mrr"], "report": report}
+        finally:
+            self.retriever.hybrid_alpha = original_alpha
         return best

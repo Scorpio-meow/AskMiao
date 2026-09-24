@@ -2,6 +2,7 @@
 import logging
 import threading
 from typing import Optional
+from app.models.database import SessionLocal
 from app.rag.contextual_rag import HybridContextualRAG
 logger = logging.getLogger(__name__)
 class RAGManager:
@@ -14,7 +15,7 @@ class RAGManager:
             with cls._lock:
                 if cls._instance is None:
                     logger.info("Initializing global RAG instance...")
-                    cls._instance = HybridContextualRAG()
+                    cls._instance = HybridContextualRAG(session_factory=SessionLocal)
                     cls._initialized = True
                     logger.info("Global RAG instance initialized successfully")
         return cls._instance

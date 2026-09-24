@@ -1,9 +1,8 @@
 import json
 from datetime import datetime
-from typing import List, Optional
+from typing import Dict, List, Optional
 from sqlalchemy.orm import Session
 from app.models import User, Conversation, Message, MessageResponse, ConversationResponse
-from app.core.rag_manager import get_rag_system
 from app.core.config import settings
 DEFAULT_CONVERSATION_TITLE = settings.DEFAULT_CONVERSATION_TITLE
 MAX_TITLE_PREVIEW_LENGTH = 50
@@ -39,8 +38,28 @@ def _build_message_response(msg: Message) -> MessageResponse:
 class ChatService:
     def __init__(self):
         pass
-    def _get_rag_system(self):
-        return get_rag_system()
+    def get_recent_history(
+        self,
+        db: Session,
+        conversation_id: int,
+        before_message_id: int,
+        limit: int
+    ) -> List[Dict[str, str]]:
+        """讀取指定訊息之前的最近 limit 則訊息作為 Agent 前文（確保以使用者訊息開頭）"""
+        if limit <= 0:
+            return []
+        rows = db.query(Message).filter(
+            Message.conversation_id == conversation_id,
+            Message.id < before_message_id
+        ).order_by(Message.id.desc()).limit(limit).all()
+        history = [
+            {"role": "user" if msg.is_user else "assistant", "content": msg.content}
+            for msg in reversed(rows)
+            if msg.content
+        ]
+        while history and history[0]["role"] != "user":
+            history.pop(0)
+        return history
     async def create_conversation(self, db: Session, user_id: int, title: Optional[str] = None):
         conversation = Conversation(
             user_id=user_id,
@@ -150,12 +169,6 @@ class ChatService:
         db.query(Message).filter(Message.conversation_id == conversation_id).delete()
         db.delete(conversation)
         db.commit()
-        rag_system = self._get_rag_system()
-        memory_key = f"{user_id}:{conversation_id}"
-        if hasattr(rag_system, 'context_memory') and memory_key in rag_system.context_memory:
-            del rag_system.context_memory[memory_key]
-        if hasattr(rag_system, 'context_memory') and conversation_id in rag_system.context_memory:
-            del rag_system.context_memory[conversation_id]
         return True
     async def get_conversation_messages(
         self, 
