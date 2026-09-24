@@ -7,6 +7,7 @@ import sys
 import time
 from typing import Any, Dict, List, Optional, Tuple
 import httpx
+from app import __version__
 from app.core.ssrf_protection import reject_unsafe_request
 logger = logging.getLogger(__name__)
 MCP_PROTOCOL_VERSION = "2024-11-05"
@@ -146,7 +147,7 @@ class McpStdioClient:
                 },
                 "clientInfo": {
                     "name": "AskMiao-MCP-Client",
-                    "version": "1.0.0"
+                    "version": __version__
                 }
             }
         )
@@ -213,7 +214,7 @@ class McpHttpClient:
             "capabilities": {},
             "clientInfo": {
                 "name": "AskMiao-MCP-Client",
-                "version": "1.0.0"
+                "version": __version__
             }
         })
     async def list_tools(self) -> List[Dict[str, Any]]:

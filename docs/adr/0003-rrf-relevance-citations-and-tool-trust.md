@@ -81,3 +81,4 @@
 
 - **升級**：在 `.env` 加入 `RRF_K`、`RERANK_RELEVANCE_THRESHOLD`、`WEB_FETCH_ALLOWED_DOMAINS`、`BLOCK_WEB_TOOLS_AFTER_KB`、`DOMAIN_PROFILE_PATH` 後再啟動。舊的 `HYBRID_ALPHA`、`NORMALIZATION`、`FINAL_THRESHOLD` 會被忽略。首次啟動時既有 BM25 索引沒有斷詞簽章，會自動依資料庫片段重建 BM25，向量不需重算。
 - **回退**：退回舊版程式前先刪除 `BM25_INDEX_DIR` 目錄，舊版啟動時會依資料庫重建 BM25。若不刪除，舊版會用未轉小寫的查詢比對已轉小寫的索引，含大寫字母的詞項（如 `MES`）將對不到。
+- **從 2.2.x 升級**：上述步驟針對已採用 chunk_id 索引的版本。3.0.0 同時包含 [ADR-0005](./0005-chunk-id-index-and-database-source-of-truth.md) 的索引格式變更，從 2.2.x 升級必須重建一次完整索引，步驟見 [升級指南](../upgrading.md)。
