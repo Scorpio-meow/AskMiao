@@ -1,15 +1,31 @@
 import os
+import re
 from pathlib import Path
 from typing import List, Optional
-from pydantic import Field
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 BACKEND_DIR = Path(__file__).resolve().parents[2]
 ENV_PATH = BACKEND_DIR / ".env"
+# 相對路徑一律以 backend/ 為基準，避免從其他目錄啟動時指到錯誤位置
+PATH_SETTING_KEYS = (
+    "UPLOAD_DIR",
+    "DATA_DIR",
+    "FAISS_INDEX_PATH",
+    "BM25_INDEX_DIR",
+    "METADATA_PATH",
+    "HF_HOME",
+    "HF_HUB_CACHE",
+    "SENTENCE_TRANSFORMERS_HOME",
+    "DOMAIN_PROFILE_PATH",
+    "JIEBA_DICTIONARY",
+)
+DOMAIN_NAME_PATTERN = re.compile(r"[a-z0-9-]+(\.[a-z0-9-]+)*")
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_file=ENV_PATH,
         env_file_encoding="utf-8",
-        extra="ignore"
+        extra="ignore",
+        validate_default=True
     )
     LLM_API_BASE: str = "http://localhost:5000"
     LLM_TIMEOUT: float = 120.0
@@ -18,6 +34,10 @@ class Settings(BaseSettings):
     OLLAMA_TEMPERATURE: Optional[float] = None
     OLLAMA_NUM_PREDICT: Optional[int] = None
     ENABLE_WEB_SEARCH: bool
+    # web_fetch 可讀取的網域（含子網域），逗號分隔；明確寫 * 才表示不限制
+    WEB_FETCH_ALLOWED_DOMAINS: str
+    # 同一次提問中知識庫工具回傳過內容後，是否拒絕 web_search 與 web_fetch
+    BLOCK_WEB_TOOLS_AFTER_KB: bool
     AGENT_MAX_TURNS: int = Field(ge=1)
     CONVERSATION_HISTORY_MESSAGES: int = Field(ge=0)
     AZURE_OPENAI_API_KEY: Optional[str] = None
@@ -74,12 +94,16 @@ class Settings(BaseSettings):
     FAISS_GPU_TEMP_MEMORY: int = 2147483648
     SIMILARITY_THRESHOLD: float = 0.30
     TOP_K: int = 30
+    RRF_K: int = Field(ge=1)
     RERANK_TOP_K: int = 50
     FINAL_K: int = 8
     RERANK_WEIGHT: float = 0.85
-    FINAL_THRESHOLD: float = 0.15
-    HYBRID_ALPHA: float = 0.75
-    NORMALIZATION: str = "max"
+    # 重排模型機率低於此值的片段視為無關（精確比對到網址、貼文 ID、日期者除外）
+    RERANK_RELEVANCE_THRESHOLD: float = Field(ge=0.0, le=1.0)
+    # 領域詞、結構化記錄日期欄位與摘要備援規則（JSON）
+    DOMAIN_PROFILE_PATH: str
+    # 選填：替換 jieba 主詞典（例如繁體較友善的 dict.txt.big），未設定時使用 jieba 內建詞典
+    JIEBA_DICTIONARY: Optional[str] = None
     CHUNK_SIZE: int = 800
     CHUNK_OVERLAP: int = 150
     MAX_FILE_SIZE_MB: int = 50
@@ -96,6 +120,28 @@ class Settings(BaseSettings):
     ENABLE_BATCH_ACCUMULATION: bool = False
     BATCH_ACCUMULATOR_SIZE: int = 32
     BASE_URL: str = "http://backend:8001"
+    @field_validator(*PATH_SETTING_KEYS)
+    @classmethod
+    def _resolve_backend_relative_path(cls, value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return None
+        path = Path(value).expanduser()
+        return str(path if path.is_absolute() else (BACKEND_DIR / path).resolve())
+    @field_validator("WEB_FETCH_ALLOWED_DOMAINS")
+    @classmethod
+    def _validate_web_fetch_domains(cls, value: str) -> str:
+        domains = [d.strip().lower() for d in value.split(",") if d.strip()]
+        if not domains:
+            raise ValueError("WEB_FETCH_ALLOWED_DOMAINS 不可為空；不限制網域請明確設定為 *")
+        if "*" in domains and len(domains) > 1:
+            raise ValueError("WEB_FETCH_ALLOWED_DOMAINS 設為 * 時不可再列其他網域")
+        invalid = [d for d in domains if d != "*" and not DOMAIN_NAME_PATTERN.fullmatch(d)]
+        if invalid:
+            raise ValueError(f"WEB_FETCH_ALLOWED_DOMAINS 含無效網域（只填網域，不含通訊協定與路徑）：{', '.join(invalid)}")
+        return ",".join(domains)
+    @property
+    def web_fetch_allowed_domains(self) -> List[str]:
+        return self.WEB_FETCH_ALLOWED_DOMAINS.split(",")
     @property
     def allowed_origins_list(self) -> List[str]:
         if not self.ALLOWED_ORIGINS:

@@ -84,6 +84,8 @@ bun run dev
    - 內建 ReAct 自主研究 Agent（`ResearchAgent`），支援原生工具調用（Native Tool Calling）。
    - 提供內部知識庫搜尋（`search_knowledge_base`）、外部即時聯網搜尋（`web_search`，支援 Ollama 與 DuckDuckGo 雙引擎備援）與深度網頁抓取（`web_fetch`）。
    - 前端即時呈現可折疊之結構化研究歷程（Research Trace Timeline）與可點擊跳轉之來源標籤（Source Badges）。
+   - 回答以 `[n]` 標註出處，來源標籤只列出答案實際引用的片段或網頁；知識庫查無相關資料時照實回報。
+   - 工具結果一律標記為不可信資料；`web_fetch` 只能讀取使用者訊息或本次工具結果中原樣出現過的網址，並可限制網域、在讀取知識庫內容後停用聯網工具。
 
 2. **多檔位模型推理程度（Reasoning Effort）選擇**：
    - 頂部導覽列支援切換五種推理深度檔位：`無 (None)`、`輕度 (Low)`、`標準 (Medium)`、`深度 (High)`、`極致 (X-High)`。
@@ -91,9 +93,9 @@ bun run dev
    - 依微軟 Foundry 規範自動處理工具調用與推理相容性限制。
 
 3. **模組化增強型混合 RAG 檢索引擎**：
-   - 結合 FAISS 稠密向量搜尋（Dense Retrieval）與 Whoosh BM25 中文稀疏文字檢索（Sparse Retrieval）。
-   - 搭配 Cross-Encoder (`ms-marco-MiniLM-L-6-v2` / `bge-reranker-base`) 進行加權重排序，確保知識檢索精準度。
-   - 支援自動動態調整 Alpha 權重與 RAG 檢索評估指標（Hit Rate, MRR）。
+   - 結合 FAISS 稠密向量搜尋（Dense Retrieval）與 Whoosh BM25 中文稀疏文字檢索（Sparse Retrieval），兩軌每次必跑並以 RRF（Reciprocal Rank Fusion）依名次融合。
+   - 搭配 Cross-Encoder（`bge-reranker-base`）重排序，並以重排模型機率套用相關性門檻，過濾無關片段。
+   - 提供 RAG 檢索評估指標（Hit Rate、MRR、反例拒絕率），可用同一次重排結果比較多個相關性門檻。
 
 4. **多模型提供商彈性整合**：
    - 提供統一的 LLM 調用抽象層，支援 Azure OpenAI v1、OpenAI 官方 API、Anthropic Claude、Google Gemini 與本地 Ollama 模型動態切換與自動多模型清單拆分。
@@ -201,6 +203,7 @@ AskMiao/
 │   │   │   └── tags.py             # 相容 Ollama 之模型清單端點
 │   │   ├── core/                   # 核心設定、安全認證、日誌脫敏與 LLM 客戶端
 │   │   │   ├── config.py           # 系統全域環境變數配置
+│   │   │   ├── domain_profile.py   # 領域設定檔載入與格式驗證
 │   │   │   ├── jwt_auth.py         # RSA-2048 JWT 簽章與驗證
 │   │   │   ├── llm_client.py       # 多提供商 LLM 統一調用層
 │   │   │   ├── security_logging.py # 敏感資料雙層遮罩日誌系統
@@ -209,10 +212,11 @@ AskMiao/
 │   │   ├── models/                 # SQLAlchemy ORM 與 Pydantic 驗證模型
 │   │   ├── rag/                    # 模組化 RAG 與 Agentic 研究核心
 │   │   │   ├── agent.py            # ReAct 自主研究 Agent（含多模態輸入組裝）
+│   │   │   ├── research_session.py # 單次提問的引用編號、網址來源限制與不可信資料包裝
 │   │   │   ├── tools.py            # 內建工具集與自訂 / MCP 工具動態註冊
 │   │   │   ├── pipeline.py         # RAG 執行管線與上下文組裝
 │   │   │   ├── contextual_rag.py   # HybridContextualRAG 門面模組
-│   │   │   ├── evaluator.py        # 檢索評估與自動 Alpha 調優
+│   │   │   ├── evaluator.py        # 檢索評估與相關性門檻比較
 │   │   │   ├── indices/            # FAISS 與 BM25 索引管理模組
 │   │   │   └── retrievers/         # 混合檢索與 Cross-Encoder 重排序器
 │   │   ├── services/               # 業務邏輯服務層
@@ -222,6 +226,7 @@ AskMiao/
 │   │   │   └── mcp_service.py      # MCP stdio / HTTP 用戶端與工具轉換
 │   │   └── tasks/                  # 背景排程任務 (定時索引重建、上傳監控)
 │   ├── tests/                      # 後端測試（自主研究、工具、MCP、SSRF）
+│   ├── config/                     # 領域設定檔（domain_profile.json）
 │   ├── main.py                     # FastAPI 應用程式主進入點
 │   ├── init_db.py                  # 資料庫初始化與預設管理員建立腳本
 │   └── requirements.txt            # Python 依賴清單
@@ -269,6 +274,8 @@ AskMiao/
 | `ENABLE_WEB_SEARCH` | 是否啟用 Agent 聯網工具（同時控制 `web_search` 與 `web_fetch`） | `true` | 是 |
 | `AGENT_MAX_TURNS` | Agent 單次提問的工具調用輪數上限（≥1） | `5` | 是 |
 | `CONVERSATION_HISTORY_MESSAGES` | 提問時從資料庫帶入的前文訊息數（0 表示不帶前文） | `6` | 是 |
+| `WEB_FETCH_ALLOWED_DOMAINS` | `web_fetch` 可讀取的網域（含子網域，逗號分隔）；明確寫 `*` 才表示不限制 | `*` | 是 |
+| `BLOCK_WEB_TOOLS_AFTER_KB` | 同一次提問中知識庫工具回傳過內容後，拒絕 `web_search` 與 `web_fetch` | `true` | 是 |
 | `AZURE_OPENAI_API_KEY` | Azure OpenAI API 金鑰 | `your_azure_api_key` | 否 |
 | `AZURE_OPENAI_ENDPOINT` | Azure OpenAI v1 服務端點 URL | `https://your-resource.openai.azure.com` | 否 |
 | `AZURE_OPENAI_DEPLOYMENT` | Azure OpenAI 部署名稱（支援逗號分隔多模型） | `gpt-4o,gpt-4o-mini` | 否 |
@@ -280,19 +287,23 @@ AskMiao/
 | `GEMINI_VISION_MODEL` | 多模態圖片理解所用之 Gemini 模型 | `gemini-2.5-flash` | 否 |
 | `AVAILABLE_MODELS` | 手動指定前端可選模型清單（逗號分隔） | 空值 | 否 |
 | `EMBEDDING_MODEL` | 向量嵌入模型名稱 | `BAAI/bge-small-zh-v1.5` | 否 |
-| `RERANKER_MODEL` | Cross-Encoder 重排序模型名稱 | `BAAI/bge-reranker-base` | 否 |
+| `RERANKER_MODEL` | Cross-Encoder 重排序模型名稱（必要元件，載入失敗時後端無法啟動） | `BAAI/bge-reranker-base` | 否 |
 | `HF_HOME` | Hugging Face 模型快取目錄（未設定時使用 `~/.cache/huggingface`） | `./data/hf_home` | 否 |
 | `HF_HUB_OFFLINE` | 只從快取離線載入模型，啟動時不連線檢查更新 | `true` | 否 |
 | `CHUNK_SIZE` / `CHUNK_OVERLAP` | 文件切塊大小與重疊字元數 | `300` / `100` | 否 |
-| `HYBRID_ALPHA` | 向量與 BM25 分數融合權重 | `0.75` | 否 |
+| `RRF_K` | RRF 融合常數，分數 = Σ 1 / (`RRF_K` + 名次) | `60` | 是 |
+| `RERANK_TOP_K` | 融合後送入重排的候選數（重排耗時與此值及片段長度成正比） | `20` | 否 |
+| `RERANK_RELEVANCE_THRESHOLD` | 重排模型機率低於此值的片段視為無關；精確比對到網址、貼文 ID、日期者不受限制 | `0.2` | 是 |
 | `FINAL_K` | 最終送入 LLM 之片段數量 | `8` | 否 |
+| `DOMAIN_PROFILE_PATH` | 領域設定檔（領域詞、記錄日期欄位、摘要備援規則） | `config/domain_profile.json` | 是 |
+| `JIEBA_DICTIONARY` | 替換 jieba 主詞典（例如繁體較友善的 `dict.txt.big`）；變更後 BM25 索引自動重建 | 空值 | 否 |
 | `MAX_FILE_SIZE_MB` | 單一上傳檔案大小上限 | `10` | 否 |
 | `ACCESS_TOKEN_EXPIRE_MINUTES` | Access Token 有效分鐘數 | `30` | 否 |
 | `REFRESH_TOKEN_EXPIRE_DAYS` | Refresh Token 有效天數 | `7` | 否 |
 | `ALLOWED_ORIGINS` | CORS 允許來源（逗號分隔） | `http://localhost:3001` | 否 |
 | `RATE_LIMIT_ENABLED` / `RATE_LIMIT_PER_MINUTE` | 速率限制開關與每分鐘上限 | `true` / `60` | 否 |
 
-> 完整變數清單請參閱 [`backend/.env.example`](./backend/.env.example) 與 [`backend/app/core/config.py`](./backend/app/core/config.py)。
+> 完整變數清單請參閱 [`backend/.env.example`](./backend/.env.example) 與 [`backend/app/core/config.py`](./backend/app/core/config.py)。路徑類設定（`DATA_DIR`、`UPLOAD_DIR`、索引路徑、`HF_*`、`DOMAIN_PROFILE_PATH`、`JIEBA_DICTIONARY`）若為相對路徑，一律以 `backend/` 為基準。`HYBRID_ALPHA`、`NORMALIZATION`、`FINAL_THRESHOLD` 已移除，留在 `.env` 中會被忽略。
 
 ### 前端環境變數 (`frontend/.env`)
 

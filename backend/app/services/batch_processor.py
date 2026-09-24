@@ -131,7 +131,7 @@ class EmbeddingBatchProcessor:
             logger.error(f"批次編碼失敗: {e}")
             raise
     
-    async def search_batch(self, queries: List[str]) -> List[List[Tuple]]:
+    async def search_batch(self, queries: List[str]) -> List[List[Any]]:
         results = []
         for query in queries:
             result = self.rag_system.smart_search(query)

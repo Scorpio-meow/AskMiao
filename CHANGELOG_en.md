@@ -11,12 +11,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+> **Breaking change**: `.env` must now define `RRF_K`, `RERANK_RELEVANCE_THRESHOLD`, `WEB_FETCH_ALLOWED_DOMAINS`, `BLOCK_WEB_TOOLS_AFTER_KB`, and `DOMAIN_PROFILE_PATH`, or the backend refuses to start; the reranker is now a required component. See [ADR-0003](docs/adr/0003-rrf-relevance-citations-and-tool-trust_en.md) for upgrade and rollback steps.
+
+### Added
+- **RRF fusion and relevance threshold**: vector search and BM25 always both run and are merged by rank with standard RRF (`RRF_K`); `RERANK_RELEVANCE_THRESHOLD` applies directly to the reranker probability, exact URL, post ID, and date matches are exempt, and when nothing passes the tool reports that the knowledge base has nothing relevant.
+- **Citations mapped to sources**: each question builds a citation table (`app/rag/research_session.py`), answers cite evidence as `[n]`, and `sources_detail` lists only the cited entries with a `citation` number; frontend badges now read like "[2] 員工手冊.pdf（段落 3）".
+- **Domain profile**: new `backend/config/domain_profile.json` and `DOMAIN_PROFILE_PATH` hold domain words, record date fields, and summary fallback rules, validated at startup; the optional `JIEBA_DICTIONARY` replaces the jieba main dictionary.
+- **Threshold calibration**: golden sets accept negatives with `"relevant_sources": []`, and `scripts/evaluate_retrieval.py` gains `--relevance-thresholds` to compare several thresholds over one rerank pass (positive hit@k and MRR, negative rejection rate).
+
 ### Changed
+- When the model stops calling tools, its answer is used as is instead of being regenerated, and fake streaming is removed; the answer is streamed from a fresh call only when the turn limit is reached or the model returns empty content.
+- The reranker is a required component: the backend refuses to start if it cannot load, and a reranking failure at query time returns an error code instead of unfiltered chunks.
+- `search_knowledge_base` with `target_document` restricts candidates before reranking and no longer falls back to the whole library.
+- BM25 tokens are always lowercased; the index directory records a tokenizer signature, BM25 is rebuilt automatically on a mismatch (vectors are not recomputed), and read-only evaluation refuses to run.
+- Relative path settings (`DATA_DIR`, `UPLOAD_DIR`, index paths, `HF_*`, `DOMAIN_PROFILE_PATH`, `JIEBA_DICTIONARY`) are always resolved against `backend/`.
+- The `RERANK_TOP_K` example value in `.env.example` changed from 50 to 20.
+- `/api/admin/rag-config` now returns `rrf_k` and `rerank_relevance_threshold` and drops `hybrid_alpha`, `final_threshold`, and `normalization`.
 - Realigned the documentation set with the current implementation:
   - `docs/api.md` and `docs/api_en.md` rewritten against the actual routers, adding the SSE streaming event contract, custom API tool and MCP endpoints, model listings, and admin endpoints, and removing the no longer existing workflow module plus the `/api/documents/list` and `/api/documents/bulk_delete` sections.
   - `docs/architecture.md` and `docs/architecture_en.md` updated (Redis and the multi-agent board removed) with new sections on external tool / MCP integration, SSRF protection, and the error code mechanism.
   - `README.md` and `README_en.md` updated with the new feature list, directory structure, and environment matrix, plus corrected database and frontend port guidance.
   - `llms.txt` and `llms_en.txt` extended with the new modules and system constraints.
+
+### Removed
+- The `HYBRID_ALPHA`, `NORMALIZATION`, and `FINAL_THRESHOLD` settings and `auto_tune_alpha` (ignored if left in `.env`); query-type routing and the hard-coded FAQ keyword check.
+- The hidden auto-loading of `data/jieba_dict.txt`; custom words now always live in the domain profile.
+- The `documents_update` WebSocket notification sent by the uploads watcher, which the frontend never received.
+
+### Fixed
+- The relevance threshold applied to the mixed score, so the top candidate always scored 0.15 and passed, and at least one irrelevant chunk always reached the model.
+- Chunks found only by BM25 never reached the rerank candidates after weighted fusion.
+- The uploads watcher deleted index and database records when an uploaded file went missing, and starting from another directory marked every document as missing; it now logs a single warning instead.
+
+### Security
+- Every tool result is wrapped in an `<untrusted_tool_result>` marker whose id changes per question, and the system prompt treats it as data only.
+- `web_fetch` may only read URLs that appear verbatim in the user's message or in this question's built-in tool results (query arguments echoed by tools do not count); new `WEB_FETCH_ALLOWED_DOMAINS` domain allowlist and `BLOCK_WEB_TOOLS_AFTER_KB` (web tools disabled once knowledge-base content has been read).
 
 ---
 

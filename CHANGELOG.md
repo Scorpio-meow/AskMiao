@@ -8,12 +8,41 @@
 
 ## [Unreleased]
 
+> **破壞性變更**：`.env` 須新增必填的 `RRF_K`、`RERANK_RELEVANCE_THRESHOLD`、`WEB_FETCH_ALLOWED_DOMAINS`、`BLOCK_WEB_TOOLS_AFTER_KB`、`DOMAIN_PROFILE_PATH`，否則後端無法啟動；重排模型改為必要元件。升級與回退步驟見 [ADR-0003](docs/adr/0003-rrf-relevance-citations-and-tool-trust.md)。
+
+### Added
+- **RRF 融合與相關性門檻**：向量與 BM25 每次必跑，以標準 RRF（`RRF_K`）依名次融合；`RERANK_RELEVANCE_THRESHOLD` 直接套在重排機率上，精確比對到網址、貼文 ID、日期者不受限制，全部未通過時回報「知識庫中查無相關資料」。
+- **引用對應來源**：每次提問建立引用編號表（`app/rag/research_session.py`），答案以 `[n]` 標註出處，`sources_detail` 只列實際被引用的條目並附 `citation` 編號；前端標籤改為「[2] 員工手冊.pdf（段落 3）」格式。
+- **領域設定檔**：新增 `backend/config/domain_profile.json` 與 `DOMAIN_PROFILE_PATH`，收納領域詞、記錄日期欄位與摘要備援規則，啟動時驗證格式；選填 `JIEBA_DICTIONARY` 可替換 jieba 主詞典。
+- **門檻校準工具**：問答集允許 `"relevant_sources": []` 的反例；`scripts/evaluate_retrieval.py` 新增 `--relevance-thresholds`，對同一次重排結果比較多個門檻的正例 hit@k、MRR 與反例拒絕率。
+
 ### Changed
+- 模型不再呼叫工具時直接採用該次答案，不再重新生成，並移除假串流；只有工具輪數用完或模型回傳空內容時才以串流生成。
+- 重排模型改為必要元件：載入失敗時啟動報錯，執行時重排失敗回傳錯誤代碼，不再回傳未過濾的片段。
+- `search_knowledge_base` 指定 `target_document` 時在重排前限定文件，查不到不再改用全庫結果。
+- BM25 斷詞結果一律轉小寫；索引目錄記錄斷詞簽章，簽章不符時自動重建 BM25（向量不需重算），唯讀評估則拒絕執行。
+- 設定中的相對路徑（`DATA_DIR`、`UPLOAD_DIR`、索引路徑、`HF_*`、`DOMAIN_PROFILE_PATH`、`JIEBA_DICTIONARY`）一律以 `backend/` 為基準。
+- `.env.example` 的 `RERANK_TOP_K` 範例值由 50 改為 20。
+- `/api/admin/rag-config` 改回傳 `rrf_k` 與 `rerank_relevance_threshold`，移除 `hybrid_alpha`、`final_threshold`、`normalization`。
 - 全面校正專案文件與現行實作之落差：
   - `docs/api.md`、`docs/api_en.md` 依實際路由重寫，補上 SSE 串流事件規格、自訂 API 工具與 MCP 端點、模型清單與管理後台端點，並移除已不存在之工作流（Workflow）與 `/api/documents/list`、`/api/documents/bulk_delete` 章節。
   - `docs/architecture.md`、`docs/architecture_en.md` 更新分層架構圖（移除 Redis 與多 Agent 看板），新增外部工具與 MCP 整合架構、SSRF 防護與錯誤代碼機制章節。
   - `README.md`、`README_en.md` 更新功能列表、目錄結構與環境變數矩陣，修正資料庫與前端埠號說明。
   - `llms.txt`、`llms_en.txt` 補齊新增模組之檔案地圖與系統約束。
+
+### Removed
+- `HYBRID_ALPHA`、`NORMALIZATION`、`FINAL_THRESHOLD` 設定與 `auto_tune_alpha`（留在 `.env` 中會被忽略）；依查詢型態分流與寫死的 FAQ 關鍵字判斷。
+- `data/jieba_dict.txt` 存在即自動載入的隱藏機制；自訂詞一律放在領域設定檔。
+- uploads watcher 發出、但前端沒有接收的 `documents_update` WebSocket 通知。
+
+### Fixed
+- 相關性門檻套在混合分數上，第一名一定拿到 0.15 而過門檻，導致永遠至少送一段無關片段給模型。
+- 只有 BM25 找到的片段在加權融合後進不了重排候選。
+- uploads watcher 在上傳檔不見時刪除索引與資料庫紀錄；從其他目錄啟動時會把所有文件判為遺失。現改為只記一次警告。
+
+### Security
+- 工具結果一律包在每次提問 id 不同的 `<untrusted_tool_result>` 標記內，系統提示規定只當資料看。
+- `web_fetch` 只能讀取使用者訊息或本次內建工具結果中原樣出現過的網址（工具回聲的查詢參數不算）；新增網域白名單 `WEB_FETCH_ALLOWED_DOMAINS` 與 `BLOCK_WEB_TOOLS_AFTER_KB`（讀過知識庫內容後停用聯網工具）。
 
 ---
 

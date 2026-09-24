@@ -28,7 +28,7 @@ After evaluation, the engineering team adopted the following architectural solut
 ### 1. Contextual Hybrid RAG Pipeline
 
 - Combines **FAISS dense vector retrieval** (powered by `BAAI/bge-small-zh-v1.5`) and **Whoosh BM25 keyword search** (with `Jieba` segmentation).
-- Merges candidate passages via score normalization fusion and re-ranks Top-K contexts using a **Cross-Encoder model (`bge-reranker-base`)**.
+- ~~Merges candidate passages via score normalization fusion~~ (**superseded**: since 2026-09-24 both tracks always run and are merged with standard RRF, see [ADR-0003](./0003-rrf-relevance-citations-and-tool-trust_en.md)) and re-ranks Top-K contexts using a **Cross-Encoder model (`bge-reranker-base`)**.
 
 ### 2. RSA-2048 Dual-Token Auth & Redis Revocation Blacklist
 
@@ -62,3 +62,4 @@ After evaluation, the engineering team adopted the following architectural solut
 - **2026-08-24 | Token revocation list moved in-process**: the architecture lightening pass dropped the Redis dependency; `TokenBlacklist` in `app/core/redis_client.py` now keeps the revocation list in process memory and prunes expired entries automatically. Trade-off: no external service is required, but the list resets on backend restart (unexpired tokens become valid again), and a multi-process deployment would need shared storage again.
 - **2026-08-24 | Multi-agent collaboration board removed**: the project focuses on knowledge base Q&A and agentic research; the discussion board and workflow module were retired.
 - **2026-09-01 | Outbound request safety**: the security design for external calls is now governed by [ADR-0002](./0002-external-tools-and-outbound-safety_en.md).
+- **2026-09-24 | Score normalization fusion superseded**: fusion now runs both tracks every time and merges them with standard RRF, the relevance threshold applies to the reranker probability, and the reranker is a required component; see [ADR-0003](./0003-rrf-relevance-citations-and-tool-trust_en.md). Measured CPU reranking takes about 0.2 to 0.4 s per pair, far above the tens of milliseconds estimated above.

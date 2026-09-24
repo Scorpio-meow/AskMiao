@@ -196,14 +196,14 @@
         <article class="cell cell--c reveal">
           <div class="cell__icon"><svg class="icon" aria-hidden="true"><use href="#i-magnifying-glass"></use></svg></div>
           <h3>混合檢索與重排序</h3>
-          <p>FAISS 稠密向量與 Whoosh BM25（Jieba 中文分詞）並行檢索，歸一化分數融合後交給 Cross-Encoder 重排，只把最相關的片段送進模型。內建 Hit Rate 與 MRR 評估，可自動調整融合權重。</p>
+          <p>FAISS 稠密向量與 Whoosh BM25（Jieba 中文分詞）每次都並行檢索，以 RRF 依名次融合後交給 Cross-Encoder 重排，重排機率未過門檻的片段不會送進模型。內建 Hit Rate、MRR 與反例拒絕率評估，可比較多個相關性門檻。</p>
           <div class="flow" aria-label="檢索流程">
             <div class="flow__pair">
               <span class="chip">FAISS 向量</span>
               <span class="chip">BM25 關鍵字</span>
             </div>
             <svg class="icon" aria-hidden="true"><use href="#i-arrow-right"></use></svg>
-            <span class="chip">分數融合 α 0.75</span>
+            <span class="chip">RRF 融合</span>
             <svg class="icon" aria-hidden="true"><use href="#i-arrow-right"></use></svg>
             <span class="chip">Cross-Encoder</span>
             <svg class="icon" aria-hidden="true"><use href="#i-arrow-right"></use></svg>
@@ -303,11 +303,11 @@
           <article class="step reveal" data-step="2">
             <span class="step__label">backend/app/rag/retrievers/hybrid.py</span>
             <h3>混合檢索與重排序</h3>
-            <p>知識庫檢索由 FAISS 向量搜尋與 BM25 關鍵字搜尋並行完成，分數歸一化後以 HYBRID_ALPHA 加權融合，再由 Cross-Encoder 重排，取前 FINAL_K 段組成上下文。文件切塊、融合權重與片段數量都可由環境變數調整。</p>
+            <p>知識庫檢索每次都由 FAISS 向量搜尋與 BM25 關鍵字搜尋並行完成，以 RRF 依名次融合，再由 Cross-Encoder 重排並套用相關性門檻，取前 FINAL_K 段組成上下文。文件切塊、RRF 常數、相關性門檻與片段數量都可由環境變數調整。</p>
             <div class="chips" aria-label="預設參數">
               <span class="chip">CHUNK_SIZE 300</span>
               <span class="chip">CHUNK_OVERLAP 100</span>
-              <span class="chip">HYBRID_ALPHA 0.75</span>
+              <span class="chip">RRF_K 60</span>
               <span class="chip">FINAL_K 8</span>
               <span class="chip">bge-small-zh-v1.5</span>
               <span class="chip">bge-reranker-base</span>
@@ -316,7 +316,7 @@
           <article class="step reveal" data-step="3">
             <span class="step__label">text/event-stream</span>
             <h3>SSE 事件串流</h3>
-            <p>後端以 Server-Sent Events 回應。前端一收到 step_start 就在時間軸上顯示進行中的步驟，token 逐字渲染 Markdown，sources 到達時掛上來源標籤；例外只會以錯誤代碼出現在 error 事件。</p>
+            <p>後端以 Server-Sent Events 回應。前端一收到 step_start 就在時間軸上顯示進行中的步驟，token 即時渲染 Markdown，sources 到達時依答案中的 [n] 掛上來源標籤；例外只會以錯誤代碼出現在 error 事件。</p>
             <pre class="code" aria-label="SSE 事件序列"><span class="k">event: start</span>       <span class="c">{"conversation_id": 42, "user_message_id": 814}</span>
 <span class="k">event: step_start</span>  <span class="c">{"step": 1, "tool": "search_knowledge_base", "arguments": {...}}</span>
 <span class="k">event: step_end</span>    <span class="c">{"step": 1, "duration_seconds": 1.42, "status": "success", ...}</span>

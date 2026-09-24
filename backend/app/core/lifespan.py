@@ -4,7 +4,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from app.core.config import settings
 from app.models.database import create_tables
-from app.tasks.uploads_watcher import scan_and_cleanup_uploads
+from app.tasks.uploads_watcher import watch_missing_uploads
 from app.core.rag_manager import get_rag_system
 logger = logging.getLogger(__name__)
 @asynccontextmanager
@@ -18,7 +18,7 @@ async def lifespan(app: FastAPI):
     logger.info(f"RAG system initialized: {rag_system.get_vector_store_info()}")
     
     uploads_watcher_task = asyncio.create_task(
-        scan_and_cleanup_uploads(settings.UPLOADS_WATCHER_INTERVAL)
+        watch_missing_uploads(settings.UPLOADS_WATCHER_INTERVAL)
     )
     app.state._uploads_watcher_task = uploads_watcher_task
     logger.info("Uploads watcher task started")

@@ -28,7 +28,7 @@ AskMiao 作為智慧對話與多 Agent 協作系統，在知識庫檢索與安�
 ### 1. 增強型混合 RAG 管道 (Hybrid RAG Pipeline)
 
 - 結合 **FAISS 向量檢索**（使用 `BAAI/bge-small-zh-v1.5` 模型）與 **Whoosh BM25 關鍵字檢索**（配合 `Jieba` 分詞）。
-- 採用分數歸一化融合演算法，並引入 **Cross-Encoder 模型 (`bge-reranker-base`)** 進行 Top-K 文本片段重排序。
+- ~~採用分數歸一化融合演算法~~（**已被取代**：自 2026-09-24 起改為兩軌必跑的標準 RRF 融合，見 [ADR-0003](./0003-rrf-relevance-citations-and-tool-trust.md)），並引入 **Cross-Encoder 模型 (`bge-reranker-base`)** 進行 Top-K 文本片段重排序。
 
 ### 2. RSA-2048 雙 Token 認證與 Redis 黑名單
 
@@ -62,3 +62,4 @@ AskMiao 作為智慧對話與多 Agent 協作系統，在知識庫檢索與安�
 - **2026-08-24｜Token 撤銷名單改為行程內記憶體實作**：架構輕量化後移除 Redis 依賴，改由 `app/core/redis_client.py` 之 `TokenBlacklist` 以行程內記憶體維護撤銷名單並自動清理過期項目。權衡：免除外部服務依賴，但後端重啟後名單重置，未過期之舊 Token 會重新被視為有效；多行程部署時亦需改回共享儲存。
 - **2026-08-24｜移除多 Agent 協作看板**：專案聚焦於知識庫問答與 Agentic 自主研究，原多 Agent 討論看板與工作流模組已下線。
 - **2026-09-01｜出站請求安全防護**：外部呼叫之安全設計改由 [ADR-0002](./0002-external-tools-and-outbound-safety.md) 規範。
+- **2026-09-24｜分數歸一化融合已被取代**：檢索融合改為兩軌必跑的標準 RRF，相關性門檻改套在重排模型機率上，重排模型成為必要元件，詳見 [ADR-0003](./0003-rrf-relevance-citations-and-tool-trust.md)。實測 CPU 重排每對約 0.2 至 0.4 秒，遠高於上文估計的數十毫秒。

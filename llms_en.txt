@@ -8,6 +8,8 @@
 
 - [backend/main.py](backend/main.py): FastAPI entry point, CORS, and global middleware registration
 - [backend/app/rag/agent.py](backend/app/rag/agent.py): ReAct autonomous ResearchAgent with multi-turn tool calling and trace logging
+- [backend/app/rag/research_session.py](backend/app/rag/research_session.py): Per-question citation table, web_fetch URL provenance, web lockout after knowledge-base reads, and untrusted-data wrapping
+- [backend/config/domain_profile.json](backend/config/domain_profile.json): Domain profile (domain words, record date fields, summary fallback rules), loaded and validated by `app/core/domain_profile.py`
 - [backend/app/rag/tools.py](backend/app/rag/tools.py): ResearchToolRegistry (Internal RAG, DuckDuckGo/Ollama web search, and deep web fetch)
 - [backend/app/rag/pipeline.py](backend/app/rag/pipeline.py): Context builder, document chunking & embedding, and agent integration
 - [backend/app/rag/contextual_rag.py](backend/app/rag/contextual_rag.py): HybridContextualRAG facade module
@@ -36,12 +38,14 @@
 
 1. **Agentic RAG Pipeline**:
    - ReAct research pattern where the model dynamically calls internal knowledge search, live web search, or deep web scraping.
-   - Every response provides structured `research_trace` (steps, tools, parameters, durations, summaries) and clickable `sources_detail`.
+   - Every response provides structured `research_trace` (steps, tools, parameters, durations, summaries) and clickable `sources_detail`; `sources_detail` lists only the entries the answer cites as `[n]`.
+   - Tool results are always marked as untrusted data with `<untrusted_tool_result>`; `web_fetch` may only read URLs that appear verbatim in the user's message or this question's tool results (further limited by `WEB_FETCH_ALLOWED_DOMAINS` and `BLOCK_WEB_TOOLS_AFTER_KB`).
 2. **Reasoning Effort Multi-Tier Selection**:
    - Supports 5 depth tiers: `none`, `low`, `medium`, `high`, and `xhigh` forwarded to Azure OpenAI v1 / OpenAI reasoning models.
    - Enforces Microsoft Foundry tool-call compatibility rules.
 3. **Contextual Hybrid Retrieval**:
-   - FAISS dense vector search and Whoosh BM25 sparse keyword search combined and re-ranked via Cross-Encoder for high precision.
+   - FAISS dense vector search and Whoosh BM25 sparse keyword search always both run and are merged by rank with standard RRF (`RRF_K`), then re-ranked by a required Cross-Encoder.
+   - `RERANK_RELEVANCE_THRESHOLD` applies directly to the reranker probability (exact URL, post ID, and date matches exempt); when nothing passes, the tool reports that the knowledge base has nothing relevant.
 4. **System-Wide Security Redaction**:
    - Recursive object masking and regex-based string redaction. Passwords and bearer tokens MUST appear as `[REDACTED]` in logs.
 5. **Tool Extensibility & MCP Integration**:

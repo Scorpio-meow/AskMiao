@@ -8,6 +8,7 @@ from app.core import llm_client
 from app.core.config import settings
 from app.rag import agent as agent_module
 from app.rag.agent import ResearchAgent
+from app.rag.retrievers.hybrid import RetrievedChunk
 from app.rag.tools import ResearchToolRegistry
 from app.rag.types import Document
 
@@ -22,9 +23,9 @@ KB_TOOL = {
 
 
 class StaticRetriever:
-    def smart_search(self, query):
-        doc = Document(page_content="特休依年資計算", metadata={"source": "leave.txt", "chunk_index": 0})
-        return [(doc, 0.9)]
+    def smart_search(self, query, target_document=None):
+        doc = Document(page_content="特休依年資計算", metadata={"source": "leave.txt", "chunk_index": 0, "chunk_id": 7})
+        return [RetrievedChunk(document=doc, score=0.9, relevance=0.9, pinned=False)]
 
 
 class FakeStream:
@@ -162,31 +163,49 @@ def test_anthropic_request_merges_tool_results_and_converts_images():
     }]
 
 
-@pytest.mark.asyncio
-async def test_agent_tool_round_trip_with_claude_preserves_raw_content(claude, monkeypatch):
-    first_content = [
-        SimpleNamespace(type="thinking", thinking="", signature="sig-1"),
-        SimpleNamespace(type="tool_use", id="toolu_1", name="search_knowledge_base", input={"query": "特休"}),
-    ]
-    fake_messages = claude(
-        responses=[
-            SimpleNamespace(stop_reason="tool_use", stop_details=None, content=first_content),
-            SimpleNamespace(stop_reason="end_turn", stop_details=None, content=[SimpleNamespace(type="text", text="草稿")]),
-        ],
-        stream_chunks=["特休", "依年資計算"],
-    )
+CLAUDE_TOOL_USE_CONTENT = [
+    SimpleNamespace(type="thinking", thinking="", signature="sig-1"),
+    SimpleNamespace(type="tool_use", id="toolu_1", name="search_knowledge_base", input={"query": "特休"}),
+]
+
+
+def claude_agent(monkeypatch):
     registry = ResearchToolRegistry(retriever=StaticRetriever())
     monkeypatch.setattr(registry, "get_tool_definitions", lambda: [KB_TOOL])
-    agent = ResearchAgent(tool_registry=registry)
+    return ResearchAgent(tool_registry=registry)
 
-    result = await agent.run_research("特休怎麼算？", model_name="claude-opus-5", max_turns=3)
+
+@pytest.mark.asyncio
+async def test_agent_tool_round_trip_with_claude_preserves_raw_content(claude, monkeypatch):
+    fake_messages = claude(responses=[
+        SimpleNamespace(stop_reason="tool_use", stop_details=None, content=CLAUDE_TOOL_USE_CONTENT),
+        SimpleNamespace(stop_reason="end_turn", stop_details=None, content=[SimpleNamespace(type="text", text="特休依年資計算 [1]")]),
+    ])
+
+    result = await claude_agent(monkeypatch).run_research("特休怎麼算？", model_name="claude-opus-5", max_turns=3)
 
     first_call, second_call = fake_messages.create_calls
     assert first_call["model"] == "claude-opus-5"
     assert first_call["system"] == agent_module.SYSTEM_PROMPT
     assert first_call["messages"] == [{"role": "user", "content": "特休怎麼算？"}]
-    assert second_call["messages"][1] == {"role": "assistant", "content": first_content}
+    assert second_call["messages"][1] == {"role": "assistant", "content": CLAUDE_TOOL_USE_CONTENT}
     assert [block["tool_use_id"] for block in second_call["messages"][2]["content"]] == ["toolu_1"]
+    assert fake_messages.stream_calls == []
+    assert all("temperature" not in call for call in fake_messages.create_calls)
+    assert result["answer"] == "特休依年資計算 [1]"
+    assert result["sources"] == ["leave.txt"]
+
+
+@pytest.mark.asyncio
+async def test_claude_streams_final_answer_when_turn_limit_is_reached(claude, monkeypatch):
+    fake_messages = claude(
+        responses=[SimpleNamespace(stop_reason="tool_use", stop_details=None, content=CLAUDE_TOOL_USE_CONTENT)],
+        stream_chunks=["特休", "依年資計算"],
+    )
+
+    result = await claude_agent(monkeypatch).run_research("特休怎麼算？", model_name="claude-opus-5", max_turns=1)
+
+    (first_call,) = fake_messages.create_calls
     (stream_call,) = fake_messages.stream_calls
     assert stream_call["tool_choice"] == {"type": "none"}
     assert stream_call["tools"] == first_call["tools"]

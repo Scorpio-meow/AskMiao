@@ -210,8 +210,8 @@
 | `start` | 串流開始 | `{"conversation_id": 42, "user_message_id": 107}` |
 | `step_start` | 每一輪工具調用開始 | 工具名稱與輸入參數 |
 | `step_end` | 每一輪工具調用結束 | 步驟結果摘要與耗時，累積為 `research_trace` |
-| `token` | 模型逐字輸出 | `{"content": "片段文字"}` |
-| `sources` | 取得參考來源 | `{"sources": [...], "sources_detail": [...]}` |
+| `token` | 模型輸出（用到工具後的答案會一次整段送出） | `{"content": "片段文字"}` |
+| `sources` | 答案完成後，列出答案以 `[n]` 實際引用的來源 | `{"sources": [...], "sources_detail": [...]}` |
 | `done` | 串流結束並完成訊息落庫 | 完整答案、來源與研究歷程 |
 | `error` | 串流過程發生例外 | `{"detail": "...（錯誤代碼：xxxxxxxx）", "error_id": "xxxxxxxx"}` |
 
@@ -228,16 +228,16 @@ event: step_end
 data: {"step": 1, "tool": "search_knowledge_base", "duration_seconds": 0.83, "status": "success"}
 
 event: token
-data: {"content": "依照公司規章，"}
+data: {"content": "依照公司規章，特休假需於系統填寫假單並經主管核准 [1]。"}
 
 event: sources
-data: {"sources": ["員工規範2026.pdf"], "sources_detail": [{"source": "員工規範2026.pdf", "score": 0.92}]}
+data: {"sources": ["員工規範2026.pdf"], "sources_detail": [{"citation": 1, "source": "員工規範2026.pdf", "chunk": 3, "score": 0.92, "snippet": "特休假申請需於系統填寫假單……"}]}
 
 event: done
 data: {"message_id": 108, "conversation_id": 42, "answer": "依照公司規章，...", "sources": ["員工規範2026.pdf"], "sources_detail": [...], "research_trace": [...]}
 ```
 
-> 完成後系統會將機器人回覆與 `sources`、`sources_detail`、`research_trace` 一併寫入訊息紀錄的 `context_used` 欄位。
+> `sources_detail` 只列答案實際引用的條目，依第一次引用的順序排列；`citation` 對應答案中的 `[n]`，網頁來源另含 `url`。答案沒有任何引用時兩者皆為空陣列。完成後系統會將機器人回覆與 `sources`、`sources_detail`、`research_trace` 一併寫入訊息紀錄的 `context_used` 欄位。
 
 ---
 
