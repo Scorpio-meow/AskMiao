@@ -2,7 +2,7 @@
 MCP 伺服器與自訂 API 工具的權限與出站防護
 驗證：
 1. 兩個模組的每個端點都拒絕非管理員，且不會啟動子行程或送出外部請求
-2. 管理員可以正常管理；MCP HTTP 網址被 SSRF 防護拒絕時顯示原因
+2. 管理員可以正常管理；MCP HTTP 網址被 SSRF 防護拒絕時註明遭拒並附錯誤代碼，不帶出伺服器端的解析結果
 3. stdio 子行程不繼承後端的機密環境變數
 4. 自訂 API 工具與 MCP HTTP 傳輸的每一跳（含轉址）都經過 SSRF 檢查
 """
@@ -137,6 +137,27 @@ def test_mcp_http_server_on_private_address_is_rejected(no_side_effects, clean_t
     discovered = client.post(f"/api/mcp/servers/{server['id']}/discover")
     assert discovered.status_code == 400
     assert "SSRF" in discovered.json()["detail"]
+    assert no_side_effects["sent"] == []
+
+
+def test_mcp_ssrf_rejection_hides_resolved_address(no_side_effects, clean_test_servers):
+    """拒絕原因含伺服器端 DNS 解析出的內網 IP，只寫入日誌；回應只說明遭 SSRF 防護拒絕並附錯誤代碼"""
+    client = build_client(ADMIN_USER)
+    with patch("app.core.ssrf_protection.resolve_hostname", new_callable=AsyncMock) as mock_dns:
+        mock_dns.return_value = [ipaddress.ip_address("10.20.30.40")]
+        created = client.post(
+            "/api/mcp/servers",
+            json={"name": "permission_test_http", "display_name": "解析到內網", "transport_type": "http", "url": "https://mcp.example.com/mcp"},
+        )
+        server = created.json()["server"]
+        discovered = client.post(f"/api/mcp/servers/{server['id']}/discover")
+        stored = client.get(f"/api/mcp/servers/{server['id']}").json()["server"]
+    assert server["status"] == "error"
+    assert discovered.status_code == 400
+    for message in (server["last_error"], discovered.json()["detail"], stored["last_error"]):
+        assert "SSRF" in message
+        assert "10.20.30.40" not in message
+        assert re.search(r"錯誤代碼：[0-9a-f]{12}", message)
     assert no_side_effects["sent"] == []
 
 
