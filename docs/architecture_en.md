@@ -82,22 +82,22 @@ flowchart TB
 
 ## 2. Enhanced Hybrid RAG Retrieval & Reranking
 
-Dense vector search and sparse keyword search run in parallel; their normalized scores are fused and the candidates are then reranked by a Cross-Encoder.
+Every query runs both dense vector search and sparse keyword search; the two rankings are merged by rank with RRF, reranked by a Cross-Encoder, and filtered by the reranker's relevance probability.
 
 ```mermaid
 flowchart LR
-    Query["User query"] --> Strategy{"Retrieval strategy"}
+    Query["User query"] --> FAISS["FAISS vector search (TOP_K)"]
+    Query --> BM25["Whoosh BM25 (jieba tokenizer, TOP_K)"]
+    Query --> Exact["Exact match (URL / post ID / date / @account)"]
 
-    subgraph ParallelRetrieval ["Parallel dual-track retrieval"]
-        Strategy -->|vector match| FAISS["FAISS search (inner product, IndexIDMap2)"]
-        Strategy -->|keyword match| BM25["Whoosh BM25 (Jieba tokenizer)"]
-    end
-
-    FAISS --> Merge["Normalized score fusion (HYBRID_ALPHA)"]
+    FAISS --> Merge["RRF fusion: Σ 1 / (RRF_K + rank), keep top RERANK_TOP_K"]
     BM25 --> Merge
 
-    Merge --> Reranker["Cross-Encoder reranking (RERANKER_MODEL)"]
-    Reranker --> TopK["Select top FINAL_K chunks"]
+    Merge --> Reranker["Cross-Encoder reranking (RERANKER_MODEL, required)"]
+    Exact --> Reranker
+    Reranker --> Threshold{"Reranker probability ≥ RERANK_RELEVANCE_THRESHOLD?<br/>(exact URL / post ID / date matches exempt)"}
+    Threshold -->|yes| TopK["Keep top FINAL_K chunks"]
+    Threshold -->|none pass| NoData["Report that the knowledge base has nothing relevant"]
     TopK --> LLM["Context assembly and generation"]
 ```
 
@@ -105,10 +105,10 @@ flowchart LR
 
 1. **Chunking**: uploaded documents run through `RecursiveCharacterTextSplitter`, sized by `CHUNK_SIZE` / `CHUNK_OVERLAP` (300 / 100 characters in the shipped template). Structured and JSON records are additionally stored as atomic record chunks so per-record counting stays exact.
 2. **Embedding**: `BAAI/bge-small-zh-v1.5` by default (`EMBEDDING_MODEL`); the vector dimension is read from the loaded model. Chunks live in the `rag_chunks` database table; FAISS (`IndexIDMap2(IndexFlatIP)`) and BM25 (`doc_id`) are both keyed by chunk_id, so deleting a document removes only its vectors without re-embedding, and both indexes are reconciled against the database at startup.
-3. **Keyword retrieval (BM25)**: `Whoosh` plus `Jieba` tokenization compensates for the weakness of vector search on proper nouns and identifiers.
-4. **Fusion**: both tracks are normalized per `NORMALIZATION` and merged with the `HYBRID_ALPHA` weight.
-5. **Reranking**: the Cross-Encoder (`BAAI/bge-reranker-base` by default) scores candidates with cross-attention; after `RERANK_WEIGHT` and `FINAL_THRESHOLD` filtering, the top `FINAL_K` chunks form the context.
-6. **Evaluation**: `evaluator.py` computes document-level hit@k, recall@k, and MRR through the production `smart_search` path; `scripts/evaluate_retrieval.py` reads a JSONL golden set (format in `backend/eval/retrieval_golden.example.jsonl`), runs read-only on a copy of the indexes, and can gate CI with `--min-mrr`.
+3. **Keyword retrieval (BM25)**: `Whoosh` plus `jieba` tokenization compensates for the weakness of vector search on proper nouns and identifiers. Tokens are always lowercased (a query for `mes` matches `MES`); the main dictionary can be replaced with `JIEBA_DICTIONARY` (for example the Traditional-Chinese-friendly `dict.txt.big`), and domain words come from the profile at `DOMAIN_PROFILE_PATH`. The BM25 index directory stores a tokenizer signature (rules version, main-dictionary hash, domain-words hash); on a mismatch the backend rebuilds BM25 at startup without recomputing vectors, and read-only evaluation refuses to run.
+4. **Fusion**: both tracks always run, each returning `TOP_K` results, and are merged with standard, unweighted RRF: score = Σ 1 / (`RRF_K` + rank); the top `RERANK_TOP_K` go to the reranker. A chunk found by only one track still becomes a candidate. Exact matches on URLs, post IDs, dates, and @accounts are added as candidates and ranked first.
+5. **Reranking and relevance threshold**: the Cross-Encoder (`BAAI/bge-reranker-base` by default) is a required component: the backend refuses to start if it cannot load, and a reranking failure at query time returns an error code instead of unfiltered chunks. `RERANK_RELEVANCE_THRESHOLD` applies directly to the reranker's probability, except for exact URL, post ID, and date matches; the mixed score (`RERANK_WEIGHT` × probability + (1 − `RERANK_WEIGHT`) × candidate score) is used only for ordering. The top `FINAL_K` passing chunks form the context; when none pass, `search_knowledge_base` explicitly reports that the knowledge base has nothing relevant. A `target_document` restricts candidates before reranking and never falls back to the whole library.
+6. **Evaluation**: `evaluator.py` computes document-level hit@k, recall@k, and MRR through the production path (rerank, then the configured threshold, exactly as `smart_search`); golden-set entries with `"relevant_sources": []` are negatives that should find nothing and feed a negative rejection rate. `scripts/evaluate_retrieval.py` reads a JSONL golden set (format in `backend/eval/retrieval_golden.example.jsonl`), runs read-only on a copy of the indexes, can gate CI with `--min-mrr`, and with `--relevance-thresholds` compares several thresholds over a single rerank pass to calibrate `RERANK_RELEVANCE_THRESHOLD`.
 
 ---
 
@@ -172,9 +172,9 @@ flowchart LR
 
 ### Core mechanics
 
-1. **Autonomous decisions**: the model decides per question whether to query the knowledge base, run exact counting, search the web, deep-read a URL, or call an external API / MCP tool.
+1. **Autonomous decisions**: the model decides per question whether to query the knowledge base, run exact counting, search the web, deep-read a URL, or call an external API / MCP tool. When the model stops calling tools, the content of that response is the final answer and is sent as is; the answer is streamed from a fresh call only when the turn limit is reached or the model returns empty content.
 2. **Research trace**: every turn records the step, tool name, arguments, output summary, and duration, streamed live to the collapsible frontend timeline via `step_start` / `step_end` SSE events.
-3. **Source badges**: internal chunks and external links are merged into clickable source badges for verification.
+3. **Citations and source badges**: each question builds a citation table (`research_session.py`) keyed by chunk_id for knowledge-base chunks and by URL for web pages; numbers are assigned on first appearance and written into the tool results, and the model cites them as `[n]`. After the answer completes, `[n]` markers (including `[1,2]` and `[1][2]`) are parsed and `sources_detail` lists only the cited entries, deduplicated in order of first citation; an answer without citations shows no source badges. `[n]` markers in earlier answers are stripped from the history so stale numbers are not reused.
 4. **Multimodal input**: image attachments are passed as `image_url` content parts to vision models; text attachments are extracted into the prompt context.
 5. **Conversation history**: each question loads the latest `CONVERSATION_HISTORY_MESSAGES` messages from the `messages` table, so restarts do not lose context.
 6. **Multi-provider tool calling**: `llm_client.py` unifies OpenAI, Azure OpenAI, Claude (official `anthropic` SDK), Gemini, and Ollama, all with tool calling and streaming.
@@ -263,7 +263,17 @@ flowchart LR
 
 Blocked targets include IPv4 / IPv6 private and reserved ranges, loopback and link-local addresses, cloud metadata endpoints (such as `169.254.169.254`), internal domain suffixes, and a dangerous port list. The behaviour is covered by `backend/tests/test_ssrf_protection.py`.
 
-### 6.4 Other protections
+### 6.4 Tool-output trust boundary and web restrictions
+
+Tool results (knowledge-base chunks, web pages, external API responses) may carry prompt injection, so the agent wraps every tool result in an `<untrusted_tool_result>` marker whose id changes per question. The system prompt tells the model to treat it as data only, never to follow instructions inside it, and never to put conversation or knowledge-base content into URLs or search strings. Three limits are enforced in code:
+
+1. **URL provenance**: `web_fetch` may only read URLs that appear verbatim in the user's messages (including attachment text and earlier user messages) or in the data fields of this question's built-in tool results. Query arguments echoed back by a tool do not count, so the model cannot smuggle data into a query and then fetch it as a URL that "appeared".
+2. **Domain allowlist**: `WEB_FETCH_ALLOWED_DOMAINS` restricts readable domains (subdomains included); only an explicit `*` means unrestricted.
+3. **No web after knowledge-base reads**: with `BLOCK_WEB_TOOLS_AFTER_KB` enabled, once a knowledge-base tool returns content in a question, later `web_search` and `web_fetch` calls are refused.
+
+Results from custom API and MCP tools are wrapped as untrusted too, but they neither feed URL provenance nor receive citation numbers, and their outbound requests are outside these limits (a known risk, see ADR-0003).
+
+### 6.5 Other protections
 
 - **Security headers**: `SecurityHeadersMiddleware` injects hardened response headers.
 - **Rate limiting**: `RateLimitMiddleware` enforces `RATE_LIMIT_PER_MINUTE`.
@@ -278,3 +288,5 @@ Significant architectural decisions are recorded separately:
 
 - [ADR index](./adr/README.md)
 - [ADR-0001: Enhanced hybrid RAG retrieval and dual-token security](./adr/0001-hybrid-rag-and-security.md)
+- [ADR-0002: External tool extensibility and outbound request safety](./adr/0002-external-tools-and-outbound-safety_en.md)
+- [ADR-0003: RRF fusion, relevance threshold, citations, and tool-output trust boundary](./adr/0003-rrf-relevance-citations-and-tool-trust_en.md)

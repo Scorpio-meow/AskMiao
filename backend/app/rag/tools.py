@@ -3,11 +3,21 @@ import json
 import logging
 import re
 from typing import Any, Dict, List, Optional
+from urllib.parse import urlparse
 import httpx
 from app.core.config import settings
+from app.core.domain_profile import domain_profile
 from app.core.error_response import log_and_get_error_id
+from app.rag.retrievers.hybrid import matches_target_document
 logger = logging.getLogger(__name__)
 WEB_TOOL_NAMES = ("web_search", "web_fetch")
+def is_web_fetch_domain_allowed(url: str) -> bool:
+    """WEB_FETCH_ALLOWED_DOMAINS 為 * 時不限制；否則主機須為清單中的網域或其子網域"""
+    allowed = settings.web_fetch_allowed_domains
+    if allowed == ["*"]:
+        return True
+    host = (urlparse(url).hostname or "").rstrip(".")
+    return any(host == domain or host.endswith(f".{domain}") for domain in allowed)
 def clean_html(html_content: str) -> str:
     """清理 HTML 標籤並擷取核心文字內容"""
     if not html_content:
@@ -26,38 +36,40 @@ class ResearchToolRegistry:
     def set_retriever(self, retriever):
         self.retriever = retriever
     async def search_knowledge_base(self, query: str, top_k: int = 3, target_document: Optional[str] = None) -> Dict[str, Any]:
-        """檢索本機與企業內部知識庫（包含 FAISS 向量與 BM25 關鍵字混合檢索，可選限定特定文件）"""
+        """檢索本機與企業內部知識庫（向量與 BM25 以 RRF 融合後重排，只回傳通過相關性門檻的片段，可選限定特定文件）"""
         if not self.retriever:
             return {"error": "知識庫檢索器尚未初始化", "documents": []}
-        
-        try:
-            doc_score_pairs = await asyncio.to_thread(self.retriever.smart_search, query)
-            if target_document:
-                target_clean = target_document.strip().lower()
-                filtered = [
-                    (doc, score) for doc, score in doc_score_pairs
-                    if target_clean in (doc.metadata.get("source", "")).lower() or target_clean in (doc.metadata.get("original_filename", "")).lower()
-                ]
-                if filtered:
-                    doc_score_pairs = filtered
 
-            exact_hits_count = len([p for p in doc_score_pairs if p[1] is not None and p[1] >= 0.95])
-            effective_k = max(top_k, exact_hits_count)
-            selected_pairs = doc_score_pairs[:effective_k]
-            
+        try:
+            results = await asyncio.to_thread(self.retriever.smart_search, query, target_document)
+            if not results:
+                message = f"指定文件《{target_document}》中查無相關資料" if target_document else "知識庫中查無相關資料"
+                return {
+                    "query": query,
+                    "target_document": target_document,
+                    "total_found": 0,
+                    "returned": 0,
+                    "documents": [],
+                    "message": message
+                }
+
+            # 精確比對到網址、貼文 ID、日期的片段全部回傳，其餘依 top_k
+            effective_k = max(top_k, sum(1 for r in results if r.pinned))
             docs_info = []
-            for doc, score in selected_pairs:
+            for result in results[:effective_k]:
+                doc = result.document
                 docs_info.append({
+                    "chunk_id": doc.metadata["chunk_id"],
                     "source": doc.metadata.get("source", "未知文件"),
                     "chunk_index": doc.metadata.get("chunk_index", 0),
-                    "score": round(float(score), 4) if score is not None else None,
+                    "score": round(result.score, 4),
                     "content": doc.page_content.strip()
                 })
-            
+
             return {
                 "query": query,
                 "target_document": target_document,
-                "total_found": len(doc_score_pairs),
+                "total_found": len(results),
                 "returned": len(docs_info),
                 "documents": docs_info
             }
@@ -103,20 +115,18 @@ class ResearchToolRegistry:
                 target_dates = list(set(target_dates))
             matched_records = []
             for doc in docs:
-                if target_document:
-                    src = (doc.metadata.get("source", "")).lower()
-                    orig = (doc.metadata.get("original_filename", "")).lower()
-                    t_clean = target_document.strip().lower()
-                    if t_clean not in src and t_clean not in orig:
-                        continue
+                if target_document and not matches_target_document(doc, target_document):
+                    continue
                 content = doc.page_content
                 c_lower = content.lower()
- 
+
                 if target_dates:
-                    if "timestamp:" in content or "timestampTitle:" in content:
+                    # 記錄有發布日期欄位時只比對該欄位，避免內文提到的其他日期被算進去
+                    date_fields = [f for f in domain_profile.record_date_fields if f"{f}:" in content]
+                    if date_fields:
                         has_date = any(
-                            re.search(rf'timestamp:\s*{re.escape(td)}', content) or
-                            re.search(rf'timestampTitle:\s*{re.escape(td)}', content)
+                            re.search(rf'{re.escape(field)}:\s*{re.escape(td)}', content)
+                            for field in date_fields
                             for td in target_dates
                         )
                     else:
@@ -133,6 +143,7 @@ class ResearchToolRegistry:
                     if keyword.lower() not in c_lower:
                         continue
                 matched_records.append({
+                    "chunk_id": doc.metadata["chunk_id"],
                     "source": doc.metadata.get("source", "未知文件"),
                     "record_index": doc.metadata.get("record_index"),
                     "author": doc.metadata.get("author"),
@@ -232,6 +243,9 @@ class ResearchToolRegistry:
     async def web_fetch(self, url: str) -> Dict[str, Any]:
         """深入讀取指定網頁全文（優先使用 Ollama Web Fetch，失敗時使用具備 SSRF 防護之 HTTP 抓取並解析 HTML）"""
         from app.core.ssrf_protection import safe_fetch_text, validate_url_ssrf, SSRFProtectionError
+
+        if not is_web_fetch_domain_allowed(url):
+            return {"url": url, "error": "該網址的網域不在 WEB_FETCH_ALLOWED_DOMAINS 允許清單內", "content": ""}
 
         is_safe, error_msg, _ = await validate_url_ssrf(url)
         if not is_safe:
@@ -350,7 +364,7 @@ class ResearchToolRegistry:
                 "type": "function",
                 "function": {
                     "name": "filter_and_count_records",
-                    "description": "精準統計與條件篩選知識庫中的結構化貼文/記錄/文件。可用於計算特定發布月份/日期（如 '2026年8月'、'2025-10-22'）、特定作者（如 '@xv.n_4'）、特定關鍵字或特定文件的總筆數（精確 count），並可取得符合條件的完整或批次清單。當使用者詢問『總共有幾則』、『統計』、『列出某年某月所有貼文』或『某作者的全部記錄』時【必須優先調用此工具】。",
+                    "description": "精準統計與條件篩選知識庫中的結構化貼文/記錄/文件。可用於計算特定發布月份/日期（如 '2026年8月'、'2025-10-22'）、特定作者（如 '@example_user'）、特定關鍵字或特定文件的總筆數（精確 count），並可取得符合條件的完整或批次清單。當使用者詢問『總共有幾則』、『統計』、『列出某年某月所有貼文』或『某作者的全部記錄』時【必須優先調用此工具】。",
                     "parameters": {
                         "type": "object",
                         "properties": {
@@ -360,7 +374,7 @@ class ResearchToolRegistry:
                             },
                             "author": {
                                 "type": "string",
-                                "description": "篩選特定作者帳號（如 '@xv.n_4' 或 'xv.n_4'）"
+                                "description": "篩選特定作者帳號（如 '@example_user' 或 'example_user'）"
                             },
                             "keyword": {
                                 "type": "string",
@@ -368,7 +382,7 @@ class ResearchToolRegistry:
                             },
                             "target_document": {
                                 "type": "string",
-                                "description": "限定的文件名稱（例如 'threads-full-data-2026-08-24.js'）"
+                                "description": "限定的文件名稱（例如 'posts-export.json'）"
                             },
                             "limit": {
                                 "type": "integer",

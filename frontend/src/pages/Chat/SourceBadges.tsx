@@ -65,9 +65,12 @@ export const SourceBadges: React.FC<SourceBadgesProps> = ({
         {hasDetails
           ? normalizedDetails.map((detail, idx) => {
             const isWeb = Boolean(detail.url);
-            const label = isWeb
-              ? detail.source
-              : `${detail.source}${detail.chunk !== undefined ? ` (段落 ${detail.chunk})` : ''}`;
+            const hasCitation = detail.citation !== undefined;
+            const chunkLabel = detail.chunk !== undefined
+              ? (hasCitation ? `（段落 ${detail.chunk}）` : ` (段落 ${detail.chunk})`)
+              : '';
+            const baseLabel = isWeb ? detail.source : `${detail.source}${chunkLabel}`;
+            const label = hasCitation ? `[${detail.citation}] ${baseLabel}` : baseLabel;
             return (
               <Chip
                 key={idx}

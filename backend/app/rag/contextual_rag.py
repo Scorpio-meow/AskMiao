@@ -7,11 +7,11 @@ from datetime import datetime
 from sqlalchemy.orm import Session
 
 from .types import Document
-from .tokenizers import init_domain_dictionary
+from .tokenizers import configure_tokenizer
 from .indices.chunk_store import ChunkStore
 from .indices.vector_store import VectorStoreManager
 from .indices.bm25_store import BM25StoreManager
-from .retrievers.hybrid import HybridRetriever
+from .retrievers.hybrid import HybridRetriever, RetrievedChunk
 from .pipeline import RAGPipeline
 from .evaluator import RAGEvaluator, RetrievalCase
 
@@ -19,6 +19,7 @@ logger = logging.getLogger(__name__)
 
 
 from app.core.config import settings
+from app.core.domain_profile import domain_profile
 
 class HybridContextualRAG:
     """
@@ -30,12 +31,11 @@ class HybridContextualRAG:
         self.chunk_overlap = settings.CHUNK_OVERLAP
         self.similarity_threshold = settings.SIMILARITY_THRESHOLD
         self.top_k = settings.TOP_K
+        self.rrf_k = settings.RRF_K
         self.rerank_top_k = settings.RERANK_TOP_K
         self.final_k = settings.FINAL_K
         self.rerank_weight = settings.RERANK_WEIGHT
-        self.final_threshold = settings.FINAL_THRESHOLD
-        self.hybrid_alpha = settings.HYBRID_ALPHA
-        self.normalization = settings.NORMALIZATION.lower()
+        self.relevance_threshold = settings.RERANK_RELEVANCE_THRESHOLD
         self.model_name = settings.MODEL_NAME or ""
         self.data_dir = settings.DATA_DIR
         self.use_fp16 = settings.USE_FP16_QUANTIZATION
@@ -44,7 +44,7 @@ class HybridContextualRAG:
         self.faiss_gpu_device = settings.FAISS_GPU_DEVICE
 
         os.makedirs(self.data_dir, exist_ok=True)
-        init_domain_dictionary(self.data_dir)
+        configure_tokenizer(settings.JIEBA_DICTIONARY, domain_profile.domain_words)
 
         self.chunk_store = ChunkStore(session_factory)
 
@@ -66,12 +66,13 @@ class HybridContextualRAG:
         self.retriever = HybridRetriever(
             vector_store=self.vector_store,
             bm25_store=self.bm25_store,
-            hybrid_alpha=self.hybrid_alpha,
+            reranker_model=settings.RERANKER_MODEL,
+            top_k=self.top_k,
+            rrf_k=self.rrf_k,
             rerank_top_k=self.rerank_top_k,
             final_k=self.final_k,
             rerank_weight=self.rerank_weight,
-            final_threshold=self.final_threshold,
-            normalization=self.normalization,
+            relevance_threshold=self.relevance_threshold,
             use_fp16=self.use_fp16,
         )
 
@@ -117,11 +118,13 @@ class HybridContextualRAG:
             self.bm25_store.ensure_aligned(self.vector_store.chunks)
 
     def _load_chunks_read_only(self) -> None:
-        """唯讀模式（例如離線評估）：只載入片段，不修改資料庫或索引檔；三方不一致時拒絕執行"""
+        """唯讀模式（例如離線評估）：只載入片段，不修改資料庫或索引檔；三方不一致或斷詞設定不符時拒絕執行"""
         chunks = self.chunk_store.load_all()
         expected_bm25_ids = sorted(str(chunk_id) for chunk_id in chunks)
         if self.vector_store.ids() != set(chunks) or sorted(self.bm25_store.indexed_ids()) != expected_bm25_ids:
             raise RuntimeError("索引與資料庫片段不一致；請先啟動後端完成校正，再執行唯讀評估")
+        if not self.bm25_store.tokenizer_matches():
+            raise RuntimeError("BM25 索引的斷詞簽章與目前設定不符；請先啟動後端完成重建，再執行唯讀評估")
         self.vector_store.chunks = chunks
 
 
@@ -146,10 +149,6 @@ class HybridContextualRAG:
         return self.retriever.cross_encoder
 
     @property
-    def has_reranker(self) -> bool:
-        return self.retriever.has_reranker
-
-    @property
     def device(self):
         return self.vector_store.device
 
@@ -170,14 +169,8 @@ class HybridContextualRAG:
         with self.vector_store.lock:
             return self.bm25_store.search(query, self.vector_store.chunks, top_k=top_k or self.top_k)
 
-    def hybrid_search(self, query: str, alpha: float = None) -> List[Tuple[Document, float]]:
-        return self.retriever.hybrid_search(query, alpha=alpha)
-
-    def rerank_with_cross_encoder(self, query: str, doc_score_pairs: List[Tuple[Document, float]]) -> List[Tuple[Document, float]]:
-        return self.retriever.rerank_with_cross_encoder(query, doc_score_pairs)
-
-    def smart_search(self, query: str) -> List[Tuple[Document, float]]:
-        return self.retriever.smart_search(query)
+    def smart_search(self, query: str, target_document: Optional[str] = None) -> List[RetrievedChunk]:
+        return self.retriever.smart_search(query, target_document)
 
 
     def add_documents(self, documents: List[Document]) -> int:
@@ -240,19 +233,14 @@ class HybridContextualRAG:
     def evaluate_retrieval(self, cases: List[RetrievalCase], k_values: List[int]) -> Dict[str, Any]:
         return self.evaluator.evaluate(cases, k_values)
 
-    def auto_tune_alpha(self, cases: List[RetrievalCase], k_values: List[int], alphas: List[float]) -> Dict[str, Any]:
-        return self.evaluator.auto_tune_alpha(cases, k_values, alphas)
-
 
     def get_statistics(self) -> Dict[str, Any]:
         bm25_status = "Available" if self.bm25_store.bm25_index else "Not Available"
-        reranker_status = "Available" if self.retriever.has_reranker else "Not Available"
         return {
             "total_documents": len(self.vector_store.chunks),
             "total_vectors": self.vector_store.index.ntotal,
             "embedding_dimension": self.vector_store.embedding_dimension,
             "bm25_status": bm25_status,
-            "reranker_status": reranker_status,
             "similarity_threshold": self.similarity_threshold,
             "chunk_size": self.chunk_size,
             "chunk_overlap": self.chunk_overlap,
@@ -279,7 +267,6 @@ class HybridContextualRAG:
             "index_type": "FAISS IndexIDMap2(IndexFlatIP) + Whoosh BM25",
             "vector_index_exists": os.path.exists(self.vector_store.faiss_index_path),
             "bm25_index_exists": os.path.exists(self.bm25_store.bm25_index_dir),
-            "reranker_available": self.retriever.has_reranker,
             "last_reindex": self._get_last_reindex_time()
         }
 

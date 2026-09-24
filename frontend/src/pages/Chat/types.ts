@@ -5,6 +5,8 @@ export interface SourceDetail {
   score?: number | null;
   snippet?: string;
   url?: string;
+  // 答案中 [n] 引用對應的編號；舊訊息沒有此欄位
+  citation?: number;
 }
 export interface ResearchTraceStep {
   step: number;
