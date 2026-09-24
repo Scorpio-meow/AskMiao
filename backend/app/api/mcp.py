@@ -64,6 +64,12 @@ def _serialize_mcp_server(server: McpServer) -> Dict[str, Any]:
         "created_at": server.created_at,
         "updated_at": server.updated_at,
     }
+def _format_ssrf_rejection(error_id: str) -> str:
+    """SSRF 拒絕原因可能含伺服器端 DNS 解析出的內網 IP 或轉址目標，只寫入日誌；對外只說明遭拒並附錯誤代碼"""
+    return (
+        "SSRF 防護拒絕連線：網址或其轉址目標未通過安全檢查，完整原因記錄於伺服器日誌；"
+        f"本機的 MCP 伺服器請改用 stdio 傳輸（錯誤代碼：{error_id}）"
+    )
 @router.get("/presets")
 async def get_preset_servers(current_user: dict = Depends(get_current_admin_user)):
     """獲取常用官方與社群 MCP 伺服器範本"""
@@ -125,9 +131,9 @@ async def create_server(
         db.commit()
         db.refresh(new_server)
     except SSRFProtectionError as e:
-        # 訊息只描述管理員填入的網址為何被拒，可以原樣顯示
+        error_id = log_and_get_error_id(logger, "MCP 伺服器網址被 SSRF 防護拒絕", e, logging.WARNING)
         new_server.status = "error"
-        new_server.last_error = str(e)
+        new_server.last_error = _format_ssrf_rejection(error_id)
         db.commit()
         db.refresh(new_server)
     except Exception as e:
@@ -236,10 +242,11 @@ async def discover_server_tools(
             "server": _serialize_mcp_server(server)
         }
     except SSRFProtectionError as e:
+        error_id = log_and_get_error_id(logger, "MCP 伺服器網址被 SSRF 防護拒絕", e, logging.WARNING)
         server.status = "error"
-        server.last_error = str(e)
+        server.last_error = _format_ssrf_rejection(error_id)
         db.commit()
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(status_code=400, detail=_format_ssrf_rejection(error_id))
     except Exception as e:
         error_id = log_and_get_error_id(logger, "探索 MCP 伺服器工具失敗", e)
         server.status = "error"

@@ -64,3 +64,9 @@
 - 依賴後端環境變數的 `stdio` 伺服器（例如 `HTTP_PROXY`、`HTTPS_PROXY`、`NODE_EXTRA_CA_CERTS` 或各種存取權杖）需把變數寫進該伺服器的 `env_vars`。
 - 指向 `localhost` 或內網位址的 MCP HTTP 伺服器，升級後探索會失敗並在 `last_error` 顯示原因。
 - 回退時還原程式碼即可。
+
+---
+
+## 後續修訂 (Amendments)
+
+- **2026-09-25｜SSRF 拒絕原因只寫入日誌**：拒絕原因可能含伺服器端 DNS 解析出的內網 IP 或轉址目標，不只描述管理員填入的網址（CodeQL `py/stack-trace-exposure`）。MCP 伺服器被拒絕時，`last_error` 與探索端點的 400 回應改為註明遭 SSRF 防護拒絕並附錯誤代碼，完整原因只寫入伺服器日誌。

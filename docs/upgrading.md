@@ -139,7 +139,7 @@ curl -X POST http://localhost:8001/api/documents/rebuild-index \
 
 - **至少一位管理員**：「AI 工具」、「知識庫」與「管理後台」都只限管理員。還沒有管理員時，請依 [README：建立第一位管理員](../README.md#4-建立第一位管理員) 操作。
 - **MCP `stdio` 伺服器**：子行程只繼承系統必要變數（Windows 為 `PATH`、`SYSTEMROOT`、`USERPROFILE` 等，其他平台為 `HOME`、`PATH`、`SHELL` 等）。依賴後端環境變數的伺服器（例如 `HTTP_PROXY`、`HTTPS_PROXY`、`NODE_EXTRA_CA_CERTS` 或各種存取權杖），請把變數寫進該伺服器的 `env_vars`，再按「重新探索」。
-- **MCP HTTP 伺服器**：指向 `localhost` 或內網位址的伺服器，探索會失敗，並在 `last_error` 顯示 SSRF 拒絕原因。本機的 MCP 伺服器請改用 `stdio` 傳輸。
+- **MCP HTTP 伺服器**：指向 `localhost` 或內網位址的伺服器，探索會失敗，`last_error` 會註明遭 SSRF 防護拒絕並附錯誤代碼。本機的 MCP 伺服器請改用 `stdio` 傳輸。
 - **自訂 API 工具**：出站請求的每一次轉址都會重新做 SSRF 驗證，轉址到內網位址的 API 會被拒絕（測試結果的 `status_code` 為 `403`）。
 
 ### 步驟 5：驗證升級結果
@@ -198,7 +198,7 @@ curl -X POST http://localhost:8001/api/documents/rebuild-index \
 
 查看該伺服器的 `last_error`：
 
-- 提到 SSRF 或內網位址：伺服器位於本機或內網，請改用 `stdio` 傳輸。
-- 顯示錯誤代碼：多半是 `stdio` 子行程少了原本從後端繼承的環境變數，請把需要的變數寫進 `env_vars` 後重新探索；錯誤代碼可在伺服器日誌中對應到完整例外。
+- 提到 SSRF：網址或其轉址目標未通過 SSRF 驗證，多半是伺服器位於本機或內網，請改用 `stdio` 傳輸；確切原因可依錯誤代碼在伺服器日誌查到。
+- 只顯示錯誤代碼：多半是 `stdio` 子行程少了原本從後端繼承的環境變數，請把需要的變數寫進 `env_vars` 後重新探索；錯誤代碼可在伺服器日誌中對應到完整例外。
 
 </details>

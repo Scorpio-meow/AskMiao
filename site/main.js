@@ -176,6 +176,7 @@
   const rrf = document.querySelector('[data-rrf]');
   const rrfDataElement = document.getElementById('rrf-data');
   if (rrf && rrfDataElement) {
+    /* 內嵌 JSON 讀自 DOM，其中的值插入 HTML 前一律經過 escapeHtml */
     const { rerankWeight, chunks, queries } = JSON.parse(rrfDataElement.textContent);
     const kInput = rrf.querySelector('[data-rrf-k]');
     const tInput = rrf.querySelector('[data-rrf-t]');
@@ -214,7 +215,7 @@
 
       Object.entries(lanes).forEach(([lane, list]) => {
         list.innerHTML = query[lane].map((id, index) => (
-          `<li data-chunk="${id}" title="${escapeHtml(chunks[id].text)}"><span class="rrf__rank">${index + 1}</span>${chunkLabel(id)}</li>`
+          `<li data-chunk="${escapeHtml(id)}" title="${escapeHtml(chunks[id].text)}"><span class="rrf__rank">${index + 1}</span>${chunkLabel(id)}</li>`
         )).join('');
       });
 
@@ -233,11 +234,11 @@
       }).sort((a, b) => b.mixed - a.mixed);
 
       results.innerHTML = ranked.map((row) => `
-        <li class="rrf-row ${row.pass ? 'is-pass' : 'is-fail'}" data-chunk="${row.id}" title="${escapeHtml(chunks[row.id].text)}" style="view-transition-name: rrf-${row.id}">
+        <li class="rrf-row ${row.pass ? 'is-pass' : 'is-fail'}" data-chunk="${escapeHtml(row.id)}" title="${escapeHtml(chunks[row.id].text)}" style="view-transition-name: rrf-${escapeHtml(row.id)}">
           ${chunkLabel(row.id)}
           <span class="rrf-row__rrf">${row.score.toFixed(4)}<small>融合第 ${row.fusedRank} 名</small></span>
           <span class="rrf-row__rel">
-            <span class="relbar" style="--p: ${row.relevance}; --t: ${threshold}" aria-hidden="true"><span class="relbar__fill"></span><span class="relbar__mark"></span></span>
+            <span class="relbar" style="--p: ${escapeHtml(row.relevance)}; --t: ${threshold}" aria-hidden="true"><span class="relbar__fill"></span><span class="relbar__mark"></span></span>
             <span class="mono">${row.relevance.toFixed(2)}</span>
             <span class="rrf-row__state">${row.pass ? '通過門檻' : '低於門檻'}</span>
           </span>

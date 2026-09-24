@@ -21,7 +21,10 @@
 
 ## [Unreleased]
 
-目前沒有尚未發行的變更。
+### 安全性 (Security)
+
+- **MCP 伺服器的 SSRF 拒絕訊息不再帶出解析結果**：建立或探索 MCP 伺服器時網址被 SSRF 防護拒絕，`last_error` 與 400 回應改為註明遭拒並附錯誤代碼；完整原因可能含伺服器端 DNS 解析出的內網 IP 或轉址目標，只寫入伺服器日誌（CWE-209）。
+- **介紹頁 RRF 示範跳脫片段 ID**：`site/main.js` 把內嵌 JSON 的片段 ID 與重排機率插入 HTML 前改經 `escapeHtml`，資料含引號或角括號時不再被當成 HTML 解析（CWE-79）。
 
 ---
 

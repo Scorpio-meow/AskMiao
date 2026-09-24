@@ -740,7 +740,7 @@ Add a server; it connects and discovers tools right away.
 | `is_enabled` | boolean | No | `true` |
 | `timeout` | integer | No | `30` |
 
-**Response**: `{"status": "success", "message": "MCP 伺服器建立成功", "server": {...}}`. If discovery fails, the server is still created with `status` `error`: an SSRF rejection explains itself in `last_error`, and other failures record only an error code. A duplicate name returns `400` `已存在同名 MCP 伺服器: <name>`.
+**Response**: `{"status": "success", "message": "MCP 伺服器建立成功", "server": {...}}`. If discovery fails, the server is still created with `status` `error`, and `last_error` records only an error code; an SSRF rejection also says the SSRF guard rejected it, and its full reason likewise goes only to the server log. A duplicate name returns `400` `已存在同名 MCP 伺服器: <name>`.
 
 ### 5.4 GET /api/mcp/servers/{server_id}
 
@@ -769,7 +769,7 @@ Reconnect and rediscover tools; the result is written to `discovered_tools`.
 }
 ```
 
-Failures return `400`: an SSRF rejection explains itself in `detail`, and other failures include only an error code; the server's `status` becomes `error`.
+Failures return `400` with only an error code in `detail` (an SSRF rejection also says the SSRF guard rejected it); the server's `status` becomes `error`.
 
 ### 5.8 PATCH /api/mcp/servers/{server_id}/toggle
 
@@ -948,7 +948,7 @@ Unexpected server exceptions **never** return exception messages or stack traces
 }
 ```
 
-Validation errors that only describe the user's own input (such as an invalid OpenAPI spec or a URL rejected by the SSRF guard) return an actionable message instead.
+Validation errors that only describe the user's own input (such as an invalid OpenAPI spec or a spec URL rejected by the SSRF guard) return an actionable message instead.
 
 ### Common status codes
 

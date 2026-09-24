@@ -139,7 +139,7 @@ For every document in the database the rebuild re-extracts text from `UPLOAD_DIR
 
 - **At least one admin**: the AI tools, knowledge base, and admin dashboard pages are admin-only. If you have no admin yet, follow [README: create the first admin](../README_en.md#4-create-the-first-admin).
 - **MCP `stdio` servers**: subprocesses inherit only essential system variables (`PATH`, `SYSTEMROOT`, `USERPROFILE`, and a few more on Windows; `HOME`, `PATH`, `SHELL`, and a few more elsewhere). Servers that relied on backend variables (such as `HTTP_PROXY`, `HTTPS_PROXY`, `NODE_EXTRA_CA_CERTS`, or access tokens) need those variables in their `env_vars`; then run discovery again.
-- **MCP HTTP servers**: servers on `localhost` or intranet addresses fail discovery, and `last_error` shows the SSRF rejection reason. Use the `stdio` transport for local MCP servers.
+- **MCP HTTP servers**: servers on `localhost` or intranet addresses fail discovery, and `last_error` says the SSRF guard rejected them, with an error code. Use the `stdio` transport for local MCP servers.
 - **Custom API tools**: every redirect of an outbound request is SSRF-validated again, so APIs that redirect into the intranet are rejected (the test result reports `status_code` `403`).
 
 ### Step 5: verify the upgrade
@@ -198,7 +198,7 @@ This is expected in 3.0.0. Tools are shared by every user's agent and `stdio` se
 
 Check the server's `last_error`:
 
-- It mentions SSRF or an intranet address: the server is local or on the intranet; switch it to the `stdio` transport.
-- It shows an error code: most likely the `stdio` subprocess is missing a variable it used to inherit from the backend. Add it to `env_vars` and run discovery again; the error code maps to the full exception in the server log.
+- It mentions SSRF: the URL or one of its redirect targets failed SSRF validation, most likely because the server is local or on the intranet; switch it to the `stdio` transport. The error code maps to the exact reason in the server log.
+- It shows only an error code: most likely the `stdio` subprocess is missing a variable it used to inherit from the backend. Add it to `env_vars` and run discovery again; the error code maps to the full exception in the server log.
 
 </details>
