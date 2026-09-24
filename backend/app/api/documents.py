@@ -27,7 +27,7 @@ def validate_filename(filename: str) -> str:
     dangerous_chars = ['/', '\\', '..', '<', '>', ':', '"', '|', '?', '*', '\0']
     for char in dangerous_chars:
         if char in filename:
-            raise ValueError(f"檔名包含不允許的字符: {char}")
+            raise ValueError(f"檔名包含不允許的字元: {char}")
     from pathlib import Path
     ext = Path(filename).suffix.lower()
     if ext not in ALLOWED_EXTENSIONS:
@@ -192,7 +192,7 @@ async def upload_document(
                 results.append({
                     "filename": safe_filename,
                     "status": "failed",
-                    "detail": "無法從文件中提取文本內容",
+                    "detail": "無法從文件中擷取文字內容",
                     "http_status": 400
                 })
                 continue
@@ -370,7 +370,7 @@ async def rebuild_index(
         if not documents_from_db:
             logger.warning("數據庫中沒有文檔")
             return {
-                "message": "索引重建完成（沒有文檔）",
+                "message": "索引重建完成（沒有文件）",
                 "document_count": 0,
                 "chunk_count": 0,
                 "timestamp": datetime.now().isoformat()

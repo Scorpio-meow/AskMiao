@@ -32,7 +32,7 @@ const router = createBrowserRouter([
       },
       {
         path: 'tools',
-        element: <PrivateRoute element={withSuspense(<AiTools />)} />,
+        element: <AdminRoute element={withSuspense(<AiTools />)} />,
       },
       {
         path: 'documents',

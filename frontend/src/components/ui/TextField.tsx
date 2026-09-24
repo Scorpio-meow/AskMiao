@@ -1,4 +1,4 @@
-import React, { forwardRef, useState } from 'react';
+import React, { forwardRef, useId, useState } from 'react';
 import styles from './TextField.module.css';
 export interface TextFieldProps
   extends Omit<React.InputHTMLAttributes<HTMLInputElement | HTMLTextAreaElement>, 'size'> {
@@ -36,11 +36,15 @@ export const TextField = forwardRef<HTMLInputElement & HTMLTextAreaElement, Text
       disabled,
       onFocus,
       onBlur,
+      id,
       ...props
     },
     ref
   ) => {
     const [focused, setFocused] = useState(false);
+    const generatedId = useId();
+    const inputId = id ?? generatedId;
+    const helperId = `${inputId}-helper`;
     const actualStartAdornment = startAdornment || InputProps?.startAdornment;
     const actualEndAdornment = endAdornment || InputProps?.endAdornment;
     const handleFocus = (e: React.FocusEvent<HTMLInputElement & HTMLTextAreaElement>) => {
@@ -59,13 +63,18 @@ export const TextField = forwardRef<HTMLInputElement & HTMLTextAreaElement, Text
     ]
       .filter(Boolean)
       .join(' ');
+    const a11yProps = {
+      id: inputId,
+      'aria-invalid': error || undefined,
+      'aria-describedby': helperText ? helperId : undefined,
+    };
     return (
       <div
         className={`${styles.container} ${fullWidth ? styles.fullWidth : ''} ${className}`}
         style={style}
       >
         {label && (
-          <label className={`${styles.label} ${error ? styles.labelError : ''}`}>
+          <label htmlFor={inputId} className={`${styles.label} ${error ? styles.labelError : ''}`}>
             {label}
           </label>
         )}
@@ -82,6 +91,7 @@ export const TextField = forwardRef<HTMLInputElement & HTMLTextAreaElement, Text
               readOnly={InputProps?.readOnly}
               onFocus={handleFocus}
               onBlur={handleBlur}
+              {...a11yProps}
               {...(props as React.TextareaHTMLAttributes<HTMLTextAreaElement>)}
             />
           ) : (
@@ -92,6 +102,7 @@ export const TextField = forwardRef<HTMLInputElement & HTMLTextAreaElement, Text
               readOnly={InputProps?.readOnly}
               onFocus={handleFocus}
               onBlur={handleBlur}
+              {...a11yProps}
               {...(props as React.InputHTMLAttributes<HTMLInputElement>)}
             />
           )}
@@ -100,7 +111,7 @@ export const TextField = forwardRef<HTMLInputElement & HTMLTextAreaElement, Text
           )}
         </div>
         {helperText && (
-          <div className={`${styles.helperText} ${error ? styles.helperTextError : ''}`}>
+          <div id={helperId} className={`${styles.helperText} ${error ? styles.helperTextError : ''}`}>
             {helperText}
           </div>
         )}

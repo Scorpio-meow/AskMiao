@@ -1,6 +1,18 @@
+.wrapper {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/* position: relative 讓訊息內絕對定位的 .sr-only 文字以捲動區為基準，不會撐大外層容器 */
 .container {
-  flex-grow: 1;
+  position: relative;
+  flex: 1;
+  min-height: 0;
   overflow-y: auto;
+  overflow-x: hidden;
   padding: var(--space-4);
   display: flex;
   flex-direction: column;
@@ -18,6 +30,53 @@
   margin: var(--space-3) 0;
 }
 
+.centerState {
+  flex-grow: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-3);
+}
+
+.loadingOverlay {
+  position: absolute;
+  top: var(--space-3);
+  left: 50%;
+  transform: translateX(-50%);
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-4);
+  border-radius: var(--radius-full);
+  background-color: var(--bg-surface-elevated);
+  border: 1px solid var(--border-default);
+  box-shadow: var(--shadow-md);
+}
+
+.jumpButton {
+  position: absolute;
+  bottom: var(--space-3);
+  left: 50%;
+  transform: translateX(-50%);
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: 36px;
+  padding: 0 var(--space-4);
+  border-radius: var(--radius-full);
+  border: 1px solid var(--border-default);
+  background-color: var(--bg-surface-elevated);
+  color: var(--text-primary);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  box-shadow: var(--shadow-md);
+  cursor: pointer;
+}
+
+.jumpButton:hover {
+  background-color: var(--bg-surface-hover);
+}
+
 .emptyContainer {
   flex-grow: 1;
   display: flex;
@@ -25,20 +84,35 @@
   align-items: center;
   justify-content: center;
   text-align: center;
-  padding: var(--space-10) var(--space-4);
+  padding: var(--space-10) 0;
 }
 
 .emptyCard {
   padding: var(--space-8);
+  width: 100%;
   max-width: 480px;
   border-radius: var(--radius-xl);
   border: 1px dashed var(--border-strong);
   background-color: var(--bg-surface-secondary);
 }
 
+@media (max-width: 599px) {
+  .emptyContainer {
+    padding: var(--space-4) 0;
+  }
+
+  .emptyCard {
+    padding: var(--space-5);
+  }
+}
+
 .emptyIcon {
   margin: 0 auto var(--space-4);
   color: var(--color-primary);
+}
+
+.emptyIcon svg {
+  margin: 0 auto;
 }
 
 .emptyTitle {
@@ -72,24 +146,6 @@
   display: flex;
   flex-wrap: wrap;
   gap: var(--space-2);
-}
-
-.loadingRow {
-  display: flex;
-  align-items: center;
-  gap: var(--space-3);
-  margin-bottom: var(--space-4);
-}
-
-.loadingBubble {
-  padding: var(--space-4);
-  border-radius: 4px 16px 16px 16px;
-  background-color: var(--bg-surface);
-  border: 1px solid var(--border-default);
-  display: flex;
-  align-items: center;
-  gap: var(--space-3);
-  box-shadow: var(--shadow-sm);
 }
 
 .loadingText {

@@ -36,11 +36,12 @@
 
 /* 附件預覽區域 */
 .attachmentPreviewBar {
+  list-style: none;
+  margin: 0 0 var(--space-1);
+  padding: 0 0 var(--space-2);
   display: flex;
   flex-wrap: wrap;
   gap: var(--space-2);
-  padding-bottom: var(--space-2);
-  margin-bottom: var(--space-1);
   border-bottom: 1px dashed var(--border-default);
   animation: fadeIn 0.2s ease-out;
 }
@@ -76,29 +77,31 @@
   background-color: var(--bg-surface);
   border: 1px solid var(--border-default);
   border-radius: var(--radius-md);
-  padding: 4px 10px;
+  padding: 4px 4px 4px 10px;
   font-size: 0.8rem;
   color: var(--text-primary);
   box-shadow: var(--shadow-xs);
-  max-width: 220px;
+  max-width: 240px;
 }
 
 .fileFormatBadge {
-  font-size: 0.65rem;
+  font-size: 0.7rem;
   font-weight: 700;
   padding: 2px 6px;
   border-radius: 4px;
   text-transform: uppercase;
   letter-spacing: 0.5px;
-  background-color: rgba(37, 99, 235, 0.1);
-  color: var(--color-primary);
+  background-color: var(--color-primary-light);
+  color: var(--color-primary-text);
 }
 
-.badgePdf { background-color: rgba(239, 68, 68, 0.12); color: #dc2626; }
-.badgeDocx { background-color: rgba(37, 99, 235, 0.12); color: #2563eb; }
-.badgeXlsx { background-color: rgba(16, 185, 129, 0.12); color: #059669; }
-.badgePptx { background-color: rgba(249, 115, 22, 0.12); color: #d97706; }
-.badgeCode { background-color: rgba(139, 92, 246, 0.12); color: #7c3aed; }
+.badgePdf { background-color: var(--color-error-bg); color: var(--color-error-text); }
+.badgeDocx { background-color: var(--color-primary-light); color: var(--color-primary-text); }
+.badgeXlsx { background-color: var(--color-success-bg); color: var(--color-success-text); }
+.badgePptx { background-color: var(--color-warning-bg); color: var(--color-warning-text); }
+.badgeCode { background-color: rgba(139, 92, 246, 0.12); color: #6d28d9; }
+
+[data-theme="dark"] .badgeCode { color: #c4b5fd; }
 
 .fileInfo {
   display: flex;
@@ -115,7 +118,7 @@
 }
 
 .fileSize {
-  font-size: 0.7rem;
+  font-size: var(--font-size-xs);
   color: var(--text-tertiary);
 }
 
@@ -123,8 +126,8 @@
   position: absolute;
   top: 2px;
   right: 2px;
-  width: 18px;
-  height: 18px;
+  width: 24px;
+  height: 24px;
   border-radius: 50%;
   background: rgba(0, 0, 0, 0.65);
   color: #fff;
@@ -146,17 +149,20 @@
   border: none;
   color: var(--text-tertiary);
   cursor: pointer;
-  padding: 2px;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  flex-shrink: 0;
   display: flex;
   align-items: center;
   justify-content: center;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   transition: color var(--transition-fast), background-color var(--transition-fast);
 }
 
 .removeFileBtn:hover {
-  color: #dc2626;
-  background-color: rgba(239, 68, 68, 0.1);
+  color: var(--color-error-text);
+  background-color: var(--color-error-bg);
 }
 
 /* 輸入框主體 */
@@ -165,6 +171,10 @@
   align-items: flex-end;
   gap: var(--space-2);
   width: 100%;
+}
+
+.hiddenFileInput {
+  display: none;
 }
 
 .attachButton {
@@ -182,9 +192,14 @@
   transition: background-color var(--transition-fast), color var(--transition-fast);
 }
 
-.attachButton:hover {
-  background-color: var(--bg-hover);
-  color: var(--color-primary);
+.attachButton:hover:not(:disabled) {
+  background-color: var(--bg-surface-hover);
+  color: var(--color-primary-text);
+}
+
+.attachButton:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
 }
 
 .textarea {
@@ -199,7 +214,9 @@
   resize: none;
   outline: none;
   padding: 6px 0;
+  field-sizing: content;
   max-height: 160px;
+  overflow-y: auto;
 }
 
 .textarea::placeholder {
@@ -222,12 +239,21 @@
 }
 
 .sendButtonActive {
-  background-color: var(--color-primary);
+  background-color: var(--color-primary-solid);
   color: var(--text-on-primary);
 }
 
 .sendButtonActive:hover {
-  background-color: var(--color-primary-hover);
+  background-color: var(--color-primary-solid-hover);
+}
+
+.stopButton {
+  background-color: var(--text-primary);
+  color: var(--bg-surface);
+}
+
+.stopButton:hover {
+  background-color: var(--text-secondary);
 }
 
 .sendButton:disabled {
@@ -241,13 +267,14 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: var(--space-3);
   margin-top: 4px;
   padding: 0 var(--space-1);
 }
 
 .dragHint {
   color: var(--text-tertiary);
-  font-size: 0.725rem;
+  font-size: var(--font-size-xs);
   display: inline-flex;
   align-items: center;
   gap: 4px;
@@ -255,5 +282,33 @@
 
 .hint {
   color: var(--text-tertiary);
-  font-size: 0.725rem;
+  font-size: var(--font-size-xs);
+}
+
+/* 觸控裝置：放大點擊範圍、字級 16px 避免 iOS 自動放大，並隱藏只適用實體鍵盤的提示 */
+@media (pointer: coarse) {
+  .attachButton,
+  .sendButton {
+    width: 44px;
+    height: 44px;
+  }
+
+  .removeAttachmentBtn {
+    width: 28px;
+    height: 28px;
+  }
+
+  .removeFileBtn {
+    width: 36px;
+    height: 36px;
+  }
+
+  .textarea {
+    font-size: var(--font-size-base);
+    padding: 10px 0;
+  }
+
+  .keyboardHint {
+    display: none;
+  }
 }

@@ -4,42 +4,58 @@
   display: flex;
   align-items: center;
   justify-content: center;
+  max-width: calc(100vw - 32px);
   pointer-events: none;
   transition: transform var(--transition-fast), opacity var(--transition-fast);
 }
 
 .snackbar>* {
   pointer-events: auto;
+  box-shadow: var(--shadow-lg);
+}
+
+.defaultMessage {
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-md);
+  background-color: var(--neutral-900);
+  color: var(--neutral-0);
+  font-size: var(--font-size-sm);
+  line-height: var(--line-height-normal);
+}
+
+[data-theme="dark"] .defaultMessage {
+  background-color: var(--neutral-100);
+  color: var(--neutral-950);
 }
 
 .bottomCenter {
-  bottom: 24px;
+  bottom: calc(24px + env(safe-area-inset-bottom));
   left: 50%;
   transform: translateX(-50%);
 }
 
 .bottomRight {
-  bottom: 24px;
+  bottom: calc(24px + env(safe-area-inset-bottom));
   right: 24px;
 }
 
 .bottomLeft {
-  bottom: 24px;
+  bottom: calc(24px + env(safe-area-inset-bottom));
   left: 24px;
 }
 
 .topCenter {
-  top: 24px;
+  top: calc(24px + env(safe-area-inset-top));
   left: 50%;
   transform: translateX(-50%);
 }
 
 .topRight {
-  top: 24px;
+  top: calc(24px + env(safe-area-inset-top));
   right: 24px;
 }
 
 .topLeft {
-  top: 24px;
+  top: calc(24px + env(safe-area-inset-top));
   left: 24px;
 }

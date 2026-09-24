@@ -1,25 +1,18 @@
 import { useState, useEffect } from 'react';
 import { Snackbar, Alert } from './ui';
 import networkMonitor from '../utils/networkMonitor';
-import offlineCache from '../utils/offlineCache';
 const NetworkStatus = () => {
-  const [showOfflineAlert, setShowOfflineAlert] = useState(false);
-  const [showOnlineAlert, setShowOnlineAlert] = useState(false);
-  const [pendingRequestsCount, setPendingRequestsCount] = useState(0);
+  // offline：目前離線；restored：剛從離線恢復。一開始就在線上時不顯示任何提示
+  const [status, setStatus] = useState(null);
   useEffect(() => {
-    const handleNetworkChange = async (status) => {
-      const online = status === 'online';
-      if (online) {
-        setShowOnlineAlert(true);
-        setShowOfflineAlert(false);
-        const count = await offlineCache.getCount();
-        setPendingRequestsCount(count);
-        if (count > 0) {
-          console.log(`[NetworkStatus] 檢測到 ${count} 個離線請求，準備同步...`);
-        }
-      } else {
-        setShowOfflineAlert(true);
-        setShowOnlineAlert(false);
+    let wasOffline = false;
+    const handleNetworkChange = (next) => {
+      if (next === 'offline') {
+        wasOffline = true;
+        setStatus('offline');
+      } else if (wasOffline) {
+        wasOffline = false;
+        setStatus('restored');
       }
     };
     networkMonitor.addListener(handleNetworkChange);
@@ -27,39 +20,29 @@ const NetworkStatus = () => {
       networkMonitor.removeListener(handleNetworkChange);
     };
   }, []);
-  const handleCloseOfflineAlert = () => {
-    setShowOfflineAlert(false);
-  };
-  const handleCloseOnlineAlert = () => {
-    setShowOnlineAlert(false);
+  const handleClose = () => {
+    setStatus(null);
   };
   return (
     <>
       <Snackbar
-        open={showOfflineAlert}
+        open={status === 'offline'}
+        autoHideDuration={0}
         anchorOrigin={{ vertical: 'top', horizontal: 'center' }}
-        onClose={handleCloseOfflineAlert}
+        onClose={handleClose}
       >
-        <Alert
-          onClose={handleCloseOfflineAlert}
-          severity="warning"
-        >
-          您目前處於離線狀態，某些功能可能不可用
+        <Alert onClose={handleClose} severity="warning">
+          目前處於離線狀態，部分功能可能無法使用
         </Alert>
       </Snackbar>
       <Snackbar
-        open={showOnlineAlert}
+        open={status === 'restored'}
         autoHideDuration={3000}
         anchorOrigin={{ vertical: 'top', horizontal: 'center' }}
-        onClose={handleCloseOnlineAlert}
+        onClose={handleClose}
       >
-        <Alert
-          onClose={handleCloseOnlineAlert}
-          severity="success"
-        >
-          {pendingRequestsCount > 0
-            ? `網絡已恢復！檢測到 ${pendingRequestsCount} 個離線請求`
-            : '網絡已恢復'}
+        <Alert onClose={handleClose} severity="success">
+          網路已恢復連線
         </Alert>
       </Snackbar>
     </>

@@ -1,5 +1,5 @@
 .container {
-  padding: var(--space-4);
+  padding: var(--space-4) 0;
   max-width: 1200px;
   margin: 0 auto;
 }
@@ -8,6 +8,13 @@
   .container {
     padding: var(--space-6);
   }
+}
+
+.loadingState {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  height: 50vh;
 }
 
 .header {
@@ -19,15 +26,30 @@
   gap: var(--space-3);
 }
 
+.titleRow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
 .title {
   font-size: var(--font-size-2xl);
   font-weight: var(--font-weight-bold);
   color: var(--text-primary);
 }
 
+.refreshing {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--font-size-sm);
+  color: var(--text-secondary);
+}
+
 .actions {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: var(--space-3);
 }
 
@@ -59,6 +81,8 @@
 }
 
 .emptyIcon {
+  display: flex;
+  justify-content: center;
   margin: 0 auto var(--space-4);
   color: var(--text-tertiary);
 }
@@ -77,12 +101,16 @@
 .docList {
   display: flex;
   flex-direction: column;
+  list-style: none;
+  margin: 0;
+  padding: 0;
 }
 
 .docItem {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: var(--space-3);
   padding: var(--space-4);
   border-bottom: 1px solid var(--border-subtle);
   transition: background-color var(--transition-fast);
@@ -100,6 +128,8 @@
   display: flex;
   flex-direction: column;
   gap: 4px;
+  flex: 1;
+  min-width: 0;
 }
 
 .docTitleRow {
@@ -113,6 +143,7 @@
   font-size: var(--font-size-base);
   font-weight: var(--font-weight-medium);
   color: var(--text-primary);
+  overflow-wrap: anywhere;
 }
 
 .docMeta {
@@ -127,29 +158,29 @@
   display: flex;
   flex-direction: column;
   gap: 4px;
-  background: var(--bg-surface-secondary, rgba(37, 99, 235, 0.04));
+  background: var(--bg-surface-secondary);
   border-left: 3px solid var(--color-primary);
   border-radius: 0 var(--radius-md) var(--radius-md) 0;
   padding: 8px 12px;
   margin: 6px 0;
   max-width: 900px;
-  border-top: 1px solid var(--border-subtle, rgba(0, 0, 0, 0.05));
-  border-right: 1px solid var(--border-subtle, rgba(0, 0, 0, 0.05));
-  border-bottom: 1px solid var(--border-subtle, rgba(0, 0, 0, 0.05));
+  border-top: 1px solid var(--border-subtle);
+  border-right: 1px solid var(--border-subtle);
+  border-bottom: 1px solid var(--border-subtle);
 }
 
 .docDescriptionHeader {
   display: flex;
   align-items: center;
   gap: 6px;
-  font-size: 0.75rem;
+  font-size: var(--font-size-xs);
   font-weight: 600;
-  color: var(--color-primary);
+  color: var(--color-primary-text);
   letter-spacing: 0.02em;
 }
 
 .docDescriptionIcon {
-  color: var(--color-primary);
+  color: var(--color-primary-text);
   flex-shrink: 0;
   display: flex;
   align-items: center;
@@ -159,23 +190,43 @@
   font-size: 0.84rem;
   line-height: 1.5;
   color: var(--text-primary);
-  word-break: break-word;
+  overflow-wrap: anywhere;
+}
+
+.summaryActions {
+  margin-left: auto;
+  display: flex;
+  gap: 4px;
 }
 
 .summaryActionBtn {
   background: none;
   border: none;
-  font-size: 0.72rem;
+  font-size: var(--font-size-xs);
   color: var(--text-secondary);
   cursor: pointer;
-  padding: 2px 6px;
+  min-height: 28px;
+  padding: 2px 8px;
   border-radius: var(--radius-sm);
   transition: all 0.2s ease;
 }
 
 .summaryActionBtn:hover {
-  color: var(--color-primary);
-  background: var(--bg-hover, rgba(0, 0, 0, 0.05));
+  color: var(--color-primary-text);
+  background: var(--bg-surface-hover);
+}
+
+.summaryEditor {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.summaryEditorActions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
 }
 
 .summaryEditTextarea {
@@ -183,7 +234,7 @@
   padding: 8px 10px;
   font-size: 0.84rem;
   line-height: 1.45;
-  border: 1px solid var(--border-medium, #cbd5e1);
+  border: 1px solid var(--border-strong);
   border-radius: var(--radius-sm);
   background: var(--bg-surface);
   color: var(--text-primary);
@@ -194,13 +245,24 @@
 
 .summaryEditTextarea:focus {
   border-color: var(--color-primary);
-  box-shadow: 0 0 0 2px var(--color-primary-light, rgba(37, 99, 235, 0.15));
+  box-shadow: 0 0 0 2px var(--border-focus);
+}
+
+@media (pointer: coarse) {
+  .summaryEditTextarea {
+    font-size: var(--font-size-base);
+  }
 }
 
 .docActions {
   display: flex;
   align-items: center;
   gap: var(--space-2);
+  flex-shrink: 0;
+}
+
+.hiddenFileInput {
+  display: none;
 }
 
 .selectedFilesBox {
@@ -214,14 +276,8 @@
   border: 1px solid var(--border-subtle);
 }
 
-.fileProgressItem {
-  padding-bottom: var(--space-2);
-  border-bottom: 1px solid var(--border-default);
-}
-
-.fileProgressItem:last-child {
-  border-bottom: none;
-  padding-bottom: 0;
+.uploadSummary {
+  margin-top: var(--space-4);
 }
 
 .progressBar {
@@ -240,21 +296,11 @@
   transition: width 0.3s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
-/* === UI/UX Pro-Max 彈窗專屬樣式 === */
-.dialogHeaderFlex {
+.progressMeta {
   display: flex;
-  align-items: center;
   justify-content: space-between;
-  width: 100%;
-}
-
-.dialogTitleWithIcon {
-  display: flex;
-  align-items: center;
-  gap: var(--space-3);
-  font-size: var(--font-size-lg);
-  font-weight: var(--font-weight-semibold);
-  color: var(--text-primary);
+  font-size: var(--font-size-xs);
+  color: var(--text-tertiary);
 }
 
 .dialogIconBadge {
@@ -265,22 +311,18 @@
   align-items: center;
   justify-content: center;
   background: rgba(59, 130, 246, 0.12);
-  color: var(--color-primary);
+  color: var(--color-primary-text);
   flex-shrink: 0;
-}
-
-.dialogIconBadgeDanger {
-  background: rgba(239, 68, 68, 0.12);
-  color: var(--color-error);
 }
 
 .dialogIconBadgeWarning {
   background: rgba(245, 158, 11, 0.12);
-  color: var(--color-warning);
+  color: var(--color-warning-text);
 }
 
 .dropZone {
-  border: 2px dashed var(--border-default);
+  width: 100%;
+  border: 2px dashed var(--border-strong);
   border-radius: var(--radius-lg);
   padding: var(--space-6) var(--space-4);
   background-color: var(--bg-surface-secondary);
@@ -289,15 +331,22 @@
   align-items: center;
   justify-content: center;
   text-align: center;
+  font: inherit;
+  color: inherit;
   cursor: pointer;
   transition: all 0.2s ease;
   position: relative;
   overflow: hidden;
 }
 
-.dropZone:hover {
+.dropZone:hover:not(:disabled) {
   border-color: var(--color-primary);
   background-color: rgba(59, 130, 246, 0.03);
+}
+
+.dropZone:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
 }
 
 .dropZoneActive {
@@ -316,7 +365,7 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  color: var(--color-primary);
+  color: var(--color-primary-text);
   margin-bottom: var(--space-3);
   transition: transform 0.2s ease;
 }
@@ -326,6 +375,7 @@
 }
 
 .dropZoneTitle {
+  display: block;
   font-size: var(--font-size-base);
   font-weight: var(--font-weight-semibold);
   color: var(--text-primary);
@@ -333,6 +383,7 @@
 }
 
 .dropZoneSubtitle {
+  display: block;
   font-size: var(--font-size-xs);
   color: var(--text-secondary);
   margin-bottom: var(--space-3);
@@ -347,7 +398,7 @@
 }
 
 .formatTag {
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   font-weight: 500;
   padding: 2px 8px;
   border-radius: var(--radius-full);
@@ -360,6 +411,8 @@
   display: flex;
   justify-content: space-between;
   align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2);
   padding: 0 2px;
 }
 
@@ -370,12 +423,14 @@
 }
 
 .fileQueueList {
+  list-style: none;
+  margin: 0;
   display: flex;
   flex-direction: column;
   gap: var(--space-2);
-  max-height: 240px;
+  max-height: 280px;
   overflow-y: auto;
-  padding-right: 4px;
+  padding: 0 4px 0 0;
 }
 
 .fileCard {
@@ -390,7 +445,7 @@
 }
 
 .fileCard:hover {
-  border-color: var(--border-hover);
+  border-color: var(--border-strong);
 }
 
 .fileCardTop {
@@ -409,7 +464,7 @@
 }
 
 .fileBadge {
-  font-size: 10px;
+  font-size: var(--font-size-xs);
   font-weight: 700;
   padding: 2px 6px;
   border-radius: 4px;
@@ -418,12 +473,14 @@
   letter-spacing: 0.5px;
 }
 
-.fileBadgePdf { background: rgba(239, 68, 68, 0.12); color: #ef4444; }
-.fileBadgeDocx { background: rgba(59, 130, 246, 0.12); color: #3b82f6; }
-.fileBadgePptx { background: rgba(245, 158, 11, 0.12); color: #f59e0b; }
-.fileBadgeXlsx { background: rgba(16, 185, 129, 0.12); color: #10b981; }
-.fileBadgeCode { background: rgba(139, 92, 246, 0.12); color: #8b5cf6; }
-.fileBadgeText { background: rgba(107, 114, 128, 0.12); color: #6b7280; }
+.fileBadgePdf { background: var(--color-error-bg); color: var(--color-error-text); }
+.fileBadgeDocx { background: var(--color-primary-light); color: var(--color-primary-text); }
+.fileBadgePptx { background: var(--color-warning-bg); color: var(--color-warning-text); }
+.fileBadgeXlsx { background: var(--color-success-bg); color: var(--color-success-text); }
+.fileBadgeCode { background: rgba(139, 92, 246, 0.12); color: #6d28d9; }
+.fileBadgeText { background: var(--bg-surface-secondary); color: var(--text-secondary); }
+
+[data-theme="dark"] .fileBadgeCode { color: #c4b5fd; }
 
 .fileInfoText {
   display: flex;
@@ -441,7 +498,7 @@
 }
 
 .fileSize {
-  font-size: 11px;
+  font-size: var(--font-size-xs);
   color: var(--text-tertiary);
 }
 
@@ -452,14 +509,47 @@
   flex-shrink: 0;
 }
 
-.limitTip {
+.fileError {
+  font-size: var(--font-size-xs);
+  color: var(--color-error-text);
+  overflow-wrap: anywhere;
+}
+
+.uploadActions {
+  justify-content: space-between;
+}
+
+.uploadActionsRight {
   display: flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 12px;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.rebuildText {
+  font-size: var(--font-size-sm);
+  color: var(--text-primary);
+  margin-bottom: 10px;
+}
+
+.rebuildNotes {
+  font-size: 13px;
   color: var(--text-secondary);
-  margin-top: var(--space-3);
-  padding: 8px 12px;
-  background: var(--bg-surface-secondary);
+  line-height: 1.7;
+  margin: 0;
+  padding: 12px 16px 12px 32px;
   border-radius: var(--radius-md);
+  background: var(--bg-surface-secondary);
+}
+
+.rebuildProgress {
+  margin-top: var(--space-4);
+  padding: 12px;
+  text-align: center;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-secondary);
+}
+
+.rebuildProgress svg {
+  margin: 0 auto var(--space-2);
 }

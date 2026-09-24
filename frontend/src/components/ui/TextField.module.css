@@ -17,7 +17,7 @@
 }
 
 .labelError {
-  color: var(--color-error);
+  color: var(--color-error-text);
 }
 
 .inputWrapper {
@@ -76,6 +76,13 @@
   cursor: not-allowed;
 }
 
+/* iOS Safari 會在字級小於 16px 的欄位聚焦時自動放大畫面 */
+@media (pointer: coarse) {
+  .input {
+    font-size: var(--font-size-base);
+  }
+}
+
 .textarea {
   resize: vertical;
   min-height: 80px;
@@ -96,5 +103,5 @@
 }
 
 .helperTextError {
-  color: var(--color-error);
+  color: var(--color-error-text);
 }

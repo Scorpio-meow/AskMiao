@@ -24,6 +24,7 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(
       className = '',
       disabled,
       color,
+      type = 'button',
       ...props
     },
     ref
@@ -59,19 +60,26 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(
       .filter(Boolean)
       .join(' ');
     return (
-      <button ref={ref} className={classes} disabled={disabled || loading} {...props}>
+      <button
+        ref={ref}
+        type={type}
+        className={classes}
+        disabled={disabled || loading}
+        aria-busy={loading || undefined}
+        {...props}
+      >
         {loading ? (
-          <span style={{ display: 'inline-flex', animation: 'spin 1s linear infinite' }}>
+          <span className={styles.spinner} aria-hidden="true">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3">
               <circle cx="12" cy="12" r="10" strokeDasharray="32" strokeDashoffset="12" />
             </svg>
           </span>
         ) : (
-          startIcon && <span style={{ display: 'inline-flex', flexShrink: 0 }}>{startIcon}</span>
+          startIcon && <span className={styles.iconSlot} aria-hidden="true">{startIcon}</span>
         )}
         {children}
         {!loading && endIcon && (
-          <span style={{ display: 'inline-flex', flexShrink: 0 }}>{endIcon}</span>
+          <span className={styles.iconSlot} aria-hidden="true">{endIcon}</span>
         )}
       </button>
     );

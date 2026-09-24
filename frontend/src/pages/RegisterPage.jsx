@@ -1,6 +1,8 @@
 import { useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { useAuth } from '../hooks/useAuth';
+import { useDocumentTitle } from '../hooks/useDocumentTitle';
+import { APP_NAME, APP_TAGLINE } from '../config/brand';
 import { TextField, Button, Alert, IconButton, Icon } from '../components/ui';
 import styles from './Auth.module.css';
 const RegisterPage = () => {
@@ -14,15 +16,21 @@ const RegisterPage = () => {
   });
   const [showPassword, setShowPassword] = useState(false);
   const [localError, setLocalError] = useState('');
+  const [submitAttempted, setSubmitAttempted] = useState(false);
   const [success, setSuccess] = useState(false);
-  const passwordRequirements = {
-    length: formData.password.length >= 8,
-    uppercase: /[A-Z]/.test(formData.password),
-    lowercase: /[a-z]/.test(formData.password),
-    number: /[0-9]/.test(formData.password),
-    match: formData.password === formData.confirmPassword && formData.password.length > 0
-  };
-  const isPasswordValid = Object.values(passwordRequirements).every(req => req);
+  useDocumentTitle('註冊');
+  const passwordRequirements = [
+    { key: 'length', label: '至少 8 個字元', met: formData.password.length >= 8 },
+    { key: 'uppercase', label: '包含大寫字母', met: /[A-Z]/.test(formData.password) },
+    { key: 'lowercase', label: '包含小寫字母', met: /[a-z]/.test(formData.password) },
+    { key: 'number', label: '包含數字', met: /[0-9]/.test(formData.password) },
+    {
+      key: 'match',
+      label: '兩次密碼輸入一致',
+      met: formData.password === formData.confirmPassword && formData.password.length > 0
+    },
+  ];
+  const isPasswordValid = passwordRequirements.every((req) => req.met);
   const handleChange = (e) => {
     setFormData({
       ...formData,
@@ -32,12 +40,13 @@ const RegisterPage = () => {
   };
   const handleSubmit = async (e) => {
     e.preventDefault();
+    setSubmitAttempted(true);
     if (!formData.username || !formData.email || !formData.password) {
       setLocalError('請填寫所有必填欄位');
       return;
     }
     if (!isPasswordValid) {
-      setLocalError('密碼不符合要求');
+      setLocalError('密碼尚未符合下列要求');
       return;
     }
     setLocalError('');
@@ -57,12 +66,12 @@ const RegisterPage = () => {
   if (success) {
     return (
       <div className={styles.container}>
-        <div className={styles.card} style={{ textAlign: 'center' }}>
-          <div style={{ color: 'var(--color-success)', marginBottom: '16px' }}>
+        <div className={`${styles.card} ${styles.successCard}`} role="status">
+          <div className={styles.successIcon}>
             <Icon name="check-circle" size={64} />
           </div>
-          <h2 className={styles.title}>註冊成功!</h2>
-          <p className={styles.subtitle}>正在跳轉到首頁...</p>
+          <h1 className={styles.title}>註冊成功！</h1>
+          <p className={styles.subtitle}>正在前往首頁...</p>
         </div>
       </div>
     );
@@ -74,7 +83,7 @@ const RegisterPage = () => {
           <div className={styles.headerIcon}>
             <Icon name="person-add" size={48} />
           </div>
-          <h1 className={styles.title}>創建新帳號</h1>
+          <h1 className={styles.title}>建立新帳號</h1>
           <p className={styles.subtitle}>填寫以下資料完成註冊</p>
         </div>
         {error && (
@@ -82,16 +91,18 @@ const RegisterPage = () => {
             {error}
           </Alert>
         )}
-        <form onSubmit={handleSubmit} className={styles.form}>
+        <form onSubmit={handleSubmit} className={styles.form} noValidate>
           <TextField
             fullWidth
-            label="用戶名"
+            label="使用者名稱"
             name="username"
             value={formData.username}
             onChange={handleChange}
             disabled={loading}
             autoFocus
-            helperText="3-50 個字符,只能包含字母、數字、下劃線和連字符"
+            autoComplete="username"
+            required
+            helperText="3–50 個字元，只能包含英文字母、數字、底線（_）與連字號（-）"
           />
           <TextField
             fullWidth
@@ -101,6 +112,8 @@ const RegisterPage = () => {
             value={formData.email}
             onChange={handleChange}
             disabled={loading}
+            autoComplete="email"
+            required
           />
           <TextField
             fullWidth
@@ -110,6 +123,9 @@ const RegisterPage = () => {
             value={formData.password}
             onChange={handleChange}
             disabled={loading}
+            autoComplete="new-password"
+            required
+            aria-describedby="password-requirements"
             endAdornment={
               <IconButton
                 size="sm"
@@ -128,42 +144,33 @@ const RegisterPage = () => {
             value={formData.confirmPassword}
             onChange={handleChange}
             disabled={loading}
+            autoComplete="new-password"
+            required
           />
-          {formData.password && (
-            <div style={{ marginTop: '8px', padding: '8px', backgroundColor: 'var(--bg-surface-secondary)', borderRadius: '8px' }}>
-              <div style={{ fontSize: '12px', color: 'var(--text-tertiary)', fontWeight: 600, marginBottom: '6px' }}>
-                密碼要求:
-              </div>
-              <ul style={{ listStyle: 'none', padding: 0, margin: 0, fontSize: '12px', display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                <li style={{ display: 'flex', alignItems: 'center', gap: '6px', color: passwordRequirements.length ? 'var(--color-success)' : 'var(--color-error)' }}>
-                  <Icon name={passwordRequirements.length ? 'check' : 'close'} size={14} />
-                  <span>至少 8 個字符</span>
-                </li>
-                <li style={{ display: 'flex', alignItems: 'center', gap: '6px', color: passwordRequirements.uppercase ? 'var(--color-success)' : 'var(--color-error)' }}>
-                  <Icon name={passwordRequirements.uppercase ? 'check' : 'close'} size={14} />
-                  <span>包含大寫字母</span>
-                </li>
-                <li style={{ display: 'flex', alignItems: 'center', gap: '6px', color: passwordRequirements.lowercase ? 'var(--color-success)' : 'var(--color-error)' }}>
-                  <Icon name={passwordRequirements.lowercase ? 'check' : 'close'} size={14} />
-                  <span>包含小寫字母</span>
-                </li>
-                <li style={{ display: 'flex', alignItems: 'center', gap: '6px', color: passwordRequirements.number ? 'var(--color-success)' : 'var(--color-error)' }}>
-                  <Icon name={passwordRequirements.number ? 'check' : 'close'} size={14} />
-                  <span>包含數字</span>
-                </li>
-                <li style={{ display: 'flex', alignItems: 'center', gap: '6px', color: passwordRequirements.match ? 'var(--color-success)' : 'var(--color-error)' }}>
-                  <Icon name={passwordRequirements.match ? 'check' : 'close'} size={14} />
-                  <span>兩次密碼輸入一致</span>
-                </li>
-              </ul>
-            </div>
-          )}
+          <div className={styles.requirements} id="password-requirements">
+            <div className={styles.requirementsTitle}>密碼要求：</div>
+            <ul className={styles.requirementList} role="list">
+              {passwordRequirements.map((req) => {
+                const state = req.met ? 'met' : submitAttempted ? 'unmet' : 'pending';
+                return (
+                  <li
+                    key={req.key}
+                    className={`${styles.requirement} ${state === 'met' ? styles.requirementMet : state === 'unmet' ? styles.requirementUnmet : ''}`}
+                  >
+                    <Icon name={state === 'met' ? 'check' : state === 'unmet' ? 'close' : 'info'} size={14} />
+                    <span>{req.label}</span>
+                    <span className="sr-only">{state === 'met' ? '（已符合）' : '（尚未符合）'}</span>
+                  </li>
+                );
+              })}
+            </ul>
+          </div>
           <Button
             fullWidth
             type="submit"
             variant="primary"
             size="lg"
-            disabled={loading || !isPasswordValid}
+            disabled={loading}
             loading={loading}
             className={styles.submitBtn}
           >
@@ -171,14 +178,14 @@ const RegisterPage = () => {
           </Button>
         </form>
         <div className={styles.footer}>
-          已有帳號?
+          已有帳號？
           <Link to="/login" className={styles.link}>
             立即登入
           </Link>
         </div>
       </div>
       <p className={styles.copyright}>
-        ChatBot © 2025 - Powered by JWT Authentication
+        {APP_NAME} · {APP_TAGLINE}
       </p>
     </div>
   );

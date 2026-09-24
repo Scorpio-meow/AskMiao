@@ -26,6 +26,8 @@ export interface SnackbarState {
   open: boolean;
   message: string;
   severity: 'success' | 'info' | 'warning' | 'error';
+  /** 每則通知的序號，讓新通知重新開始自動關閉的計時 */
+  key: number;
 }
 export type ReasoningEffort = 'none' | 'low' | 'medium' | 'high' | 'xhigh';
 export interface ChatHeaderProps {
@@ -38,8 +40,11 @@ export interface ChatHeaderProps {
   onRefreshModels: () => void;
   currentConversation: Conversation | null;
   onOpenSidebar?: () => void;
+  sidebarOpen?: boolean;
+  sidebarId?: string;
 }
 export interface ChatSidebarProps {
+  id: string;
   open: boolean;
   onClose: () => void;
   conversations: Conversation[];
@@ -48,16 +53,22 @@ export interface ChatSidebarProps {
   onNewConversation: () => void;
   onDeleteConversation: (id: number) => void;
   loading: boolean;
+  loadError: string | null;
+  onRetryLoad: () => void;
 }
 export interface ChatMessageItemProps {
   message: Message;
+  isStreaming: boolean;
   isThinkingOpen: boolean;
   onToggleThinking: () => void;
   onCopyMessage: (text: string) => void;
+  onRetry?: () => void;
 }
 export interface ChatMessageListProps {
   messages: Message[];
-  loading: boolean;
+  conversationLoading: boolean;
+  sending: boolean;
+  streamingMessageId: number | null;
   loadingMore: boolean;
   hasMoreMessages: boolean;
   onLoadMore: () => void;
@@ -65,8 +76,7 @@ export interface ChatMessageListProps {
   onToggleThinking: (id: number | string) => void;
   onCopyMessage: (text: string) => void;
   onSelectPrompt?: (prompt: string) => void;
-  messagesEndRef: React.RefObject<HTMLDivElement | null>;
-  messagesTopRef: React.RefObject<HTMLDivElement | null>;
+  onRetry: (failedMessage: Message) => void;
 }
 export type { ChatAttachment } from '../../services/api';
 import type { ChatAttachment } from '../../services/api';
@@ -74,7 +84,11 @@ export interface ChatInputAreaProps {
   value: string;
   onChange: (val: string) => void;
   onSend: () => void;
-  loading: boolean;
+  onStop: () => void;
+  /** 有任何回答正在產生 */
+  sending: boolean;
+  /** 正在產生的回答就在目前這段對話裡 */
+  streamingHere: boolean;
   disabled?: boolean;
   attachments?: ChatAttachment[];
   onAddAttachments?: (attachments: ChatAttachment[]) => void;

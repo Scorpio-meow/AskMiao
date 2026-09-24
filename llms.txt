@@ -52,8 +52,9 @@
    - 自訂 HTTP API 工具與 OpenAPI 匯入結果存於 `custom_api_tools`；MCP 伺服器與其工具快取存於 `mcp_servers`。
    - `ResearchToolRegistry.get_tool_definitions()` 於每次組裝時動態載入啟用中的外部工具，變更後無需重啟後端。
    - MCP 工具統一採 `mcp_<伺服器名稱>_<工具名稱>` 命名，`execute_tool` 依此前綴路由至 `McpManager.execute_mcp_tool`。
+   - `/api/api-tools` 與 `/api/mcp` 的所有端點（含查詢）必須使用 `get_current_admin_user`；MCP `stdio` 子行程的環境變數必須經 `build_stdio_env()` 組成，不可傳入整個 `os.environ`。
 6. **SSRF 防護與錯誤代碼 (Outbound Safety)**：
-   - 所有使用者輸入驅動之外部請求（OpenAPI 規格 URL、`web_fetch`、MCP HTTP 傳輸、自訂 API 工具）必須先經 `ssrf_protection.py` 驗證。
+   - 所有使用者輸入驅動之外部請求（OpenAPI 規格 URL、`web_fetch`、MCP HTTP 傳輸、自訂 API 工具）必須先經 `ssrf_protection.py` 驗證；會跟隨轉址的 httpx 用戶端必須掛上 `reject_unsafe_request` request hook，讓每次轉址都重新驗證。
    - 未預期例外一律透過 `error_response.py` 轉為隨機錯誤代碼，禁止將例外訊息或堆疊回傳客戶端或寫入 SSE 串流。
 7. **串流介面約定 (SSE Contract)**：
    - `POST /api/chat/send` 以 SSE 回應，事件序列為 `start` → `step_start` / `step_end` → `token` → `sources` → `done`，例外時回傳 `error`。

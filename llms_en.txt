@@ -52,8 +52,9 @@
    - Custom HTTP API tools and OpenAPI imports live in `custom_api_tools`; MCP servers and their cached tools live in `mcp_servers`.
    - `ResearchToolRegistry.get_tool_definitions()` loads enabled external tools on every assembly, so changes apply without a backend restart.
    - MCP tools are named `mcp_<server_name>_<tool_name>`; `execute_tool` routes on that prefix to `McpManager.execute_mcp_tool`.
+   - Every endpoint under `/api/api-tools` and `/api/mcp`, including reads, MUST depend on `get_current_admin_user`; the environment of an MCP `stdio` subprocess MUST be built by `build_stdio_env()`, never the whole `os.environ`.
 6. **Outbound Safety: SSRF Guard & Error Codes**:
-   - Every outbound request driven by user input (OpenAPI spec URLs, `web_fetch`, MCP HTTP transport, custom API tools) MUST pass `ssrf_protection.py` first.
+   - Every outbound request driven by user input (OpenAPI spec URLs, `web_fetch`, MCP HTTP transport, custom API tools) MUST pass `ssrf_protection.py` first; an httpx client that follows redirects MUST register the `reject_unsafe_request` request hook so every redirect is validated again.
    - Unexpected exceptions are converted by `error_response.py` into random error codes; exception text and stack traces MUST NOT reach clients or the SSE stream.
 7. **SSE Contract**:
    - `POST /api/chat/send` responds with SSE, emitting `start` -> `step_start` / `step_end` -> `token` -> `sources` -> `done`, or `error` on failure.

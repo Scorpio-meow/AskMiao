@@ -1,6 +1,7 @@
 
 import { Navigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../hooks/useAuth';
+import Forbidden from './Forbidden';
 export const PrivateRoute = ({ element }) => {
   const location = useLocation();
   const { isAuthenticated } = useAuth();
@@ -16,8 +17,7 @@ export const AdminRoute = ({ element }) => {
     return <Navigate to="/login" state={{ from: location }} replace />;
   }
   if (!isAdmin) {
-    alert('您沒有管理員權限');
-    return <Navigate to="/" replace />;
+    return <Forbidden />;
   }
   return element;
 };

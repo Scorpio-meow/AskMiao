@@ -1,12 +1,12 @@
-import React, { useMemo } from 'react';
+import React, { useMemo, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import DOMPurify from 'dompurify';
 import { ChatMessageItemProps } from './types';
 import ThinkBlock from './ThinkBlock';
 import SourceBadges from './SourceBadges';
 import ResearchTraceBlock from './ResearchTraceBlock';
-import { Avatar, Tooltip, IconButton, Spinner, Icon } from '../../components/ui';
+import { Avatar, Tooltip, IconButton, Spinner, Icon, Button, useModalDialog } from '../../components/ui';
 import styles from './ChatMessageItem.module.css';
 const SOCIAL_PLATFORM_DOMAINS = ['threads.com', 'threads.net', 'instagram.com', 'twitter.com', 'x.com'];
 const ACTION_BUTTON_KEYWORDS = ['貼文', '查看', '前往', '開啟', '↗'];
@@ -15,23 +15,59 @@ const POST_AUTHOR_PREFIX_REGEX = /^(?:(\d+)[\.:\s]+)?(@?[\w\.-]+)/;
 const POST_AUTHOR_EXACT_REGEX = /^(?:(\d+)[\.:\s]+)?(@?[\w\.-]+)$/;
 const POST_LINK_PREFIX_REGEX = /^(連結|來源)[：:]\s*/;
 const POST_CONTENT_PREFIX_REGEX = /^(內容)[：:]\s*/;
+const timeFormatter = new Intl.DateTimeFormat('zh-TW', { hour: '2-digit', minute: '2-digit' });
+const monthDayTimeFormatter = new Intl.DateTimeFormat('zh-TW', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+const fullDateTimeFormatter = new Intl.DateTimeFormat('zh-TW', { year: 'numeric', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+const isSocialUrl = (href?: string): boolean => {
+  if (!href) return false;
+  try {
+    const host = new URL(href).hostname.replace(/^www\./, '');
+    return SOCIAL_PLATFORM_DOMAINS.some((domain) => host === domain || host.endsWith(`.${domain}`));
+  } catch {
+    return false;
+  }
+};
+const formatMessageTime = (value: string) => {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return null;
+  const now = new Date();
+  const label =
+    date.toDateString() === now.toDateString()
+      ? timeFormatter.format(date)
+      : date.getFullYear() === now.getFullYear()
+        ? monthDayTimeFormatter.format(date)
+        : fullDateTimeFormatter.format(date);
+  return { label, full: fullDateTimeFormatter.format(date) };
+};
+/**
+ * 把「作者 ｜ 時間 ｜ 內容 ｜ 社群連結」這類貼文清單轉成卡片。
+ * 只在段落確實連到社群平台、且不含行內程式碼時套用，避免一般文字或指令中的 | 被誤判。
+ */
 function parsePipeDelimitedPost(children: React.ReactNode): React.ReactNode | null {
   const childArray = React.Children.toArray(children);
   let fullText = '';
   const linkNodes: React.ReactNode[] = [];
+  let hasSocialLink = false;
   for (const child of childArray) {
     if (typeof child === 'string') {
       fullText += child;
     } else if (React.isValidElement(child)) {
       const props: any = child.props || {};
+      if (child.type === 'code') {
+        return null;
+      }
       if (child.type === 'a' || props.href) {
         linkNodes.push(child);
+        hasSocialLink = hasSocialLink || isSocialUrl(props.href);
         fullText += ' [[LINK]] ';
       } else if (props.children) {
         const textDesc = typeof props.children === 'string' ? props.children : ' ';
         fullText += textDesc;
       }
     }
+  }
+  if (!hasSocialLink) {
+    return null;
   }
   if (!fullText.includes('｜') && !fullText.includes('|')) {
     return null;
@@ -97,11 +133,31 @@ function parsePipeDelimitedPost(children: React.ReactNode): React.ReactNode | nu
     </div>
   );
 }
+const ImageLightbox: React.FC<{ src: string; alt: string; onClose: () => void }> = ({ src, alt, onClose }) => {
+  const dialogRef = useRef<HTMLDialogElement>(null);
+  const dialogHandlers = useModalDialog(dialogRef, true, onClose);
+  return createPortal(
+    <dialog
+      ref={dialogRef}
+      aria-label={`圖片預覽：${alt}`}
+      className={styles.lightboxDialog}
+      {...dialogHandlers}
+    >
+      <img src={src} alt={alt} className={styles.lightboxImage} />
+      <button type="button" className={styles.lightboxClose} onClick={onClose} aria-label="關閉圖片預覽">
+        <Icon name="close" size={20} />
+      </button>
+    </dialog>,
+    document.body
+  );
+};
 export const ChatMessageItem: React.FC<ChatMessageItemProps> = ({
   message,
+  isStreaming,
   isThinkingOpen,
   onToggleThinking,
   onCopyMessage,
+  onRetry,
 }) => {
   const isUser = message.is_user;
   const { thinkContent, mainContent } = useMemo(() => {
@@ -117,9 +173,6 @@ export const ChatMessageItem: React.FC<ChatMessageItemProps> = ({
       mainContent: rawContent,
     };
   }, [message.content]);
-  const sanitizedContent = useMemo(() => {
-    return DOMPurify.sanitize(mainContent);
-  }, [mainContent]);
   const traceFromContext = useMemo(() => {
     if (message.research_trace && message.research_trace.length > 0) {
       return message.research_trace;
@@ -179,15 +232,18 @@ export const ChatMessageItem: React.FC<ChatMessageItemProps> = ({
     }
     return [];
   }, [message.attachments, message.context_used]);
-  const [lightboxImg, setLightboxImg] = React.useState<string | null>(null);
+  const [lightboxImg, setLightboxImg] = React.useState<{ src: string; alt: string } | null>(null);
   const hasTrace = traceFromContext.length > 0;
   const hasText = Boolean(mainContent.trim());
   const hasAttachments = attachmentsFromContext.length > 0;
+  const isSettled = Boolean(message.error || message.stopped);
+  const timestamp = message.created_at ? formatMessageTime(message.created_at) : null;
   return (
     <div className={`${styles.container} ${isUser ? styles.userContainer : ''}`}>
       <Avatar
         size={36}
         className={isUser ? styles.avatarUser : styles.avatarBot}
+        aria-hidden="true"
       >
         <Icon name={isUser ? 'person' : 'bot'} size={18} />
       </Avatar>
@@ -197,21 +253,24 @@ export const ChatMessageItem: React.FC<ChatMessageItemProps> = ({
         <div
           className={`${styles.bubble} ${isUser ? styles.bubbleUser : styles.bubbleBot}`}
         >
+          <span className="sr-only">{isUser ? '您說：' : 'AskMiao 回覆：'}</span>
           {/* 訊息附件展示 */}
           {hasAttachments && (
             <div className={styles.attachmentGallery}>
               {attachmentsFromContext.map((att: any, idx: number) => {
                 const isImg = att.file_type?.startsWith('image/') || Boolean(att.data_url?.startsWith('data:image/'));
+                const name = att.filename || '圖片';
                 if (isImg && att.data_url) {
                   return (
-                    <img
+                    <button
                       key={idx}
-                      src={att.data_url}
-                      alt={att.filename || '圖片'}
-                      className={styles.messageImage}
-                      onClick={() => setLightboxImg(att.data_url)}
-                      title="點擊放大圖片"
-                    />
+                      type="button"
+                      className={styles.imageButton}
+                      onClick={() => setLightboxImg({ src: att.data_url, alt: name })}
+                      aria-label={`放大圖片：${name}`}
+                    >
+                      <img src={att.data_url} alt="" className={styles.messageImage} />
+                    </button>
                   );
                 }
                 const ext = (att.filename || '').split('.').pop()?.toUpperCase() || 'FILE';
@@ -228,7 +287,7 @@ export const ChatMessageItem: React.FC<ChatMessageItemProps> = ({
             <ResearchTraceBlock
               trace={traceFromContext}
               hasContent={hasText}
-              isStreaming={!message.id || Number(message.id) > 1000000000}
+              isStreaming={isStreaming}
             />
           )}
           {!isUser && thinkContent && (
@@ -240,8 +299,8 @@ export const ChatMessageItem: React.FC<ChatMessageItemProps> = ({
           )}
           {isUser ? (
             <div className={styles.userText}>{mainContent}</div>
-          ) : !hasText && !hasTrace ? (
-            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '4px 0', color: 'var(--text-secondary)', fontSize: '13px' }}>
+          ) : !hasText && !hasTrace && !isSettled ? (
+            <div className={styles.pending}>
               <Spinner size={16} color="var(--color-primary)" />
               <span>AI 正在分析您的問題...</span>
             </div>
@@ -252,7 +311,7 @@ export const ChatMessageItem: React.FC<ChatMessageItemProps> = ({
                 components={{
                   a: ({ node, href, children, ...props }) => {
                     const isExternal = href?.startsWith('http://') || href?.startsWith('https://');
-                    const isSocial = href ? SOCIAL_PLATFORM_DOMAINS.some((domain) => href.includes(domain)) : false;
+                    const isSocial = isSocialUrl(href);
                     const text = String(children);
                     const isPill = isSocial || ACTION_BUTTON_KEYWORDS.some((kw) => text.includes(kw));
                     return (
@@ -265,7 +324,10 @@ export const ChatMessageItem: React.FC<ChatMessageItemProps> = ({
                         {...props}
                       >
                         {children}
-                        {isExternal && !text.includes('↗') && <span className={styles.externalIcon}>↗</span>}
+                        {isExternal && !text.includes('↗') && (
+                          <span className={styles.externalIcon} aria-hidden="true">↗</span>
+                        )}
+                        {isExternal && <span className="sr-only">（在新分頁開啟）</span>}
                       </a>
                     );
                   },
@@ -286,10 +348,27 @@ export const ChatMessageItem: React.FC<ChatMessageItemProps> = ({
                   },
                 }}
               >
-                {sanitizedContent}
+                {mainContent}
               </ReactMarkdown>
             </div>
           ) : null}
+          {!isUser && message.error && (
+            <div className={styles.errorBlock}>
+              <Icon name="error" size={16} />
+              <span className={styles.errorText}>{message.error}</span>
+              {onRetry && (
+                <Button size="sm" variant="outline" onClick={onRetry} startIcon={<Icon name="refresh" size={14} />}>
+                  重新傳送
+                </Button>
+              )}
+            </div>
+          )}
+          {!isUser && message.stopped && (
+            <div className={styles.stoppedNote}>
+              <Icon name="info" size={14} />
+              <span>已停止產生。這則回答沒有被儲存，重新整理後不會出現。</span>
+            </div>
+          )}
           {!isUser && (
             <SourceBadges
               sources={sourcesFromContext}
@@ -297,20 +376,14 @@ export const ChatMessageItem: React.FC<ChatMessageItemProps> = ({
             />
           )}
         </div>
-        {/* 圖片全螢幕燈箱 */}
         {lightboxImg && (
-          <div className={styles.lightboxOverlay} onClick={() => setLightboxImg(null)}>
-            <img src={lightboxImg} alt="預覽" className={styles.lightboxImage} />
-          </div>
+          <ImageLightbox src={lightboxImg.src} alt={lightboxImg.alt} onClose={() => setLightboxImg(null)} />
         )}
         <div className={styles.footer}>
-          {message.created_at && (
-            <span className={styles.timestamp}>
-              {new Date(message.created_at).toLocaleTimeString([], {
-                hour: '2-digit',
-                minute: '2-digit',
-              })}
-            </span>
+          {timestamp && message.created_at && (
+            <time className={styles.timestamp} dateTime={message.created_at} title={timestamp.full}>
+              {timestamp.label}
+            </time>
           )}
           {hasText && (
             <Tooltip title="複製訊息內容">

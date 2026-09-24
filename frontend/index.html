@@ -2,15 +2,29 @@
 <html lang="zh-TW">
 <head>
   <meta charset="utf-8" />
-  <link rel="icon" type="image/png" href="/favicon.png" />
+  <!-- favicon.png 是 2048px 的原始圖（site/assets 的圖示也由它產生），頁面只引用縮小後的版本 -->
+  <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32.png" />
+  <link rel="icon" type="image/png" sizes="64x64" href="/favicon-64.png" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <meta name="msapplication-TileColor" content="#000000" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <meta name="description" content="AskMiao - 智慧知識助理" />
   <title>AskMiao</title>
+  <script>
+    // 在第一次繪製前套用主題，避免深色模式使用者先看到亮色畫面；鍵值與規則需與 src/contexts/ThemeContext.tsx 一致
+    (function () {
+      try {
+        var mode = localStorage.getItem('askmiao_theme_mode');
+        var dark = mode === 'dark' || (mode !== 'light' && window.matchMedia('(prefers-color-scheme: dark)').matches);
+        document.documentElement.setAttribute('data-theme', dark ? 'dark' : 'light');
+      } catch (e) {
+        // 無法讀取 localStorage 時交給 ThemeProvider 處理
+      }
+    })();
+  </script>
 </head>
 <body>
-  <noscript>您需要啟用 JavaScript 才能運行此應用程式。</noscript>
+  <noscript>您需要啟用 JavaScript 才能使用此應用程式。</noscript>
   <div id="root"></div>
   <script type="module" src="/src/index.jsx"></script>
 </body>

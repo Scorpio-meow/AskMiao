@@ -49,7 +49,7 @@ class OpenApiParser:
             except Exception as e:
                 error_id = log_and_get_error_id(logger, "獲取遠端 OpenAPI 規格失敗", e)
                 raise SafeClientError(
-                    "獲取遠端 OpenAPI 規格失敗，請確認該 URL 可公開存取且能正常回應"
+                    "取得遠端 OpenAPI 規格失敗，請確認該 URL 可公開存取且能正常回應"
                     f"（錯誤代碼：{error_id}）"
                 )
         spec_dict = cls._parse_raw_text_to_dict(raw_text)

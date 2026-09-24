@@ -1,4 +1,5 @@
 :root {
+  color-scheme: light;
   --primary-50: #eff6ff;
   --primary-100: #dbeafe;
   --primary-200: #bfdbfe;
@@ -48,7 +49,8 @@
   --bg-backdrop: rgba(15, 23, 42, 0.45);
   --text-primary: #0f172a;
   --text-secondary: #475569;
-  --text-tertiary: #94a3b8;
+  /* 需在白底、bg-app、surface-secondary 與 surface-active 上都達 4.5:1 */
+  --text-tertiary: #586980;
   --text-disabled: #cbd5e1;
   --text-inverse: #ffffff;
   --text-on-primary: #ffffff;
@@ -61,14 +63,23 @@
   --color-primary-active: #1e40af;
   --color-primary-light: #eff6ff;
   --color-primary-text: #1d4ed8;
+  /* 實心底色（按鈕、使用者泡泡）搭配 --text-on-primary，兩種主題都維持 4.5:1 以上 */
+  --color-primary-solid: #2563eb;
+  --color-primary-solid-hover: #1d4ed8;
+  --color-primary-solid-active: #1e40af;
   --color-success: #16a34a;
   --color-success-bg: #f0fdf4;
+  --color-success-text: #15803d;
   --color-warning: #d97706;
   --color-warning-bg: #fffbeb;
+  --color-warning-text: #b45309;
   --color-error: #dc2626;
   --color-error-bg: #fef2f2;
+  --color-error-text: #b91c1c;
   --color-info: #0284c7;
   --color-info-bg: #f0f9ff;
+  --color-info-text: #0369a1;
+  --switch-track-off: #64748b;
   --space-1: 4px;
   --space-2: 8px;
   --space-3: 12px;
@@ -121,6 +132,7 @@
 }
 
 [data-theme="dark"] {
+  color-scheme: dark;
   --bg-app: #090d16;
   --bg-surface: #111827;
   --bg-surface-elevated: #1f2937;
@@ -133,7 +145,7 @@
   --bg-backdrop: rgba(0, 0, 0, 0.7);
   --text-primary: #f8fafc;
   --text-secondary: #cbd5e1;
-  --text-tertiary: #64748b;
+  --text-tertiary: #94a3b8;
   --text-disabled: #475569;
   --text-inverse: #0f172a;
   --text-on-primary: #ffffff;
@@ -146,14 +158,22 @@
   --color-primary-active: #93c5fd;
   --color-primary-light: rgba(59, 130, 246, 0.15);
   --color-primary-text: #93c5fd;
+  --color-primary-solid: #2563eb;
+  --color-primary-solid-hover: #1d4ed8;
+  --color-primary-solid-active: #1e40af;
   --color-success: #22c55e;
   --color-success-bg: rgba(34, 197, 94, 0.15);
+  --color-success-text: #4ade80;
   --color-warning: #f59e0b;
   --color-warning-bg: rgba(245, 158, 11, 0.15);
+  --color-warning-text: #fbbf24;
   --color-error: #ef4444;
   --color-error-bg: rgba(239, 68, 68, 0.15);
+  --color-error-text: #f87171;
   --color-info: #38bdf8;
   --color-info-bg: rgba(56, 189, 248, 0.15);
+  --color-info-text: #7dd3fc;
+  --switch-track-off: #64748b;
   --shadow-xs: 0 1px 2px 0 rgba(0, 0, 0, 0.3);
   --shadow-sm: 0 1px 3px 0 rgba(0, 0, 0, 0.4), 0 1px 2px -1px rgba(0, 0, 0, 0.4);
   --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.4), 0 2px 4px -2px rgba(0, 0, 0, 0.4);

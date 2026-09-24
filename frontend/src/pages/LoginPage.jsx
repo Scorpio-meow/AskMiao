@@ -1,6 +1,8 @@
 import { useState } from 'react';
 import { useNavigate, useLocation, Link } from 'react-router-dom';
 import { useAuth } from '../hooks/useAuth';
+import { useDocumentTitle } from '../hooks/useDocumentTitle';
+import { APP_NAME, APP_TAGLINE } from '../config/brand';
 import { TextField, Button, Alert, IconButton, Icon } from '../components/ui';
 import styles from './Auth.module.css';
 const LoginPage = () => {
@@ -13,6 +15,7 @@ const LoginPage = () => {
   });
   const [showPassword, setShowPassword] = useState(false);
   const [localError, setLocalError] = useState('');
+  useDocumentTitle('登入');
   const from = location.state?.from?.pathname || '/';
   const handleChange = (e) => {
     setFormData({
@@ -24,7 +27,7 @@ const LoginPage = () => {
   const handleSubmit = async (e) => {
     e.preventDefault();
     if (!formData.username || !formData.password) {
-      setLocalError('請輸入用戶名和密碼');
+      setLocalError('請輸入使用者名稱和密碼');
       return;
     }
     setLocalError('');
@@ -41,7 +44,7 @@ const LoginPage = () => {
           <div className={styles.headerIcon}>
             <Icon name="login" size={48} />
           </div>
-          <h1 className={styles.title}>ChatBot 登入</h1>
+          <h1 className={styles.title}>登入 {APP_NAME}</h1>
           <p className={styles.subtitle}>使用您的帳號登入系統</p>
         </div>
         {error && (
@@ -52,7 +55,7 @@ const LoginPage = () => {
         <form onSubmit={handleSubmit} className={styles.form}>
           <TextField
             fullWidth
-            label="用戶名或電子郵件"
+            label="使用者名稱或電子郵件"
             name="username"
             value={formData.username}
             onChange={handleChange}
@@ -92,14 +95,14 @@ const LoginPage = () => {
           </Button>
         </form>
         <div className={styles.footer}>
-          還沒有帳號?
+          還沒有帳號？
           <Link to="/register" className={styles.link}>
             立即註冊
           </Link>
         </div>
       </div>
       <p className={styles.copyright}>
-        ChatBot © 2025 - Powered by JWT Authentication
+        {APP_NAME} · {APP_TAGLINE}
       </p>
     </div>
   );

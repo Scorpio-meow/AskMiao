@@ -25,6 +25,23 @@
   cursor: not-allowed;
 }
 
+.iconSlot {
+  display: inline-flex;
+  flex-shrink: 0;
+}
+
+.spinner {
+  display: inline-flex;
+  flex-shrink: 0;
+  animation: buttonSpin 1s linear infinite;
+}
+
+@keyframes buttonSpin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 .sizeSm {
   height: 32px;
   padding: 0 var(--space-3);
@@ -44,13 +61,17 @@
 }
 
 .variantPrimary {
-  background-color: var(--color-primary);
+  background-color: var(--color-primary-solid);
   color: var(--text-on-primary);
   box-shadow: var(--shadow-sm);
 }
 
 .variantPrimary:hover:not(:disabled) {
-  background-color: var(--color-primary-hover);
+  background-color: var(--color-primary-solid-hover);
+}
+
+.variantPrimary:active:not(:disabled) {
+  background-color: var(--color-primary-solid-active);
 }
 
 .variantSecondary {
@@ -66,7 +87,7 @@
 
 .variantOutline {
   background-color: transparent;
-  color: var(--color-primary);
+  color: var(--color-primary-text);
   border-color: var(--color-primary);
 }
 
@@ -81,16 +102,16 @@
 
 .variantText:hover:not(:disabled) {
   background-color: var(--bg-surface-hover);
-  color: var(--color-primary);
+  color: var(--color-primary-text);
 }
 
 .variantDanger {
-  background-color: var(--color-error);
-  color: #ffffff;
+  background-color: var(--error-600);
+  color: var(--neutral-0);
 }
 
 .variantDanger:hover:not(:disabled) {
-  background-color: #b91c1c;
+  background-color: var(--error-700);
 }
 
 .fullWidth {
@@ -111,4 +132,22 @@
 
 .iconOnly.sizeLg {
   width: 48px;
+}
+
+@media (pointer: coarse) {
+  .sizeSm {
+    height: 40px;
+  }
+
+  .sizeMd {
+    height: 44px;
+  }
+
+  .iconOnly.sizeSm {
+    width: 40px;
+  }
+
+  .iconOnly.sizeMd {
+    width: 44px;
+  }
 }

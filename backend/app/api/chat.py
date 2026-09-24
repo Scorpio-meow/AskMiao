@@ -237,7 +237,7 @@ async def websocket_endpoint(websocket: WebSocket, user_id: int):
             
             response = {
                 "type": "message",
-                "content": f"收到消息: {message_data['content']}",
+                "content": f"收到訊息: {message_data['content']}",
                 "timestamp": "now"
             }
             

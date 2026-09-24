@@ -15,10 +15,13 @@ from app.models import (
     OpenApiImportRequest,
     ToolTestRequest,
 )
-from app.core.jwt_auth import get_current_active_user as get_current_user
+from app.core.jwt_auth import get_current_admin_user
+from app.core.ssrf_protection import SSRFProtectionError, reject_unsafe_request
 from app.services.openapi_parser import OpenApiParser
 from app.core.error_response import SafeClientError, log_and_get_error_id, format_client_error
 logger = logging.getLogger(__name__)
+# 自訂 API 工具是所有使用者的 Agent 共用的全域設定，回應中也含 API 金鑰等憑證，
+# 因此整個模組（含查詢）只開放管理員
 router = APIRouter()
 def _serialize_tool_model(tool: CustomApiTool) -> Dict[str, Any]:
     """將資料庫 CustomApiTool 模型轉換為 Dict"""
@@ -135,19 +138,13 @@ async def execute_http_api_tool(tool_dict: Dict[str, Any], arguments: Dict[str, 
                 query_params[k] = v
     if "request_body" in arguments and isinstance(arguments["request_body"], dict):
         body_data = arguments["request_body"]
-    from app.core.ssrf_protection import validate_url_ssrf
-    is_safe, ssrf_err, _ = await validate_url_ssrf(path_replaced_url)
-    if not is_safe:
-        duration = round(time.time() - start_time, 3)
-        return {
-            "status_code": 403,
-            "is_success": False,
-            "duration_seconds": duration,
-            "url": path_replaced_url,
-            "error": f"安全防護拒絕連線 (SSRF 防護): {ssrf_err}"
-        }
     try:
-        async with httpx.AsyncClient(timeout=float(timeout), follow_redirects=True) as client:
+        # 第一跳與每次轉址都要通過 SSRF 檢查，只驗第一個網址會被轉址繞過
+        async with httpx.AsyncClient(
+            timeout=float(timeout),
+            follow_redirects=True,
+            event_hooks={"request": [reject_unsafe_request]},
+        ) as client:
             req_kwargs: Dict[str, Any] = {
                 "method": method,
                 "url": path_replaced_url,
@@ -174,6 +171,15 @@ async def execute_http_api_tool(tool_dict: Dict[str, Any], arguments: Dict[str, 
                 "url": str(response.url),
                 "data": res_body
             }
+    except SSRFProtectionError as e:
+        duration = round(time.time() - start_time, 3)
+        return {
+            "status_code": 403,
+            "is_success": False,
+            "duration_seconds": duration,
+            "url": path_replaced_url,
+            "error": str(e)
+        }
     except Exception as e:
         duration = round(time.time() - start_time, 3)
         error_id = log_and_get_error_id(
@@ -190,7 +196,7 @@ async def execute_http_api_tool(tool_dict: Dict[str, Any], arguments: Dict[str, 
 @router.post("/parse-spec")
 async def parse_openapi_spec(
     request_data: OpenApiParseRequest,
-    current_user: dict = Depends(get_current_user)
+    current_user: dict = Depends(get_current_admin_user)
 ):
     """解析 OpenAPI / Swagger 規格 (支援 OAS 2.0, 3.0, 3.1)"""
     try:
@@ -211,7 +217,7 @@ async def parse_openapi_spec(
 async def import_openapi_tools(
     import_data: OpenApiImportRequest,
     db: Session = Depends(get_db),
-    current_user: dict = Depends(get_current_user)
+    current_user: dict = Depends(get_current_admin_user)
 ):
     """批次匯入選定的 OpenAPI 端點為自訂 AI 工具"""
     imported_count = 0
@@ -281,7 +287,7 @@ async def get_all_api_tools(
     is_enabled: Optional[bool] = Query(None),
     search: Optional[str] = Query(None),
     db: Session = Depends(get_db),
-    current_user: dict = Depends(get_current_user)
+    current_user: dict = Depends(get_current_admin_user)
 ):
     """獲取自訂 API 工具清單"""
     query = db.query(CustomApiTool)
@@ -307,7 +313,7 @@ async def get_all_api_tools(
 async def create_api_tool(
     tool_data: CustomApiToolCreate,
     db: Session = Depends(get_db),
-    current_user: dict = Depends(get_current_user)
+    current_user: dict = Depends(get_current_admin_user)
 ):
     """手動建立自訂 API 工具"""
     clean_name = OpenApiParser._generate_tool_name(tool_data.method, tool_data.path or tool_data.url, tool_data.name)
@@ -347,7 +353,7 @@ async def create_api_tool(
 async def get_api_tool_detail(
     tool_id: int,
     db: Session = Depends(get_db),
-    current_user: dict = Depends(get_current_user)
+    current_user: dict = Depends(get_current_admin_user)
 ):
     """獲取單一自訂 API 工具詳情"""
     tool = db.query(CustomApiTool).filter(CustomApiTool.id == tool_id).first()
@@ -362,7 +368,7 @@ async def update_api_tool(
     tool_id: int,
     tool_data: CustomApiToolUpdate,
     db: Session = Depends(get_db),
-    current_user: dict = Depends(get_current_user)
+    current_user: dict = Depends(get_current_admin_user)
 ):
     """更新自訂 API 工具"""
     tool = db.query(CustomApiTool).filter(CustomApiTool.id == tool_id).first()
@@ -409,7 +415,7 @@ async def update_api_tool(
 async def toggle_api_tool(
     tool_id: int,
     db: Session = Depends(get_db),
-    current_user: dict = Depends(get_current_user)
+    current_user: dict = Depends(get_current_admin_user)
 ):
     """切換工具啟用/停用狀態"""
     tool = db.query(CustomApiTool).filter(CustomApiTool.id == tool_id).first()
@@ -427,7 +433,7 @@ async def toggle_api_tool(
 async def delete_api_tool(
     tool_id: int,
     db: Session = Depends(get_db),
-    current_user: dict = Depends(get_current_user)
+    current_user: dict = Depends(get_current_admin_user)
 ):
     """刪除自訂 API 工具"""
     tool = db.query(CustomApiTool).filter(CustomApiTool.id == tool_id).first()
@@ -444,7 +450,7 @@ async def test_api_tool(
     tool_id: int,
     test_data: ToolTestRequest,
     db: Session = Depends(get_db),
-    current_user: dict = Depends(get_current_user)
+    current_user: dict = Depends(get_current_admin_user)
 ):
     """即時測試發送自訂 API 工具請求"""
     tool = db.query(CustomApiTool).filter(CustomApiTool.id == tool_id).first()

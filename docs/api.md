@@ -23,8 +23,8 @@
 | `/api/auth` | 身份認證 | 註冊、登入、刷新、個人資料與登出 |
 | `/api/chat` | 對話與自主研究 | SSE 串流對話、模型與工具清單、對話歷史 |
 | `/api/documents` | 知識庫文件 | 上傳、摘要、刪除與索引重建（管理員） |
-| `/api/api-tools` | 自訂 API 工具 | OpenAPI 解析匯入與工具 CRUD、測試 |
-| `/api/mcp` | MCP 伺服器 | MCP 伺服器管理、工具探索與調用測試 |
+| `/api/api-tools` | 自訂 API 工具 | OpenAPI 解析匯入與工具 CRUD、測試（管理員） |
+| `/api/mcp` | MCP 伺服器 | MCP 伺服器管理、工具探索與調用測試（管理員） |
 | `/api/admin` | 管理後台 | 使用者、統計、對話與向量庫維運（管理員） |
 | `/api/tags`、`/api/external-tags` | 模型清單 | 相容 Ollama `tags` 格式之模型清單 |
 | `/health`、`/` | 健康檢查 | 無需認證之存活探測 |
@@ -433,6 +433,8 @@ Content-Type: multipart/form-data
 
 將外部 HTTP API 註冊為 AI 可自主調用之工具。啟用中的工具會於組裝工具定義時自動載入 Agent 工具集。
 
+> 本模組所有端點（含查詢）均需**管理員**權限：工具由所有使用者的 Agent 共用，回應也包含 API 金鑰等憑證。
+
 ### 4.1 POST /api/api-tools/parse-spec
 
 解析 OpenAPI / Swagger 規格（支援 OAS 2.0、3.0、3.1），可傳入規格全文或規格網址。
@@ -560,12 +562,16 @@ Content-Type: multipart/form-data
 ```
 
 > 呼叫失敗時 `result.success` 為 `false`，並回傳 `error` 與 `error_id`，不揭露內部例外內容。
+>
+> 第一個請求與每次轉址的目標都會重新經過 SSRF 驗證；被拒絕時 `result.status_code` 為 `403`，`error` 說明拒絕原因。
 
 ---
 
 ## 5. MCP 伺服器模組 (`/api/mcp`)
 
 管理 Model Context Protocol 伺服器，支援 `stdio`（本機子行程）與 HTTP 兩種傳輸方式。
+
+> 本模組所有端點（含查詢）均需**管理員**權限：`stdio` 模式會在主機上執行指定的指令，回應也包含環境變數與標頭等憑證。
 
 ### 5.1 GET /api/mcp/presets
 
@@ -587,7 +593,7 @@ Content-Type: multipart/form-data
 
 ### 5.3 POST /api/mcp/servers
 
-新增 MCP 伺服器。建立後系統會立即嘗試連線並探索工具清單；探索失敗時伺服器仍會建立，但 `status` 為 `error` 且 `last_error` 帶回錯誤代碼。
+新增 MCP 伺服器。建立後系統會立即嘗試連線並探索工具清單；探索失敗時伺服器仍會建立，但 `status` 為 `error` 且 `last_error` 帶回錯誤代碼；網址被 SSRF 防護拒絕時，`last_error` 直接說明拒絕原因。
 
 **請求參數 (Request Body):**
 
@@ -599,8 +605,8 @@ Content-Type: multipart/form-data
 | `transport_type` | string | 否 | `stdio` 或 HTTP 傳輸 | `stdio` |
 | `command` | string | 否 | `stdio` 模式之執行指令 | `null` |
 | `args` | array | 否 | 指令參數陣列 | `null` |
-| `env_vars` | object | 否 | 子行程環境變數 | `null` |
-| `url` | string | 否 | HTTP 傳輸之伺服器位址（經 SSRF 驗證） | `null` |
+| `env_vars` | object | 否 | 子行程環境變數。子行程只繼承 `PATH` 等系統必要變數，不會取得後端的 `.env` 設定，伺服器需要的變數都要寫在這裡 | `null` |
+| `url` | string | 否 | HTTP 傳輸之伺服器位址（每次請求與轉址都經 SSRF 驗證，指向本機或內網的位址會被拒絕） | `null` |
 | `headers` | object | 否 | HTTP 傳輸之請求標頭 | `null` |
 | `is_enabled` | boolean | 否 | 是否啟用 | `true` |
 | `timeout` | integer | 否 | 連線與呼叫逾時秒數 | `30` |
@@ -636,6 +642,8 @@ Content-Type: multipart/form-data
   "server_info": { "protocolVersion": "2024-11-05" }
 }
 ```
+
+- **400 Bad Request**：連線或探索失敗（回傳錯誤代碼），或網址被 SSRF 防護拒絕（回傳拒絕原因）。
 
 ### 5.8 PATCH /api/mcp/servers/{server_id}/toggle
 

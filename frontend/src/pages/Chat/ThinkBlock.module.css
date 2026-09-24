@@ -16,10 +16,30 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
+  width: 100%;
+  min-height: 40px;
   padding: var(--space-2) var(--space-4);
+  font: inherit;
+  text-align: left;
+  background: transparent;
+  border: none;
   cursor: pointer;
   user-select: none;
   transition: background-color var(--transition-fast);
+}
+
+.header:focus-visible {
+  outline-offset: -2px;
+}
+
+.chevron {
+  display: inline-flex;
+  color: var(--text-tertiary);
+  transition: transform var(--transition-fast);
+}
+
+.chevronOpen {
+  transform: rotate(180deg);
 }
 
 .header:hover {

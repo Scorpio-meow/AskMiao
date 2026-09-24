@@ -45,6 +45,18 @@
   border-radius: var(--radius-full);
 }
 
+@media (pointer: coarse) {
+  .sizeSm {
+    width: 40px;
+    height: 40px;
+  }
+
+  .sizeMd {
+    width: 44px;
+    height: 44px;
+  }
+}
+
 .filled {
   background-color: var(--bg-surface-secondary);
   color: var(--text-primary);

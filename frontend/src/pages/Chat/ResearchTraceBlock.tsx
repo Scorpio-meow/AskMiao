@@ -1,49 +1,29 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useId } from 'react';
 import { ResearchTraceStep } from './types';
-import { Collapse, Chip, Spinner, Icon } from '../../components/ui';
+import { Collapse, Spinner, Icon, IconName } from '../../components/ui';
 import styles from './ResearchTraceBlock.module.css';
 export interface ResearchTraceBlockProps {
   trace: ResearchTraceStep[];
   hasContent?: boolean;
   isStreaming?: boolean;
 }
-const getToolDisplayInfo = (toolName: string) => {
+interface ToolDisplayInfo {
+  label: string;
+  icon: IconName;
+  toneClass: string;
+}
+const getToolDisplayInfo = (toolName: string): ToolDisplayInfo => {
   switch (toolName) {
     case 'search_knowledge_base':
-      return {
-        label: '檢索內部知識庫',
-        color: '#2563EB',
-        bgColor: 'rgba(37, 99, 235, 0.12)',
-        icon: <Icon name="menu-book" size={16} color="#2563EB" />,
-      };
+      return { label: '檢索內部知識庫', icon: 'menu-book', toneClass: styles.toneKnowledge };
     case 'filter_and_count_records':
-      return {
-        label: '結構化統計與篩選',
-        color: '#059669',
-        bgColor: 'rgba(5, 150, 105, 0.12)',
-        icon: <Icon name="analytics" size={16} color="#059669" />,
-      };
+      return { label: '結構化統計與篩選', icon: 'analytics', toneClass: styles.toneRecords };
     case 'web_search':
-      return {
-        label: '外部聯網搜尋',
-        color: '#0891B2',
-        bgColor: 'rgba(8, 145, 178, 0.12)',
-        icon: <Icon name="language" size={16} color="#0891B2" />,
-      };
+      return { label: '外部聯網搜尋', icon: 'language', toneClass: styles.toneSearch };
     case 'web_fetch':
-      return {
-        label: '深度閱讀網頁',
-        color: '#7C3AED',
-        bgColor: 'rgba(124, 58, 237, 0.12)',
-        icon: <Icon name="article" size={16} color="#7C3AED" />,
-      };
+      return { label: '深度閱讀網頁', icon: 'article', toneClass: styles.toneFetch };
     default:
-      return {
-        label: toolName,
-        color: '#64748B',
-        bgColor: 'rgba(100, 116, 139, 0.12)',
-        icon: <Icon name="code" size={16} color="#64748B" />,
-      };
+      return { label: toolName, icon: 'code', toneClass: styles.toneDefault };
   }
 };
 const formatStepQueryParam = (step: ResearchTraceStep): string => {
@@ -53,7 +33,7 @@ const formatStepQueryParam = (step: ResearchTraceStep): string => {
     if (args.date_range) parts.push(`日期: ${args.date_range}`);
     if (args.author) parts.push(`作者: ${args.author}`);
     if (args.keyword) parts.push(`關鍵字: ${args.keyword}`);
-    if (args.target_document) parts.push(`文檔: ${args.target_document}`);
+    if (args.target_document) parts.push(`文件: ${args.target_document}`);
     if (parts.length > 0) return parts.join(' | ');
   }
   return args.query || args.url || '';
@@ -66,6 +46,7 @@ export const ResearchTraceBlock: React.FC<ResearchTraceBlockProps> = ({
   const [isOpen, setIsOpen] = useState(false);
   const userInteractedRef = useRef(false);
   const prevHasContentRef = useRef(hasContent);
+  const stepListId = useId();
   const hasRunningStep = trace.some(s => s.status === 'running');
   const isResearching = isStreaming && !hasContent;
   useEffect(() => {
@@ -86,16 +67,16 @@ export const ResearchTraceBlock: React.FC<ResearchTraceBlockProps> = ({
   const activeToolInfo = activeStep ? getToolDisplayInfo(activeStep.tool) : null;
   return (
     <div className={`${styles.container} ${hasRunningStep ? styles.containerActive : ''}`}>
-      <div
+      <button
+        type="button"
         className={styles.header}
         onClick={handleHeaderClick}
-        role="button"
-        tabIndex={0}
         aria-expanded={isOpen}
+        aria-controls={stepListId}
       >
-        <div className={styles.titleArea}>
+        <span className={styles.titleArea}>
           {hasRunningStep ? (
-            <Spinner size={16} color="var(--color-primary)" />
+            <Spinner size={16} color="var(--color-primary)" aria-hidden="true" />
           ) : (
             <Icon name="search" size={18} color="var(--color-primary)" />
           )}
@@ -104,50 +85,45 @@ export const ResearchTraceBlock: React.FC<ResearchTraceBlockProps> = ({
               ? `AI 自主研究中：${activeToolInfo?.label || '執行中'} (步驟 ${activeStep.step})`
               : `AI 自主研究歷程 (${trace.length} 個步驟)`}
           </span>
-        </div>
-        <div className={styles.metaArea}>
-          <div className={styles.stepsChipRow}>
+        </span>
+        <span className={styles.metaArea}>
+          <span className={styles.stepsChipRow} aria-hidden="true">
             {trace.map((step, idx) => {
               const info = getToolDisplayInfo(step.tool);
               const isStepRunning = step.status === 'running';
               return (
-                <Chip
+                <span
                   key={idx}
-                  label={`S${step.step}${isStepRunning ? '...' : ''}`}
-                  size="sm"
-                  style={{
-                    color: isStepRunning ? '#FFFFFF' : info.color,
-                    backgroundColor: isStepRunning ? 'var(--color-primary)' : info.bgColor,
-                    borderColor: `${info.color}33`,
-                    height: '20px',
-                    fontSize: '0.68rem',
-                    fontWeight: 600,
-                    animation: isStepRunning ? 'var(--anim-pulse)' : undefined
-                  }}
-                />
+                  className={`${styles.stepChip} ${info.toneClass} ${isStepRunning ? styles.stepChipRunning : ''} ${step.status === 'error' ? styles.stepChipError : ''}`}
+                >
+                  S{step.step}
+                </span>
               );
             })}
-          </div>
-          <span className={`${styles.chevron} ${isOpen ? styles.chevronOpen : ''}`}>
+          </span>
+          <span className={`${styles.chevron} ${isOpen ? styles.chevronOpen : ''}`} aria-hidden="true">
             <Icon name="expand-more" size={16} />
           </span>
-        </div>
-      </div>
-      <Collapse in={isOpen}>
+        </span>
+      </button>
+      <Collapse in={isOpen} id={stepListId}>
         <div className={styles.divider} />
-        <div className={styles.stepList}>
+        <ol className={styles.stepList} role="list">
           {trace.map((step: ResearchTraceStep, index: number) => {
             const toolInfo = getToolDisplayInfo(step.tool);
             const queryParam = formatStepQueryParam(step);
             const isStepRunning = step.status === 'running';
+            const isStepError = step.status === 'error';
             return (
-              <div
+              <li
                 key={index}
                 className={`${styles.stepItem} ${isStepRunning ? styles.stepItemRunning : ''}`}
               >
                 <div className={styles.stepHeader}>
                   <div className={styles.stepTitle}>
-                    {toolInfo.icon}
+                    <span className={`${styles.toolIcon} ${toolInfo.toneClass}`}>
+                      <Icon name={toolInfo.icon} size={16} />
+                    </span>
                     <span>
                       步驟 {step.step}：{toolInfo.label}
                       {isStepRunning && <span className={styles.runningBadge}>進行中</span>}
@@ -158,11 +134,17 @@ export const ResearchTraceBlock: React.FC<ResearchTraceBlockProps> = ({
                       <span className={styles.duration}>{step.duration_seconds}s</span>
                     )}
                     {isStepRunning ? (
-                      <Spinner size={14} color="var(--color-primary)" />
-                    ) : step.status === 'error' ? (
-                      <Icon name="error" size={14} color="#EF4444" />
+                      <Spinner size={14} color="var(--color-primary)" aria-hidden="true" />
+                    ) : isStepError ? (
+                      <span className={styles.statusError}>
+                        <Icon name="error" size={14} />
+                        <span className="sr-only">失敗</span>
+                      </span>
                     ) : (
-                      <Icon name="check-circle" size={14} color="#10B981" />
+                      <span className={styles.statusSuccess}>
+                        <Icon name="check-circle" size={14} />
+                        <span className="sr-only">完成</span>
+                      </span>
                     )}
                   </div>
                 </div>
@@ -178,10 +160,10 @@ export const ResearchTraceBlock: React.FC<ResearchTraceBlockProps> = ({
                     {step.output_preview}
                   </pre>
                 )}
-              </div>
+              </li>
             );
           })}
-        </div>
+        </ol>
       </Collapse>
     </div>
   );

@@ -1,6 +1,7 @@
 import axios, { AxiosInstance, InternalAxiosRequestConfig, AxiosResponse } from 'axios';
 import { shouldRefreshToken, hasValidAuth, clearAuth } from '../utils/tokenUtils.ts';
 import { devLog, devWarn } from '../utils/secureLogger.ts';
+import { createSseParser } from './sse.ts';
 export interface ChatAttachment {
   id?: string;
   filename: string;
@@ -39,6 +40,10 @@ export interface Message {
   think?: string | null;
   role?: string;
   isUser?: boolean;
+  /** 僅前端使用：串流失敗時的錯誤訊息 */
+  error?: string;
+  /** 僅前端使用：使用者手動停止產生 */
+  stopped?: boolean;
 }
 export interface Conversation {
   id: number;
@@ -139,13 +144,20 @@ api.interceptors.request.use(
     return Promise.reject(error);
   }
 );
+// 這些端點回 401 代表帳密或 refresh token 本身無效，不應再觸發 refresh，否則原本的錯誤訊息會被蓋掉
+const AUTH_PATHS_WITHOUT_REFRESH = ['/auth/login', '/auth/register', '/auth/refresh'];
+const isAuthPathWithoutRefresh = (url?: string): boolean => {
+  if (!url) return false;
+  const path = url.split('?')[0];
+  return AUTH_PATHS_WITHOUT_REFRESH.some((authPath) => path.endsWith(authPath));
+};
 api.interceptors.response.use(
   (response: AxiosResponse) => {
     return response;
   },
   async (error) => {
     const originalRequest = error.config;
-    if (error.response?.status === 401 && !originalRequest._retry) {
+    if (error.response?.status === 401 && !originalRequest._retry && !isAuthPathWithoutRefresh(originalRequest.url)) {
       originalRequest._retry = true;
       if (isRefreshing) {
         return new Promise((resolve) => {
@@ -241,30 +253,22 @@ export const chatService = {
     }
     const reader = response.body.getReader();
     const decoder = new TextDecoder('utf-8');
-    let buffer = '';
+    const parser = createSseParser(({ event, data }) => {
+      let parsedData: unknown;
+      try {
+        parsedData = JSON.parse(data);
+      } catch (e) {
+        console.warn('Failed to parse SSE data:', data, e);
+        return;
+      }
+      onEvent({ event: event as StreamEvent['event'], data: parsedData });
+    });
     while (true) {
       const { value, done } = await reader.read();
       if (done) break;
-      buffer += decoder.decode(value, { stream: true });
-      const lines = buffer.split('\n');
-      buffer = lines.pop() || '';
-      let currentEvent: string = 'message';
-      for (const line of lines) {
-        const trimmed = line.trim();
-        if (!trimmed) continue;
-        if (trimmed.startsWith('event:')) {
-          currentEvent = trimmed.slice(6).trim();
-        } else if (trimmed.startsWith('data:')) {
-          const rawData = trimmed.slice(5).trim();
-          try {
-            const parsedData = JSON.parse(rawData);
-            onEvent({ event: currentEvent as any, data: parsedData });
-          } catch (e) {
-            console.warn('Failed to parse SSE data:', rawData, e);
-          }
-        }
-      }
+      parser.push(decoder.decode(value, { stream: true }));
     }
+    parser.push(decoder.decode());
   },
   async sendMessage(
     content: string,

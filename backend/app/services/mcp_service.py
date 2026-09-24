@@ -7,8 +7,41 @@ import sys
 import time
 from typing import Any, Dict, List, Optional, Tuple
 import httpx
+from app.core.ssrf_protection import reject_unsafe_request
 logger = logging.getLogger(__name__)
 MCP_PROTOCOL_VERSION = "2024-11-05"
+# stdio 子行程只繼承執行所需的系統變數（與 MCP 官方 SDK 的預設清單相同），
+# 後端的 JWT 金鑰、資料庫連線與模型 API 金鑰不會外流給第三方 MCP 伺服器；
+# 伺服器需要的其他變數要寫在該伺服器的 env_vars
+INHERITED_ENV_VARS = (
+    (
+        "APPDATA",
+        "HOMEDRIVE",
+        "HOMEPATH",
+        "LOCALAPPDATA",
+        "PATH",
+        "PATHEXT",
+        "PROCESSOR_ARCHITECTURE",
+        "SYSTEMDRIVE",
+        "SYSTEMROOT",
+        "TEMP",
+        "USERNAME",
+        "USERPROFILE",
+    )
+    if sys.platform == "win32"
+    else ("HOME", "LOGNAME", "PATH", "SHELL", "TERM", "USER")
+)
+def build_stdio_env(env_vars: Dict[str, str]) -> Dict[str, str]:
+    """組出 stdio 子行程的環境變數：系統必要變數加上伺服器設定的 env_vars"""
+    env: Dict[str, str] = {}
+    for key in INHERITED_ENV_VARS:
+        value = os.environ.get(key)
+        # 以 "()" 開頭的是 shell 匯出的函式定義，不交給子行程
+        if value is None or value.startswith("()"):
+            continue
+        env[key] = value
+    env.update(env_vars)
+    return env
 class McpStdioClient:
     """
     基於 Stdio (標準輸入/輸出子進程) 的 MCP 用戶端通訊器
@@ -32,8 +65,7 @@ class McpStdioClient:
         return self._request_id
     async def start(self):
         """啟動子進程"""
-        env = dict(os.environ)
-        env.update(self.env_vars)
+        env = build_stdio_env(self.env_vars)
         full_cmd = [self.command] + self.args
         try:
             self.process = await asyncio.create_subprocess_exec(
@@ -44,7 +76,7 @@ class McpStdioClient:
                 env=env
             )
         except Exception as e:
-            raise RuntimeError(f"無法啟動 MCP 子進程 ({' '.join(full_cmd)}): {str(e)}")
+            raise RuntimeError(f"無法啟動 MCP 子行程 ({' '.join(full_cmd)}): {str(e)}")
     async def close(self):
         """關閉子進程"""
         if self.process:
@@ -61,7 +93,7 @@ class McpStdioClient:
     async def _send_rpc_request(self, method: str, params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         """發送單次 JSON-RPC 2.0 請求並讀取回應"""
         if not self.process or not self.process.stdin or not self.process.stdout:
-            raise RuntimeError("MCP 子進程尚未啟動或通訊管線已中斷")
+            raise RuntimeError("MCP 子行程尚未啟動或通訊管線已中斷")
         req_id = self._next_id()
         payload = {
             "jsonrpc": "2.0",
@@ -88,7 +120,7 @@ class McpStdioClient:
                         err_bytes = await asyncio.wait_for(self.process.stderr.read(2048), timeout=0.5)
                     except Exception:
                         pass
-                raise RuntimeError(f"MCP 伺服器已異常退出: {err_bytes.decode('utf-8', errors='ignore')}")
+                raise RuntimeError(f"MCP 伺服器已異常結束: {err_bytes.decode('utf-8', errors='ignore')}")
             line_str = line_bytes.decode("utf-8", errors="ignore").strip()
             if not line_str:
                 continue
@@ -162,7 +194,12 @@ class McpHttpClient:
             "method": method,
             "params": params or {}
         }
-        async with httpx.AsyncClient(timeout=self.timeout, follow_redirects=True) as client:
+        # 與自訂 API 工具相同：第一跳與每次轉址都要通過 SSRF 檢查
+        async with httpx.AsyncClient(
+            timeout=self.timeout,
+            follow_redirects=True,
+            event_hooks={"request": [reject_unsafe_request]},
+        ) as client:
             resp = await client.post(self.url, headers=self.headers, json=payload)
             if resp.status_code != 200:
                 raise RuntimeError(f"HTTP MCP 伺服器返回狀態碼 {resp.status_code}: {resp.text}")
@@ -397,7 +434,7 @@ if __name__ == '__main__':
             return {
                 "is_success": False,
                 "duration_seconds": duration,
-                "error": f"調用 MCP 工具失敗: {str(e)}"
+                "error": f"呼叫 MCP 工具失敗: {str(e)}"
             }
     @classmethod
     def convert_mcp_tool_to_function_def(

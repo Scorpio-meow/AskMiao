@@ -1,31 +1,32 @@
-import React from 'react';
+import React, { useId } from 'react';
 import { ThinkBlockProps } from './types';
-import { Icon, Collapse, IconButton } from '../../components/ui';
+import { Icon, Collapse } from '../../components/ui';
 import styles from './ThinkBlock.module.css';
 export const ThinkBlock: React.FC<ThinkBlockProps> = ({
   thinkContent,
   isOpen,
   onToggle,
 }) => {
+  const bodyId = useId();
   if (!thinkContent) return null;
   return (
     <div className={styles.container}>
-      <div
+      <button
+        type="button"
         className={styles.header}
         onClick={onToggle}
-        role="button"
-        tabIndex={0}
         aria-expanded={isOpen}
+        aria-controls={bodyId}
       >
-        <div className={styles.titleArea}>
-          <Icon name="lightbulb" size={18} color="#2563EB" />
+        <span className={styles.titleArea}>
+          <Icon name="lightbulb" size={18} />
           <span>思考與推論過程</span>
-        </div>
-        <IconButton size="sm" aria-label={isOpen ? '收合思考過程' : '展開思考過程'}>
-          <Icon name={isOpen ? 'expand-less' : 'expand-more'} size={16} />
-        </IconButton>
-      </div>
-      <Collapse in={isOpen}>
+        </span>
+        <span className={`${styles.chevron} ${isOpen ? styles.chevronOpen : ''}`} aria-hidden="true">
+          <Icon name="expand-more" size={16} />
+        </span>
+      </button>
+      <Collapse in={isOpen} id={bodyId}>
         <div className={styles.body}>
           <pre className={styles.text}>{thinkContent}</pre>
         </div>
