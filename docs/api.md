@@ -738,7 +738,7 @@ data: {"message_id": 108, "conversation_id": 42, "answer": "特休假需先在�
 | `is_enabled` | boolean | 否 | `true` |
 | `timeout` | integer | 否 | `30` |
 
-**回應**：`{"status": "success", "message": "MCP 伺服器建立成功", "server": {...}}`。探索失敗時伺服器仍會建立，但 `status` 為 `error`：SSRF 拒絕時 `last_error` 直接說明原因，其他失敗只記錄錯誤代碼。同名時回傳 `400` `已存在同名 MCP 伺服器: <名稱>`。
+**回應**：`{"status": "success", "message": "MCP 伺服器建立成功", "server": {...}}`。探索失敗時伺服器仍會建立，但 `status` 為 `error`，`last_error` 只記錄錯誤代碼；SSRF 拒絕時另註明遭 SSRF 防護拒絕，完整原因同樣只寫入伺服器日誌。同名時回傳 `400` `已存在同名 MCP 伺服器: <名稱>`。
 
 ### 5.4 GET /api/mcp/servers/{server_id}
 
@@ -767,7 +767,7 @@ data: {"message_id": 108, "conversation_id": 42, "answer": "特休假需先在�
 }
 ```
 
-失敗時回傳 `400`：SSRF 拒絕時 `detail` 說明原因，其他失敗只含錯誤代碼；伺服器的 `status` 同時改為 `error`。
+失敗時回傳 `400`，`detail` 只含錯誤代碼（SSRF 拒絕時另註明遭 SSRF 防護拒絕）；伺服器的 `status` 同時改為 `error`。
 
 ### 5.8 PATCH /api/mcp/servers/{server_id}/toggle
 
@@ -946,7 +946,7 @@ data: {"message_id": 108, "conversation_id": 42, "answer": "特休假需先在�
 }
 ```
 
-只描述使用者輸入本身的驗證錯誤（例如 OpenAPI 規格格式不合法、網址被 SSRF 防護拒絕）則直接回傳可據以修正的訊息。
+只描述使用者輸入本身的驗證錯誤（例如 OpenAPI 規格格式不合法、規格網址被 SSRF 防護拒絕）則直接回傳可據以修正的訊息。
 
 ### 常見狀態碼
 

@@ -64,3 +64,9 @@ Extends [ADR-0002](./0002-external-tools-and-outbound-safety_en.md): adds tool m
 - `stdio` servers that relied on backend environment variables (for example `HTTP_PROXY`, `HTTPS_PROXY`, `NODE_EXTRA_CA_CERTS`, or access tokens) must list those variables in the server's `env_vars`.
 - MCP HTTP servers pointing at `localhost` or private addresses fail discovery after the upgrade and show the reason in `last_error`.
 - To roll back, revert the code.
+
+---
+
+## Amendments
+
+- **2026-09-25 | SSRF rejection reasons go to the log only**: a rejection reason can include private IPs from server-side DNS resolution or redirect targets, not just the URL the admin entered (CodeQL `py/stack-trace-exposure`). When an MCP server is rejected, `last_error` and the 400 response of the discover endpoint now say the SSRF guard rejected it and carry an error code; the full reason goes only to the server log.
