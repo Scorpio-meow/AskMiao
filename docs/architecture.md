@@ -89,7 +89,7 @@ flowchart LR
     Query["用戶查詢內容 (Query)"] --> Strategy{"檢索策略調配器"}
 
     subgraph ParallelRetrieval ["並行雙軌檢索"]
-        Strategy -->|向量比對| FAISS["FAISS 向量搜尋 (內積相似度, IndexFlatIP)"]
+        Strategy -->|向量比對| FAISS["FAISS 向量搜尋 (內積相似度, IndexIDMap2)"]
         Strategy -->|關鍵字比對| BM25["Whoosh BM25 (Jieba 中文分詞)"]
     end
 
@@ -104,11 +104,11 @@ flowchart LR
 ### 檢索管道核心處理解析
 
 1. **文字切塊 (Chunking)**：上傳文件經 `RecursiveCharacterTextSplitter` 處理，切塊大小與重疊由 `CHUNK_SIZE` / `CHUNK_OVERLAP` 控制（範本預設 300 / 100 字元）。結構化記錄與 JSON 資料另以「原子記錄分塊」方式建立，確保逐筆統計正確。
-2. **向量嵌入 (Embedding)**：預設採用 `BAAI/bge-small-zh-v1.5`（`EMBEDDING_MODEL`），向量維度於載入模型時自動取得，FAISS 以 `IndexFlatIP` 內積索引建立。
+2. **向量嵌入 (Embedding)**：預設採用 `BAAI/bge-small-zh-v1.5`（`EMBEDDING_MODEL`），向量維度於載入模型時自動取得。片段存於資料庫 `rag_chunks` 表，FAISS 以 `IndexIDMap2(IndexFlatIP)` 內積索引、BM25 以 `doc_id` 皆用 chunk_id 對應；刪除文件只移除該文件的向量，不需重新嵌入，啟動時並依資料庫校正兩份索引。
 3. **關鍵字檢索 (BM25)**：結合 `Whoosh` 搜尋引擎與 `Jieba` 中文分詞，補足向量檢索對專有名詞與代碼之弱點。
 4. **分數融合 (Fusion)**：兩軌分數依 `NORMALIZATION` 策略歸一化後，以 `HYBRID_ALPHA` 加權合併。
 5. **重排序 (Reranking)**：Cross-Encoder（預設 `BAAI/bge-reranker-base`）對候選片段計算交叉注意力分數，經 `RERANK_WEIGHT` 與 `FINAL_THRESHOLD` 過濾後，取前 `FINAL_K` 段組裝上下文。
-6. **檢索評估 (Evaluation)**：`evaluator.py` 提供 Hit Rate、MRR 等指標與 Alpha 自動調優依據。
+6. **檢索評估 (Evaluation)**：`evaluator.py` 以線上實際使用的 `smart_search` 計算文件層級的 hit@k、recall@k 與 MRR；`scripts/evaluate_retrieval.py` 讀取 JSONL 標準問答集（格式見 `backend/eval/retrieval_golden.example.jsonl`），在索引副本上唯讀執行，並可用 `--min-mrr` 作為 CI 門檻。
 
 ---
 
@@ -176,6 +176,8 @@ flowchart LR
 2. **研究歷程追蹤 (Research Trace)**：每輪工具調用之步驟、工具名稱、輸入參數、輸出摘要與耗時皆結構化記錄，透過 `step_start` / `step_end` SSE 事件即時推送前端折疊時間軸。
 3. **來源標籤與跳轉 (Sources Detail)**：整合內部文檔片段與外部網頁連結產生來源標籤，支援點擊驗證出處。
 4. **多模態輸入**：附件中的圖片以 `image_url` 內容區塊送入視覺模型，文字類附件則抽取內容併入提問上下文。
+5. **對話前文**：每次提問從資料庫 `messages` 表讀取最近 `CONVERSATION_HISTORY_MESSAGES` 則訊息作為前文，後端重啟不影響。
+6. **多供應商工具呼叫**：`llm_client.py` 統一 OpenAI、Azure OpenAI、Claude（官方 `anthropic` SDK）、Gemini 與 Ollama 的呼叫格式，皆支援工具呼叫與串流。
 
 ---
 

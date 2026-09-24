@@ -14,7 +14,7 @@ def reset_indexes():
     
     index_files = [
         data_dir / "faiss_index.bin",
-        data_dir / "documents.pkl",
+        data_dir / "index_metadata.pkl",
     ]
     bm25_dir = data_dir / "bm25_index"
     
@@ -55,7 +55,7 @@ def reset_indexes():
             print(f"  文檔數: {len(rag.documents) if hasattr(rag, 'documents') else 0}")
         
         print("\n✅ 索引重置成功!")
-        print("   下次上傳文檔時將自動建立新索引")
+        print("   已依資料庫 rag_chunks 中的片段重新計算向量並重建 BM25 索引")
         
     except Exception as e:
         print(f"\n⚠️  RAG 初始化警告 (索引已清空，重啟服務後將重建): {e}")

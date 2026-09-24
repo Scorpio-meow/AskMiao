@@ -18,9 +18,9 @@ async def reprocess_all():
         print("資料庫中無任何文件記錄。")
         db.close()
         return
-    print("清空現有 RAG 向量與 BM25 索引...")
+    print("清空現有 RAG 片段、向量與 BM25 索引...")
     from app.core.config import settings
-    rag_system.clear_vector_store()
+    rag_system.clear_indices()
     upload_dir = settings.UPLOAD_DIR
     total_chunks = 0
     for doc in docs:

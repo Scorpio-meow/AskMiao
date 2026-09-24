@@ -17,6 +17,7 @@ scikit-learn
 websockets
 requests
 httpx
+anthropic
 pypdf
 pymupdf
 fonttools

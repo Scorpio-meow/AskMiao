@@ -264,20 +264,25 @@ AskMiao/
 | `JWT_SECRET_KEY` | JWT 簽署金鑰 | `cb_jwt_sec_...` | 是 |
 | `ADMIN_API_KEY` | 系統管理員 API 金鑰 | `cb_admin_key_...` | 是 |
 | `LLM_API_BASE` | 本地 Ollama 服務端點 URL | `http://localhost:11434` | 否 |
+| `OLLAMA_TEMPERATURE` / `OLLAMA_NUM_PREDICT` | Ollama 生成參數（未設定時使用模型預設值） | `0.3` / `2048` | 否 |
 | `MODEL_NAME` | 預設模型名稱（未設定時取第一個可用模型） | 空值 | 否 |
-| `ENABLE_WEB_SEARCH` | 是否啟用 Agent 聯網搜尋工具 | `true` | 否 |
-| `AGENT_MAX_TURNS` | Agent 自主研究最大工具調用輪數 | `5` | 否 |
+| `ENABLE_WEB_SEARCH` | 是否啟用 Agent 聯網工具（同時控制 `web_search` 與 `web_fetch`） | `true` | 是 |
+| `AGENT_MAX_TURNS` | Agent 單次提問的工具調用輪數上限（≥1） | `5` | 是 |
+| `CONVERSATION_HISTORY_MESSAGES` | 提問時從資料庫帶入的前文訊息數（0 表示不帶前文） | `6` | 是 |
 | `AZURE_OPENAI_API_KEY` | Azure OpenAI API 金鑰 | `your_azure_api_key` | 否 |
 | `AZURE_OPENAI_ENDPOINT` | Azure OpenAI v1 服務端點 URL | `https://your-resource.openai.azure.com` | 否 |
 | `AZURE_OPENAI_DEPLOYMENT` | Azure OpenAI 部署名稱（支援逗號分隔多模型） | `gpt-4o,gpt-4o-mini` | 否 |
 | `OPENAI_API_KEY` | OpenAI 官方 API 金鑰 | `sk-...` | 否 |
 | `OPENAI_VISION_MODEL` | 多模態圖片理解所用之 OpenAI 模型 | `gpt-4o` | 否 |
 | `ANTHROPIC_API_KEY` | Anthropic Claude API 金鑰 | `sk-ant-...` | 否 |
+| `ANTHROPIC_MAX_TOKENS` | Claude 單次回應的輸出 token 上限（使用 Claude 模型時必填） | `16000` | 否 |
 | `GEMINI_API_KEY` | Google Gemini API 金鑰 | `AIza...` | 否 |
 | `GEMINI_VISION_MODEL` | 多模態圖片理解所用之 Gemini 模型 | `gemini-2.5-flash` | 否 |
 | `AVAILABLE_MODELS` | 手動指定前端可選模型清單（逗號分隔） | 空值 | 否 |
 | `EMBEDDING_MODEL` | 向量嵌入模型名稱 | `BAAI/bge-small-zh-v1.5` | 否 |
 | `RERANKER_MODEL` | Cross-Encoder 重排序模型名稱 | `BAAI/bge-reranker-base` | 否 |
+| `HF_HOME` | Hugging Face 模型快取目錄（未設定時使用 `~/.cache/huggingface`） | `./data/hf_home` | 否 |
+| `HF_HUB_OFFLINE` | 只從快取離線載入模型，啟動時不連線檢查更新 | `true` | 否 |
 | `CHUNK_SIZE` / `CHUNK_OVERLAP` | 文件切塊大小與重疊字元數 | `300` / `100` | 否 |
 | `HYBRID_ALPHA` | 向量與 BM25 分數融合權重 | `0.75` | 否 |
 | `FINAL_K` | 最終送入 LLM 之片段數量 | `8` | 否 |

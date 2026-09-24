@@ -264,20 +264,25 @@ AskMiao/
 | `JWT_SECRET_KEY` | JWT signing key | `cb_jwt_sec_...` | Yes |
 | `ADMIN_API_KEY` | Administrative API key | `cb_admin_key_...` | Yes |
 | `LLM_API_BASE` | Local Ollama service endpoint | `http://localhost:11434` | No |
+| `OLLAMA_TEMPERATURE` / `OLLAMA_NUM_PREDICT` | Ollama generation options (model defaults when unset) | `0.3` / `2048` | No |
 | `MODEL_NAME` | Default model name (falls back to the first available model) | empty | No |
-| `ENABLE_WEB_SEARCH` | Enable the agent's web search tool | `true` | No |
-| `AGENT_MAX_TURNS` | Maximum autonomous tool-calling turns | `5` | No |
+| `ENABLE_WEB_SEARCH` | Enable the agent's web tools (controls both `web_search` and `web_fetch`) | `true` | Yes |
+| `AGENT_MAX_TURNS` | Maximum tool-calling turns per question (>= 1) | `5` | Yes |
+| `CONVERSATION_HISTORY_MESSAGES` | Prior messages loaded from the database as context (0 disables) | `6` | Yes |
 | `AZURE_OPENAI_API_KEY` | Azure OpenAI API key | `your_azure_api_key` | No |
 | `AZURE_OPENAI_ENDPOINT` | Azure OpenAI v1 endpoint URL | `https://your-resource.openai.azure.com` | No |
 | `AZURE_OPENAI_DEPLOYMENT` | Azure deployment names (comma-separated for multiple models) | `gpt-4o,gpt-4o-mini` | No |
 | `OPENAI_API_KEY` | OpenAI API key | `sk-...` | No |
 | `OPENAI_VISION_MODEL` | OpenAI model used for image understanding | `gpt-4o` | No |
 | `ANTHROPIC_API_KEY` | Anthropic Claude API key | `sk-ant-...` | No |
+| `ANTHROPIC_MAX_TOKENS` | Output token cap per Claude response (required when using Claude models) | `16000` | No |
 | `GEMINI_API_KEY` | Google Gemini API key | `AIza...` | No |
 | `GEMINI_VISION_MODEL` | Gemini model used for image understanding | `gemini-2.5-flash` | No |
 | `AVAILABLE_MODELS` | Explicit model list exposed to the frontend (comma-separated) | empty | No |
 | `EMBEDDING_MODEL` | Embedding model name | `BAAI/bge-small-zh-v1.5` | No |
 | `RERANKER_MODEL` | Cross-Encoder reranking model | `BAAI/bge-reranker-base` | No |
+| `HF_HOME` | Hugging Face model cache directory (`~/.cache/huggingface` when unset) | `./data/hf_home` | No |
+| `HF_HUB_OFFLINE` | Load cached models offline without update checks at startup | `true` | No |
 | `CHUNK_SIZE` / `CHUNK_OVERLAP` | Document chunk size and overlap | `300` / `100` | No |
 | `HYBRID_ALPHA` | Fusion weight between vector and BM25 scores | `0.75` | No |
 | `FINAL_K` | Number of chunks passed to the LLM | `8` | No |

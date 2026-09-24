@@ -33,7 +33,7 @@ async def scan_and_cleanup_uploads(interval_seconds: int = None):
                         logger.info(f"Detected missing file for document id={doc.id}, filename={doc.filename}")
                         try:
                             rag_system = get_rag_system()
-                            await asyncio.to_thread(rag_system.remove_document_by_id, doc.id, False)
+                            await asyncio.to_thread(rag_system.remove_document_by_id, doc.id)
                         except Exception as e:
                             logger.warning(f"Failed to remove document {doc.id} from RAG: {e}")
                         try:

@@ -1,7 +1,8 @@
-from typing import List, Tuple, Dict, Any, Optional
+from typing import List, Tuple, Dict, Optional, Set
 import os
 import pickle
 import logging
+import threading
 from datetime import datetime
 import numpy as np
 import faiss
@@ -17,11 +18,12 @@ SentenceTransformer = None
 
 
 class VectorStoreManager:
+    """FAISS 向量索引（IndexIDMap2，id 為 rag_chunks 的 chunk_id）與記憶體中的 chunk_id → 片段對照"""
+
     def __init__(
         self,
         data_dir: Optional[str] = None,
         faiss_index_path: Optional[str] = None,
-        documents_path: Optional[str] = None,
         metadata_path: Optional[str] = None,
         embedding_model: Optional[str] = None,
         force_cpu: bool = False,
@@ -36,20 +38,21 @@ class VectorStoreManager:
 
         self.data_dir = data_dir or settings.DATA_DIR
         self.faiss_index_path = faiss_index_path or settings.FAISS_INDEX_PATH
-        self.documents_path = documents_path or settings.DOCUMENTS_PATH
         self.metadata_path = metadata_path or settings.METADATA_PATH
         os.makedirs(self.data_dir, exist_ok=True)
 
         self.similarity_threshold = similarity_threshold if similarity_threshold is not None else settings.SIMILARITY_THRESHOLD
         self.top_k = top_k if top_k is not None else settings.TOP_K
-        self.documents: List[Document] = []
+        self.chunks: Dict[int, Document] = {}
+        # 保護 chunks、FAISS 與 BM25 索引之間的一致性；讀寫兩側皆須持有
+        self.lock = threading.RLock()
 
         import torch
 
         if force_cpu or not torch.cuda.is_available():
             self.device = "cpu"
             try:
- 
+
                 cpu_threads = min(MAX_CPU_THREADS, os.cpu_count() or 8)
                 torch.set_num_threads(cpu_threads)
                 torch.set_num_interop_threads(min(MAX_INTEROP_THREADS, os.cpu_count() or 4))
@@ -103,8 +106,15 @@ class VectorStoreManager:
             logger.warning("FAISS-GPU 已啟用但庫不支援 GPU，請安裝 faiss-gpu。回退到 CPU 模式。")
             self.use_faiss_gpu = False
 
-        self.index = faiss.IndexFlatIP(self.embedding_dimension)
+        self.index = self._new_index()
         self.load_indices()
+
+    @property
+    def documents(self) -> List[Document]:
+        return list(self.chunks.values())
+
+    def _new_index(self):
+        return faiss.IndexIDMap2(faiss.IndexFlatIP(self.embedding_dimension))
 
     def _load_embedding_model(self, model_name: str):
         global SentenceTransformer
@@ -118,108 +128,96 @@ class VectorStoreManager:
             return None
 
     def load_indices(self) -> None:
+        if not os.path.exists(self.faiss_index_path):
+            return
         try:
-            index_mismatch = False
-            if os.path.exists(self.faiss_index_path) and os.path.exists(self.documents_path):
-                cpu_index = faiss.read_index(self.faiss_index_path)
-                try:
-                    index_dim = getattr(cpu_index, "d", None)
-                except Exception:
-                    index_dim = None
-
-                if index_dim is not None and index_dim != self.embedding_dimension:
-                    index_mismatch = True
-                    logger.warning(
-                        f"Loaded FAISS index dimension ({index_dim}) does not match current embedding dimension ({self.embedding_dimension})."
-                        " Initializing empty index to avoid add() assertion failure."
-                    )
-                    cpu_index = faiss.IndexFlatIP(self.embedding_dimension)
-                    try:
-                        if os.path.exists(self.faiss_index_path):
-                            os.replace(self.faiss_index_path, self.faiss_index_path + ".mismatch.bak")
-                        if os.path.exists(self.documents_path):
-                            os.replace(self.documents_path, self.documents_path + ".mismatch.bak")
-                        logger.info("Backed up mismatched FAISS index and documents.pkl as *.mismatch.bak")
-                    except Exception as e:
-                        logger.warning(f"Failed to back up mismatched indices: {e}")
-
-                if self.use_faiss_gpu and self.gpu_resources:
-                    try:
-                        self.index = faiss.index_cpu_to_gpu(
-                            self.gpu_resources,
-                            self.faiss_gpu_device,
-                            cpu_index
-                        )
-                        logger.info(f"FAISS 索引已轉換至 GPU (設備 {self.faiss_gpu_device})")
-                    except Exception as e:
-                        logger.warning(f"FAISS 索引 GPU 轉換失敗，使用 CPU: {e}")
-                        self.index = cpu_index
-                        self.use_faiss_gpu = False
-                else:
-                    self.index = cpu_index
-
-                if index_mismatch:
-                    self.documents = []
-                else:
-                    try:
-                        with open(self.documents_path, "rb") as f:
-                            self.documents = pickle.load(f)
-                    except Exception as e:
-                        logger.warning(f"Failed to load documents pickle: {e}. Clearing documents.")
-                        self.documents = []
-
-                logger.info(f"Loaded FAISS index with {self.index.ntotal} vectors")
+            cpu_index = faiss.read_index(self.faiss_index_path)
         except Exception as e:
-            logger.error(f"Error loading FAISS indices: {e}")
-            self.clear()
+            raise RuntimeError(
+                f"向量索引載入失敗：{e}。原索引檔已保留、未刪除；若檔案被其他程序占用，請排除後重新啟動；"
+                f"若已損毀，請將 {self.faiss_index_path} 移出後重新啟動，系統會依資料庫中的片段重新計算向量"
+            ) from e
+
+        if not isinstance(cpu_index, faiss.IndexIDMap2):
+            self._backup_incompatible_index(
+                ".legacy.bak",
+                "偵測到舊版（依位置對齊）的 FAISS 索引格式；升級後請呼叫 POST /api/documents/rebuild-index 由資料庫重建索引"
+            )
+            return
+        if cpu_index.d != self.embedding_dimension:
+            self._backup_incompatible_index(
+                ".mismatch.bak",
+                f"FAISS 索引維度 ({cpu_index.d}) 與目前嵌入模型維度 ({self.embedding_dimension}) 不符，將依資料庫片段重新計算向量"
+            )
+            return
+
+        if self.use_faiss_gpu and self.gpu_resources:
+            try:
+                self.index = faiss.index_cpu_to_gpu(
+                    self.gpu_resources,
+                    self.faiss_gpu_device,
+                    cpu_index
+                )
+                logger.info(f"FAISS 索引已轉換至 GPU (設備 {self.faiss_gpu_device})")
+            except Exception as e:
+                logger.warning(f"FAISS 索引 GPU 轉換失敗，使用 CPU: {e}")
+                self.index = cpu_index
+                self.use_faiss_gpu = False
+        else:
+            self.index = cpu_index
+
+        logger.info(f"Loaded FAISS index with {self.index.ntotal} vectors")
+
+    def _backup_incompatible_index(self, suffix: str, reason: str) -> None:
+        backup_path = f"{self.faiss_index_path}{suffix}"
+        os.replace(self.faiss_index_path, backup_path)
+        logger.warning(f"{reason}（原檔已備份為 {backup_path}）")
 
     def save_indices(self) -> None:
+        faiss_tmp_path = f"{self.faiss_index_path}.tmp"
+        metadata_tmp_path = f"{self.metadata_path}.tmp"
         try:
             if self.use_faiss_gpu and self.gpu_resources:
                 try:
                     cpu_index = faiss.index_gpu_to_cpu(self.index)
-                    faiss.write_index(cpu_index, self.faiss_index_path)
+                    faiss.write_index(cpu_index, faiss_tmp_path)
                     logger.info("FAISS-GPU 索引已轉回 CPU 並儲存")
                 except Exception as e:
                     logger.warning(f"GPU 索引轉換失敗，嘗試直接儲存: {e}")
-                    faiss.write_index(self.index, self.faiss_index_path)
+                    faiss.write_index(self.index, faiss_tmp_path)
             else:
-                faiss.write_index(self.index, self.faiss_index_path)
-
-            with open(self.documents_path, "wb") as f:
-                pickle.dump(self.documents, f)
+                faiss.write_index(self.index, faiss_tmp_path)
 
             from ..tokenizers import HAS_JIEBA
             metadata = {
                 "last_reindex": datetime.now(),
-                "total_documents": len(self.documents),
+                "total_documents": len(self.chunks),
                 "total_vectors": self.index.ntotal,
                 "tokenizer": "jieba" if HAS_JIEBA else "standard",
                 "faiss_gpu_enabled": self.use_faiss_gpu
             }
-            with open(self.metadata_path, "wb") as f:
+            with open(metadata_tmp_path, "wb") as f:
                 pickle.dump(metadata, f)
+
+            os.replace(faiss_tmp_path, self.faiss_index_path)
+            os.replace(metadata_tmp_path, self.metadata_path)
 
             logger.info(f"Saved FAISS indices with {self.index.ntotal} vectors")
         except Exception as e:
             logger.error(f"Error saving FAISS indices: {e}")
+            raise
 
-    def add_documents(self, chunks: List[Document]) -> int:
-        if not chunks:
-            return 0
-        total_chunks = len(chunks)
-        chunk_texts = [chunk.page_content for chunk in chunks]
+    def embed(self, texts: List[str]) -> np.ndarray:
+        total_chunks = len(texts)
         logger.info(f"正在對 {total_chunks} 個文本塊計算向量嵌入 (Batch Size: {self.batch_size}, Device: {self.device})...")
-        
 
         if total_chunks > LARGE_BATCH_CHUNK_THRESHOLD:
             step = max(LARGE_BATCH_CHUNK_THRESHOLD, self.batch_size * 4)
             all_embeddings = []
             for start_idx in range(0, total_chunks, step):
                 end_idx = min(start_idx + step, total_chunks)
-                sub_texts = chunk_texts[start_idx:end_idx]
                 sub_emb = self.local_embeddings.encode(
-                    sub_texts,
+                    texts[start_idx:end_idx],
                     batch_size=self.batch_size,
                     show_progress_bar=False,
                     convert_to_numpy=True,
@@ -228,24 +226,38 @@ class VectorStoreManager:
                 all_embeddings.append(sub_emb)
                 pct = int((end_idx / total_chunks) * 100)
                 logger.info(f"向量編碼進度: {pct}% ({end_idx}/{total_chunks} 塊)")
-            import numpy as np
-            embeddings = np.vstack(all_embeddings).astype("float32")
+            embeddings = np.vstack(all_embeddings)
         else:
             embeddings = self.local_embeddings.encode(
-                chunk_texts,
+                texts,
                 batch_size=self.batch_size,
                 show_progress_bar=False,
                 convert_to_numpy=True,
                 device=self.device
             )
-            embeddings = embeddings.astype("float32")
 
+        embeddings = np.ascontiguousarray(embeddings, dtype="float32")
         faiss.normalize_L2(embeddings)
-        self.index.add(embeddings)
-        self.documents.extend(chunks)
-        self.save_indices()
-        logger.info(f"成功將 {total_chunks} 個文本塊寫入 FAISS 向量庫 (現有總向量數: {self.index.ntotal})")
-        return total_chunks
+        return embeddings
+
+    def add(self, chunk_ids: List[int], embeddings: np.ndarray, chunks: List[Document]) -> None:
+        self.index.add_with_ids(embeddings, np.asarray(chunk_ids, dtype="int64"))
+        self.chunks.update(zip(chunk_ids, chunks))
+        logger.info(f"成功將 {len(chunk_ids)} 個文本塊寫入 FAISS 向量庫 (現有總向量數: {self.index.ntotal})")
+
+    def remove(self, chunk_ids: List[int]) -> None:
+        ids = np.asarray(chunk_ids, dtype="int64")
+        if self.use_faiss_gpu and self.gpu_resources:
+            cpu_index = faiss.index_gpu_to_cpu(self.index)
+            cpu_index.remove_ids(ids)
+            self.index = faiss.index_cpu_to_gpu(self.gpu_resources, self.faiss_gpu_device, cpu_index)
+        else:
+            self.index.remove_ids(ids)
+        for chunk_id in chunk_ids:
+            self.chunks.pop(chunk_id, None)
+
+    def ids(self) -> Set[int]:
+        return set(faiss.vector_to_array(self.index.id_map).tolist())
 
     def search(self, query: str, top_k: Optional[int] = None, apply_threshold: bool = True) -> List[Tuple[Document, float]]:
         if self.index.ntotal == 0:
@@ -258,57 +270,29 @@ class VectorStoreManager:
             convert_to_numpy=True,
             device=self.device
         )
-        query_embedding = query_embedding.astype("float32")
+        query_embedding = np.ascontiguousarray(query_embedding, dtype="float32")
         faiss.normalize_L2(query_embedding)
 
-        similarities, indices = self.index.search(query_embedding, min(limit, self.index.ntotal))
+        similarities, chunk_ids = self.index.search(query_embedding, min(limit, self.index.ntotal))
 
         results = []
-        for similarity, idx in zip(similarities[0], indices[0]):
-            if (not apply_threshold or similarity > self.similarity_threshold) and idx < len(self.documents):
-                results.append((self.documents[idx], float(similarity)))
+        for similarity, chunk_id in zip(similarities[0], chunk_ids[0]):
+            chunk = self.chunks.get(int(chunk_id))
+            if chunk is not None and (not apply_threshold or similarity > self.similarity_threshold):
+                results.append((chunk, float(similarity)))
 
         return results
 
-    def remove_document_by_id(self, document_id: int) -> int:
-        docs_to_remove = []
-        for i, doc in enumerate(self.documents):
-            if doc.metadata.get("document_id") == document_id or doc.metadata.get("original_doc_id") == document_id:
-                docs_to_remove.append(i)
-
-        if not docs_to_remove:
-            return 0
-
-        for i in sorted(docs_to_remove, reverse=True):
-            del self.documents[i]
-
-        if not self.documents:
-            self.clear()
-        else:
-            all_texts = [doc.page_content for doc in self.documents]
-            embeddings = self.local_embeddings.encode(
-                all_texts,
-                batch_size=self.batch_size,
-                show_progress_bar=False,
-                convert_to_numpy=True,
-                device=self.device
-            )
-            embeddings = embeddings.astype("float32")
-            faiss.normalize_L2(embeddings)
-            self.index = faiss.IndexFlatIP(self.embedding_dimension)
-            self.index.add(embeddings)
-            self.save_indices()
-
-        logger.info(f"Removed {len(docs_to_remove)} chunks for document_id {document_id}")
-        return len(docs_to_remove)
+    def reset_index(self) -> None:
+        self.index = self._new_index()
 
     def clear(self) -> None:
-        self.index = faiss.IndexFlatIP(self.embedding_dimension)
-        self.documents = []
-        for path in [self.faiss_index_path, self.documents_path, self.metadata_path]:
+        self.index = self._new_index()
+        self.chunks = {}
+        for path in [self.faiss_index_path, self.metadata_path]:
             if os.path.exists(path):
                 try:
                     os.remove(path)
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.warning(f"刪除索引檔 {path} 失敗（下次啟動會依資料庫片段校正）: {e}")
         logger.info("Vector store cleared completely")

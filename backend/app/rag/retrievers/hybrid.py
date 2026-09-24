@@ -54,6 +54,12 @@ class HybridRetriever:
                 except Exception as e:
                     logger.warning(f"Cross-Encoder FP16 量化失敗: {e}")
 
+            import torch
+            activation_fn = getattr(self.cross_encoder, "activation_fn", None)
+            if activation_fn is None:
+                activation_fn = getattr(self.cross_encoder, "default_activation_function", None)
+            self.reranker_outputs_probability = isinstance(activation_fn, torch.nn.Sigmoid)
+
             self.has_reranker = True
             logger.info(f"Cross-Encoder 已載入至 {self.vector_store.device.upper()}: {model_name} (精度: {'FP16' if use_fp16 else 'FP32'})")
         except Exception as e:
@@ -79,8 +85,9 @@ class HybridRetriever:
 
     def hybrid_search(self, query: str, alpha: Optional[float] = None) -> List[Tuple[Document, float]]:
         alpha_val = self.hybrid_alpha if alpha is None else alpha
-        vector_results = self.vector_store.search(query, self.rerank_top_k, apply_threshold=False)
-        bm25_results = self.bm25_store.search(query, self.vector_store.documents, self.rerank_top_k)
+        with self.vector_store.lock:
+            vector_results = self.vector_store.search(query, self.rerank_top_k, apply_threshold=False)
+            bm25_results = self.bm25_store.search(query, self.vector_store.chunks, self.rerank_top_k)
 
         doc_scores: Dict[int, Dict[str, Any]] = {}
         if vector_results:
@@ -120,7 +127,10 @@ class HybridRetriever:
 
 
             cs_arr = np.array(cross_scores, dtype=float)
-            cs_norm = 1.0 / (1.0 + np.exp(-np.clip(cs_arr, -20.0, 20.0)))
+            if self.reranker_outputs_probability:
+                cs_norm = cs_arr
+            else:
+                cs_norm = 1.0 / (1.0 + np.exp(-np.clip(cs_arr, -20.0, 20.0)))
 
             def _normalize_orig(arr):
                 arr = np.array(arr, dtype=float)
@@ -144,6 +154,10 @@ class HybridRetriever:
             return doc_score_pairs[: self.final_k]
 
     def smart_search(self, query: str) -> List[Tuple[Document, float]]:
+        with self.vector_store.lock:
+            return self._smart_search_unlocked(query)
+
+    def _smart_search_unlocked(self, query: str) -> List[Tuple[Document, float]]:
         has_quotes = '"' in query
         has_chinese = bool(re.search(r"[\u4e00-\u9fff]", query))
         has_exact_terms = bool(has_quotes or re.search(r"\b(exactly|precisely|具體|確切)\b", query, re.I))
@@ -194,7 +208,7 @@ class HybridRetriever:
 
         strategy = ""
         if has_exact_terms and not has_chinese:
-            results = self.bm25_store.search(query, self.vector_store.documents, self.rerank_top_k)
+            results = self.bm25_store.search(query, self.vector_store.chunks, self.rerank_top_k)
             strategy = "bm25"
             logger.info(f"Retrieval strategy=BM25 query='{query}' candidates={len(results)}")
         elif has_chinese and (is_short or contains_faq_kw):

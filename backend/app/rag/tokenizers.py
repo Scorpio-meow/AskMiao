@@ -47,7 +47,7 @@ if HAS_WHOOSH and HAS_JIEBA:
             char_pos = start_char
             for w in jieba.cut(value, cut_all=False):
                 w = w.strip()
-                if not w:
+                if not any(ch.isalnum() for ch in w):
                     continue
                 t.original = w
                 t.text = w

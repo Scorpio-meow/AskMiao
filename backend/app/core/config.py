@@ -15,8 +15,11 @@ class Settings(BaseSettings):
     LLM_TIMEOUT: float = 120.0
     MODEL_NAME: Optional[str] = None
     OLLAMA_API_KEY: Optional[str] = None
-    ENABLE_WEB_SEARCH: bool = True
-    AGENT_MAX_TURNS: Optional[int] = None
+    OLLAMA_TEMPERATURE: Optional[float] = None
+    OLLAMA_NUM_PREDICT: Optional[int] = None
+    ENABLE_WEB_SEARCH: bool
+    AGENT_MAX_TURNS: int = Field(ge=1)
+    CONVERSATION_HISTORY_MESSAGES: int = Field(ge=0)
     AZURE_OPENAI_API_KEY: Optional[str] = None
     AZURE_OPENAI_ENDPOINT: Optional[str] = None
     AZURE_OPENAI_DEPLOYMENT: Optional[str] = None
@@ -26,6 +29,7 @@ class Settings(BaseSettings):
     OPENAI_VISION_MODEL: str = "gpt-4o"
     ANTHROPIC_API_KEY: Optional[str] = None
     ANTHROPIC_API_BASE: str = "https://api.anthropic.com"
+    ANTHROPIC_MAX_TOKENS: Optional[int] = Field(default=None, ge=1)
     GEMINI_API_KEY: Optional[str] = None
     GEMINI_API_BASE: str = "https://generativelanguage.googleapis.com"
     GEMINI_VISION_MODEL: str = "gemini-2.5-flash"
@@ -56,11 +60,11 @@ class Settings(BaseSettings):
     SQLALCHEMY_ECHO: bool = False
     EMBEDDING_MODEL: str = "BAAI/bge-small-zh-v1.5"
     RERANKER_MODEL: str = "BAAI/bge-reranker-base"
-    HF_HOME: str = "./data/hf_home"
-    HUGGINGFACE_HUB_CACHE: str = "./data/hf_home/hub"
-    TRANSFORMERS_CACHE: str = "./data/hf_home/transformers"
-    SENTENCE_TRANSFORMERS_HOME: str = "./data/hf_home/sentence-transformers"
-    HF_HUB_DISABLE_SYMLINKS_WARNING: int = 1
+    HF_HOME: Optional[str] = None
+    HF_HUB_CACHE: Optional[str] = None
+    SENTENCE_TRANSFORMERS_HOME: Optional[str] = None
+    HF_HUB_OFFLINE: Optional[bool] = None
+    HF_HUB_DISABLE_SYMLINKS_WARNING: Optional[bool] = None
     FORCE_CPU: bool = True
     USE_FP16_QUANTIZATION: bool = False
     GPU_BATCH_SIZE: int = 128
@@ -80,12 +84,8 @@ class Settings(BaseSettings):
     CHUNK_OVERLAP: int = 150
     MAX_FILE_SIZE_MB: int = 50
     UPLOAD_DIR: str = "data/uploads"
-    ENABLE_AUTO_REINDEX: int = 0
-    ENABLE_AUTO_REINDEX_TASK: int = 1
-    REINDEX_HOURS: int = 24
     DATA_DIR: str = "data"
     FAISS_INDEX_PATH: str = "data/faiss_index.bin"
-    DOCUMENTS_PATH: str = "data/documents.pkl"
     BM25_INDEX_DIR: str = "data/bm25_index"
     METADATA_PATH: str = "data/index_metadata.pkl"
     ALLOWED_ORIGINS: str = "http://localhost:3001,https://localhost:3001,http://127.0.0.1:3001,https://127.0.0.1:3001"
@@ -104,4 +104,19 @@ class Settings(BaseSettings):
         if self.DEVTUNNEL_URL and self.DEVTUNNEL_URL.strip():
             origins.append(self.DEVTUNNEL_URL.strip())
         return origins
+HF_ENVIRONMENT_KEYS = (
+    "HF_HOME",
+    "HF_HUB_CACHE",
+    "SENTENCE_TRANSFORMERS_HOME",
+    "HF_HUB_OFFLINE",
+    "HF_HUB_DISABLE_SYMLINKS_WARNING",
+)
+def export_hf_environment(config: Settings) -> None:
+    """Hugging Face 相關套件只讀環境變數，且在匯入時就決定快取位置與離線模式，須在載入模型前寫入 os.environ"""
+    for key in HF_ENVIRONMENT_KEYS:
+        value = getattr(config, key)
+        if value is None:
+            continue
+        os.environ[key] = ("1" if value else "0") if isinstance(value, bool) else value
 settings = Settings()
+export_hf_environment(settings)

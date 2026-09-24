@@ -1,16 +1,19 @@
-from typing import List, Dict, Any, Optional, Tuple, AsyncGenerator
+from typing import List, Dict, Any, Optional, Tuple, AsyncGenerator, Callable
 import os
 import pickle
 import logging
 from datetime import datetime
 
+from sqlalchemy.orm import Session
+
 from .types import Document
-from .tokenizers import init_domain_dictionary, HAS_JIEBA
+from .tokenizers import init_domain_dictionary
+from .indices.chunk_store import ChunkStore
 from .indices.vector_store import VectorStoreManager
 from .indices.bm25_store import BM25StoreManager
 from .retrievers.hybrid import HybridRetriever
 from .pipeline import RAGPipeline
-from .evaluator import RAGEvaluator
+from .evaluator import RAGEvaluator, RetrievalCase
 
 logger = logging.getLogger(__name__)
 
@@ -19,10 +22,10 @@ from app.core.config import settings
 
 class HybridContextualRAG:
     """
-    RAG 核心門面（Facade），統整向量檢索、BM25 倒排索引、混合檢索、Cross-Encoder 重排序與生成管線。
-    維持 100% 向下相容介面。
+    RAG 核心門面（Facade），統整片段儲存、向量檢索、BM25 倒排索引、混合檢索、Cross-Encoder 重排序與生成管線。
+    片段以資料庫 rag_chunks 為準，FAISS 與 BM25 皆以 chunk_id 對應，啟動時會依資料庫校正兩份索引。
     """
-    def __init__(self):
+    def __init__(self, session_factory: Callable[[], Session], read_only: bool = False):
         self.chunk_size = settings.CHUNK_SIZE
         self.chunk_overlap = settings.CHUNK_OVERLAP
         self.similarity_threshold = settings.SIMILARITY_THRESHOLD
@@ -33,10 +36,7 @@ class HybridContextualRAG:
         self.final_threshold = settings.FINAL_THRESHOLD
         self.hybrid_alpha = settings.HYBRID_ALPHA
         self.normalization = settings.NORMALIZATION.lower()
-        self.reindex_threshold_hours = settings.REINDEX_HOURS
-        self.llm_timeout = settings.LLM_TIMEOUT
         self.model_name = settings.MODEL_NAME or ""
-        self.api_base = (settings.LLM_API_BASE or "").strip()
         self.data_dir = settings.DATA_DIR
         self.use_fp16 = settings.USE_FP16_QUANTIZATION
         self.force_cpu = settings.FORCE_CPU
@@ -46,6 +46,7 @@ class HybridContextualRAG:
         os.makedirs(self.data_dir, exist_ok=True)
         init_domain_dictionary(self.data_dir)
 
+        self.chunk_store = ChunkStore(session_factory)
 
         self.vector_store = VectorStoreManager(
             data_dir=self.data_dir,
@@ -76,28 +77,57 @@ class HybridContextualRAG:
 
 
         self.pipeline = RAGPipeline(
-            vector_store=self.vector_store,
-            bm25_store=self.bm25_store,
             retriever=self.retriever,
             chunk_size=self.chunk_size,
             chunk_overlap=self.chunk_overlap,
-            llm_timeout=self.llm_timeout,
             model_name=self.model_name,
         )
 
 
         self.evaluator = RAGEvaluator(self.retriever)
 
+        if read_only:
+            self._load_chunks_read_only()
+        else:
+            self._reconcile_indices()
+
         logger.info("HybridContextualRAG 門面模組初始化完成")
+
+    def _reconcile_indices(self) -> None:
+        """以資料庫片段為準，移除 FAISS 中多出的向量、補算缺少的向量，並校正 BM25"""
+        with self.vector_store.lock:
+            self.chunk_store.delete_orphans()
+            chunks = self.chunk_store.load_all()
+            indexed_ids = self.vector_store.ids()
+            stale_ids = sorted(indexed_ids - chunks.keys())
+            missing_ids = sorted(chunks.keys() - indexed_ids)
+
+            if stale_ids:
+                self.vector_store.remove(stale_ids)
+            self.vector_store.chunks = chunks
+            if missing_ids:
+                embeddings = self.vector_store.embed([chunks[chunk_id].page_content for chunk_id in missing_ids])
+                self.vector_store.add(missing_ids, embeddings, [chunks[chunk_id] for chunk_id in missing_ids])
+            if stale_ids or missing_ids:
+                logger.warning(
+                    f"FAISS 索引已依資料庫片段校正：移除 {len(stale_ids)} 個多餘向量，補算 {len(missing_ids)} 個缺少的向量"
+                )
+                self.vector_store.save_indices()
+
+            self.bm25_store.ensure_aligned(self.vector_store.chunks)
+
+    def _load_chunks_read_only(self) -> None:
+        """唯讀模式（例如離線評估）：只載入片段，不修改資料庫或索引檔；三方不一致時拒絕執行"""
+        chunks = self.chunk_store.load_all()
+        expected_bm25_ids = sorted(str(chunk_id) for chunk_id in chunks)
+        if self.vector_store.ids() != set(chunks) or sorted(self.bm25_store.indexed_ids()) != expected_bm25_ids:
+            raise RuntimeError("索引與資料庫片段不一致；請先啟動後端完成校正，再執行唯讀評估")
+        self.vector_store.chunks = chunks
 
 
     @property
     def documents(self) -> List[Document]:
         return self.vector_store.documents
-
-    @documents.setter
-    def documents(self, value: List[Document]):
-        self.vector_store.documents = value
 
     @property
     def index(self):
@@ -120,10 +150,6 @@ class HybridContextualRAG:
         return self.retriever.has_reranker
 
     @property
-    def context_memory(self):
-        return self.pipeline.context_memory
-
-    @property
     def device(self):
         return self.vector_store.device
 
@@ -137,10 +163,12 @@ class HybridContextualRAG:
 
 
     def vector_search(self, query: str, top_k: int = None, apply_threshold: bool = True) -> List[Tuple[Document, float]]:
-        return self.vector_store.search(query, top_k=top_k, apply_threshold=apply_threshold)
+        with self.vector_store.lock:
+            return self.vector_store.search(query, top_k=top_k, apply_threshold=apply_threshold)
 
     def bm25_search(self, query: str, top_k: int = None) -> List[Tuple[Document, float]]:
-        return self.bm25_store.search(query, self.vector_store.documents, top_k=top_k or self.top_k)
+        with self.vector_store.lock:
+            return self.bm25_store.search(query, self.vector_store.chunks, top_k=top_k or self.top_k)
 
     def hybrid_search(self, query: str, alpha: float = None) -> List[Tuple[Document, float]]:
         return self.retriever.hybrid_search(query, alpha=alpha)
@@ -153,71 +181,74 @@ class HybridContextualRAG:
 
 
     def add_documents(self, documents: List[Document]) -> int:
-        return self.pipeline.process_and_add_documents(documents)
+        chunks = self.pipeline.split_documents(documents)
+        if not chunks:
+            return 0
+        with self.vector_store.lock:
+            embeddings = self.vector_store.embed([chunk.page_content for chunk in chunks])
+            with self.chunk_store.session_factory() as session:
+                chunk_ids = self.chunk_store.insert(session, chunks)
+                self.vector_store.add(chunk_ids, embeddings, chunks)
+                try:
+                    session.commit()
+                except Exception:
+                    self.vector_store.remove(chunk_ids)
+                    raise
+            self.bm25_store.add_documents(dict(zip(chunk_ids, chunks)))
+            self.vector_store.save_indices()
+        return len(chunks)
 
-    def remove_document_by_id(self, document_id: int, rebuild_bm25: bool = True):
-        removed = self.vector_store.remove_document_by_id(document_id)
-        if rebuild_bm25 and removed > 0:
-            self.bm25_store.rebuild(self.vector_store.documents)
+    def remove_document_by_id(self, document_id: int) -> int:
+        with self.vector_store.lock:
+            chunk_ids = [
+                chunk_id for chunk_id, chunk in self.vector_store.chunks.items()
+                if chunk.metadata.get("document_id") == document_id
+            ]
+            self.chunk_store.delete_by_document(document_id)
+            if chunk_ids:
+                self.vector_store.remove(chunk_ids)
+                self.bm25_store.delete_ids(chunk_ids)
+                self.vector_store.save_indices()
+        logger.info(f"Removed {len(chunk_ids)} chunks for document_id {document_id}")
+        return len(chunk_ids)
 
-    def clear_vector_store(self):
-        self.vector_store.clear()
-        self.bm25_store.clear()
-        self.pipeline.context_memory.clear()
+    def clear_indices(self):
+        with self.vector_store.lock:
+            self.chunk_store.delete_all()
+            self.vector_store.clear()
+            self.bm25_store.clear()
 
-
-    async def generate_response(
-        self,
-        query: str,
-        conversation_id: Optional[int] = None,
-        model_name: Optional[str] = None,
-        user_id: Optional[int] = None,
-        reasoning_effort: Optional[str] = "medium"
-    ) -> Dict[str, Any]:
-        return await self.pipeline.generate_response(
-            query=query,
-            conversation_id=conversation_id,
-            model_name=model_name,
-            user_id=user_id,
-            reasoning_effort=reasoning_effort
-        )
 
     async def generate_response_stream(
         self,
         query: str,
-        conversation_id: Optional[int] = None,
+        conversation_history: List[Dict[str, str]],
         model_name: Optional[str] = None,
-        user_id: Optional[int] = None,
         reasoning_effort: Optional[str] = "medium",
         attachments: Optional[List[Any]] = None
     ) -> AsyncGenerator[Dict[str, Any], None]:
         async for event in self.pipeline.generate_response_stream(
             query=query,
-            conversation_id=conversation_id,
+            conversation_history=conversation_history,
             model_name=model_name,
-            user_id=user_id,
             reasoning_effort=reasoning_effort,
             attachments=attachments
         ):
             yield event
 
-    def clear_conversation_context(self, conversation_id: int, user_id: Optional[int] = None):
-        self.pipeline.clear_conversation_context(conversation_id, user_id)
 
+    def evaluate_retrieval(self, cases: List[RetrievalCase], k_values: List[int]) -> Dict[str, Any]:
+        return self.evaluator.evaluate(cases, k_values)
 
-    def evaluate_retrieval(self, test_queries: List[str], gold_doc_ids: List[List[int]], k_values: List[int] = [1, 3, 5, 10]) -> Dict[str, Any]:
-        return self.evaluator.evaluate_retrieval(test_queries, gold_doc_ids, k_values)
-
-    def auto_tune_alpha(self, test_queries: List[str], gold_doc_ids: List[List[int]], alphas: List[float] = None) -> Dict[str, Any]:
-        return self.evaluator.auto_tune_alpha(test_queries, gold_doc_ids, alphas)
+    def auto_tune_alpha(self, cases: List[RetrievalCase], k_values: List[int], alphas: List[float]) -> Dict[str, Any]:
+        return self.evaluator.auto_tune_alpha(cases, k_values, alphas)
 
 
     def get_statistics(self) -> Dict[str, Any]:
         bm25_status = "Available" if self.bm25_store.bm25_index else "Not Available"
         reranker_status = "Available" if self.retriever.has_reranker else "Not Available"
         return {
-            "total_documents": len(self.vector_store.documents),
-            "total_conversations": len(self.pipeline.context_memory),
+            "total_documents": len(self.vector_store.chunks),
             "total_vectors": self.vector_store.index.ntotal,
             "embedding_dimension": self.vector_store.embedding_dimension,
             "bm25_status": bm25_status,
@@ -243,23 +274,26 @@ class HybridContextualRAG:
     def get_vector_store_info(self) -> Dict[str, Any]:
         return {
             "total_vectors": self.vector_store.index.ntotal,
-            "total_documents": len(self.vector_store.documents),
+            "total_documents": len(self.vector_store.chunks),
             "embedding_dimension": self.vector_store.embedding_dimension,
-            "index_type": "FAISS IndexFlatIP + Whoosh BM25",
+            "index_type": "FAISS IndexIDMap2(IndexFlatIP) + Whoosh BM25",
             "vector_index_exists": os.path.exists(self.vector_store.faiss_index_path),
             "bm25_index_exists": os.path.exists(self.bm25_store.bm25_index_dir),
-            "documents_file_exists": os.path.exists(self.vector_store.documents_path),
             "reranker_available": self.retriever.has_reranker,
-            "last_reindex": self._get_last_reindex_time(),
-            "auto_reindex_hours": self.reindex_threshold_hours
+            "last_reindex": self._get_last_reindex_time()
         }
 
     def force_reindex(self):
         logger.info("Forcing reindex...")
-        if self.vector_store.documents:
-            docs = list(self.vector_store.documents)
-            self.clear_vector_store()
-            self.add_documents(docs)
+        with self.vector_store.lock:
+            chunks = dict(self.vector_store.chunks)
+            chunk_ids = list(chunks)
+            embeddings = self.vector_store.embed([chunks[chunk_id].page_content for chunk_id in chunk_ids]) if chunk_ids else None
+            self.vector_store.reset_index()
+            if chunk_ids:
+                self.vector_store.add(chunk_ids, embeddings, [chunks[chunk_id] for chunk_id in chunk_ids])
+            self.bm25_store.rebuild(chunks)
+            self.vector_store.save_indices()
         return True
 
 

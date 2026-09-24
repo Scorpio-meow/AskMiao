@@ -96,6 +96,12 @@ async def send_message(
         model_name=message_data.model_name,
     )
     conv_id = user_message.conversation_id
+    conversation_history = chat_service.get_recent_history(
+        db,
+        conv_id,
+        before_message_id=user_message.id,
+        limit=settings.CONVERSATION_HISTORY_MESSAGES
+    )
     async def sse_generator():
         yield f"event: start\ndata: {json.dumps({'conversation_id': conv_id, 'user_message_id': user_message.id}, ensure_ascii=False)}\n\n"
         rag_system = get_rag_system()
@@ -106,9 +112,8 @@ async def send_message(
         try:
             async for event_item in rag_system.generate_response_stream(
                 message_data.content,
-                conv_id,
-                message_data.model_name,
-                user_id,
+                conversation_history=conversation_history,
+                model_name=message_data.model_name,
                 reasoning_effort=message_data.reasoning_effort,
                 attachments=message_data.attachments
             ):

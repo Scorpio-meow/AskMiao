@@ -342,7 +342,7 @@ async def delete_document(
         raise HTTPException(status_code=404, detail="文件不存在")
     try:
         rag_system = get_rag_system()
-        rag_system.remove_document_by_id(document_id, rebuild_bm25=False)
+        await asyncio.to_thread(rag_system.remove_document_by_id, document_id)
     except Exception as e:
         logger.warning("Failed to remove document from RAG system: %s", str(e))
     try:
@@ -364,8 +364,7 @@ async def rebuild_index(
         logger.info(f"管理員 {current_user.get('username', 'unknown')} 觸發完整索引重建（含重新分塊與摘要升級）")
         rag_system = get_rag_system()
         logger.info("清空現有索引...")
-        rag_system.documents = []
-        rag_system.index.reset()
+        await asyncio.to_thread(rag_system.clear_indices)
         logger.info("從數據庫重新載入文檔...")
         documents_from_db = db.query(DBDocument).all()
         if not documents_from_db:
@@ -386,7 +385,9 @@ async def rebuild_index(
                 content_to_process = doc.content
                 if os.path.exists(file_path):
                     try:
-                        fresh_content = DocumentProcessor.extract_text_from_file(file_path, doc.file_type or "text/plain")
+                        fresh_content = await asyncio.to_thread(
+                            DocumentProcessor.extract_text_from_file, file_path, doc.file_type or "text/plain"
+                        )
                         if fresh_content and fresh_content.strip():
                             content_to_process = fresh_content.strip()
                             doc.content = content_to_process
@@ -405,8 +406,10 @@ async def rebuild_index(
                     "content_type": doc.file_type,
                     "original_filename": doc.filename
                 }
-                langchain_docs, qa_count = process_document_for_rag(content_to_process, base_metadata, rag_system)
-                chunks_added = rag_system.add_documents(langchain_docs)
+                langchain_docs, qa_count = await asyncio.to_thread(
+                    process_document_for_rag, content_to_process, base_metadata, rag_system
+                )
+                chunks_added = await asyncio.to_thread(rag_system.add_documents, langchain_docs)
                 
                 total_chunks += chunks_added or 0
                 if qa_count > 0:

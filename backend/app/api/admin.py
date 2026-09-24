@@ -1,3 +1,4 @@
+import asyncio
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import func
@@ -125,21 +126,11 @@ async def delete_conversation(
     if not conversation:
         raise HTTPException(status_code=404, detail="對話不存在")
     
-    user_id = conversation.user_id
-    
     db.query(Message).filter(Message.conversation_id == conversation_id).delete()
-    
+
     db.delete(conversation)
     db.commit()
-    
-    rag_system = get_rag_system()
-    memory_key = f"{user_id}:{conversation_id}"
-    if hasattr(rag_system, 'context_memory') and memory_key in rag_system.context_memory:
-        del rag_system.context_memory[memory_key]
-    
-    if hasattr(rag_system, 'context_memory') and conversation_id in rag_system.context_memory:
-        del rag_system.context_memory[conversation_id]
-    
+
     return {"message": "對話刪除成功"}
 @router.get("/documents")
 async def get_documents(
@@ -157,10 +148,13 @@ async def delete_document(
     document = db.query(Document).filter(Document.id == document_id).first()
     if not document:
         raise HTTPException(status_code=404, detail="文檔不存在")
-    
+
+    rag_system = get_rag_system()
+    await asyncio.to_thread(rag_system.remove_document_by_id, document_id)
+
     db.delete(document)
     db.commit()
-    
+
     return {"message": "文檔刪除成功"}
 @router.put("/users/{user_id}")
 async def update_user(
@@ -213,18 +207,10 @@ async def delete_user(
     if not user:
         raise HTTPException(status_code=404, detail="用戶不存在")
     
-    rag_system = get_rag_system()
     conversations = db.query(Conversation).filter(Conversation.user_id == user_id).all()
     for conv in conversations:
         db.query(Message).filter(Message.conversation_id == conv.id).delete()
-        
-        memory_key = f"{user_id}:{conv.id}"
-        if hasattr(rag_system, 'context_memory') and memory_key in rag_system.context_memory:
-            del rag_system.context_memory[memory_key]
-        
-        if hasattr(rag_system, 'context_memory') and conv.id in rag_system.context_memory:
-            del rag_system.context_memory[conv.id]
-        
+
         db.delete(conv)
     
     db.delete(user)
@@ -255,9 +241,8 @@ async def get_rag_config(
         "rerank_weight": rag_system.rerank_weight,
         "final_threshold": rag_system.final_threshold,
         "normalization": rag_system.normalization,
-        "batch_size": rag_system.batch_size,
+        "batch_size": rag_system.vector_store.batch_size,
         "embedding_dimension": rag_system.embedding_dimension,
-        "reindex_threshold_hours": rag_system.reindex_threshold_hours,
         "device": str(rag_system.device),
         "use_faiss_gpu": rag_system.use_faiss_gpu
     }
@@ -272,7 +257,7 @@ async def clear_vector_store(
     current_user: dict = Depends(get_current_admin_user)
 ):
     rag_system = get_rag_system()
-    rag_system.clear_vector_store()
+    await asyncio.to_thread(rag_system.clear_indices)
     return {"message": "向量庫已清空"}
 @router.post("/vector-store/reindex")
 async def force_reindex(
@@ -280,7 +265,7 @@ async def force_reindex(
 ):
     try:
         rag_system = get_rag_system()
-        ok = rag_system.force_reindex()
+        ok = await asyncio.to_thread(rag_system.force_reindex)
         return {"message": "索引重建已觸發", "ok": bool(ok), "info": rag_system.get_vector_store_info()}
     except Exception as e:
         import logging

@@ -89,7 +89,7 @@ flowchart LR
     Query["User query"] --> Strategy{"Retrieval strategy"}
 
     subgraph ParallelRetrieval ["Parallel dual-track retrieval"]
-        Strategy -->|vector match| FAISS["FAISS search (inner product, IndexFlatIP)"]
+        Strategy -->|vector match| FAISS["FAISS search (inner product, IndexIDMap2)"]
         Strategy -->|keyword match| BM25["Whoosh BM25 (Jieba tokenizer)"]
     end
 
@@ -104,11 +104,11 @@ flowchart LR
 ### Pipeline details
 
 1. **Chunking**: uploaded documents run through `RecursiveCharacterTextSplitter`, sized by `CHUNK_SIZE` / `CHUNK_OVERLAP` (300 / 100 characters in the shipped template). Structured and JSON records are additionally stored as atomic record chunks so per-record counting stays exact.
-2. **Embedding**: `BAAI/bge-small-zh-v1.5` by default (`EMBEDDING_MODEL`); the vector dimension is read from the loaded model and FAISS builds an `IndexFlatIP` inner-product index.
+2. **Embedding**: `BAAI/bge-small-zh-v1.5` by default (`EMBEDDING_MODEL`); the vector dimension is read from the loaded model. Chunks live in the `rag_chunks` database table; FAISS (`IndexIDMap2(IndexFlatIP)`) and BM25 (`doc_id`) are both keyed by chunk_id, so deleting a document removes only its vectors without re-embedding, and both indexes are reconciled against the database at startup.
 3. **Keyword retrieval (BM25)**: `Whoosh` plus `Jieba` tokenization compensates for the weakness of vector search on proper nouns and identifiers.
 4. **Fusion**: both tracks are normalized per `NORMALIZATION` and merged with the `HYBRID_ALPHA` weight.
 5. **Reranking**: the Cross-Encoder (`BAAI/bge-reranker-base` by default) scores candidates with cross-attention; after `RERANK_WEIGHT` and `FINAL_THRESHOLD` filtering, the top `FINAL_K` chunks form the context.
-6. **Evaluation**: `evaluator.py` provides Hit Rate, MRR, and the signal used for Alpha auto-tuning.
+6. **Evaluation**: `evaluator.py` computes document-level hit@k, recall@k, and MRR through the production `smart_search` path; `scripts/evaluate_retrieval.py` reads a JSONL golden set (format in `backend/eval/retrieval_golden.example.jsonl`), runs read-only on a copy of the indexes, and can gate CI with `--min-mrr`.
 
 ---
 
@@ -176,6 +176,8 @@ flowchart LR
 2. **Research trace**: every turn records the step, tool name, arguments, output summary, and duration, streamed live to the collapsible frontend timeline via `step_start` / `step_end` SSE events.
 3. **Source badges**: internal chunks and external links are merged into clickable source badges for verification.
 4. **Multimodal input**: image attachments are passed as `image_url` content parts to vision models; text attachments are extracted into the prompt context.
+5. **Conversation history**: each question loads the latest `CONVERSATION_HISTORY_MESSAGES` messages from the `messages` table, so restarts do not lose context.
+6. **Multi-provider tool calling**: `llm_client.py` unifies OpenAI, Azure OpenAI, Claude (official `anthropic` SDK), Gemini, and Ollama, all with tool calling and streaming.
 
 ---
 

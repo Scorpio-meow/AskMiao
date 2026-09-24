@@ -3,8 +3,7 @@ import logging
 import time
 import asyncio
 from typing import Any, Dict, List, Optional, AsyncGenerator
-import httpx
-from app.core.config import settings
+from app.core.llm_client import chat_completion, stream_completion
 from app.rag.tools import ResearchToolRegistry
 from app.core.error_response import log_and_get_error_id
 
@@ -34,167 +33,6 @@ class ResearchAgent:
     def __init__(self, tool_registry: ResearchToolRegistry):
         self.tools = tool_registry
 
-    async def _call_azure_openai(
-        self,
-        messages: List[Dict[str, Any]],
-        tools_def: List[Dict[str, Any]],
-        model_name: Optional[str] = None,
-        reasoning_effort: Optional[str] = "medium"
-    ) -> Dict[str, Any]:
-        """調用 v1 Azure OpenAI / AI Services 原生 Tool Calling"""
-        endpoint = settings.AZURE_OPENAI_ENDPOINT.rstrip('/') if settings.AZURE_OPENAI_ENDPOINT else ""
-        api_key = settings.AZURE_OPENAI_API_KEY or ""
-
-        azure_deployments = [d.strip() for d in (settings.AZURE_OPENAI_DEPLOYMENT or "").split(",") if d.strip()]
-        deployment = model_name or (azure_deployments[0] if azure_deployments else "")
-
-        url = f"{endpoint}/openai/v1/chat/completions"
-        headers = {
-            "api-key": api_key,
-            "Authorization": f"Bearer {api_key}",
-            "Content-Type": "application/json"
-        }
-
-        payload: Dict[str, Any] = {
-            "model": deployment,
-            "messages": messages,
-        }
-        if tools_def:
-            payload["tools"] = tools_def
-            payload["tool_choice"] = "auto"
-            if "gpt-5" in deployment.lower():
-                payload["reasoning_effort"] = "none"
-            elif reasoning_effort and reasoning_effort in ("none", "minimal", "low", "medium", "high", "xhigh", "max"):
-                payload["reasoning_effort"] = reasoning_effort
-        else:
-            if reasoning_effort and reasoning_effort in ("none", "minimal", "low", "medium", "high", "xhigh", "max"):
-                payload["reasoning_effort"] = reasoning_effort
-
-        async with httpx.AsyncClient(timeout=settings.LLM_TIMEOUT) as client:
-            resp = await client.post(url, headers=headers, json=payload)
-            if resp.status_code != 200:
-                raise RuntimeError(f"v1 Azure OpenAI API 錯誤 ({resp.status_code}): {resp.text}")
-            data = resp.json()
-            choice = data["choices"][0]
-            return choice["message"]
-
-    async def _stream_azure_openai(
-        self,
-        messages: List[Dict[str, Any]],
-        model_name: Optional[str] = None,
-        reasoning_effort: Optional[str] = "medium"
-    ) -> AsyncGenerator[str, None]:
-        """調用 v1 Azure OpenAI 串流生成最終答案"""
-        endpoint = settings.AZURE_OPENAI_ENDPOINT.rstrip('/') if settings.AZURE_OPENAI_ENDPOINT else ""
-        api_key = settings.AZURE_OPENAI_API_KEY or ""
-
-        azure_deployments = [d.strip() for d in (settings.AZURE_OPENAI_DEPLOYMENT or "").split(",") if d.strip()]
-        deployment = model_name or (azure_deployments[0] if azure_deployments else "")
-
-        url = f"{endpoint}/openai/v1/chat/completions"
-        headers = {
-            "api-key": api_key,
-            "Authorization": f"Bearer {api_key}",
-            "Content-Type": "application/json"
-        }
-
-        payload: Dict[str, Any] = {
-            "model": deployment,
-            "messages": messages,
-            "stream": True
-        }
-        if reasoning_effort and reasoning_effort in ("none", "minimal", "low", "medium", "high", "xhigh", "max"):
-            payload["reasoning_effort"] = reasoning_effort
-
-        async with httpx.AsyncClient(timeout=settings.LLM_TIMEOUT) as client:
-            async with client.stream("POST", url, headers=headers, json=payload) as resp:
-                if resp.status_code != 200:
-                    error_text = await resp.aread()
-                    raise RuntimeError(f"Azure OpenAI 串流錯誤 ({resp.status_code}): {error_text.decode('utf-8')}")
-
-                async for line in resp.aiter_lines():
-                    if not line:
-                        continue
-                    if line.startswith("data: "):
-                        line_content = line[6:].strip()
-                        if line_content == "[DONE]":
-                            break
-                        try:
-                            chunk_data = json.loads(line_content)
-                            delta = chunk_data["choices"][0].get("delta", {})
-                            content = delta.get("content")
-                            if content:
-                                yield content
-                        except Exception:
-                            continue
-
-    async def _call_ollama(
-        self,
-        messages: List[Dict[str, Any]],
-        tools_def: List[Dict[str, Any]],
-        model_name: Optional[str] = None
-    ) -> Dict[str, Any]:
-        """調用 Ollama 原生 Tool Calling API"""
-        base_url = settings.LLM_API_BASE.rstrip('/')
-        target_model = model_name or settings.MODEL_NAME or ""
-
-        url = f"{base_url}/api/chat"
-        payload: Dict[str, Any] = {
-            "model": target_model,
-            "messages": messages,
-            "stream": False,
-            "options": {
-                "temperature": 0.3,
-                "num_predict": 2048
-            }
-        }
-        if tools_def:
-            payload["tools"] = tools_def
-
-        async with httpx.AsyncClient(timeout=settings.LLM_TIMEOUT) as client:
-            resp = await client.post(url, json=payload)
-            if resp.status_code != 200:
-                raise RuntimeError(f"Ollama API 錯誤 ({resp.status_code}): {resp.text}")
-            data = resp.json()
-            return data.get("message", {})
-
-    async def _stream_ollama(
-        self,
-        messages: List[Dict[str, Any]],
-        model_name: Optional[str] = None
-    ) -> AsyncGenerator[str, None]:
-        """調用 Ollama 串流生成最終答案"""
-        base_url = settings.LLM_API_BASE.rstrip('/')
-        target_model = model_name or settings.MODEL_NAME or ""
-
-        url = f"{base_url}/api/chat"
-        payload: Dict[str, Any] = {
-            "model": target_model,
-            "messages": messages,
-            "stream": True,
-            "options": {
-                "temperature": 0.3,
-                "num_predict": 2048
-            }
-        }
-
-        async with httpx.AsyncClient(timeout=settings.LLM_TIMEOUT) as client:
-            async with client.stream("POST", url, json=payload) as resp:
-                if resp.status_code != 200:
-                    error_text = await resp.aread()
-                    raise RuntimeError(f"Ollama 串流錯誤 ({resp.status_code}): {error_text.decode('utf-8')}")
-                
-                async for line in resp.aiter_lines():
-                    if not line:
-                        continue
-                    try:
-                        chunk_data = json.loads(line)
-                        content = chunk_data.get("message", {}).get("content", "")
-                        if content:
-                            yield content
-                    except Exception:
-                        continue
-
     async def stream_research(
         self,
         query: str,
@@ -202,9 +40,10 @@ class ResearchAgent:
         conversation_history: Optional[List[Dict[str, str]]] = None,
         reasoning_effort: Optional[str] = "medium",
         attachments: Optional[List[Any]] = None,
-        max_turns: Optional[int] = None
+        *,
+        max_turns: int
     ) -> AsyncGenerator[Dict[str, Any], None]:
-        """非同步生成器：即時產生研究步驟事件與文字 token 串流（無輪數上限，由模型自主決定研究步數）"""
+        """非同步生成器：即時產生研究步驟事件與文字 token 串流（工具調用最多 max_turns 輪，達上限後直接生成最終答案）"""
         start_time = time.time()
         tools_def = self.tools.get_tool_definitions()
 
@@ -213,7 +52,7 @@ class ResearchAgent:
         ]
 
         if conversation_history:
-            for turn_msg in conversation_history[-6:]:
+            for turn_msg in conversation_history:
                 messages.append(turn_msg)
 
 
@@ -263,29 +102,11 @@ class ResearchAgent:
         if doc_contexts:
             effective_query = "\n\n".join(doc_contexts) + f"\n\n【使用者問題】\n{query}"
 
-        azure_deployments = [d.strip() for d in (settings.AZURE_OPENAI_DEPLOYMENT or "").split(",") if d.strip()]
-        use_azure = False
-        if settings.AZURE_OPENAI_API_KEY and settings.AZURE_OPENAI_ENDPOINT:
-            if model_name:
-                if model_name in azure_deployments or any(prefix in model_name.lower() for prefix in ("gpt-", "o1", "o3", "o4")):
-                    use_azure = True
-            else:
-                use_azure = True
-
-
-        if image_data_urls and use_azure:
+        if image_data_urls:
             user_content = [{"type": "text", "text": effective_query}]
             for img_url in image_data_urls:
                 user_content.append({"type": "image_url", "image_url": {"url": img_url}})
             messages.append({"role": "user", "content": user_content})
-        elif image_data_urls:
-            b64_list = []
-            for img_url in image_data_urls:
-                if "," in img_url:
-                    b64_list.append(img_url.split(",", 1)[1])
-                else:
-                    b64_list.append(img_url)
-            messages.append({"role": "user", "content": effective_query, "images": b64_list})
         else:
             messages.append({"role": "user", "content": effective_query})
 
@@ -298,17 +119,14 @@ class ResearchAgent:
 
         while True:
             turns_used += 1
-            if max_turns is not None and turns_used > max_turns:
-                logger.info(f"Agent 已達到手動指定的輪數上限 ({max_turns})，停止後續工具調用")
+            if turns_used > max_turns:
+                logger.info(f"Agent 已達到輪數上限 ({max_turns})，停止後續工具調用")
                 break
 
             try:
-                if use_azure:
-                    assistant_msg = await self._call_azure_openai(
-                        messages, tools_def, model_name, reasoning_effort=reasoning_effort
-                    )
-                else:
-                    assistant_msg = await self._call_ollama(messages, tools_def, model_name)
+                assistant_msg = await chat_completion(
+                    messages, model_name=model_name, tools=tools_def, reasoning_effort=reasoning_effort
+                )
             except Exception as e:
                 error_id = log_and_get_error_id(logger, f"模型調用失敗 (第 {turns_used} 輪)", e)
                 if not final_answer and not research_trace:
@@ -428,14 +246,11 @@ class ResearchAgent:
 
         if has_executed_tools and not final_answer:
             try:
-                if use_azure:
-                    async for chunk in self._stream_azure_openai(messages, model_name, reasoning_effort=reasoning_effort):
-                        final_answer += chunk
-                        yield {"event": "token", "data": {"content": chunk}}
-                else:
-                    async for chunk in self._stream_ollama(messages, model_name):
-                        final_answer += chunk
-                        yield {"event": "token", "data": {"content": chunk}}
+                async for chunk in stream_completion(
+                    messages, model_name=model_name, tools=tools_def, reasoning_effort=reasoning_effort
+                ):
+                    final_answer += chunk
+                    yield {"event": "token", "data": {"content": chunk}}
             except Exception as e:
                 error_id = log_and_get_error_id(logger, "串流生成最終答案失敗", e)
                 err_msg = f"\n[回答生成中斷（錯誤代碼：{error_id}）]"
@@ -473,7 +288,8 @@ class ResearchAgent:
         conversation_history: Optional[List[Dict[str, str]]] = None,
         reasoning_effort: Optional[str] = "medium",
         attachments: Optional[List[Any]] = None,
-        max_turns: Optional[int] = None
+        *,
+        max_turns: int
     ) -> Dict[str, Any]:
         """非串流封裝（向後相容）"""
         result: Dict[str, Any] = {
