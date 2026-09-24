@@ -32,7 +32,7 @@ async def run_tests():
             print(f"啟動所有 Key 時的模型列表: {models}")
             assert "azure-gpt" in models
             assert "gpt-4o" in models
-            assert "claude-4-8-opus" in models
+            assert "claude-opus-4-8" in models
             assert "gemini-3.5-flash" in models
             print("=> 測試 1 成功！")
     print("\n[測試 2] 驗證 OpenAI 路由與調用格式：")
@@ -97,40 +97,32 @@ async def run_tests():
             assert json_payload["model"] == "gemini-3.5-flash"
             assert json_payload["messages"] == messages
             print("=> 測試 3 成功！")
-    print("\n[測試 4] 驗證 Anthropic Claude 路由與調用格式：")
-    mock_post = AsyncMock()
-    mock_post.return_value = MockResponse({
-        "content": [{
-            "text": "Hello from Claude"
-        }]
-    })
-    
-    with patch("httpx.AsyncClient.post", mock_post):
-        with patch.object(settings, "ANTHROPIC_API_KEY", "claude-test-key"):
+    print("\n[測試 4] 驗證 Anthropic Claude 路由與調用格式（官方 anthropic SDK）：")
+    mock_create = AsyncMock(return_value=MagicMock(
+        stop_reason="end_turn",
+        content=[MagicMock(type="text", text="Hello from Claude")]
+    ))
+    fake_client = MagicMock()
+    fake_client.with_options.return_value.messages.create = mock_create
+
+    with patch("app.core.llm_client._anthropic_client_instance", return_value=fake_client):
+        with patch.object(settings, "ANTHROPIC_API_KEY", "claude-test-key"), \
+             patch.object(settings, "ANTHROPIC_MAX_TOKENS", 16000):
             messages = [
                 {"role": "system", "content": "你是繁體中文助手"},
                 {"role": "user", "content": "你好"}
             ]
-            response = await call_llm(messages, model_name="claude-4-8-opus")
+            response = await call_llm(messages, model_name="claude-opus-4-8")
             print(f"LLM 回傳: {response}")
             assert response == "Hello from Claude"
-            
-            args, kwargs = mock_post.call_args
-            url = args[0]
-            json_payload = kwargs.get("json")
-            headers = kwargs.get("headers")
-            
-            print(f"請求 URL: {url}")
-            print(f"請求 Payload: {json_payload}")
-            print(f"請求 Headers: {headers}")
-            
-            assert url == "https://api.anthropic.com/v1/messages"
-            assert headers["x-api-key"] == "claude-test-key"
-            assert json_payload["model"] == "claude-4-8-opus"
-            assert json_payload["system"] == "你是繁體中文助手"
-            assert len(json_payload["messages"]) == 1
-            assert json_payload["messages"][0]["role"] == "user"
-            assert json_payload["messages"][0]["content"] == "你好"
+
+            kwargs = mock_create.call_args.kwargs
+            print(f"SDK 呼叫參數: {kwargs}")
+
+            assert kwargs["model"] == "claude-opus-4-8"
+            assert kwargs["max_tokens"] == 16000
+            assert kwargs["system"] == "你是繁體中文助手"
+            assert kwargs["messages"] == [{"role": "user", "content": "你好"}]
             print("=> 測試 4 成功！")
     print("\n=== 所有測試皆通過！ ===")
 if __name__ == "__main__":

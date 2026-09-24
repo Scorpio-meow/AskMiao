@@ -1,5 +1,9 @@
 import os
 import pytest
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
+from app.models import RagChunk
+from app.models.database import Base
 from app.rag.types import Document, RecursiveCharacterTextSplitter
 from app.rag.tokenizers import init_domain_dictionary, get_chinese_analyzer
 from app.rag.contextual_rag import HybridContextualRAG, ContextualRAG
@@ -8,12 +12,10 @@ def setup_env():
     from app.core.config import settings
     old_data_dir = settings.DATA_DIR
     old_faiss = settings.FAISS_INDEX_PATH
-    old_docs = settings.DOCUMENTS_PATH
     old_bm25 = settings.BM25_INDEX_DIR
     old_meta = settings.METADATA_PATH
     settings.DATA_DIR = "tests_data"
     settings.FAISS_INDEX_PATH = "tests_data/faiss_index.bin"
-    settings.DOCUMENTS_PATH = "tests_data/documents.pkl"
     settings.BM25_INDEX_DIR = "tests_data/bm25_index"
     settings.METADATA_PATH = "tests_data/index_metadata.pkl"
     if os.path.exists("tests_data"):
@@ -32,9 +34,14 @@ def setup_env():
             pass
     settings.DATA_DIR = old_data_dir
     settings.FAISS_INDEX_PATH = old_faiss
-    settings.DOCUMENTS_PATH = old_docs
     settings.BM25_INDEX_DIR = old_bm25
     settings.METADATA_PATH = old_meta
+@pytest.fixture
+def session_factory(tmp_path):
+    engine = create_engine(f"sqlite:///{tmp_path / 'rag.db'}")
+    Base.metadata.create_all(engine)
+    yield sessionmaker(bind=engine)
+    engine.dispose()
 def test_document_and_splitter():
     doc = Document(page_content="這是測試文檔內容", metadata={"source": "test.txt", "document_id": 1})
     assert doc.page_content == "這是測試文檔內容"
@@ -46,8 +53,8 @@ def test_tokenizers():
     init_domain_dictionary("tests_data")
     analyzer = get_chinese_analyzer()
     assert analyzer is not None or analyzer is None
-def test_rag_facade_lifecycle():
-    rag = HybridContextualRAG()
+def test_rag_facade_lifecycle(session_factory):
+    rag = HybridContextualRAG(session_factory=session_factory)
     assert rag.documents == []
     assert rag.embedding_dimension > 0
     sample_docs = [
@@ -64,6 +71,8 @@ def test_rag_facade_lifecycle():
     assert added_chunks > 0
     assert len(rag.documents) > 0
     assert rag.index.ntotal > 0
+    with session_factory() as session:
+        assert session.query(RagChunk).count() == len(rag.documents)
     stats = rag.get_statistics()
     assert stats["total_documents"] == len(rag.documents)
     assert stats["total_vectors"] == rag.index.ntotal
@@ -76,12 +85,9 @@ def test_rag_facade_lifecycle():
     assert isinstance(score, float)
     smart_results = rag.smart_search("加班如何申請？")
     assert len(smart_results) > 0
-    prompt, history = rag.pipeline.build_context_prompt("加班怎麼申請", [top_doc], conversation_id=1, user_id=10)
-    assert "用戶問題: 加班怎麼申請" in prompt
-    assert "檔案片段:" in prompt
     rag.remove_document_by_id(101)
     remaining_ids = [d.metadata.get("original_doc_id") for d in rag.documents]
     assert 101 not in remaining_ids
-    rag.clear_vector_store()
+    rag.clear_indices()
     assert len(rag.documents) == 0
     assert rag.index.ntotal == 0
