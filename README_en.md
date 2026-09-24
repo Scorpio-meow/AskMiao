@@ -1,347 +1,593 @@
-# AskMiao (AI ChatBot)
+<div align="center">
 
-An enterprise-grade intelligent knowledge-base conversational system powered by Contextual Hybrid RAG (Retrieval-Augmented Generation) and Agentic Autonomous Research architectures.
+<img src="site/assets/logo-256.png" alt="AskMiao mascot: a black cat with a scorpion tail" width="120" height="120">
+
+# AskMiao
+
+**An enterprise knowledge-base chat system that checks its own sources and cites them**
+
+AskMiao answers with hybrid retrieval (FAISS + BM25 + Cross-Encoder) and agentic RAG research,<br>so every claim in an answer traces back to a document passage or web page, and it says so when the knowledge base has nothing relevant.
 
 [繁體中文](README.md) | [English](README_en.md)
 
-[![FastAPI](https://img.shields.io/badge/FastAPI-0.109+-005571?style=flat&logo=fastapi)](https://fastapi.tiangolo.com/)
-[![React](https://img.shields.io/badge/React-19.0-61DAFB?style=flat&logo=react&logoColor=black)](https://react.dev/)
+[![Version](https://img.shields.io/badge/version-3.0.0-2563eb?style=flat)](CHANGELOG_en.md)
 [![Python](https://img.shields.io/badge/Python-3.10+-3776AB?style=flat&logo=python&logoColor=white)](https://www.python.org/)
-[![Vite](https://img.shields.io/badge/Vite-7.0-646CFF?style=flat&logo=vite&logoColor=white)](https://vitejs.dev/)
-[![Bun](https://img.shields.io/badge/Bun-1.0+-FBF0DF?style=flat&logo=bun&logoColor=black)](https://bun.sh/)
-[![SQLite](https://img.shields.io/badge/SQLite-3.x-003B57?style=flat&logo=sqlite&logoColor=white)](https://www.sqlite.org/)
-[![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
+[![FastAPI](https://img.shields.io/badge/FastAPI-005571?style=flat&logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
+[![React](https://img.shields.io/badge/React-19.2-61DAFB?style=flat&logo=react&logoColor=black)](https://react.dev/)
+[![TypeScript](https://img.shields.io/badge/TypeScript-7-3178C6?style=flat&logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
+[![Vite](https://img.shields.io/badge/Vite-8-646CFF?style=flat&logo=vite&logoColor=white)](https://vite.dev/)
+[![Bun](https://img.shields.io/badge/Bun-1.x-000000?style=flat&logo=bun&logoColor=white)](https://bun.sh/)
+[![License](https://img.shields.io/badge/License-MIT-16a34a?style=flat)](LICENSE)
 
-[Quick Start](#quick-start) | [Core Features](#core-features) | [System Architecture](#system-architecture) | [Directory Structure](#directory-structure) | [Environment Variables](#environment-variables) | [Documentation](#documentation) | [Contributing](#contributing) | [License](#license)
+[Website](https://scorpio-meow.github.io/AskMiao/) · [Quick Start](#quick-start) · [Documentation](#documentation) · [Changelog](CHANGELOG_en.md) · [Upgrade Guide](docs/upgrading_en.md)
+
+</div>
+
+<br>
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="site/assets/screens/hero-chat-dark.webp">
+  <img src="site/assets/screens/hero-chat-light.webp" alt="AskMiao chat: an answer comparing NIST SP 800-63B-4 with the company password policy, citing sources as [n] and listing the cited web page and document passages below" width="1440" height="900">
+</picture>
+
+> [!IMPORTANT]
+> **3.0.0 contains breaking changes**: 8 new required settings, indexes keyed by chunk_id (rebuild the index once after upgrading), and admin-only tool management. Upgrading from 2.x? Read the [upgrade guide](docs/upgrading_en.md) first.
+
+## Contents
+
+- [Highlights](#highlights)
+- [Features](#features)
+- [Screenshots](#screenshots)
+- [Architecture](#architecture)
+- [Quick Start](#quick-start)
+- [Configuration](#configuration)
+- [Project Structure](#project-structure)
+- [Development and Testing](#development-and-testing)
+- [Troubleshooting](#troubleshooting)
+- [Documentation](#documentation)
+- [Versioning](#versioning)
+- [Contributing](#contributing)
+- [License](#license)
 
 ---
+
+## Highlights
+
+| | Capability | What it means |
+|---|---|---|
+| 1 | **Traceable answers** | Answers cite evidence as `[n]`, and the source badges list only the passages or pages actually cited, one click away from the original text |
+| 2 | **Honest "nothing found"** | Chunks below the reranker probability threshold are dropped, and when nothing passes the agent says so instead of improvising |
+| 3 | **Autonomous research** | A ReAct agent decides whether to search the knowledge base, count records precisely, search the web, or read a page, with the research trace shown live |
+| 4 | **Hybrid retrieval** | Vector search and BM25 always both run, fused by rank with RRF and reranked by a Cross-Encoder; chunks are keyed by a database chunk_id |
+| 5 | **Five LLM providers** | Ollama, OpenAI, Azure OpenAI, Anthropic Claude, and Google Gemini all support tool calling and streaming |
+| 6 | **External tools and MCP** | Paste an OpenAPI spec to import API tools or connect MCP servers; managed by admins only |
+| 7 | **Defense in depth** | RSA JWT, Argon2 password hashing, per-hop SSRF validation, a trust boundary for tool output, and error codes instead of stack traces |
+
+## Features
+
+### Agentic RAG research
+
+- **ReAct research loop**: `ResearchAgent` gathers evidence over several rounds with native tool calling, capped by `AGENT_MAX_TURNS`; when the model stops calling tools, that response is the final answer.
+- **Four built-in tools**:
+
+  | Tool | Purpose |
+  |---|---|
+  | `search_knowledge_base` | Search knowledge-base chunks, optionally restricted to one document with `target_document` |
+  | `filter_and_count_records` | Count structured records precisely by date, author, or keyword (for example all posts in a month) |
+  | `web_search` | Web search via Ollama Web Search when `OLLAMA_API_KEY` is set, otherwise DuckDuckGo |
+  | `web_fetch` | Read a full web page, limited to URLs that appear verbatim in the user's message or in this question's tool results |
+
+- **Research trace**: each step's tool, arguments, result preview, and duration stream over SSE and appear as a collapsible timeline.
+- **Multimodal questions**: attach images and files; images go to vision models as `image_url` parts, and text attachments are extracted into the question.
+- **Conversation history**: each question loads the latest `CONVERSATION_HISTORY_MESSAGES` messages from the database, so restarts keep the context.
+
+### Traceable answers
+
+- Each question builds a citation table keyed by chunk_id for knowledge-base chunks and by URL for web pages; numbers are assigned on first appearance and the model cites them as `[n]`.
+- Source badges list only the entries the answer cites, in order of first citation, such as "[2] 員工手冊.pdf（段落 3）"; no citations means no badges.
+- Every tool result is wrapped in an `<untrusted_tool_result>` marker whose id changes per question, so the model treats it as data and ignores instructions hidden in documents or web pages.
+
+### Hybrid retrieval engine
+
+```mermaid
+flowchart LR
+    Q["Question"] --> V["FAISS vector search<br/>TOP_K"]
+    Q --> B["BM25 keyword search<br/>jieba tokens, TOP_K"]
+    Q --> E["Exact matches<br/>URL / post ID / date / @account"]
+    V --> F["RRF fusion<br/>Σ 1 / (RRF_K + rank)"]
+    B --> F
+    F --> R["Cross-Encoder rerank<br/>top RERANK_TOP_K"]
+    E --> R
+    R --> T{"Reranker probability ≥<br/>RERANK_RELEVANCE_THRESHOLD"}
+    T -->|pass| K["Top FINAL_K chunks<br/>go to the model"]
+    T -->|none pass| N["Report nothing relevant"]
+```
+
+- **Both tracks always run**: chunks found by only one track still reach the reranker, so proper nouns and codes are no longer drowned out.
+- **The threshold reads the reranker probability**: exact URL, post ID, and date matches are exempt and ranked first.
+- **The database is the source of truth**: chunks live in the `rag_chunks` table, and FAISS (`IndexIDMap2`) and BM25 are keyed by chunk_id; startup reconciles both indexes automatically, and deleting a document removes only its vectors.
+- **Measurable**: `scripts/evaluate_retrieval.py` computes hit@k, recall@k, MRR, and the negative rejection rate from a golden set and compares several thresholds at once.
+
+### Multi-provider LLM
+
+- One calling layer supports **Ollama, OpenAI, Azure OpenAI v1, Anthropic Claude (official SDK), and Google Gemini**, routed by model name, all with tool calling and streaming.
+- The frontend switches models and five reasoning levels: `None`, `Low`, `Medium`, `High`, and `X-High`; the level is passed to OpenAI and Azure OpenAI reasoning models.
+- The model list comes from `AVAILABLE_MODELS` or is built from the configured keys; see the [configuration reference](docs/configuration_en.md#llm-providers-and-models).
+
+### Knowledge base and document processing
+
+- 27 file extensions: `.txt`, `.md`, `.markdown`, `.pdf`, `.docx`, `.pptx`, `.xlsx`, `.csv`, `.json`, `.yaml`, `.yml`, `.xml`, `.html`, `.htm`, `.log`, `.py`, `.js`, `.ts`, `.tsx`, `.jsx`, `.java`, `.cpp`, `.c`, `.sql`, `.sh`, `.ini`, `.env`.
+- **Robust PDF extraction**: PyMuPDF extracts text and repairs embedded fonts missing ToUnicode maps; blank or garbled pages go through vision-model OCR (Azure OpenAI, OpenAI, or Gemini), with pypdf as the last fallback.
+- **Smart chunking**: Q&A documents become one chunk per question-answer pair, structured records and JSON become one chunk per record, and everything else is split recursively on Chinese punctuation.
+- **AI outlines and summaries**: uploads get an AI summary that can be regenerated or edited; rule-based summaries take over when the LLM fails. The summaries also form the knowledge-base catalog the agent uses to decide which document to search.
+
+### External tools and MCP
+
+- **Custom API tools**: create them with a form or bulk-import from an OpenAPI / Swagger spec (OAS 2.0, 3.0, 3.1), with Bearer, API key (header / query), and Basic auth, plus a live test.
+- **MCP client**: `stdio` and HTTP transports, automatic tool discovery, and tools added to the agent as `mcp_<server>_<tool>`; presets for time, filesystem, and web fetch servers are built in.
+- **Loaded dynamically**: enabled tools are read from the database whenever tool definitions are assembled, so changes need no restart.
+- **Admins only**: tools are shared by every user's agent, so `/api/api-tools`, `/api/mcp`, and the AI tools page are admin-only; `stdio` subprocesses inherit only system variables such as `PATH` and never see the backend's keys ([ADR-0004](docs/adr/0004-tool-admin-permissions-and-subprocess-isolation_en.md)).
+
+### Security
+
+- **Authentication**: RSA-2048 signed JWT access tokens with the refresh token in an HttpOnly cookie; logout revokes both; passwords are hashed with Argon2 (legacy bcrypt hashes are upgraded at login).
+- **Outbound requests**: OpenAPI spec URLs, `web_fetch`, custom API tools, and the MCP HTTP transport go through `ssrf_protection.py`, which re-checks every redirect and blocks private networks, cloud metadata endpoints, and dangerous ports.
+- **Error codes**: unexpected exceptions reach clients only as a random error code, while full stack traces stay in the server log (CWE-209 / CWE-497).
+- **Log redaction**: recursive object masking plus regex masking render passwords, tokens, and Authorization headers as `[REDACTED]`.
+- **More**: security response headers, per-IP rate limiting, a CORS allowlist, and filename and path traversal checks.
+
+### Frontend experience
+
+- Stop an answer mid-stream or retry a failed one; pressing Enter to pick a character in Zhuyin, Cangjie, and other input methods does not send the message.
+- Light, dark, and follow-system appearance, applied before first paint with no white flash.
+- Fully usable with a keyboard and screen readers, with WCAG AA contrast; phones get a single-row top bar and a chat page that fits one viewport.
+- Deletions ask for confirmation, offline and back-online states are announced, and non-admins see a "no permission" page on admin routes.
+
+## Screenshots
+
+<table>
+  <tr>
+    <td width="33%" valign="top">
+      <picture>
+        <source media="(prefers-color-scheme: dark)" srcset="site/assets/screens/feature-trace-dark.webp">
+        <img src="site/assets/screens/feature-trace-light.webp" alt="AI research trace: a web search, a deep page read, and a knowledge-base search, each step showing its arguments, result preview, and duration">
+      </picture>
+      <p align="center"><b>Research trace</b><br>Each step's tool, arguments, and result</p>
+    </td>
+    <td width="33%" valign="top">
+      <picture>
+        <source media="(prefers-color-scheme: dark)" srcset="site/assets/screens/feature-docs-dark.webp">
+        <img src="site/assets/screens/feature-docs-light.webp" alt="Knowledge base page: uploaded documents, each with an AI outline and summary that can be edited, regenerated, or deleted">
+      </picture>
+      <p align="center"><b>Knowledge base</b><br>Uploads, AI summaries, index rebuilds</p>
+    </td>
+    <td width="33%" valign="top">
+      <picture>
+        <source media="(prefers-color-scheme: dark)" srcset="site/assets/screens/feature-tools-dark.webp">
+        <img src="site/assets/screens/feature-tools-light.webp" alt="AI tools overview: counts of built-in tools, MCP servers, and custom API tools with management shortcuts">
+      </picture>
+      <p align="center"><b>AI tools</b><br>OpenAPI import and MCP servers</p>
+    </td>
+  </tr>
+</table>
+
+> The screenshots come from the real frontend with demo data; the documents, conversations, and numbers shown are illustrative. The interface itself is in Traditional Chinese.
+
+## Architecture
+
+```mermaid
+flowchart TB
+    subgraph Client ["Frontend · React 19 + TypeScript + Vite 8 (Bun)"]
+        ChatUI["Chat<br/>SSE streaming, research trace, citations"]
+        DocsUI["Knowledge base (admin)"]
+        ToolsUI["AI tools (admin)"]
+        AdminUI["Admin dashboard (admin)"]
+    end
+
+    subgraph Backend ["Backend · FastAPI (Python 3.10+)"]
+        MW["Middleware<br/>security headers, rate limit, CORS"]
+        Auth["Auth /api/auth<br/>RSA JWT, revocation list"]
+        ChatAPI["Chat /api/chat (SSE)"]
+        DocAPI["Documents /api/documents"]
+        ToolAPI["Tools /api/api-tools, /api/mcp"]
+
+        subgraph Core ["Agentic RAG core"]
+            Agent["ResearchAgent<br/>ReAct tool loop"]
+            Session["ResearchSession<br/>citations, URL provenance, trust boundary"]
+            Registry["ResearchToolRegistry<br/>built-in, custom API, MCP tools"]
+            Retriever["HybridRetriever<br/>RRF, exact matches, rerank, threshold"]
+            LLM["llm_client<br/>Ollama, OpenAI, Azure, Claude, Gemini"]
+        end
+
+        SSRF["SSRF guard<br/>per-hop validation"]
+    end
+
+    subgraph Storage ["Storage"]
+        DB[("SQLite / PostgreSQL<br/>users, conversations, documents, rag_chunks, tools")]
+        FAISS["FAISS IndexIDMap2<br/>keyed by chunk_id"]
+        BM25["Whoosh BM25<br/>keyed by chunk_id"]
+        Files["Uploads data/uploads"]
+    end
+
+    Client --> MW
+    MW --> Auth & ChatAPI & DocAPI & ToolAPI
+    ChatAPI --> Agent
+    Agent --> Session
+    Agent --> Registry
+    Agent --> LLM
+    Registry --> Retriever
+    Registry --> SSRF
+    SSRF -.-> Ext["External sites, APIs, and MCP servers"]
+    Retriever --> FAISS & BM25
+    DocAPI --> Files
+    DocAPI --> DB
+    Retriever -.->|reconciled at startup| DB
+    Auth --> DB
+    ToolAPI --> DB
+```
+
+The journey of one question:
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor U as User
+    participant FE as Frontend
+    participant API as POST /api/chat/send
+    participant AG as ResearchAgent
+    participant LLM as Model provider
+    participant T as Tools
+
+    U->>FE: Ask a question (optionally with images or files)
+    FE->>API: Send the message
+    API->>API: Save the user message, load recent history
+    API-->>FE: event: start
+    loop At most AGENT_MAX_TURNS rounds
+        AG->>LLM: Conversation and tool definitions
+        LLM-->>AG: Tool calls
+        API-->>FE: event: step_start
+        AG->>T: Run tools (URL provenance and web limits checked first)
+        T-->>AG: Results (numbered for citation, wrapped as untrusted data)
+        API-->>FE: event: step_end
+    end
+    LLM-->>AG: Final answer (citing sources as [n])
+    API-->>FE: event: token
+    API-->>FE: event: sources (cited sources only)
+    API->>API: Save the answer, sources, and research trace
+    API-->>FE: event: done
+```
+
+See [Architecture & Design](docs/architecture_en.md) for module-level details.
 
 ## Quick Start
 
 ### Requirements
 
-| Component | Minimum Version | Recommended Tool & Purpose |
+| Item | Requirement | Notes |
 |---|---|---|
-| Python | 3.10 or higher | Backend FastAPI server, RAG vector indexing, and Agentic research engine |
-| Bun | 1.0 or higher | Preferred package manager and build tool for frontend |
-| SQLite | 3.x (Built-in) | Zero-dependency relational database for local launch (PostgreSQL also supported) |
+| Python | 3.10 or later | Backend |
+| Bun | 1.x | Frontend package manager, dev server, and build |
+| Database | SQLite (bundled with Python) or PostgreSQL | SQLite works with zero dependencies |
+| Models | About 1.2 GB downloaded on first start | Embedding model `BAAI/bge-small-zh-v1.5` and reranker `BAAI/bge-reranker-base` |
+| LLM | Any one | A local Ollama, or an OpenAI, Azure OpenAI, Anthropic, or Gemini API key |
 
-### 1. Clone Repository
+### 1. Get the source
 
 ```bash
 git clone https://github.com/Scorpio-meow/AskMiao.git
 cd AskMiao
 ```
 
-### 2. Backend Setup & Launch
+### 2. Configure and start the backend
 
 ```bash
 cd backend
 
-# Create and activate Python virtual environment
-py -m venv .venv
-
-# Windows PowerShell:
+# create and activate a virtual environment (on Windows you can use py -m venv .venv)
+python -m venv .venv
+# Windows PowerShell
 .\.venv\Scripts\Activate.ps1
-# Linux/macOS:
+# Linux / macOS
 source .venv/bin/activate
 
-# Install backend dependencies
 pip install -r requirements.txt
-
-# Copy the environment template and adjust for your environment
-# Note: DATABASE_URL in .env.example points to PostgreSQL.
-#       For a zero-dependency launch, set DATABASE_URL=sqlite:///./chatbot.db
 cp .env.example .env
-
-# Initialize database schema and admin account
-py init_db.py
-
-# Start FastAPI development server (Port 8001)
-py main.py
 ```
 
-### 3. Frontend Setup & Launch (Bun Preferred)
+Edit `backend/.env` before starting:
+
+1. **Database**: the template's `DATABASE_URL` points to PostgreSQL; for a zero-dependency start use `DATABASE_URL=sqlite:///./chatbot.db`.
+2. **Keys**: replace `JWT_SECRET_KEY` and `ADMIN_API_KEY` with random strings, for example from `python -c "import secrets; print(secrets.token_urlsafe(32))"`.
+3. **Models**: for a local Ollama keep `LLM_API_BASE=http://localhost:11434`; for cloud models fill in the matching API key, and add `ANTHROPIC_MAX_TOKENS` for Claude.
+
+The template already contains the other required settings, so the template values are enough to start. Then run the backend:
 
 ```bash
-cd ../frontend
+python main.py
+```
 
-# Install frontend dependencies using Bun
+The first start creates the database tables, generates the RSA keys for JWT (`backend/keys/`), and downloads the embedding and reranker models. When it is up:
+
+- API: `http://localhost:8001`
+- Interactive API docs (Swagger UI): `http://localhost:8001/docs`
+
+> [!NOTE]
+> `init_db.py` is a compatibility script that adds columns and indexes to older PostgreSQL databases; fresh installs do not need it, and SQLite does not support its `ADD COLUMN IF NOT EXISTS` statement.
+
+### 3. Start the frontend
+
+In another terminal:
+
+```bash
+cd frontend
 bun install
-
-# Start Vite development server (Port 3000 unless PORT is set)
 bun run dev
 ```
 
-Once launched, navigate to `http://localhost:3000` in your browser to start using AskMiao.
-If you keep `PORT=3001` from `frontend/.env.example` (the origin allowed by the backend `ALLOWED_ORIGINS` default), use `http://localhost:3001` instead.
+Open `http://localhost:3000`. Without `frontend/.env`, the frontend calls the relative path `/api`, which the Vite dev server proxies to `http://127.0.0.1:8001`, so no CORS setup is needed. If you copied `frontend/.env.example` (`PORT=3001`, calling the backend directly), open `http://localhost:3001` instead.
 
----
+### 4. Create the first admin
 
-## Core Features
+The knowledge base, AI tools, and admin dashboard pages are admin-only, and no admin account exists out of the box:
 
-1. **Agentic RAG & Multi-Turn Autonomous Research**:
-   - Built-in ReAct research agent (`ResearchAgent`) supporting Native Tool Calling.
-   - Comprehensive toolset including internal knowledge search (`search_knowledge_base`), real-time web search (`web_search` with Ollama & DuckDuckGo dual-engine fallback), and deep web fetch (`web_fetch`).
-   - Collapsible research trace timeline (`ResearchTraceBlock`) and clickable reference badges (`SourceBadges`) in frontend UI.
-   - Answers cite their evidence as `[n]`; the badges list only the chunks or pages the answer actually cites, and the agent reports plainly when the knowledge base has nothing relevant.
-   - Every tool result is marked as untrusted data; `web_fetch` only reads URLs that appear verbatim in the user's message or in this question's tool results, with an optional domain allowlist and a switch that disables web tools once knowledge-base content has been read.
+1. Create an account on the frontend's register page. Passwords need at least 8 characters with an uppercase letter, a lowercase letter, and a digit.
+2. In `backend/` (with the virtual environment active), run the command below, replacing `your_username` with the name you just registered:
 
-2. **Reasoning Effort Multi-Tier Selection**:
-   - Navigation header selector with 5 reasoning depth levels: `None (none)`, `Low (low)`, `Medium (medium)`, `High (high)`, and `Extreme (xhigh)`.
-   - Full support for Azure OpenAI v1 and OpenAI reasoning models (GPT-6 and GPT-5.6 series, o-series).
-   - Automatic compatibility enforcement with tool calls per Microsoft Foundry specifications.
+   ```bash
+   python -c "from sqlalchemy import text; from app.models.database import engine; conn = engine.connect(); conn.execute(text('UPDATE users SET is_admin = :flag WHERE username = :name'), {'flag': True, 'name': 'your_username'}); conn.commit()"
+   ```
 
-3. **Modular Contextual Hybrid RAG Pipeline**:
-   - Integrates dense vector search (FAISS) and sparse Chinese keyword search (Whoosh BM25); both tracks always run and are merged by rank with RRF (Reciprocal Rank Fusion).
-   - Re-ranked by a Cross-Encoder (`bge-reranker-base`), with a relevance threshold applied to the reranker's probability to drop irrelevant chunks.
-   - Quantitative retrieval evaluation (Hit Rate, MRR, negative rejection rate), including a comparison of several relevance thresholds over a single rerank pass.
+3. Sign out and sign back in to see the admin pages. From then on, admins can promote other users in the admin dashboard.
 
-4. **Multi-Provider LLM Integration**:
-   - Unified abstraction layer supporting dynamic switching between Azure OpenAI v1, OpenAI Official, Anthropic Claude, Google Gemini, and local Ollama models with automatic multi-model list normalization.
+The command goes through the backend's own database settings, so it works for both SQLite and PostgreSQL.
 
-5. **Enterprise Security & Two-Layer Data Redaction**:
-   - Dual-token security with RSA-2048 signed Access Tokens and HttpOnly Secure Cookies.
-   - Recursive object-level masking and regex redaction (`security_logging.py`) preventing credential leaks in logs.
-   - Client-facing errors expose only a random error code (`error_response.py`); full exceptions and stack traces stay in server-side logs (CWE-209 / CWE-497).
-   - Every outbound URL request (OpenAPI spec import, `web_fetch`, MCP HTTP transport) is resolved and validated by `ssrf_protection.py`, blocking private ranges, cloud metadata endpoints, and dangerous ports.
+### 5. Upload documents and ask
 
-6. **External Tool Extensibility & MCP Ecosystem**:
-   - Define custom HTTP API tools through a form, or paste an OpenAPI / Swagger spec (OAS 2.0 / 3.0 / 3.1) to bulk-import endpoints as AI-callable tools.
-   - Supports Bearer, API Key (header / query), and Basic authentication, with a built-in connectivity test for each tool.
-   - Built-in MCP (Model Context Protocol) client over `stdio` and HTTP transports, discovering server tools and injecting them into the agent toolset.
-   - Enabled custom API tools and MCP tools are loaded dynamically whenever tool definitions are assembled — no backend restart required.
-   - Tools are shared by every user's agent, so only admins can manage them; `stdio` subprocesses inherit only system variables such as `PATH`, never the backend's keys or database settings (see [ADR-0004](docs/adr/0004-tool-admin-permissions-and-subprocess-isolation_en.md)).
+1. As an admin, open the knowledge base page and upload documents (up to 10 files per upload, each within `MAX_FILE_SIZE_MB`). AskMiao extracts the text, writes an AI summary, and indexes it.
+2. Back in chat, pick a model and a reasoning level, then ask. Each `[n]` in the answer maps to a source badge below it.
 
-7. **Multimodal Chat & AI Document Summaries**:
-   - Chat accepts image and file attachments: images are passed to vision models as `image_url` parts, while text files are extracted and merged into the prompt context.
-   - Uploaded documents receive an AI-generated outline and summary, which can be regenerated or edited manually from the document management page.
+### Using PostgreSQL (optional)
 
----
+`backend/docker-compose.yml` provides PostgreSQL 17 and applies `init.sql` on first start:
 
-## System Architecture
-
-```mermaid
-flowchart TB
-    subgraph Client ["Frontend (React 19 + TypeScript + Vite + Bun)"]
-        UI["Chat Interface (SSE streaming)"]
-        TraceView["Research Trace Cards (ResearchTraceBlock)"]
-        ToolsView["AI Tools Page (Custom API / OpenAPI / MCP)"]
-        DocManage["Knowledge Base Management (Documents)"]
-        AdminView["Admin Dashboard"]
-    end
-
-    subgraph Backend ["Backend Services (FastAPI + Python 3.10+)"]
-        SecurityMW["Security Middleware (CORS / rate limit / log redaction)"]
-        AuthService["JWT Authentication (RSA-2048)"]
-        ChatAPI["Chat SSE Endpoint (/api/chat)"]
-        DocAPI["Document Upload & Indexing (/api/documents)"]
-        ToolAPI["Custom API Tools (/api/api-tools)"]
-        McpAPI["MCP Servers (/api/mcp)"]
-
-        subgraph AgenticRAG ["Agentic RAG Core Pipeline"]
-            Agent["Research Agent (ResearchAgent)"]
-            ToolRegistry["Tool Registry (ResearchToolRegistry)"]
-            HybridRetriever["Hybrid Retriever (FAISS + BM25 + Cross-Encoder)"]
-            LLMClient["Unified LLM Client (Azure / OpenAI / Claude / Gemini / Ollama)"]
-        end
-
-        SSRF["SSRF Guard (ssrf_protection.py)"]
-    end
-
-    subgraph Storage ["Data & Index Storage"]
-        SQLiteDB[(SQLite / PostgreSQL)]
-        FAISSStore["FAISS Vector Index (faiss_index.bin)"]
-        BM25Store["Whoosh BM25 Index Directory"]
-        DocUploads["Upload Directory (data/uploads)"]
-    end
-
-    UI --> SecurityMW
-    ToolsView --> SecurityMW
-    DocManage --> SecurityMW
-    AdminView --> SecurityMW
-    SecurityMW --> ChatAPI
-    SecurityMW --> DocAPI
-    SecurityMW --> ToolAPI
-    SecurityMW --> McpAPI
-    SecurityMW --> AuthService
-
-    ChatAPI --> Agent
-    ChatAPI -.-> |SSE events| TraceView
-    Agent --> ToolRegistry
-    ToolRegistry --> HybridRetriever
-    ToolRegistry -.-> |custom API tools| ToolAPI
-    ToolRegistry -.-> |MCP tools| McpAPI
-    ToolRegistry --> SSRF
-    SSRF -.-> |web search| DuckDuckGo["DuckDuckGo / Ollama Web Search"]
-    SSRF -.-> |deep fetch| WebContent["External Web Content (HTTP Fetch)"]
-    SSRF -.-> |outbound API calls| ExternalAPI["Custom API Tools / Remote MCP Servers"]
-
-    Agent --> LLMClient
-    HybridRetriever --> FAISSStore
-    HybridRetriever --> BM25Store
-    DocAPI --> DocUploads
-    ToolAPI --> SQLiteDB
-    McpAPI --> SQLiteDB
-    AuthService --> SQLiteDB
+```bash
+cd backend
+docker compose up -d
 ```
 
----
+The container publishes port **7690**, so set `.env` to:
 
-## Directory Structure
+```dotenv
+DATABASE_URL=postgresql+psycopg2://postgres:postgres@localhost:7690/chatbot
+```
+
+## Configuration
+
+Backend settings live in `backend/.env`. These 11 have no defaults, and the backend refuses to start if any is missing (the template provides recommended values):
+
+| Variable | Template | Description |
+|---|---|---|
+| `DATABASE_URL` | PostgreSQL example | Connection string; use `sqlite:///./chatbot.db` for SQLite |
+| `JWT_SECRET_KEY` | placeholder | HS256 signing key used when the RSA keys are unavailable |
+| `ADMIN_API_KEY` | placeholder | Admin API key (unused by routes today, but required by settings validation) |
+| `ENABLE_WEB_SEARCH` | `true` | Offer `web_search` and `web_fetch` |
+| `AGENT_MAX_TURNS` | `5` | Tool-calling turn limit per question (≥ 1) |
+| `CONVERSATION_HISTORY_MESSAGES` | `6` | Prior messages loaded as context (0 disables) |
+| `WEB_FETCH_ALLOWED_DOMAINS` | `*` | Domains `web_fetch` may read; only an explicit `*` means unrestricted |
+| `BLOCK_WEB_TOOLS_AFTER_KB` | `true` | Disable web tools once knowledge-base content has been read |
+| `RRF_K` | `60` | RRF fusion constant |
+| `RERANK_RELEVANCE_THRESHOLD` | `0.2` | Reranker probability threshold (provisional; calibrate with a golden set) |
+| `DOMAIN_PROFILE_PATH` | `config/domain_profile.json` | Domain profile (domain words, date fields, summary fallback rules) |
+
+Common optional settings:
+
+| Variable | Description |
+|---|---|
+| `LLM_API_BASE` | Ollama base URL (template `http://localhost:11434`) |
+| `OPENAI_API_KEY`, `AZURE_OPENAI_*`, `ANTHROPIC_API_KEY`, `GEMINI_API_KEY` | Cloud model keys; their models join the list automatically |
+| `ANTHROPIC_MAX_TOKENS` | Output cap per Claude response (required for Claude) |
+| `MODEL_NAME`, `AVAILABLE_MODELS` | Default model and a custom model list |
+| `CHUNK_SIZE`, `CHUNK_OVERLAP` | Chunk length and overlap (template 300 / 100) |
+| `HF_HOME`, `HF_HUB_OFFLINE` | Model cache location and offline mode |
+| `ALLOWED_ORIGINS` | CORS origins (needed when the frontend calls the backend directly) |
+
+Every setting, with defaults, template values, provider routing rules, and frontend variables, is in the **[configuration reference](docs/configuration_en.md)**.
+
+## Project Structure
 
 ```text
 AskMiao/
-├── backend/                        # FastAPI backend
+├── backend/                          # FastAPI backend
+│   ├── main.py                       # Entry point (python main.py)
 │   ├── app/
-│   │   ├── api/                    # RESTful API routers
-│   │   │   ├── auth.py             # Register, login, refresh, logout
-│   │   │   ├── chat.py             # Chat SSE streaming, model & tool listings
-│   │   │   ├── documents.py        # Uploads, summaries, index rebuild
-│   │   │   ├── api_tools.py        # Custom API tool CRUD, OpenAPI parse & import
-│   │   │   ├── mcp.py              # MCP server management, discovery, tool testing
-│   │   │   ├── admin.py            # Admin statistics and vector store operations
-│   │   │   └── tags.py             # Ollama-compatible model listing endpoints
-│   │   ├── core/                   # Config, auth, log redaction, LLM client
-│   │   │   ├── config.py           # Global environment configuration
-│   │   │   ├── domain_profile.py   # Domain profile loading and validation
-│   │   │   ├── jwt_auth.py         # RSA-2048 JWT signing and verification
-│   │   │   ├── llm_client.py       # Unified multi-provider LLM layer
-│   │   │   ├── security_logging.py # Two-layer sensitive data redaction
-│   │   │   ├── error_response.py   # Client error codes mapped to server logs
-│   │   │   └── ssrf_protection.py  # Outbound URL validation and SSRF blocking
-│   │   ├── models/                 # SQLAlchemy ORM and Pydantic schemas
-│   │   ├── rag/                    # Modular RAG and agentic research core
-│   │   │   ├── agent.py            # ReAct research agent (incl. multimodal input)
-│   │   │   ├── research_session.py # Per-question citations, URL provenance, untrusted-data wrapping
-│   │   │   ├── tools.py            # Built-in tools plus custom / MCP tool registration
-│   │   │   ├── pipeline.py         # RAG execution pipeline and context assembly
-│   │   │   ├── contextual_rag.py   # HybridContextualRAG facade
-│   │   │   ├── evaluator.py        # Retrieval evaluation and relevance-threshold comparison
-│   │   │   ├── indices/            # FAISS and BM25 index management
-│   │   │   └── retrievers/         # Hybrid retrieval and Cross-Encoder reranking
-│   │   ├── services/               # Business logic services
-│   │   │   ├── chat_service.py     # Conversation and message persistence
-│   │   │   ├── document_processor.py # Document parsing and AI summaries
-│   │   │   ├── openapi_parser.py   # OpenAPI / Swagger spec parser
-│   │   │   └── mcp_service.py      # MCP stdio / HTTP clients and tool conversion
-│   │   └── tasks/                  # Background jobs (index rebuild, upload watcher)
-│   ├── tests/                      # Backend tests (research, tools, MCP, SSRF)
-│   ├── config/                     # Domain profile (domain_profile.json)
-│   ├── main.py                     # FastAPI application entry point
-│   ├── init_db.py                  # Database bootstrap and default admin creation
-│   └── requirements.txt            # Python dependencies
-├── frontend/                       # React 19 + Vite frontend
+│   │   ├── __init__.py               # Backend version __version__
+│   │   ├── api/                      # Routers: auth, chat, documents, api_tools, mcp, admin, tags
+│   │   ├── core/                     # Settings, auth, security, and the LLM layer
+│   │   │   ├── config.py             # Settings: every environment variable and its validation
+│   │   │   ├── lifespan.py           # Startup: create tables, initialize RAG, watch uploads
+│   │   │   ├── llm_client.py         # One calling layer for five providers (tool calls, streaming)
+│   │   │   ├── jwt_auth.py           # RSA JWT, Argon2 password hashing, revocation checks
+│   │   │   ├── ssrf_protection.py    # Outbound URL validation and per-hop SSRF checks
+│   │   │   ├── error_response.py     # Client-facing error codes
+│   │   │   ├── security_logging.py   # Two-layer log redaction
+│   │   │   └── domain_profile.py     # Domain profile loading and validation
+│   │   ├── models/                   # SQLAlchemy tables and Pydantic request models
+│   │   ├── rag/                      # Retrieval and agentic RAG core
+│   │   │   ├── contextual_rag.py     # HybridContextualRAG: facade for reconciliation, writes, and search
+│   │   │   ├── agent.py              # ResearchAgent: ReAct tool loop and streaming events
+│   │   │   ├── research_session.py   # Per-question citations, URL provenance, untrusted-data wrapping
+│   │   │   ├── tools.py              # Built-in tools plus custom API / MCP tool registration and execution
+│   │   │   ├── pipeline.py           # Chunking and the agent streaming pipeline
+│   │   │   ├── tokenizers.py         # jieba tokenizer and tokenizer signature
+│   │   │   ├── evaluator.py          # Retrieval evaluation (hit@k, MRR, negative rejection)
+│   │   │   ├── indices/              # chunk_store (rag_chunks), vector_store (FAISS), bm25_store
+│   │   │   └── retrievers/hybrid.py  # RRF fusion, exact matches, reranking, relevance threshold
+│   │   ├── services/                 # Chat, document processing (with PDF OCR), OpenAPI parsing, MCP client
+│   │   └── tasks/uploads_watcher.py  # Missing-upload watcher (warnings only)
+│   ├── config/domain_profile.json    # Domain profile
+│   ├── eval/                         # Retrieval evaluation golden sets
+│   ├── scripts/                      # Maintenance scripts
+│   ├── tests/                        # pytest suite
+│   ├── docker-compose.yml            # Optional PostgreSQL 17 (published on port 7690)
+│   ├── init.sql                      # PostgreSQL schema bootstrap
+│   ├── init_db.py                    # Compatibility patch for older PostgreSQL databases
+│   ├── requirements.txt
+│   └── .env.example                  # Backend settings template
+├── frontend/                         # React 19 + TypeScript + Vite 8
 │   ├── src/
-│   │   ├── pages/                  # Page components
-│   │   │   ├── Chat/               # Chat module (MessageItem, TraceBlock, SourceBadges, Header)
-│   │   │   ├── AiTools.jsx         # AI tools management (custom API, OpenAPI import, MCP)
-│   │   │   ├── Documents.jsx       # Knowledge base upload and management
-│   │   │   ├── AdminDashboard.jsx  # Admin dashboard
-│   │   │   ├── LoginPage.jsx / RegisterPage.jsx # Authentication pages
-│   │   │   └── ProfilePage.jsx     # User profile page
-│   │   ├── hooks/                  # Custom hooks (useChat, useAuth, useDocuments)
-│   │   ├── services/               # Axios wrappers and token interceptors
-│   │   └── components/             # Shared UI components and layout
-│   ├── package.json                # Frontend manifest (managed with Bun)
-│   └── vite.config.js              # Vite build configuration
-├── docs/                           # System specification and architecture docs
-│   ├── api.md                      # API reference (Traditional Chinese)
-│   ├── api_en.md                   # API reference (English)
-│   ├── architecture.md             # Architecture & design (Traditional Chinese)
-│   ├── architecture_en.md          # Architecture & design (English)
-│   └── adr/                        # Architecture Decision Records
-├── llms.txt                        # AI-friendly structure index (Traditional Chinese)
-├── llms_en.txt                     # AI-friendly structure index (English)
-├── CHANGELOG.md                    # Release notes (Traditional Chinese)
-├── CHANGELOG_en.md                 # Release notes (English)
-└── LICENSE                         # MIT license
+│   │   ├── pages/                    # Chat/, Documents, AiTools, AdminDashboard, login, register, profile
+│   │   ├── components/               # Layout, route guards, and the ui/ component library
+│   │   ├── hooks/                    # useChat (streaming, stop, retry), useAuth, useDocuments
+│   │   ├── services/                 # api.ts (Axios and token refresh), sse.ts (SSE parser)
+│   │   ├── contexts/ThemeContext.tsx # Light / dark / follow system
+│   │   └── styles/                   # Design tokens and reset
+│   ├── package.json                  # Frontend version and scripts
+│   └── .env.example
+├── site/                             # GitHub Pages intro site (static)
+├── docs/
+│   ├── api.md                        # API reference
+│   ├── architecture.md               # Architecture and design
+│   ├── configuration.md              # Configuration reference
+│   ├── upgrading.md                  # Upgrade guide
+│   └── adr/                          # Architecture decision records
+├── .github/workflows/deploy-pages.yml # Deploys site/ to GitHub Pages when it changes
+├── llms.txt                          # Project guide for AI agents
+├── CHANGELOG.md                      # Release notes
+└── LICENSE
 ```
 
----
+Every document has an English counterpart ending in `_en`.
 
-## Environment Variables
+## Development and Testing
 
-### Backend Configuration (`backend/.env`)
+### Backend tests
 
-| Variable | Description | Example / Default | Required |
-|---|---|---|---|
-| `DATABASE_URL` | Database connection string (no built-in default) | `sqlite:///./chatbot.db`, `postgresql+psycopg2://...` | Yes |
-| `JWT_SECRET_KEY` | JWT signing key | `cb_jwt_sec_...` | Yes |
-| `ADMIN_API_KEY` | Administrative API key | `cb_admin_key_...` | Yes |
-| `LLM_API_BASE` | Local Ollama service endpoint | `http://localhost:11434` | No |
-| `OLLAMA_TEMPERATURE` / `OLLAMA_NUM_PREDICT` | Ollama generation options (model defaults when unset) | `0.3` / `2048` | No |
-| `MODEL_NAME` | Default model name (falls back to the first available model) | empty | No |
-| `ENABLE_WEB_SEARCH` | Enable the agent's web tools (controls both `web_search` and `web_fetch`) | `true` | Yes |
-| `AGENT_MAX_TURNS` | Maximum tool-calling turns per question (>= 1) | `5` | Yes |
-| `CONVERSATION_HISTORY_MESSAGES` | Prior messages loaded from the database as context (0 disables) | `6` | Yes |
-| `WEB_FETCH_ALLOWED_DOMAINS` | Domains `web_fetch` may read (subdomains included, comma-separated); only an explicit `*` means unrestricted | `*` | Yes |
-| `BLOCK_WEB_TOOLS_AFTER_KB` | Refuse `web_search` and `web_fetch` once a knowledge-base tool has returned content in the same question | `true` | Yes |
-| `AZURE_OPENAI_API_KEY` | Azure OpenAI API key | `your_azure_api_key` | No |
-| `AZURE_OPENAI_ENDPOINT` | Azure OpenAI v1 endpoint URL | `https://your-resource.openai.azure.com` | No |
-| `AZURE_OPENAI_DEPLOYMENT` | Azure deployment names (comma-separated for multiple models) | `gpt-6-sol,gpt-6-luna` | No |
-| `OPENAI_API_KEY` | OpenAI API key | `sk-...` | No |
-| `OPENAI_VISION_MODEL` | OpenAI model used for image understanding | `gpt-6-sol` | No |
-| `ANTHROPIC_API_KEY` | Anthropic Claude API key | `sk-ant-...` | No |
-| `ANTHROPIC_MAX_TOKENS` | Output token cap per Claude response (required when using Claude models) | `16000` | No |
-| `GEMINI_API_KEY` | Google Gemini API key | `AIza...` | No |
-| `GEMINI_VISION_MODEL` | Gemini model used for image understanding | `gemini-3.5-flash` | No |
-| `AVAILABLE_MODELS` | Explicit model list exposed to the frontend (comma-separated) | empty | No |
-| `EMBEDDING_MODEL` | Embedding model name | `BAAI/bge-small-zh-v1.5` | No |
-| `RERANKER_MODEL` | Cross-Encoder reranking model (required component: the backend refuses to start if it cannot load) | `BAAI/bge-reranker-base` | No |
-| `HF_HOME` | Hugging Face model cache directory (`~/.cache/huggingface` when unset) | `./data/hf_home` | No |
-| `HF_HUB_OFFLINE` | Load cached models offline without update checks at startup | `true` | No |
-| `CHUNK_SIZE` / `CHUNK_OVERLAP` | Document chunk size and overlap | `300` / `100` | No |
-| `RRF_K` | RRF fusion constant: score = Σ 1 / (`RRF_K` + rank) | `60` | Yes |
-| `RERANK_TOP_K` | Fused candidates sent to the reranker (rerank time grows with this and with chunk length) | `20` | No |
-| `RERANK_RELEVANCE_THRESHOLD` | Chunks whose reranker probability is below this are dropped; exact URL, post ID, and date matches are exempt | `0.2` | Yes |
-| `FINAL_K` | Number of chunks passed to the LLM | `8` | No |
-| `DOMAIN_PROFILE_PATH` | Domain profile (domain words, record date fields, summary fallback rules) | `config/domain_profile.json` | Yes |
-| `JIEBA_DICTIONARY` | Replacement jieba main dictionary (e.g. the Traditional-Chinese-friendly `dict.txt.big`); changing it rebuilds BM25 automatically | empty | No |
-| `MAX_FILE_SIZE_MB` | Per-file upload size limit | `10` | No |
-| `ACCESS_TOKEN_EXPIRE_MINUTES` | Access token lifetime in minutes | `30` | No |
-| `REFRESH_TOKEN_EXPIRE_DAYS` | Refresh token lifetime in days | `7` | No |
-| `ALLOWED_ORIGINS` | Allowed CORS origins (comma-separated) | `http://localhost:3001` | No |
-| `RATE_LIMIT_ENABLED` / `RATE_LIMIT_PER_MINUTE` | Rate limiting switch and per-minute cap | `true` / `60` | No |
+```bash
+cd backend
+python -m pytest
+```
 
-> For the complete list see [`backend/.env.example`](./backend/.env.example) and [`backend/app/core/config.py`](./backend/app/core/config.py). Relative paths in path settings (`DATA_DIR`, `UPLOAD_DIR`, index paths, `HF_*`, `DOMAIN_PROFILE_PATH`, `JIEBA_DICTIONARY`) are always resolved against `backend/`. `HYBRID_ALPHA`, `NORMALIZATION`, and `FINAL_THRESHOLD` were removed and are ignored if left in `.env`.
+- The tests load the settings, so the required settings must be available in `backend/.env` or the environment.
+- Some tests load the real embedding and reranker models (the model cache is needed), so a full run takes a few minutes.
+- On Windows accounts whose user name contains non-ASCII characters, pass an ASCII temp path such as `--basetemp=C:\pytest-tmp`; otherwise FAISS fails to write its temporary indexes.
 
-### Frontend Configuration (`frontend/.env`)
+### Frontend checks
 
-| Variable | Description | Default | Required |
-|---|---|---|---|
-| `VITE_API_BASE` | Backend API base path (falls back to `/api`) | `http://localhost:8001` | No |
-| `VITE_API_URL` | Absolute backend endpoint (used when `VITE_API_BASE` is unset) | `http://localhost:8001` | No |
-| `VITE_TAGS_URL` | External model listing source URL | empty | No |
-| `VITE_MODEL_POLL_INTERVAL_MS` | Model list polling interval (ms) | `300000` | No |
-| `PORT` | Vite dev server port | `3001` | No |
+```bash
+cd frontend
+bun run test --run   # Vitest unit tests (SSE parser)
+bun run lint         # ESLint (JS / JSX)
+bun x tsc --noEmit   # TypeScript type check
+bun run build        # Build into build/
+```
 
----
+### Maintenance scripts
+
+Run them from `backend/` with `python scripts/<script>`:
+
+| Script | Purpose |
+|---|---|
+| `evaluate_retrieval.py` | Evaluate retrieval quality with a golden set and compare relevance thresholds (read-only, safe to run alongside the backend); see [calibrating the relevance threshold](docs/configuration_en.md#calibrating-the-relevance-threshold) |
+| `reprocess_existing_docs.py` | Offline rebuild: re-extract text, regenerate summaries, re-chunk, and re-index. Stop the backend first |
+| `reset_faiss.py` | Delete the FAISS and BM25 index files in `backend/data`, then recompute them from `rag_chunks` (asks for confirmation first) |
+| `test_llm_clients.py` | Check the model list and each provider's request format with mocked responses, without calling any API |
+| `docx_to_txt.py` | Convert `.docx` files in the upload directory to `.txt` |
+| `migrate_sqlite_to_postgres.py` | Known issue: imports the removed `app.models.custom_agent` and cannot run at the moment |
+
+## Troubleshooting
+
+<details>
+<summary><b>The backend fails to start with <code>Field required</code></b></summary>
+
+A required setting is missing from `.env`; the error names the fields. Add them as listed under [Configuration](#configuration), or follow the [upgrade guide](docs/upgrading_en.md) when coming from 2.x.
+
+</details>
+
+<details>
+<summary><b>The backend fails to start because the reranker cannot load</b></summary>
+
+The reranker is required. The first start downloads it from Hugging Face, so check the network and make sure `HF_HUB_OFFLINE` is not `true`; if the models were downloaded before, point `HF_HOME` at that cache.
+
+</details>
+
+<details>
+<summary><b><code>python init_db.py</code> fails with <code>near "EXISTS": syntax error</code></b></summary>
+
+SQLite does not need `init_db.py`; the backend creates the tables at startup. The script only patches older PostgreSQL databases.
+
+</details>
+
+<details>
+<summary><b>The knowledge base, AI tools, and admin pages are missing after signing in</b></summary>
+
+Those pages are admin-only. Follow [Create the first admin](#4-create-the-first-admin) and sign in again.
+
+</details>
+
+<details>
+<summary><b>Every question reports that the knowledge base has nothing relevant</b></summary>
+
+Make sure documents were uploaded and that `total_vectors` in `GET /api/admin/vector-store/info` (admin only) is above 0. If the index is fine, the relevance threshold may be too high; calibrate it with a real golden set as described in [calibrating the relevance threshold](docs/configuration_en.md#calibrating-the-relevance-threshold).
+
+</details>
+
+<details>
+<summary><b>The frontend shows network or CORS errors</b></summary>
+
+- Without `frontend/.env`, the frontend reaches `http://127.0.0.1:8001` through the Vite proxy, so make sure the backend is running on that port.
+- With an absolute `VITE_API_BASE`, the browser calls the backend directly, and the backend's `ALLOWED_ORIGINS` must include the frontend origin (for example `http://localhost:3001`).
+
+</details>
+
+<details>
+<summary><b><code>bun install</code> on Windows fails with EPERM or creates a folder named <code>~</code> inside frontend</b></summary>
+
+The cache path `~/.bun/install/cache` in `frontend/bunfig.toml` is not expanded on Windows. Pass a cache directory explicitly: `bun install --cache-dir <cache path>`.
+
+</details>
+
+<details>
+<summary><b>The API returns <code>429 Too Many Requests</code></b></summary>
+
+Rate limiting counts requests per client IP, 60 per 60 seconds by default. Behind the Vite dev proxy or a reverse proxy every user shares one IP, so raise `RATE_LIMIT_PER_MINUTE` if needed.
+
+</details>
 
 ## Documentation
 
-- [API Reference](./docs/api_en.md) — RESTful endpoints, request/response JSON schemas, and WebSocket specs
-- [Architecture & Design](./docs/architecture_en.md) — System modules, Agentic RAG pipeline, and security design
-- [Architecture Decision Records (ADR)](./docs/adr/README_en.md) — Architectural decisions and trade-offs
-- [AI System Guide](./llms_en.txt) — Machine-readable guide for AI Agents and LLMs
-- [Changelog](./CHANGELOG_en.md) — Version release history
+| Document | Contents |
+|---|---|
+| [API Reference](docs/api_en.md) | Every endpoint's permission, request and response format, the SSE event contract, and error codes |
+| [Architecture & Design](docs/architecture_en.md) | Layers, data model, retrieval pipeline, agent loop, authentication, and security design |
+| [Configuration Reference](docs/configuration_en.md) | Defaults and effects of every environment variable, provider routing, threshold calibration, frontend settings |
+| [Upgrade Guide](docs/upgrading_en.md) | Steps from 2.x to 3.0.0, rollback, and troubleshooting |
+| [Architecture Decision Records](docs/adr/README_en.md) | Context, trade-offs, and amendments of major design decisions |
+| [llms_en.txt](llms_en.txt) | File map, system constraints, and verification steps for AI agents |
+| [Changelog](CHANGELOG_en.md) | What was added, changed, removed, and fixed in each release |
+| [Website](https://scorpio-meow.github.io/AskMiao/) | Interactive demos of citations, the retrieval threshold, and the security mechanisms |
 
----
+## Versioning
+
+- **Current version**: 3.0.0 (2026-09-25); see the [changelog](CHANGELOG_en.md).
+- **Policy**: [Semantic Versioning](https://semver.org/). Incompatible changes, such as new required settings or changes to API permissions or the index format, bump the major version.
+- **Where the version lives**: `__version__` in `backend/app/__init__.py` (used by the OpenAPI document and the MCP handshake) and `frontend/package.json`, updated together with `CHANGELOG.md` for each release.
 
 ## Contributing
 
-Contributions are welcome! Please follow these steps:
+Issues and pull requests are welcome:
 
-1. Fork the repository and create your feature branch (`git checkout -b feature/amazing-feature`).
-2. Ensure code passes type checks and tests:
-   - Backend tests: `pytest tests/`
-   - Frontend validation: `bun x tsc --noEmit`, `bun run build`, `bun run lint`
-3. Commit your changes (`git commit -m 'feat: Add amazing feature'`).
-4. Push to your branch (`git push origin feature/amazing-feature`).
-5. Open a Pull Request with a clear description of your changes.
-
----
+1. Fork the repository and create a feature branch.
+2. Write commit messages following [Conventional Commits](https://www.conventionalcommits.org/en/v1.0.0/) (for example `feat(rag): …` or `fix: …`; mark breaking changes with `!` and a `BREAKING CHANGE` footer).
+3. Make sure the backend `python -m pytest` and the frontend `bun run test --run`, `bun run lint`, and `bun x tsc --noEmit` all pass.
+4. Documentation is bilingual: whenever you change a document, update its `_en` counterpart and record the change under `[Unreleased]` in `CHANGELOG.md`.
+5. The intro site's interactive demos reproduce backend rules in the browser. When you change the rules in these files, update `site/index.html` and `site/main.js` as well:
+   - `rag/research_session.py`: citation numbering and URL provenance
+   - `rag/retrievers/hybrid.py`: RRF fusion, mixed score, relevance threshold
+   - `rag/tools.py`, `core/config.py`: `WEB_FETCH_ALLOWED_DOMAINS`
+   - `core/ssrf_protection.py`: SSRF check order and block lists
+   - `services/mcp_service.py`: `INHERITED_ENV_VARS`
+6. Open a pull request describing the change and how you verified it.
 
 ## License
 
-This project is licensed under the MIT License. See [LICENSE](LICENSE) for details.
+Released under the [MIT License](LICENSE).

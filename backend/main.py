@@ -3,6 +3,7 @@ import logging
 import torch
 import uvicorn
 from fastapi import FastAPI
+from app import __version__
 from app.core.config import settings
 from app.core.lifespan import lifespan
 from app.middleware import setup_middlewares
@@ -23,9 +24,9 @@ logging.basicConfig(
 logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
 logger = logging.getLogger(__name__)
 app = FastAPI(
-    title="ChatBot API",
-    description="ChatBot with Contextual RAG",
-    version="1.0.0",
+    title="AskMiao API",
+    description="AskMiao 智慧知識庫對話系統：Agentic RAG 自主研究、混合檢索與外部工具整合",
+    version=__version__,
     lifespan=lifespan
 )
 setup_middlewares(app)

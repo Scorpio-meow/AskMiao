@@ -1,69 +1,85 @@
-# AskMiao (AI ChatBot)
+# AskMiao
 
-[Traditional Chinese](llms.txt) | [English](llms_en.txt)
+[繁體中文](llms.txt) | [English](llms_en.txt)
 
-> An enterprise-grade intelligent knowledge-base conversational system powered by Contextual Hybrid RAG (Retrieval-Augmented Generation) and Agentic Autonomous Research architectures.
+> An enterprise knowledge-base chat system that checks its own sources and cites them (version 3.0.0). The FastAPI backend answers with hybrid retrieval (FAISS + BM25 + Cross-Encoder) and a ReAct research agent, citing the chunks or web pages it used as `[n]`; the React frontend streams the research trace and citations over SSE.
 
-## Core File Map & System Architecture
+This file is for AI agents: read "System constraints" before changing code, and run the checks under "Verification" afterwards.
 
-- [backend/main.py](backend/main.py): FastAPI entry point, CORS, and global middleware registration
-- [backend/app/rag/agent.py](backend/app/rag/agent.py): ReAct autonomous ResearchAgent with multi-turn tool calling and trace logging
-- [backend/app/rag/research_session.py](backend/app/rag/research_session.py): Per-question citation table, web_fetch URL provenance, web lockout after knowledge-base reads, and untrusted-data wrapping
-- [backend/config/domain_profile.json](backend/config/domain_profile.json): Domain profile (domain words, record date fields, summary fallback rules), loaded and validated by `app/core/domain_profile.py`
-- [backend/app/rag/tools.py](backend/app/rag/tools.py): ResearchToolRegistry (Internal RAG, DuckDuckGo/Ollama web search, and deep web fetch)
-- [backend/app/rag/pipeline.py](backend/app/rag/pipeline.py): Context builder, document chunking & embedding, and agent integration
-- [backend/app/rag/contextual_rag.py](backend/app/rag/contextual_rag.py): HybridContextualRAG facade module
-- [backend/app/rag/indices/vector_store.py](backend/app/rag/indices/vector_store.py): FAISS dense vector indexing and similarity search
-- [backend/app/rag/indices/bm25_store.py](backend/app/rag/indices/bm25_store.py): Whoosh BM25 keyword search index
-- [backend/app/rag/retrievers/hybrid.py](backend/app/rag/retrievers/hybrid.py): Hybrid search combiner and Cross-Encoder re-ranker
-- [backend/app/core/llm_client.py](backend/app/core/llm_client.py): Unified LLM client (Azure OpenAI v1 / OpenAI / Claude / Gemini / Ollama)
-- [backend/app/core/jwt_auth.py](backend/app/core/jwt_auth.py): RSA-2048 JWT signing, token verification, and revocation
-- [backend/app/core/security_logging.py](backend/app/core/security_logging.py): Two-layer sensitive data redaction logging system
-- [backend/app/api/chat.py](backend/app/api/chat.py): Chat, autonomous research, and available models API endpoints
-- [backend/app/api/documents.py](backend/app/api/documents.py): Knowledge document upload, AI summaries, and index management endpoints
-- [backend/app/api/api_tools.py](backend/app/api/api_tools.py): Custom API tool CRUD, OpenAPI import, and the generic HTTP tool executor
-- [backend/app/api/mcp.py](backend/app/api/mcp.py): MCP server management, tool discovery, and invocation test endpoints
-- [backend/app/services/openapi_parser.py](backend/app/services/openapi_parser.py): OpenAPI / Swagger spec parser (OAS 2.0 / 3.0 / 3.1)
-- [backend/app/services/mcp_service.py](backend/app/services/mcp_service.py): MCP stdio and HTTP JSON-RPC clients plus tool definition conversion
-- [backend/app/core/ssrf_protection.py](backend/app/core/ssrf_protection.py): Outbound URL resolution, validation, and SSRF blocking
-- [backend/app/core/error_response.py](backend/app/core/error_response.py): Client-facing error codes mapped to server-side exception logs
-- [frontend/src/App.jsx](frontend/src/App.jsx): React 19 top-level routes and global layout
-- [frontend/src/pages/Chat/index.tsx](frontend/src/pages/Chat/index.tsx): Main chat page, model selection & reasoning effort controller
-- [frontend/src/pages/Chat/ResearchTraceBlock.tsx](frontend/src/pages/Chat/ResearchTraceBlock.tsx): Collapsible research trace timeline component
-- [frontend/src/pages/Chat/SourceBadges.tsx](frontend/src/pages/Chat/SourceBadges.tsx): Interactive reference source badge component
-- [frontend/src/pages/AiTools.jsx](frontend/src/pages/AiTools.jsx): AI tools page (tool overview, OpenAPI import wizard, MCP server management)
-- [frontend/src/services/api.ts](frontend/src/services/api.ts): Axios wrappers, token interceptors, and per-module services (chat / apiTool / mcp)
+## File map
 
-## Key Architectural Invariants & Concepts
+### Retrieval and the research agent
 
-1. **Agentic RAG Pipeline**:
-   - ReAct research pattern where the model dynamically calls internal knowledge search, live web search, or deep web scraping.
-   - Every response provides structured `research_trace` (steps, tools, parameters, durations, summaries) and clickable `sources_detail`; `sources_detail` lists only the entries the answer cites as `[n]`.
-   - Tool results are always marked as untrusted data with `<untrusted_tool_result>`; `web_fetch` may only read URLs that appear verbatim in the user's message or this question's tool results (further limited by `WEB_FETCH_ALLOWED_DOMAINS` and `BLOCK_WEB_TOOLS_AFTER_KB`).
-2. **Reasoning Effort Multi-Tier Selection**:
-   - Supports 5 depth tiers: `none`, `low`, `medium`, `high`, and `xhigh` forwarded to Azure OpenAI v1 / OpenAI reasoning models.
-   - Enforces Microsoft Foundry tool-call compatibility rules.
-3. **Contextual Hybrid Retrieval**:
-   - FAISS dense vector search and Whoosh BM25 sparse keyword search always both run and are merged by rank with standard RRF (`RRF_K`), then re-ranked by a required Cross-Encoder.
-   - `RERANK_RELEVANCE_THRESHOLD` applies directly to the reranker probability (exact URL, post ID, and date matches exempt); when nothing passes, the tool reports that the knowledge base has nothing relevant.
-4. **System-Wide Security Redaction**:
-   - Recursive object masking and regex-based string redaction. Passwords and bearer tokens MUST appear as `[REDACTED]` in logs.
-5. **Tool Extensibility & MCP Integration**:
-   - Custom HTTP API tools and OpenAPI imports live in `custom_api_tools`; MCP servers and their cached tools live in `mcp_servers`.
-   - `ResearchToolRegistry.get_tool_definitions()` loads enabled external tools on every assembly, so changes apply without a backend restart.
-   - MCP tools are named `mcp_<server_name>_<tool_name>`; `execute_tool` routes on that prefix to `McpManager.execute_mcp_tool`.
-   - Every endpoint under `/api/api-tools` and `/api/mcp`, including reads, MUST depend on `get_current_admin_user`; the environment of an MCP `stdio` subprocess MUST be built by `build_stdio_env()`, never the whole `os.environ`.
-6. **Outbound Safety: SSRF Guard & Error Codes**:
-   - Every outbound request driven by user input (OpenAPI spec URLs, `web_fetch`, MCP HTTP transport, custom API tools) MUST pass `ssrf_protection.py` first; an httpx client that follows redirects MUST register the `reject_unsafe_request` request hook so every redirect is validated again.
-   - Unexpected exceptions are converted by `error_response.py` into random error codes; exception text and stack traces MUST NOT reach clients or the SSE stream.
-7. **SSE Contract**:
-   - `POST /api/chat/send` responds with SSE, emitting `start` -> `step_start` / `step_end` -> `token` -> `sources` -> `done`, or `error` on failure.
-8. **Modern Lightweight Stack**:
-   - Zero-dependency local setup with SQLite (`DATABASE_URL` also supports PostgreSQL); caching and the token revocation list are in-process memory structures. React 19 + Vite 7 frontend built with Bun.
+- [backend/app/rag/contextual_rag.py](backend/app/rag/contextual_rag.py): the HybridContextualRAG facade; adding or deleting chunks, clearing and rebuilding indexes, and startup reconciliation all go through it
+- [backend/app/rag/indices/chunk_store.py](backend/app/rag/indices/chunk_store.py): reads and writes `rag_chunks`, the single source of truth for chunks
+- [backend/app/rag/indices/vector_store.py](backend/app/rag/indices/vector_store.py): FAISS `IndexIDMap2` (ids are chunk_ids) and the `.legacy.bak` / `.mismatch.bak` renames of old indexes
+- [backend/app/rag/indices/bm25_store.py](backend/app/rag/indices/bm25_store.py): Whoosh BM25 (`doc_id` is the chunk_id) and the tokenizer signature
+- [backend/app/rag/tokenizers.py](backend/app/rag/tokenizers.py): jieba tokenization and `TOKENIZER_RULES_VERSION`
+- [backend/app/rag/retrievers/hybrid.py](backend/app/rag/retrievers/hybrid.py): RRF fusion, exact matches, reranking, and the relevance threshold
+- [backend/app/rag/research_session.py](backend/app/rag/research_session.py): per-question citation numbers, `web_fetch` URL provenance, web tools disabled after knowledge-base reads, untrusted-data wrapping
+- [backend/app/rag/agent.py](backend/app/rag/agent.py): the ResearchAgent's system prompt, tool loop, and streaming events
+- [backend/app/rag/tools.py](backend/app/rag/tools.py): built-in tools plus registration and execution of custom API / MCP tools
+- [backend/app/rag/evaluator.py](backend/app/rag/evaluator.py) and [backend/scripts/evaluate_retrieval.py](backend/scripts/evaluate_retrieval.py): retrieval evaluation and relevance-threshold calibration
+- [backend/config/domain_profile.json](backend/config/domain_profile.json): domain words, record date fields, and summary fallback rules, strictly validated by `app/core/domain_profile.py`
 
-## Documentation Index
+### Core and services
 
-- [API Reference](docs/api_en.md): RESTful endpoints, JSON schemas, and parameters
-- [Architecture & Design](docs/architecture_en.md): High-level system modules, Agentic RAG pipeline, and security design
-- [Architecture Decision Records (ADR)](docs/adr/README_en.md): Project architecture evolution and trade-offs
-- [Changelog](CHANGELOG_en.md): Version release history
+- [backend/app/core/config.py](backend/app/core/config.py): every environment variable, the required settings, and their validation
+- [backend/app/core/llm_client.py](backend/app/core/llm_client.py): the calling layer, model lists, and routing for five providers (Azure OpenAI, OpenAI, Claude, Gemini, Ollama)
+- [backend/app/core/jwt_auth.py](backend/app/core/jwt_auth.py): RSA JWT, Argon2 passwords, revocation checks, `get_current_admin_user`
+- [backend/app/core/ssrf_protection.py](backend/app/core/ssrf_protection.py): `validate_url_ssrf`, `reject_unsafe_request`, `safe_fetch_text`
+- [backend/app/core/error_response.py](backend/app/core/error_response.py): client-facing error codes and `SafeClientError`
+- [backend/app/core/security_logging.py](backend/app/core/security_logging.py): two-layer log redaction
+- [backend/app/services/mcp_service.py](backend/app/services/mcp_service.py): MCP stdio / HTTP clients, `build_stdio_env`, `INHERITED_ENV_VARS`
+- [backend/app/services/openapi_parser.py](backend/app/services/openapi_parser.py): OpenAPI / Swagger parsing and tool name generation
+- [backend/app/services/document_processor.py](backend/app/services/document_processor.py) and [backend/app/services/pdf_service.py](backend/app/services/pdf_service.py): text extraction, PDF OCR, AI summaries
+- [backend/app/api/](backend/app/api/): routers; `documents`, `api_tools`, `mcp`, and `admin` require an admin
+- [backend/app/__init__.py](backend/app/__init__.py): the backend version `__version__`
+
+### Frontend
+
+- [frontend/src/App.jsx](frontend/src/App.jsx): routes and the `PrivateRoute` / `AdminRoute` guards
+- [frontend/src/hooks/useChat.ts](frontend/src/hooks/useChat.ts): sending messages, streaming, stop, and retry
+- [frontend/src/services/sse.ts](frontend/src/services/sse.ts): the SSE parser (with Vitest tests)
+- [frontend/src/services/api.ts](frontend/src/services/api.ts): Axios, token refresh, and the per-module APIs
+- [frontend/src/pages/Chat/](frontend/src/pages/Chat/): the chat page, research trace (`ResearchTraceBlock`), and citations (`SourceBadges`)
+- [frontend/src/pages/AiTools.jsx](frontend/src/pages/AiTools.jsx): custom API tools, OpenAPI import, and MCP server management
+- [frontend/src/components/ui/](frontend/src/components/ui/): the component library built on the native `<dialog>` and ARIA
+
+### Intro site
+
+- [site/](site/): the static GitHub Pages site; the interactive demos in `site/main.js` reproduce backend rules in the browser
+
+## System constraints
+
+1. **chunk_id is the only key for chunks**: `rag_chunks`, FAISS, and BM25 are always matched by chunk_id. Add and delete chunks through the `HybridContextualRAG` methods, which update all three under `vector_store.lock`; searches and writes run in worker threads via `asyncio.to_thread`.
+2. **Bump `TOKENIZER_RULES_VERSION` when tokenization rules change**: a signature mismatch triggers an automatic BM25 rebuild, and read-only evaluation refuses to run.
+3. **New settings have no hard-coded defaults**: add new settings as required, put example values in `backend/.env.example`, and update `docs/configuration.md` (both languages), the README settings table, and the environment variable list under "Verification".
+4. **Tool results are untrusted data**: wrap them with `ResearchSession.wrap_tool_output()` before they reach the model; when adding a built-in tool, decide in `ResearchSession.record_tool_output()` whether it gets citation numbers and counts as a URL source.
+5. **Three limits on web tools**: `web_fetch` goes through `ResearchSession.refuse_tool_call()` (URL provenance, `BLOCK_WEB_TOOLS_AFTER_KB`), then `is_web_fetch_domain_allowed()` and SSRF validation.
+6. **Validate outbound requests first**: requests driven by user input call `validate_url_ssrf()`, and httpx clients that follow redirects carry `event_hooks={"request": [reject_unsafe_request]}`.
+7. **Only error codes leave the server**: unexpected exceptions become codes through `log_and_get_error_id()` or `build_error_payload()`, for REST, SSE, and tool results alike; validation errors that only describe the user's input are returned verbatim as `SafeClientError`.
+8. **Admin endpoints depend on `get_current_admin_user`**: every endpoint of `/api/documents`, `/api/admin`, `/api/api-tools`, and `/api/mcp`, reads included; `backend/tests/test_tool_admin_permissions.py` enumerates the tool routes to check this.
+9. **MCP subprocess environments come from `build_stdio_env()`**: only `INHERITED_ENV_VARS` plus the server's `env_vars`.
+10. **Sources list cited entries only**: `sources_detail` comes from `ResearchSession.cited_sources()`, driven by the `[n]` markers in the answer.
+11. **SSE event contract**: `start` → `step_start` / `step_end` → `token` → `sources` → `done`, with `error` on exceptions. The backend `app/api/chat.py` and the frontend `useChat.ts` and `sse.ts` follow it, so change event names or fields in all three places.
+12. **Keep the intro site in sync**: when changing `rag/research_session.py`, `rag/retrievers/hybrid.py`, `WEB_FETCH_ALLOWED_DOMAINS` in `rag/tools.py` and `core/config.py`, `core/ssrf_protection.py`, or `INHERITED_ENV_VARS` in `services/mcp_service.py`, update `site/index.html` and `site/main.js` too.
+13. **Bilingual documentation**: README, CHANGELOG, `docs/`, and the ADRs all have `_en` versions; update both and record changes under `[Unreleased]` in `CHANGELOG.md`.
+14. **Bump versions together**: `__version__` in `backend/app/__init__.py`, `version` in `frontend/package.json`, and `CHANGELOG.md`; new required settings or changes to API permissions or the index format are breaking and bump the major version.
+15. **Taiwan Mandarin wording**: user-visible text uses Taiwan Traditional Chinese terms, such as 使用者名稱, 電子郵件, 權杖, and 字元.
+
+## Verification
+
+- **Backend tests**: run `python -m pytest` in `backend/`. The repository has no `backend/.env`, so pass the required settings as environment variables: `ENABLE_WEB_SEARCH=true`, `AGENT_MAX_TURNS=5`, `CONVERSATION_HISTORY_MESSAGES=6`, `ADMIN_API_KEY`, `JWT_SECRET_KEY`, `DATABASE_URL` (SQLite; on Windows use the `sqlite:///C:/...` form), `RRF_K=60`, `RERANK_RELEVANCE_THRESHOLD=0.2`, `WEB_FETCH_ALLOWED_DOMAINS=*`, `BLOCK_WEB_TOOLS_AFTER_KB=true`, `DOMAIN_PROFILE_PATH=config/domain_profile.json`. Some tests load the real embedding and reranker models; on Windows accounts with non-ASCII user directories add `--basetemp=<ASCII path>`, or FAISS fails to write its files.
+- **Frontend checks**: in `frontend/`, run `bun run test --run` (Vitest), `bun run lint` (JS / JSX only), and `bun x tsc --noEmit`.
+- **Retrieval quality**: `python scripts/evaluate_retrieval.py --golden <golden set> --k 1 3 5 --relevance-thresholds 0.1 0.2 0.3` (read-only, safe to run alongside the backend).
+
+## Documentation
+
+- [README](README_en.md): features, quick start, creating the first admin, troubleshooting
+- [API reference](docs/api_en.md): endpoint permissions, request and response formats, SSE events, known limitations
+- [Architecture](docs/architecture_en.md): startup, data model, retrieval pipeline, agent loop, LLM layer, security design
+- [Configuration reference](docs/configuration_en.md): every environment variable's default and effect, provider routing, threshold calibration
+- [Upgrade guide](docs/upgrading_en.md): upgrading from 2.x to 3.0.0 and rolling back
+- [Architecture decision records](docs/adr/README_en.md): ADR-0001 to ADR-0005
+- [Changelog](CHANGELOG_en.md): changes in each release

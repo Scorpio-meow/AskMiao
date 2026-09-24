@@ -1,69 +1,85 @@
-# AskMiao (AI ChatBot)
+# AskMiao
 
 [繁體中文](llms.txt) | [English](llms_en.txt)
 
-> 基於增強型混合 RAG（檢索增強生成）與 Agentic 自主研究架構的企業級智慧知識庫對話系統。
+> 會自己查證、答案附出處的企業知識庫對話系統（版本 3.0.0）。FastAPI 後端以混合檢索（FAISS + BM25 + Cross-Encoder）與 ReAct 研究 Agent 回答問題，答案以 `[n]` 對應實際引用的片段或網頁；React 前端以 SSE 串流顯示研究歷程與引用來源。
 
-## 專案架構與核心檔案地圖
+本檔給 AI Agent 使用：修改程式前先讀「系統約束」，修改後依「驗證」執行檢查。
 
-- [backend/main.py](backend/main.py): FastAPI 後端進入點與全域路由中介軟體註冊
-- [backend/app/rag/agent.py](backend/app/rag/agent.py): ReAct 自主研究 Agent（多輪工具調用與研究思考歷程紀錄）
-- [backend/app/rag/research_session.py](backend/app/rag/research_session.py): 單次提問的引用編號表、web_fetch 網址來源限制、讀過知識庫後停用聯網與不可信資料包裝
-- [backend/config/domain_profile.json](backend/config/domain_profile.json): 領域設定檔（領域詞、記錄日期欄位、摘要備援規則），由 `app/core/domain_profile.py` 驗證載入
-- [backend/app/rag/tools.py](backend/app/rag/tools.py): 自主研究工具註冊中心（內部知識庫檢索、DuckDuckGo/Ollama 聯網搜尋、網頁深入抓取）
-- [backend/app/rag/pipeline.py](backend/app/rag/pipeline.py): RAG 執行管線、上下文組裝與 Agent 整合
-- [backend/app/rag/contextual_rag.py](backend/app/rag/contextual_rag.py): HybridContextualRAG 門面模組
-- [backend/app/rag/indices/vector_store.py](backend/app/rag/indices/vector_store.py): FAISS 向量儲存與相似度檢索
-- [backend/app/rag/indices/bm25_store.py](backend/app/rag/indices/bm25_store.py): Whoosh BM25 中文文字搜尋引擎
-- [backend/app/rag/retrievers/hybrid.py](backend/app/rag/retrievers/hybrid.py): 混合搜尋與 Cross-Encoder 重排序器
-- [backend/app/core/llm_client.py](backend/app/core/llm_client.py): 統一 LLM 客戶端（Azure OpenAI v1 / OpenAI / Claude / Gemini / Ollama）
-- [backend/app/core/jwt_auth.py](backend/app/core/jwt_auth.py): RSA-2048 JWT 簽署、令牌驗證與黑名單撤銷
-- [backend/app/core/security_logging.py](backend/app/core/security_logging.py): 敏感資料雙層脫敏日誌系統（物件遞迴與正則遮罩）
-- [backend/app/api/chat.py](backend/app/api/chat.py): 對話發送、自主研究生成與可用模型查詢端點
-- [backend/app/api/documents.py](backend/app/api/documents.py): 知識庫文件上傳、AI 摘要與索引管理端點
-- [backend/app/api/api_tools.py](backend/app/api/api_tools.py): 自訂 API 工具 CRUD、OpenAPI 匯入與通用 HTTP 工具執行器
-- [backend/app/api/mcp.py](backend/app/api/mcp.py): MCP 伺服器管理、工具探索與工具調用測試端點
-- [backend/app/services/openapi_parser.py](backend/app/services/openapi_parser.py): OpenAPI / Swagger 規格解析器（OAS 2.0 / 3.0 / 3.1）
-- [backend/app/services/mcp_service.py](backend/app/services/mcp_service.py): MCP stdio 與 HTTP JSON-RPC 用戶端與工具定義轉換
-- [backend/app/core/ssrf_protection.py](backend/app/core/ssrf_protection.py): 外部網址解析驗證與 SSRF 阻擋閘門
-- [backend/app/core/error_response.py](backend/app/core/error_response.py): 對外錯誤代碼機制與例外日誌對應
-- [frontend/src/App.jsx](frontend/src/App.jsx): React 19 頂層路由與佈局
-- [frontend/src/pages/Chat/index.tsx](frontend/src/pages/Chat/index.tsx): 對話主頁面、狀態控制與多模型/推理程度管理
-- [frontend/src/pages/Chat/ResearchTraceBlock.tsx](frontend/src/pages/Chat/ResearchTraceBlock.tsx): 自主研究歷程折疊時間軸元件
-- [frontend/src/pages/Chat/SourceBadges.tsx](frontend/src/pages/Chat/SourceBadges.tsx): 內部與外部參考來源徽章元件
-- [frontend/src/pages/AiTools.jsx](frontend/src/pages/AiTools.jsx): AI 工具管理頁（工具總覽、OpenAPI 匯入精靈、MCP 伺服器管理）
-- [frontend/src/services/api.ts](frontend/src/services/api.ts): Axios 請求封裝、Token 攔截器與各模組服務（chat / apiTool / mcp）
+## 檔案地圖
 
-## 核心設計概念與系統約束
+### 檢索與研究 Agent
 
-1. **Agentic RAG 自主研究管線**：
-   - 採用 ReAct 自主研究模式，模型可根據問題自動決定調用內部知識庫檢索、外部即時聯網搜尋或網頁深度內容抓取。
-   - 每次問答產出結構化 `research_trace`（步驟、工具、參數、耗時與摘要）以及可點擊跳轉之 `sources_detail`；`sources_detail` 只列答案以 `[n]` 實際引用的條目。
-   - 工具結果一律以 `<untrusted_tool_result>` 標記為不可信資料；`web_fetch` 只能讀使用者訊息或本次工具結果中原樣出現過的網址（`WEB_FETCH_ALLOWED_DOMAINS`、`BLOCK_WEB_TOOLS_AFTER_KB` 另加限制）。
-2. **多檔位推理程度 (Reasoning Effort)**：
-   - 支援 `none`, `low`, `medium`, `high`, `xhigh` 五種思考深度，透傳至 Azure OpenAI v1 / OpenAI 推理模型。
-   - 遵循微軟 Foundry 規範，於結合 Function Tools 時自動保持相容性。
-3. **混合檢索與重排序 (Hybrid Retrieval)**：
-   - FAISS 稠密向量搜尋與 Whoosh BM25 稀疏文字檢索每次必跑，以標準 RRF（`RRF_K`）依名次融合，再由 Cross-Encoder（必要元件）重排序。
-   - 相關性門檻 `RERANK_RELEVANCE_THRESHOLD` 直接套在重排機率上（精確比對到網址、貼文 ID、日期者除外），全部未通過時回報「知識庫中查無相關資料」。
-4. **全系統安全日誌脫敏 (Security Redaction)**：
-   - 日誌記錄全面實施物件層級與正則表達式雙層遮罩，密碼、Token 與 Authorization 標頭必須強制呈現為 `[REDACTED]`。
-5. **外部工具擴充與 MCP 整合 (Tool Extensibility)**：
-   - 自訂 HTTP API 工具與 OpenAPI 匯入結果存於 `custom_api_tools`；MCP 伺服器與其工具快取存於 `mcp_servers`。
-   - `ResearchToolRegistry.get_tool_definitions()` 於每次組裝時動態載入啟用中的外部工具，變更後無需重啟後端。
-   - MCP 工具統一採 `mcp_<伺服器名稱>_<工具名稱>` 命名，`execute_tool` 依此前綴路由至 `McpManager.execute_mcp_tool`。
-   - `/api/api-tools` 與 `/api/mcp` 的所有端點（含查詢）必須使用 `get_current_admin_user`；MCP `stdio` 子行程的環境變數必須經 `build_stdio_env()` 組成，不可傳入整個 `os.environ`。
-6. **SSRF 防護與錯誤代碼 (Outbound Safety)**：
-   - 所有使用者輸入驅動之外部請求（OpenAPI 規格 URL、`web_fetch`、MCP HTTP 傳輸、自訂 API 工具）必須先經 `ssrf_protection.py` 驗證；會跟隨轉址的 httpx 用戶端必須掛上 `reject_unsafe_request` request hook，讓每次轉址都重新驗證。
-   - 未預期例外一律透過 `error_response.py` 轉為隨機錯誤代碼，禁止將例外訊息或堆疊回傳客戶端或寫入 SSE 串流。
-7. **串流介面約定 (SSE Contract)**：
-   - `POST /api/chat/send` 以 SSE 回應，事件序列為 `start` → `step_start` / `step_end` → `token` → `sources` → `done`，例外時回傳 `error`。
-8. **輕量化與現代化工具鏈**：
-   - 後端可用 SQLite 零依賴運作（`DATABASE_URL` 亦支援 PostgreSQL），快取與 Token 撤銷名單皆為行程內記憶體實作；前端全面基於 React 19 + Vite 7 + Bun 建構。
+- [backend/app/rag/contextual_rag.py](backend/app/rag/contextual_rag.py): HybridContextualRAG 門面；新增、刪除片段、清空與重建索引、啟動校正都從這裡進入
+- [backend/app/rag/indices/chunk_store.py](backend/app/rag/indices/chunk_store.py): `rag_chunks` 讀寫，片段的唯一來源
+- [backend/app/rag/indices/vector_store.py](backend/app/rag/indices/vector_store.py): FAISS `IndexIDMap2`（id 為 chunk_id）、舊索引改名 `.legacy.bak` / `.mismatch.bak`
+- [backend/app/rag/indices/bm25_store.py](backend/app/rag/indices/bm25_store.py): Whoosh BM25（`doc_id` 為 chunk_id）與斷詞簽章
+- [backend/app/rag/tokenizers.py](backend/app/rag/tokenizers.py): jieba 斷詞、`TOKENIZER_RULES_VERSION`
+- [backend/app/rag/retrievers/hybrid.py](backend/app/rag/retrievers/hybrid.py): RRF 融合、精確比對、重排與相關性門檻
+- [backend/app/rag/research_session.py](backend/app/rag/research_session.py): 單次提問的引用編號、`web_fetch` 網址來源限制、讀過知識庫後停用聯網、不可信資料包裝
+- [backend/app/rag/agent.py](backend/app/rag/agent.py): ResearchAgent 的系統提示、工具迴圈與串流事件
+- [backend/app/rag/tools.py](backend/app/rag/tools.py): 內建工具與自訂 API / MCP 工具的註冊與執行
+- [backend/app/rag/evaluator.py](backend/app/rag/evaluator.py) 與 [backend/scripts/evaluate_retrieval.py](backend/scripts/evaluate_retrieval.py): 檢索評估與相關性門檻校準
+- [backend/config/domain_profile.json](backend/config/domain_profile.json): 領域詞、記錄日期欄位與摘要備援規則，由 `app/core/domain_profile.py` 嚴格驗證
 
-## 詳細文件導覽
+### 核心與服務
 
-- [API 參考手冊](docs/api.md): 完整 RESTful 端點、請求回應 JSON 規格與參數說明
-- [系統架構與設計](docs/architecture.md): 模組架構圖、Agentic RAG 管線與安全架構
-- [架構決策紀錄 (ADR)](docs/adr/README.md): 專案架構演進與重大決策紀錄
-- [版本變更紀錄](CHANGELOG.md): 系統版本發行歷史
+- [backend/app/core/config.py](backend/app/core/config.py): 所有環境變數、必填設定與驗證規則
+- [backend/app/core/llm_client.py](backend/app/core/llm_client.py): 五家供應商（Azure OpenAI、OpenAI、Claude、Gemini、Ollama）的呼叫層、模型清單與路由
+- [backend/app/core/jwt_auth.py](backend/app/core/jwt_auth.py): RSA JWT、Argon2 密碼、撤銷名單檢查、`get_current_admin_user`
+- [backend/app/core/ssrf_protection.py](backend/app/core/ssrf_protection.py): `validate_url_ssrf`、`reject_unsafe_request`、`safe_fetch_text`
+- [backend/app/core/error_response.py](backend/app/core/error_response.py): 對外錯誤代碼與 `SafeClientError`
+- [backend/app/core/security_logging.py](backend/app/core/security_logging.py): 日誌雙層脫敏
+- [backend/app/services/mcp_service.py](backend/app/services/mcp_service.py): MCP stdio / HTTP 用戶端、`build_stdio_env`、`INHERITED_ENV_VARS`
+- [backend/app/services/openapi_parser.py](backend/app/services/openapi_parser.py): OpenAPI / Swagger 解析與工具名稱產生
+- [backend/app/services/document_processor.py](backend/app/services/document_processor.py) 與 [backend/app/services/pdf_service.py](backend/app/services/pdf_service.py): 文字擷取、PDF OCR、AI 摘要
+- [backend/app/api/](backend/app/api/): 路由；`documents`、`api_tools`、`mcp`、`admin` 需要管理員
+- [backend/app/__init__.py](backend/app/__init__.py): 後端版本號 `__version__`
+
+### 前端
+
+- [frontend/src/App.jsx](frontend/src/App.jsx): 路由與 `PrivateRoute` / `AdminRoute` 守衛
+- [frontend/src/hooks/useChat.ts](frontend/src/hooks/useChat.ts): 送出訊息、串流、停止與重新傳送
+- [frontend/src/services/sse.ts](frontend/src/services/sse.ts): SSE 解析器（附 Vitest 測試）
+- [frontend/src/services/api.ts](frontend/src/services/api.ts): Axios、權杖換發與各模組 API
+- [frontend/src/pages/Chat/](frontend/src/pages/Chat/): 聊天頁、研究歷程（`ResearchTraceBlock`）與引用來源（`SourceBadges`）
+- [frontend/src/pages/AiTools.jsx](frontend/src/pages/AiTools.jsx): 自訂 API 工具、OpenAPI 匯入與 MCP 伺服器管理
+- [frontend/src/components/ui/](frontend/src/components/ui/): 以原生 `<dialog>` 與 ARIA 實作的元件庫
+
+### 介紹頁
+
+- [site/](site/): GitHub Pages 純靜態介紹頁，`site/main.js` 的互動示範在瀏覽器端重現後端規則
+
+## 系統約束
+
+1. **chunk_id 是片段唯一的鍵**：`rag_chunks`、FAISS 與 BM25 一律以 chunk_id 對應。新增、刪除片段都經由 `HybridContextualRAG` 的方法，在 `vector_store.lock` 內同步更新三者；檢索與寫入以 `asyncio.to_thread` 在背景執行緒執行。
+2. **斷詞規則改變時遞增 `TOKENIZER_RULES_VERSION`**：簽章不符會觸發 BM25 自動重建，唯讀評估則拒絕執行。
+3. **新設定沒有寫死的預設值**：新增的設定以必填為原則，範例值寫在 `backend/.env.example`，並同步更新 `docs/configuration.md`（中英）、README 設定表與下方「驗證」的環境變數清單。
+4. **工具結果是不可信資料**：交給模型前一律經 `ResearchSession.wrap_tool_output()` 包裝；新增內建工具時，在 `ResearchSession.record_tool_output()` 決定是否配引用編號、是否記為網址來源。
+5. **聯網工具的三道限制**：`web_fetch` 先經 `ResearchSession.refuse_tool_call()`（網址來源、`BLOCK_WEB_TOOLS_AFTER_KB`），再經 `is_web_fetch_domain_allowed()` 與 SSRF 驗證。
+6. **出站請求先驗證**：使用者輸入驅動的外部請求呼叫 `validate_url_ssrf()`；會跟隨轉址的 httpx 用戶端掛上 `event_hooks={"request": [reject_unsafe_request]}`。
+7. **錯誤只回傳錯誤代碼**：未預期例外經 `log_and_get_error_id()` 或 `build_error_payload()` 轉為代碼，REST、SSE 與工具結果皆同；只描述使用者輸入的驗證錯誤以 `SafeClientError` 原樣回傳。
+8. **管理端點依賴 `get_current_admin_user`**：`/api/documents`、`/api/admin`、`/api/api-tools`、`/api/mcp` 的每個端點（含查詢）；`backend/tests/test_tool_admin_permissions.py` 會逐一列舉工具路由檢查。
+9. **MCP 子行程環境由 `build_stdio_env()` 組成**：只繼承 `INHERITED_ENV_VARS` 與伺服器的 `env_vars`。
+10. **來源只列被引用的條目**：`sources_detail` 由 `ResearchSession.cited_sources()` 依答案中的 `[n]` 產生。
+11. **SSE 事件約定**：`start` → `step_start` / `step_end` → `token` → `sources` → `done`，例外時 `error`。後端 `app/api/chat.py` 與前端 `useChat.ts`、`sse.ts` 依此約定，修改事件名稱或欄位時三處一起改。
+12. **介紹頁同步**：修改 `rag/research_session.py`、`rag/retrievers/hybrid.py`、`rag/tools.py` 與 `core/config.py` 的 `WEB_FETCH_ALLOWED_DOMAINS`、`core/ssrf_protection.py`、`services/mcp_service.py` 的 `INHERITED_ENV_VARS` 時，同步更新 `site/index.html` 與 `site/main.js`。
+13. **文件中英雙語**：README、CHANGELOG、`docs/` 與 ADR 都有 `_en` 版本，兩份一起更新；變更記在 `CHANGELOG.md` 的 `[Unreleased]`。
+14. **版本號一起更新**：`backend/app/__init__.py` 的 `__version__`、`frontend/package.json` 的 `version` 與 `CHANGELOG.md`；新增必填設定、改變 API 權限或索引格式屬於破壞性變更，升主版號。
+15. **臺灣用語**：使用者看得到的文字使用臺灣繁體中文用語，例如使用者名稱、電子郵件、權杖、字元。
+
+## 驗證
+
+- **後端測試**：在 `backend/` 執行 `python -m pytest`。版本庫沒有 `backend/.env`，必填設定需以環境變數提供：`ENABLE_WEB_SEARCH=true`、`AGENT_MAX_TURNS=5`、`CONVERSATION_HISTORY_MESSAGES=6`、`ADMIN_API_KEY`、`JWT_SECRET_KEY`、`DATABASE_URL`（SQLite，Windows 請用 `sqlite:///C:/...` 形式）、`RRF_K=60`、`RERANK_RELEVANCE_THRESHOLD=0.2`、`WEB_FETCH_ALLOWED_DOMAINS=*`、`BLOCK_WEB_TOOLS_AFTER_KB=true`、`DOMAIN_PROFILE_PATH=config/domain_profile.json`。部分測試會載入實際的嵌入與重排模型；Windows 使用者目錄含非 ASCII 字元時加上 `--basetemp=<ASCII 路徑>`，否則 FAISS 寫檔失敗。
+- **前端檢查**：在 `frontend/` 執行 `bun run test --run`（Vitest）、`bun run lint`（只涵蓋 JS / JSX）與 `bun x tsc --noEmit`。
+- **檢索品質**：`python scripts/evaluate_retrieval.py --golden <問答集> --k 1 3 5 --relevance-thresholds 0.1 0.2 0.3`（唯讀，可與後端同時執行）。
+
+## 詳細文件
+
+- [README](README.md): 功能、快速開始、建立第一位管理員、疑難排解
+- [API 參考](docs/api.md): 端點權限、請求與回應格式、SSE 事件、已知限制
+- [系統架構](docs/architecture.md): 啟動流程、資料模型、檢索管線、Agent 迴圈、LLM 呼叫層、安全設計
+- [設定參考](docs/configuration.md): 每個環境變數的預設值與作用、供應商路由、門檻校準
+- [升級指南](docs/upgrading.md): 2.x 升級到 3.0.0 的步驟與回退
+- [架構決策紀錄](docs/adr/README.md): ADR-0001 至 ADR-0005
+- [版本變更紀錄](CHANGELOG.md): 各版本變更
