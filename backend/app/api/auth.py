@@ -58,7 +58,7 @@ async def register(
         log_security_event("REGISTER_FAILED", request=request, details={"username": username, "reason": "用戶名已存在"})
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="用戶名已被使用"
+            detail="使用者名稱已被使用"
         )
     
     if get_user_by_email(db, user_data.email):
@@ -134,7 +134,7 @@ async def login(
         })
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="用戶名或密碼錯誤",
+            detail="使用者名稱或密碼錯誤",
             headers={"WWW-Authenticate": "Bearer"},
         )
     
@@ -175,7 +175,7 @@ async def refresh_token(
         if not refresh_token_value:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="未找到刷新令牌"
+                detail="找不到重新整理權杖"
             )
         
         payload = verify_refresh_token(refresh_token_value)
@@ -184,14 +184,14 @@ async def refresh_token(
         if not user_id:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="無效的刷新令牌"
+                detail="重新整理權杖無效"
             )
         
         user = get_user_by_id(db, user_id)
         if not user:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="無效的刷新令牌"
+                detail="重新整理權杖無效"
             )
         
         tokens = create_token_pair({
@@ -218,7 +218,7 @@ async def refresh_token(
         log_security_event("TOKEN_REFRESH_ERROR", request=request, details={"error": str(e)})
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="刷新令牌失敗"
+            detail="重新整理權杖失敗"
         )
 @router.get("/me", response_model=UserProfile)
 async def get_current_user_profile(
@@ -230,7 +230,7 @@ async def get_current_user_profile(
     if not user:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="用戶不存在"
+            detail="使用者不存在"
         )
     
     return UserProfile.model_validate(user)
@@ -246,7 +246,7 @@ async def update_current_user_profile(
     if not user_obj:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="用戶不存在"
+            detail="使用者不存在"
         )
     
     if user_update.email:
@@ -263,7 +263,7 @@ async def update_current_user_profile(
         if not user_update.current_password:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="需要提供當前密碼"
+                detail="請提供目前的密碼"
             )
         
         pwd_mgr = PasswordManager()
@@ -273,7 +273,7 @@ async def update_current_user_profile(
             })
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="當前密碼錯誤"
+                detail="目前的密碼錯誤"
             )
         
         is_valid, error_msg = validate_password_strength(user_update.new_password)
@@ -300,7 +300,7 @@ async def change_password(
     if not user_obj:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="用戶不存在"
+            detail="使用者不存在"
         )
     
     pwd_mgr = PasswordManager()
@@ -310,7 +310,7 @@ async def change_password(
         })
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="當前密碼錯誤"
+            detail="目前的密碼錯誤"
         )
     
     is_valid, error_msg = validate_password_strength(password_data.new_password)
@@ -361,4 +361,4 @@ async def logout(
 async def validate_token(
     user: dict = Depends(get_current_active_user)
 ):
-    return MessageResponse(message="令牌有效")
+    return MessageResponse(message="權杖有效")

@@ -111,6 +111,7 @@ bun run dev
    - 支援 Bearer、API Key（Header / Query）與 Basic 三種認證方式，並可於管理頁面即時測試工具連通性。
    - 內建 MCP（Model Context Protocol）用戶端，支援 `stdio` 與 HTTP 兩種傳輸，可探索伺服器工具清單並自動注入 Agent 工具集。
    - 啟用中的自訂 API 工具與 MCP 工具會於每次組裝工具定義時動態載入，無需重啟後端。
+   - 工具由所有使用者的 Agent 共用，因此只有管理員能管理；`stdio` 子行程只繼承 `PATH` 等系統變數，不會取得後端的金鑰與資料庫設定（見 [ADR-0004](docs/adr/0004-tool-admin-permissions-and-subprocess-isolation.md)）。
 
 7. **多模態對話與知識庫智能摘要**：
    - 對話支援附加圖片與文件，圖片以 `image_url` 形式傳入視覺模型，文字檔則自動抽取內容併入提問上下文。

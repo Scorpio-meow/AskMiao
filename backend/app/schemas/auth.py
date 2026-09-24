@@ -11,7 +11,7 @@ class UserRegister(BaseModel):
     def username_alphanumeric(cls, v):
         import re
         if not re.match(r'^[\w\-]+$', v):
-            raise ValueError('用戶名只能包含字母、數字、下劃線和連字符')
+            raise ValueError('使用者名稱只能包含字母、數字、底線和連字號')
         return v
     
     class Config:

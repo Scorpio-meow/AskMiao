@@ -119,7 +119,7 @@ class TokenManager:
         if USE_BLACKLIST and TokenBlacklist.is_blacklisted(token):
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="令牌已被撤銷",
+                detail="權杖已被撤銷",
                 headers={"WWW-Authenticate": "Bearer"},
             )
         
@@ -143,7 +143,7 @@ class TokenManager:
             logger.exception("無效的認證令牌: 驗證失敗")
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="無效的認證令牌: 驗證失敗",
+                detail="認證權杖無效：驗證失敗",
                 headers={"WWW-Authenticate": "Bearer"},
             )
     
@@ -160,7 +160,7 @@ async def get_current_user_from_token(
     if not TokenManager.verify_token_type(payload, "access"):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="無效的令牌類型",
+            detail="權杖類型無效",
             headers={"WWW-Authenticate": "Bearer"},
         )
     
@@ -168,7 +168,7 @@ async def get_current_user_from_token(
     if user_id is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="令牌中缺少用戶信息",
+            detail="權杖中缺少使用者資訊",
             headers={"WWW-Authenticate": "Bearer"},
         )
     
@@ -216,13 +216,13 @@ def verify_refresh_token(token: str) -> Dict[str, Any]:
     if not TokenManager.verify_token_type(payload, "refresh"):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="無效的刷新令牌類型"
+            detail="重新整理權杖類型無效"
         )
     
     return payload
 def validate_password_strength(password: str) -> tuple[bool, str]:
     if len(password) < 8:
-        return False, "密碼長度至少需要 8 個字符"
+        return False, "密碼長度至少需要 8 個字元"
     
     if not any(c.isupper() for c in password):
         return False, "密碼必須包含至少一個大寫字母"

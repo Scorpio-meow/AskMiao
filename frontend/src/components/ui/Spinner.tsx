@@ -31,7 +31,7 @@ export const Spinner: React.FC<SpinnerProps> = ({
       height={pixelSize}
       viewBox="0 0 44 44"
       style={{ color, ...style }}
-      aria-label="Loading"
+      aria-label="載入中"
       role="status"
       {...props}
     >

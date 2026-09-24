@@ -115,7 +115,7 @@ class AuthService {
     try {
       const refreshToken = this.getRefreshToken();
       if (!refreshToken) {
-        throw new Error('無刷新令牌');
+        throw new Error('沒有重新整理權杖，請重新登入');
       }
       const response = await withTimeout(
         (signal) => api.post<{ access_token: string; refresh_token: string }>('/auth/refresh', {

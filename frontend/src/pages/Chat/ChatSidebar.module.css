@@ -10,32 +10,35 @@
   }
 }
 
-.mobileBackdrop {
-  position: fixed;
-  inset: 0;
-  background-color: var(--bg-backdrop);
-  z-index: var(--z-drawer);
-  animation: fadeIn var(--transition-fast) forwards;
-}
-
+/* 原生 <dialog>：覆寫瀏覽器預設的置中外距與尺寸上限，改成貼齊左側的抽屜 */
 .mobileDrawer {
-  position: fixed;
-  top: 0;
-  bottom: 0;
-  left: 0;
-  width: 280px;
-  z-index: calc(var(--z-drawer) + 1);
+  margin: 0;
+  inset: 0 auto 0 0;
+  width: min(300px, 85vw);
+  height: 100%;
+  max-width: none;
+  max-height: none;
+  padding: env(safe-area-inset-top) 0 env(safe-area-inset-bottom);
+  border: none;
+  color: var(--text-primary);
   background-color: var(--bg-sidebar);
   box-shadow: var(--shadow-xl);
+  overflow: hidden;
   animation: slideDrawer var(--transition-fast) forwards;
 }
 
-@media (min-width: 900px) {
+.mobileDrawer::backdrop {
+  background-color: rgba(15, 23, 42, 0.45);
+  animation: fadeIn var(--transition-fast) forwards;
+}
 
-  .mobileBackdrop,
-  .mobileDrawer {
-    display: none;
-  }
+[data-theme="dark"] .mobileDrawer::backdrop {
+  background-color: rgba(0, 0, 0, 0.7);
+}
+
+.mobileDrawer .sidebarInner {
+  width: 100%;
+  border-right: none;
 }
 
 .sidebarInner {
@@ -48,6 +51,9 @@
 }
 
 .newButtonArea {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
   padding: var(--space-4);
 }
 
@@ -59,6 +65,7 @@
 .listArea {
   flex-grow: 1;
   overflow-y: auto;
+  overflow-x: hidden;
   padding: var(--space-2);
 }
 
@@ -78,10 +85,30 @@
   font-size: var(--font-size-sm);
 }
 
+.errorState {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-3);
+  margin: var(--space-2) var(--space-1);
+  padding: var(--space-3);
+  border-radius: var(--radius-md);
+  background-color: var(--color-error-bg);
+  color: var(--color-error-text);
+  font-size: var(--font-size-sm);
+}
+
+.conversationList {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
 .conversationItem {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: var(--space-1);
   border-radius: var(--radius-md);
   margin-bottom: 2px;
   padding: 0 var(--space-1);
@@ -94,6 +121,7 @@
   gap: var(--space-3);
   flex: 1;
   min-width: 0;
+  min-height: 40px;
   padding: var(--space-2) var(--space-3);
   border-radius: var(--radius-md);
   background: transparent;
@@ -118,6 +146,7 @@
 
 .conversationSelected:hover {
   background-color: rgba(37, 99, 235, 0.2);
+  color: var(--color-primary-text);
 }
 
 .conversationTitle {
@@ -127,14 +156,16 @@
   flex: 1;
 }
 
+/* 未 hover 時仍需與背景有 3:1 以上的對比 */
 .deleteButton {
-  opacity: 0.4;
+  opacity: 0.75;
   transition: opacity var(--transition-fast), color var(--transition-fast);
 }
 
-.deleteButton:hover {
+.deleteButton:hover,
+.deleteButton:focus-visible {
   opacity: 1;
-  color: var(--color-error);
+  color: var(--color-error-text);
 }
 
 @keyframes fadeIn {

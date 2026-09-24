@@ -222,8 +222,9 @@ flowchart TB
 
 1. **工具命名與路由**：自訂 API 工具以其 `name` 直接註冊；MCP 工具統一採 `mcp_<伺服器名稱>_<工具名稱>` 命名，`execute_tool` 依前綴判斷路由目標。
 2. **HTTP 執行器**：`execute_http_api_tool` 統一處理 Path 變數替換、Query 組裝、Header 與認證注入（Bearer / API Key / Basic）、JSON 或表單主體序列化，以及逾時與錯誤隔離。
-3. **MCP 傳輸**：`McpStdioClient` 以子行程 stdio 進行 JSON-RPC 交握；`McpHttpClient` 以 HTTP 傳輸，兩者皆支援 `initialize`、`tools/list` 與 `tools/call`。
+3. **MCP 傳輸**：`McpStdioClient` 以子行程 stdio 進行 JSON-RPC 交握；`McpHttpClient` 以 HTTP 傳輸，兩者皆支援 `initialize`、`tools/list` 與 `tools/call`。stdio 子行程只繼承 `PATH` 等系統必要變數（與 MCP 官方 SDK 的預設清單相同），後端的 JWT 金鑰、資料庫連線與模型 API 金鑰不會傳給子行程，伺服器需要的變數要寫在該伺服器的 `env_vars`。
 4. **工具快取**：MCP 工具清單於建立或手動探索時寫入 `discovered_tools`，避免每次組裝工具定義都需重新連線。
+5. **管理權限**：自訂 API 工具與 MCP 伺服器由所有使用者的 Agent 共用，`stdio` 模式還會在主機上執行指定的指令，因此 `/api/api-tools` 與 `/api/mcp` 的所有端點（含查詢）只開放管理員，前端「AI 工具」頁也只有管理員看得到。一般使用者只能在對話中讓 Agent 使用已啟用的工具。
 
 ---
 
@@ -248,7 +249,7 @@ flowchart TB
 
 ### 6.3 SSRF 防護
 
-所有由使用者輸入驅動之外部請求（OpenAPI 規格 URL、`web_fetch`、MCP HTTP 傳輸、自訂 API 工具）皆須通過 `ssrf_protection.py`：
+所有由使用者輸入驅動之外部請求（OpenAPI 規格 URL、`web_fetch`、MCP HTTP 傳輸、自訂 API 工具）皆須通過 `ssrf_protection.py`。自訂 API 工具與 MCP HTTP 傳輸以 httpx 的 request hook（`reject_unsafe_request`）在第一個請求與每次轉址前重新驗證，外部服務無法以轉址把請求導向內網：
 
 ```mermaid
 flowchart LR

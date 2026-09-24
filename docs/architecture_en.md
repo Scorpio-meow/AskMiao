@@ -222,8 +222,9 @@ flowchart TB
 
 1. **Naming and routing**: custom API tools register under their own `name`; MCP tools use `mcp_<server_name>_<tool_name>`, and `execute_tool` routes on that prefix.
 2. **HTTP executor**: `execute_http_api_tool` handles path variable substitution, query assembly, header and auth injection (Bearer / API Key / Basic), JSON or form body serialization, plus timeout and error isolation.
-3. **MCP transports**: `McpStdioClient` speaks JSON-RPC over a subprocess's stdio, `McpHttpClient` over HTTP; both support `initialize`, `tools/list`, and `tools/call`.
+3. **MCP transports**: `McpStdioClient` speaks JSON-RPC over a subprocess's stdio, `McpHttpClient` over HTTP; both support `initialize`, `tools/list`, and `tools/call`. A stdio subprocess inherits only essential system variables such as `PATH` (the same default list as the official MCP SDK), so the backend's JWT key, database URL, and model API keys never reach it; list any variable the server needs in its `env_vars`.
 4. **Tool caching**: discovered MCP tools are stored in `discovered_tools` at creation or manual discovery time, so assembling tool definitions does not require reconnecting.
+5. **Management permissions**: custom API tools and MCP servers are shared by every user's agent, and `stdio` servers run the configured command on the host, so every endpoint under `/api/api-tools` and `/api/mcp`, including the read-only ones, is admin-only, and the frontend AI tools page is shown to admins only. Regular users can only use enabled tools through the agent in a conversation.
 
 ---
 
@@ -248,7 +249,7 @@ The same mechanism backs the SSE `error` event, so exception text cannot leak th
 
 ### 6.3 SSRF protection
 
-Every outbound request driven by user input (OpenAPI spec URLs, `web_fetch`, MCP HTTP transport, custom API tools) passes through `ssrf_protection.py`:
+Every outbound request driven by user input (OpenAPI spec URLs, `web_fetch`, MCP HTTP transport, custom API tools) passes through `ssrf_protection.py`. Custom API tools and the MCP HTTP transport validate the first request and every redirect through an httpx request hook (`reject_unsafe_request`), so an external service cannot redirect a request into the internal network:
 
 ```mermaid
 flowchart LR

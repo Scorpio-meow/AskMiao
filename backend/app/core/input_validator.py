@@ -68,34 +68,34 @@ class InputValidator:
     @staticmethod
     def validate_username(username: str) -> tuple[bool, str]:
         if not username:
-            return False, "用戶名不能為空"
+            return False, "使用者名稱不能為空"
         
         if len(username) < 3:
-            return False, "用戶名長度至少 3 個字符"
+            return False, "使用者名稱至少需要 3 個字元"
         
         if len(username) > 50:
-            return False, "用戶名長度不能超過 50 個字符"
+            return False, "使用者名稱不能超過 50 個字元"
         
         if not re.match(r'^[a-zA-Z0-9_-]+$', username):
-            return False, "用戶名只能包含字母、數字、下劃線和連字符"
+            return False, "使用者名稱只能包含英文字母、數字、底線和連字號"
         
         return True, ""
     
     @staticmethod
     def validate_filename(filename: str) -> tuple[bool, str]:
         if not filename:
-            return False, "文件名不能為空"
+            return False, "檔名不能為空"
         
         if len(filename) > 255:
-            return False, "文件名過長"
+            return False, "檔名過長"
         
         dangerous_chars = ['/', '\\', '..', '<', '>', ':', '"', '|', '?', '*', '\0']
         for char in dangerous_chars:
             if char in filename:
-                return False, f"文件名包含不允許的字符: {char}"
+                return False, f"檔名包含不允許的字元: {char}"
         
         if '..' in filename or filename.startswith('/') or filename.startswith('\\'):
-            return False, "檢測到路徑遍歷攻擊嘗試"
+            return False, "偵測到路徑遍歷攻擊嘗試"
         
         allowed_extensions = {
             '.txt', '.md', '.markdown', '.pdf', '.docx', '.doc', '.pptx',
@@ -107,7 +107,7 @@ class InputValidator:
         import os
         ext = os.path.splitext(filename)[1].lower()
         if ext and ext not in allowed_extensions:
-            return False, f"不允許的文件類型: {ext}"
+            return False, f"不允許的檔案類型: {ext}"
         return True, ""
     
     @staticmethod

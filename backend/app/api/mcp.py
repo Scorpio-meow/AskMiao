@@ -11,10 +11,13 @@ from app.models import (
     McpServerResponse,
     McpToolTestRequest,
 )
-from app.core.jwt_auth import get_current_active_user as get_current_user
+from app.core.jwt_auth import get_current_admin_user
+from app.core.ssrf_protection import SSRFProtectionError
 from app.services.mcp_service import McpManager
 from app.core.error_response import log_and_get_error_id, format_client_error
 logger = logging.getLogger(__name__)
+# MCP 伺服器是所有使用者的 Agent 共用的全域設定：stdio 模式會在主機上執行指定的指令，
+# 回應中也含環境變數與標頭等憑證，因此整個模組（含查詢）只開放管理員
 router = APIRouter()
 def _serialize_mcp_server(server: McpServer) -> Dict[str, Any]:
     """序列化 McpServer 模型為 Dict"""
@@ -62,7 +65,7 @@ def _serialize_mcp_server(server: McpServer) -> Dict[str, Any]:
         "updated_at": server.updated_at,
     }
 @router.get("/presets")
-async def get_preset_servers(current_user: dict = Depends(get_current_user)):
+async def get_preset_servers(current_user: dict = Depends(get_current_admin_user)):
     """獲取常用官方與社群 MCP 伺服器範本"""
     return {
         "status": "success",
@@ -72,7 +75,7 @@ async def get_preset_servers(current_user: dict = Depends(get_current_user)):
 async def get_all_servers(
     is_enabled: Optional[bool] = Query(None),
     db: Session = Depends(get_db),
-    current_user: dict = Depends(get_current_user)
+    current_user: dict = Depends(get_current_admin_user)
 ):
     """獲取所有已配置的 MCP 伺服器清單"""
     query = db.query(McpServer)
@@ -88,7 +91,7 @@ async def get_all_servers(
 async def create_server(
     server_data: McpServerCreate,
     db: Session = Depends(get_db),
-    current_user: dict = Depends(get_current_user)
+    current_user: dict = Depends(get_current_admin_user)
 ):
     """新增 MCP 伺服器配置"""
     clean_name = server_data.name.strip().lower()
@@ -121,6 +124,12 @@ async def create_server(
         new_server.last_error = None
         db.commit()
         db.refresh(new_server)
+    except SSRFProtectionError as e:
+        # 訊息只描述管理員填入的網址為何被拒，可以原樣顯示
+        new_server.status = "error"
+        new_server.last_error = str(e)
+        db.commit()
+        db.refresh(new_server)
     except Exception as e:
         error_id = log_and_get_error_id(logger, "初次探索 MCP 工具失敗", e, logging.WARNING)
         new_server.status = "error"
@@ -136,7 +145,7 @@ async def create_server(
 async def get_server_detail(
     server_id: int,
     db: Session = Depends(get_db),
-    current_user: dict = Depends(get_current_user)
+    current_user: dict = Depends(get_current_admin_user)
 ):
     """獲取單一 MCP 伺服器詳情"""
     server = db.query(McpServer).filter(McpServer.id == server_id).first()
@@ -151,7 +160,7 @@ async def update_server(
     server_id: int,
     server_data: McpServerUpdate,
     db: Session = Depends(get_db),
-    current_user: dict = Depends(get_current_user)
+    current_user: dict = Depends(get_current_admin_user)
 ):
     """更新 MCP 伺服器配置"""
     server = db.query(McpServer).filter(McpServer.id == server_id).first()
@@ -188,7 +197,7 @@ async def update_server(
 async def delete_server(
     server_id: int,
     db: Session = Depends(get_db),
-    current_user: dict = Depends(get_current_user)
+    current_user: dict = Depends(get_current_admin_user)
 ):
     """刪除 MCP 伺服器配置"""
     server = db.query(McpServer).filter(McpServer.id == server_id).first()
@@ -204,7 +213,7 @@ async def delete_server(
 async def discover_server_tools(
     server_id: int,
     db: Session = Depends(get_db),
-    current_user: dict = Depends(get_current_user)
+    current_user: dict = Depends(get_current_admin_user)
 ):
     """即時連線並探索 MCP 伺服器提供的所有工具 (tools/list)"""
     server = db.query(McpServer).filter(McpServer.id == server_id).first()
@@ -226,6 +235,11 @@ async def discover_server_tools(
             "init_info": init_info,
             "server": _serialize_mcp_server(server)
         }
+    except SSRFProtectionError as e:
+        server.status = "error"
+        server.last_error = str(e)
+        db.commit()
+        raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         error_id = log_and_get_error_id(logger, "探索 MCP 伺服器工具失敗", e)
         server.status = "error"
@@ -237,7 +251,7 @@ async def discover_server_tools(
 async def toggle_server(
     server_id: int,
     db: Session = Depends(get_db),
-    current_user: dict = Depends(get_current_user)
+    current_user: dict = Depends(get_current_admin_user)
 ):
     """切換 MCP 伺服器啟用狀態"""
     server = db.query(McpServer).filter(McpServer.id == server_id).first()
@@ -257,7 +271,7 @@ async def test_mcp_tool(
     tool_name: str,
     test_data: McpToolTestRequest,
     db: Session = Depends(get_db),
-    current_user: dict = Depends(get_current_user)
+    current_user: dict = Depends(get_current_admin_user)
 ):
     """即時線上測試特定 MCP 工具調用 (tools/call)"""
     server = db.query(McpServer).filter(McpServer.id == server_id).first()

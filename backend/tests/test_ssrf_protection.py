@@ -107,7 +107,7 @@ def test_ip_allowed_public_ips():
 
 @pytest.mark.anyio
 async def test_validate_url_disallowed_schemes():
-    """測試拒絕非 HTTP/HTTPS 協議"""
+    """測試拒絕非 HTTP/HTTPS 協定"""
     invalid_urls = [
         "file:///etc/passwd",
         "ftp://ftp.example.com/files",
@@ -119,7 +119,7 @@ async def test_validate_url_disallowed_schemes():
     for u in invalid_urls:
         is_safe, reason, _ = await validate_url_ssrf(u)
         assert is_safe is False
-        assert "協議" in reason or "格式" in reason
+        assert "協定" in reason or "格式" in reason
 
 
 @pytest.mark.anyio

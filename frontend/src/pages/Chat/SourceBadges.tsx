@@ -2,6 +2,7 @@ import React, { useState, useMemo } from 'react';
 import { SourceBadgesProps, SourceDetail } from './types';
 import { Chip, Popover, Icon } from '../../components/ui';
 import styles from './SourceBadges.module.css';
+const isWebUrl = (value: string) => value.startsWith('http://') || value.startsWith('https://');
 export const SourceBadges: React.FC<SourceBadgesProps> = ({
   sources,
   sourcesDetail,
@@ -44,10 +45,6 @@ export const SourceBadges: React.FC<SourceBadgesProps> = ({
     event: React.MouseEvent<HTMLElement>,
     detail: SourceDetail
   ) => {
-    if (detail.url) {
-      window.open(detail.url, '_blank', 'noopener,noreferrer');
-      return;
-    }
     setAnchorEl(event.currentTarget);
     setActiveDetail(detail);
   };
@@ -58,53 +55,64 @@ export const SourceBadges: React.FC<SourceBadgesProps> = ({
   const hasDetails = normalizedDetails.length > 0;
   const hasSources = normalizedSources.length > 0;
   if (!hasDetails && !hasSources) return null;
+  const webIcon = <Icon name="language" size={14} />;
+  const documentIcon = <Icon name="description" size={14} />;
   return (
     <div className={styles.container}>
       <span className={styles.heading}>參考來源：</span>
       <div className={styles.badgesList}>
         {hasDetails
           ? normalizedDetails.map((detail, idx) => {
-            const isWeb = Boolean(detail.url);
             const hasCitation = detail.citation !== undefined;
             const chunkLabel = detail.chunk !== undefined
               ? (hasCitation ? `（段落 ${detail.chunk}）` : ` (段落 ${detail.chunk})`)
               : '';
-            const baseLabel = isWeb ? detail.source : `${detail.source}${chunkLabel}`;
+            if (detail.url) {
+              const label = hasCitation ? `[${detail.citation}] ${detail.source}` : detail.source;
+              return (
+                <Chip
+                  key={idx}
+                  icon={webIcon}
+                  label={<>{label}<span className="sr-only">（在新分頁開啟）</span></>}
+                  size="sm"
+                  variant="outlined"
+                  wrap
+                  href={detail.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className={styles.badgeWeb}
+                />
+              );
+            }
+            const baseLabel = `${detail.source}${chunkLabel}`;
             const label = hasCitation ? `[${detail.citation}] ${baseLabel}` : baseLabel;
             return (
               <Chip
                 key={idx}
-                icon={
-                  isWeb ? (
-                    <Icon name="language" size={14} color="#0891B2" />
-                  ) : (
-                    <Icon name="description" size={14} />
-                  )
-                }
+                icon={documentIcon}
                 label={label}
                 size="sm"
                 variant="outlined"
+                wrap
                 onClick={(e) => handleOpenDetail(e, detail)}
-                className={isWeb ? styles.badgeWeb : ''}
+                aria-haspopup="dialog"
+                aria-expanded={activeDetail === detail}
               />
             );
           })
           : normalizedSources.map((src, idx) => {
-            const isWeb = src.startsWith('http://') || src.startsWith('https://');
+            const isWeb = isWebUrl(src);
             return (
               <Chip
                 key={idx}
-                icon={
-                  isWeb ? (
-                    <Icon name="language" size={14} color="#0891B2" />
-                  ) : (
-                    <Icon name="description" size={14} />
-                  )
-                }
-                label={src}
+                icon={isWeb ? webIcon : documentIcon}
+                label={isWeb ? <>{src}<span className="sr-only">（在新分頁開啟）</span></> : src}
                 size="sm"
                 variant="outlined"
-                onClick={isWeb ? () => window.open(src, '_blank', 'noopener,noreferrer') : undefined}
+                wrap
+                href={isWeb ? src : undefined}
+                target={isWeb ? '_blank' : undefined}
+                rel={isWeb ? 'noopener noreferrer' : undefined}
                 className={isWeb ? styles.badgeWeb : ''}
               />
             );
@@ -114,17 +122,18 @@ export const SourceBadges: React.FC<SourceBadgesProps> = ({
         open={Boolean(anchorEl)}
         anchorEl={anchorEl}
         onClose={handleCloseDetail}
+        aria-label={activeDetail ? `來源詳情：${activeDetail.source}` : '來源詳情'}
       >
         {activeDetail && (
           <div className={styles.popoverCard}>
             <div className={styles.popoverHeader}>
-              <Icon name="description" size={18} color="#2563EB" />
+              <Icon name="description" size={18} />
               <span>{activeDetail.source}</span>
             </div>
             {activeDetail.score !== undefined && activeDetail.score !== null && (
               <div className={styles.scoreRow}>
-                <Icon name="analytics" size={14} color="#059669" />
-                <span>匹配分數: {activeDetail.score}</span>
+                <Icon name="analytics" size={14} />
+                <span>相關度 {Math.round(activeDetail.score * 100)}%</span>
               </div>
             )}
             {activeDetail.snippet && (

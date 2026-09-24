@@ -197,7 +197,7 @@ async def validate_url_ssrf(
     # 1. 協議驗證
     scheme = (parsed.scheme or "").lower()
     if scheme not in allowed_schemes:
-        return False, f"不允許的 URL 協議 '{scheme}'，僅支援: {', '.join(allowed_schemes)}", None
+        return False, f"不允許的 URL 協定 '{scheme}'，僅支援: {', '.join(allowed_schemes)}", None
 
     # 2. 主機名稱檢查
     hostname = parsed.hostname
@@ -223,11 +223,11 @@ async def validate_url_ssrf(
     # 4. 檢查主機名稱關鍵字與特殊域名後綴
     if not allow_private_ips:
         if hostname_lower in DISALLOWED_HOSTNAMES:
-            return False, f"禁止訪問保留/內部主機名稱: {hostname_lower}", None
+            return False, f"禁止存取保留/內部主機名稱: {hostname_lower}", None
 
         for suffix in DISALLOWED_HOSTNAME_SUFFIXES:
             if hostname_lower.endswith(suffix):
-                return False, f"禁止訪問內部專屬域名: {hostname_lower}", None
+                return False, f"禁止存取內部專屬網域: {hostname_lower}", None
 
         # 檢查是否為直接輸入的 IP 位址字串
         try:
@@ -251,6 +251,18 @@ async def validate_url_ssrf(
                 return False, f"主機解析至受保護或私有 IP 位址 ({ip_addr}): {reason}", None
 
     return True, "", parsed
+
+
+async def reject_unsafe_request(request: httpx.Request) -> None:
+    """
+    httpx 的 request event hook：每次送出請求前（含自動轉址的每一跳）重新做 SSRF 檢查，
+    避免外部服務以轉址把請求導向內網或雲端 Metadata。
+
+    用法：httpx.AsyncClient(event_hooks={"request": [reject_unsafe_request]})
+    """
+    is_safe, error_msg, _ = await validate_url_ssrf(str(request.url))
+    if not is_safe:
+        raise SSRFProtectionError(f"SSRF 防護拒絕連線: {error_msg}")
 
 
 async def safe_fetch_text(
@@ -331,7 +343,7 @@ async def safe_fetch_text(
 
                         next_url = urljoin(current_url, location.strip())
                         if next_url in visited_urls:
-                            raise ValueError(f"檢測到循環轉址: {next_url}")
+                            raise ValueError(f"偵測到循環轉址: {next_url}")
 
                         logger.info(f"安全轉址 ({redirect_count}/{max_redirects}): {current_url} -> {next_url}")
                         current_url = next_url
