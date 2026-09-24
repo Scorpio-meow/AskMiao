@@ -141,7 +141,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Provided native toolset in `ResearchToolRegistry`: internal knowledge base search (`search_knowledge_base`), live web search (`web_search` with Ollama & DuckDuckGo dual fallback), and deep web fetch (`web_fetch`).
 - **Reasoning Effort Multi-Tier Selection**:
   - Added 5 reasoning depth levels in the top navigation: `None (none)`, `Low (low)`, `Medium (medium)`, `High (high)`, and `Extreme (xhigh)`.
-  - Fully compatible with Azure OpenAI v1 and OpenAI reasoning models (GPT-5 series, o-series), with automated tool-call compatibility handling.
+  - Fully compatible with Azure OpenAI v1 and OpenAI reasoning models, with automated tool-call compatibility handling.
 - **Frontend Research Visualization**:
   - Added `ResearchTraceBlock`: Collapsible step-by-step research trace timeline with tool execution logs.
   - Added `SourceBadges`: Clickable external source reference badges that open in new tabs.

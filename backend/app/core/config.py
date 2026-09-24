@@ -46,13 +46,13 @@ class Settings(BaseSettings):
     AVAILABLE_MODELS: Optional[str] = None
     OPENAI_API_KEY: Optional[str] = None
     OPENAI_API_BASE: str = "https://api.openai.com/v1"
-    OPENAI_VISION_MODEL: str = "gpt-4o"
+    OPENAI_VISION_MODEL: str = "gpt-6-sol"
     ANTHROPIC_API_KEY: Optional[str] = None
     ANTHROPIC_API_BASE: str = "https://api.anthropic.com"
     ANTHROPIC_MAX_TOKENS: Optional[int] = Field(default=None, ge=1)
     GEMINI_API_KEY: Optional[str] = None
     GEMINI_API_BASE: str = "https://generativelanguage.googleapis.com"
-    GEMINI_VISION_MODEL: str = "gemini-2.5-flash"
+    GEMINI_VISION_MODEL: str = "gemini-3.5-flash"
     OLLAMA_SEARCH_ENDPOINT: str = "https://ollama.com/api/web_search"
     OLLAMA_FETCH_ENDPOINT: str = "https://ollama.com/api/web_fetch"
     DUCKDUCKGO_SEARCH_ENDPOINT: str = "https://html.duckduckgo.com/html/"

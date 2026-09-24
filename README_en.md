@@ -89,7 +89,7 @@ If you keep `PORT=3001` from `frontend/.env.example` (the origin allowed by the 
 
 2. **Reasoning Effort Multi-Tier Selection**:
    - Navigation header selector with 5 reasoning depth levels: `None (none)`, `Low (low)`, `Medium (medium)`, `High (high)`, and `Extreme (xhigh)`.
-   - Full support for Azure OpenAI v1 and OpenAI reasoning models (GPT-5 series, o-series).
+   - Full support for Azure OpenAI v1 and OpenAI reasoning models (GPT-6 and GPT-5.6 series, o-series).
    - Automatic compatibility enforcement with tool calls per Microsoft Foundry specifications.
 
 3. **Modular Contextual Hybrid RAG Pipeline**:
@@ -279,13 +279,13 @@ AskMiao/
 | `BLOCK_WEB_TOOLS_AFTER_KB` | Refuse `web_search` and `web_fetch` once a knowledge-base tool has returned content in the same question | `true` | Yes |
 | `AZURE_OPENAI_API_KEY` | Azure OpenAI API key | `your_azure_api_key` | No |
 | `AZURE_OPENAI_ENDPOINT` | Azure OpenAI v1 endpoint URL | `https://your-resource.openai.azure.com` | No |
-| `AZURE_OPENAI_DEPLOYMENT` | Azure deployment names (comma-separated for multiple models) | `gpt-4o,gpt-4o-mini` | No |
+| `AZURE_OPENAI_DEPLOYMENT` | Azure deployment names (comma-separated for multiple models) | `gpt-6-sol,gpt-6-luna` | No |
 | `OPENAI_API_KEY` | OpenAI API key | `sk-...` | No |
-| `OPENAI_VISION_MODEL` | OpenAI model used for image understanding | `gpt-4o` | No |
+| `OPENAI_VISION_MODEL` | OpenAI model used for image understanding | `gpt-6-sol` | No |
 | `ANTHROPIC_API_KEY` | Anthropic Claude API key | `sk-ant-...` | No |
 | `ANTHROPIC_MAX_TOKENS` | Output token cap per Claude response (required when using Claude models) | `16000` | No |
 | `GEMINI_API_KEY` | Google Gemini API key | `AIza...` | No |
-| `GEMINI_VISION_MODEL` | Gemini model used for image understanding | `gemini-2.5-flash` | No |
+| `GEMINI_VISION_MODEL` | Gemini model used for image understanding | `gemini-3.5-flash` | No |
 | `AVAILABLE_MODELS` | Explicit model list exposed to the frontend (comma-separated) | empty | No |
 | `EMBEDDING_MODEL` | Embedding model name | `BAAI/bge-small-zh-v1.5` | No |
 | `RERANKER_MODEL` | Cross-Encoder reranking model (required component: the backend refuses to start if it cannot load) | `BAAI/bge-reranker-base` | No |
