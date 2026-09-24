@@ -249,8 +249,8 @@ data: {"message_id": 108, "conversation_id": 42, "answer": "依照公司規章�
 
 ```json
 {
-  "models": ["gpt-4o", "gpt-4o-mini"],
-  "default": "gpt-4o"
+  "models": ["gpt-6-sol", "gpt-6-luna"],
+  "default": "gpt-6-sol"
 }
 ```
 
@@ -667,7 +667,7 @@ Content-Type: multipart/form-data
 
 ### 6.1 GET /api/tags
 
-**回應結果:** **200 OK** `{"tags": ["gpt-4o", "gpt-4o-mini"], "default": "gpt-4o"}`
+**回應結果:** **200 OK** `{"tags": ["gpt-6-sol", "gpt-6-luna"], "default": "gpt-6-sol"}`
 
 若未設定任何雲端供應商金鑰，系統會嘗試自 `LLM_API_BASE` 取得遠端模型清單，最後才回退至內建備援清單。
 

@@ -31,8 +31,8 @@ async def run_tests():
             models = get_available_models()
             print(f"啟動所有 Key 時的模型列表: {models}")
             assert "azure-gpt" in models
-            assert "gpt-4o" in models
-            assert "claude-opus-4-8" in models
+            assert "gpt-6-sol" in models
+            assert "claude-opus-5-5" in models
             assert "gemini-3.5-flash" in models
             print("=> 測試 1 成功！")
     print("\n[測試 2] 驗證 OpenAI 路由與調用格式：")
@@ -48,7 +48,7 @@ async def run_tests():
     with patch("httpx.AsyncClient.post", mock_post):
         with patch.object(settings, "OPENAI_API_KEY", "openai-test-key"):
             messages = [{"role": "user", "content": "你好"}]
-            response = await call_llm(messages, model_name="gpt-4o")
+            response = await call_llm(messages, model_name="gpt-6-sol")
             print(f"LLM 回傳: {response}")
             assert response == "Hello from OpenAI"
             
@@ -63,7 +63,7 @@ async def run_tests():
             
             assert url == "https://api.openai.com/v1/chat/completions"
             assert headers["Authorization"] == "Bearer openai-test-key"
-            assert json_payload["model"] == "gpt-4o"
+            assert json_payload["model"] == "gpt-6-sol"
             assert json_payload["messages"] == messages
             print("=> 測試 2 成功！")
     print("\n[測試 3] 驗證 Google Gemini 路由與調用格式：")
@@ -112,14 +112,14 @@ async def run_tests():
                 {"role": "system", "content": "你是繁體中文助手"},
                 {"role": "user", "content": "你好"}
             ]
-            response = await call_llm(messages, model_name="claude-opus-4-8")
+            response = await call_llm(messages, model_name="claude-opus-5-5")
             print(f"LLM 回傳: {response}")
             assert response == "Hello from Claude"
 
             kwargs = mock_create.call_args.kwargs
             print(f"SDK 呼叫參數: {kwargs}")
 
-            assert kwargs["model"] == "claude-opus-4-8"
+            assert kwargs["model"] == "claude-opus-5-5"
             assert kwargs["max_tokens"] == 16000
             assert kwargs["system"] == "你是繁體中文助手"
             assert kwargs["messages"] == [{"role": "user", "content": "你好"}]

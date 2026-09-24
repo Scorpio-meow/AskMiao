@@ -99,9 +99,9 @@ def test_default_claude_model_ids_use_family_version_format(monkeypatch):
 
 @pytest.mark.parametrize("model, expected", [
     ("azure-gpt", "azure"),
-    ("claude-opus-5", "anthropic"),
+    ("claude-opus-5-5", "anthropic"),
     ("gemini-3-pro", "gemini"),
-    ("gpt-5.5", "openai"),
+    ("gpt-5.6-sol", "openai"),
     ("qwen3:8b", "ollama"),
 ])
 def test_resolve_provider(monkeypatch, model, expected):
@@ -121,7 +121,7 @@ def test_gpt_model_routes_to_azure_when_only_azure_is_configured(monkeypatch):
     monkeypatch.setattr(settings, "AZURE_OPENAI_DEPLOYMENT", "azure-gpt")
     monkeypatch.setattr(settings, "OPENAI_API_KEY", None)
 
-    assert llm_client.resolve_provider("gpt-4o") == "azure"
+    assert llm_client.resolve_provider("gpt-6-sol") == "azure"
 
 
 def test_anthropic_request_merges_tool_results_and_converts_images():

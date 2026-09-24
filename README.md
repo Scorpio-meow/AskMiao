@@ -89,7 +89,7 @@ bun run dev
 
 2. **多檔位模型推理程度（Reasoning Effort）選擇**：
    - 頂部導覽列支援切換五種推理深度檔位：`無 (None)`、`輕度 (Low)`、`標準 (Medium)`、`深度 (High)`、`極致 (X-High)`。
-   - 完整支援 Azure OpenAI v1 與 OpenAI 推理模型（如 GPT-5 系列、o-series）。
+   - 完整支援 Azure OpenAI v1 與 OpenAI 推理模型（如 GPT-6、GPT-5.6 系列與 o-series）。
    - 依微軟 Foundry 規範自動處理工具調用與推理相容性限制。
 
 3. **模組化增強型混合 RAG 檢索引擎**：
@@ -279,13 +279,13 @@ AskMiao/
 | `BLOCK_WEB_TOOLS_AFTER_KB` | 同一次提問中知識庫工具回傳過內容後，拒絕 `web_search` 與 `web_fetch` | `true` | 是 |
 | `AZURE_OPENAI_API_KEY` | Azure OpenAI API 金鑰 | `your_azure_api_key` | 否 |
 | `AZURE_OPENAI_ENDPOINT` | Azure OpenAI v1 服務端點 URL | `https://your-resource.openai.azure.com` | 否 |
-| `AZURE_OPENAI_DEPLOYMENT` | Azure OpenAI 部署名稱（支援逗號分隔多模型） | `gpt-4o,gpt-4o-mini` | 否 |
+| `AZURE_OPENAI_DEPLOYMENT` | Azure OpenAI 部署名稱（支援逗號分隔多模型） | `gpt-6-sol,gpt-6-luna` | 否 |
 | `OPENAI_API_KEY` | OpenAI 官方 API 金鑰 | `sk-...` | 否 |
-| `OPENAI_VISION_MODEL` | 多模態圖片理解所用之 OpenAI 模型 | `gpt-4o` | 否 |
+| `OPENAI_VISION_MODEL` | 多模態圖片理解所用之 OpenAI 模型 | `gpt-6-sol` | 否 |
 | `ANTHROPIC_API_KEY` | Anthropic Claude API 金鑰 | `sk-ant-...` | 否 |
 | `ANTHROPIC_MAX_TOKENS` | Claude 單次回應的輸出 token 上限（使用 Claude 模型時必填） | `16000` | 否 |
 | `GEMINI_API_KEY` | Google Gemini API 金鑰 | `AIza...` | 否 |
-| `GEMINI_VISION_MODEL` | 多模態圖片理解所用之 Gemini 模型 | `gemini-2.5-flash` | 否 |
+| `GEMINI_VISION_MODEL` | 多模態圖片理解所用之 Gemini 模型 | `gemini-3.5-flash` | 否 |
 | `AVAILABLE_MODELS` | 手動指定前端可選模型清單（逗號分隔） | 空值 | 否 |
 | `EMBEDDING_MODEL` | 向量嵌入模型名稱 | `BAAI/bge-small-zh-v1.5` | 否 |
 | `RERANKER_MODEL` | Cross-Encoder 重排序模型名稱（必要元件，載入失敗時後端無法啟動） | `BAAI/bge-reranker-base` | 否 |
