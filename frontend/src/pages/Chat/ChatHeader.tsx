@@ -19,10 +19,13 @@ export const ChatHeader: React.FC<ChatHeaderProps> = ({
   onRefreshModels,
   currentConversation,
   onOpenSidebar,
+  sidebarOpen = false,
+  sidebarId,
 }) => {
   const currentModelValue = availableModels.includes(selectedModel)
     ? selectedModel
     : availableModels[0] || '';
+  const title = currentConversation?.title || '新對話';
   return (
     <header className={styles.header}>
       <div className={styles.leftGroup}>
@@ -32,13 +35,15 @@ export const ChatHeader: React.FC<ChatHeaderProps> = ({
             onClick={onOpenSidebar}
             className={styles.mobileMenuBtn}
             aria-label="開啟對話清單"
+            aria-expanded={sidebarOpen}
+            aria-controls={sidebarOpen ? sidebarId : undefined}
           >
             <Icon name="menu" size={20} />
           </IconButton>
         )}
-        <h2 className={styles.title}>
-          {currentConversation?.title || '新對話'}
-        </h2>
+        <h1 className={styles.title} title={title}>
+          {title}
+        </h1>
       </div>
       <div className={styles.rightGroup}>
         <div className={styles.selectWrapper}>
@@ -61,7 +66,7 @@ export const ChatHeader: React.FC<ChatHeaderProps> = ({
               ))
             )}
           </select>
-          <span className={styles.selectIcon}>
+          <span className={styles.selectIcon} aria-hidden="true">
             <Icon name="expand-more" size={16} />
           </span>
         </div>
@@ -71,7 +76,6 @@ export const ChatHeader: React.FC<ChatHeaderProps> = ({
               className={styles.select}
               value={reasoningEffort}
               onChange={(e) => onSelectReasoningEffort(e.target.value)}
-              disabled={modelsLoading}
               aria-label="選擇推理程度"
             >
               {REASONING_EFFORT_OPTIONS.map((opt) => (
@@ -80,7 +84,7 @@ export const ChatHeader: React.FC<ChatHeaderProps> = ({
                 </option>
               ))}
             </select>
-            <span className={styles.selectIcon}>
+            <span className={styles.selectIcon} aria-hidden="true">
               <Icon name="expand-more" size={16} />
             </span>
           </div>
@@ -90,10 +94,10 @@ export const ChatHeader: React.FC<ChatHeaderProps> = ({
             size="sm"
             onClick={onRefreshModels}
             disabled={modelsLoading}
-            aria-label="重新整理模型"
+            aria-label="重新整理可用模型清單"
           >
             {modelsLoading ? (
-              <Spinner size={18} />
+              <Spinner size={18} aria-hidden="true" />
             ) : (
               <Icon name="refresh" size={18} />
             )}

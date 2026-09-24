@@ -111,6 +111,7 @@ If you keep `PORT=3001` from `frontend/.env.example` (the origin allowed by the 
    - Supports Bearer, API Key (header / query), and Basic authentication, with a built-in connectivity test for each tool.
    - Built-in MCP (Model Context Protocol) client over `stdio` and HTTP transports, discovering server tools and injecting them into the agent toolset.
    - Enabled custom API tools and MCP tools are loaded dynamically whenever tool definitions are assembled — no backend restart required.
+   - Tools are shared by every user's agent, so only admins can manage them; `stdio` subprocesses inherit only system variables such as `PATH`, never the backend's keys or database settings (see [ADR-0004](docs/adr/0004-tool-admin-permissions-and-subprocess-isolation_en.md)).
 
 7. **Multimodal Chat & AI Document Summaries**:
    - Chat accepts image and file attachments: images are passed to vision models as `image_url` parts, while text files are extracted and merged into the prompt context.

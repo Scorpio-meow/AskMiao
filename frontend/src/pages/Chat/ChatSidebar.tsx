@@ -1,9 +1,10 @@
-import React from 'react';
+import React, { useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { ChatSidebarProps } from './types';
-import { Button, IconButton, Tooltip, Spinner, Icon } from '../../components/ui';
+import { Button, IconButton, Tooltip, Spinner, Icon, useModalDialog } from '../../components/ui';
 import styles from './ChatSidebar.module.css';
 export const ChatSidebar: React.FC<ChatSidebarProps> = ({
+  id,
   open,
   onClose,
   conversations,
@@ -12,34 +13,64 @@ export const ChatSidebar: React.FC<ChatSidebarProps> = ({
   onNewConversation,
   onDeleteConversation,
   loading,
+  loadError,
+  onRetryLoad,
 }) => {
-  const sidebarContent = (
+  const drawerRef = useRef<HTMLDialogElement>(null);
+  const drawerHandlers = useModalDialog(drawerRef, open, onClose);
+  // 桌面版改用常駐側欄，視窗放大時關閉抽屜，避免頁面仍處於模態狀態
+  useEffect(() => {
+    if (!open) return;
+    const desktopQuery = window.matchMedia('(min-width: 900px)');
+    const handleChange = () => {
+      if (desktopQuery.matches) onClose();
+    };
+    desktopQuery.addEventListener('change', handleChange);
+    return () => desktopQuery.removeEventListener('change', handleChange);
+  }, [open, onClose]);
+  const renderContent = (inDrawer: boolean) => (
     <div className={styles.sidebarInner}>
       <div className={styles.newButtonArea}>
         <Button
           fullWidth
           variant="primary"
           startIcon={<Icon name="add" size={18} />}
-          onClick={onNewConversation}
+          onClick={() => {
+            onNewConversation();
+            if (inDrawer) onClose();
+          }}
         >
           開啟新對話
         </Button>
+        {inDrawer && (
+          <IconButton size="md" onClick={onClose} aria-label="關閉對話清單">
+            <Icon name="close" size={20} />
+          </IconButton>
+        )}
       </div>
       <div className={styles.divider} />
-      <div className={styles.listArea}>
-        <span className={styles.sectionTitle}>歷史對話記錄</span>
-        {loading && conversations.length === 0 ? (
+      <nav className={styles.listArea} aria-label="歷史對話">
+        <p className={styles.sectionTitle}>歷史對話記錄</p>
+        {loadError ? (
+          <div className={styles.errorState} role="alert">
+            <span>{loadError}</span>
+            <Button size="sm" variant="outline" onClick={onRetryLoad} startIcon={<Icon name="refresh" size={14} />}>
+              重新載入
+            </Button>
+          </div>
+        ) : loading && conversations.length === 0 ? (
           <div className={styles.loadingCenter}>
             <Spinner size={24} color="var(--color-primary)" />
           </div>
         ) : conversations.length === 0 ? (
           <div className={styles.emptyText}>尚無歷史對話</div>
         ) : (
-          <div>
+          <ul className={styles.conversationList}>
             {conversations.map((conv, idx) => {
               const isSelected = currentConversation?.id === conv.id;
+              const title = conv.title || '未命名對話';
               return (
-                <div
+                <li
                   key={conv.id ? `conv-${conv.id}` : `conv-${idx}`}
                   className={styles.conversationItem}
                 >
@@ -48,15 +79,13 @@ export const ChatSidebar: React.FC<ChatSidebarProps> = ({
                     className={`${styles.conversationButton} ${isSelected ? styles.conversationSelected : ''}`}
                     onClick={() => {
                       onSelectConversation(conv.id);
-                      if (onClose) onClose();
+                      if (inDrawer) onClose();
                     }}
+                    aria-current={isSelected ? 'true' : undefined}
+                    title={title}
                   >
-                    <Icon
-                      name="chat"
-                      size={18}
-                      color={isSelected ? 'var(--color-primary)' : 'var(--text-secondary)'}
-                    />
-                    <span className={styles.conversationTitle}>{conv.title || '對話'}</span>
+                    <Icon name="chat" size={18} />
+                    <span className={styles.conversationTitle}>{title}</span>
                   </button>
                   <Tooltip title="刪除此對話">
                     <IconButton
@@ -66,30 +95,35 @@ export const ChatSidebar: React.FC<ChatSidebarProps> = ({
                         onDeleteConversation(conv.id);
                       }}
                       className={styles.deleteButton}
-                      aria-label="刪除對話"
+                      aria-label={`刪除對話「${title}」`}
                     >
                       <Icon name="delete" size={16} />
                     </IconButton>
                   </Tooltip>
-                </div>
+                </li>
               );
             })}
-          </div>
+          </ul>
         )}
-      </div>
+      </nav>
     </div>
   );
   return (
     <>
-      <aside className={styles.desktopSidebar}>
-        {sidebarContent}
+      <aside className={styles.desktopSidebar} aria-label="對話清單">
+        {renderContent(false)}
       </aside>
       {open &&
         createPortal(
-          <>
-            <div className={styles.mobileBackdrop} onClick={onClose} />
-            <div className={styles.mobileDrawer}>{sidebarContent}</div>
-          </>,
+          <dialog
+            ref={drawerRef}
+            id={id}
+            className={styles.mobileDrawer}
+            aria-label="對話清單"
+            {...drawerHandlers}
+          >
+            {renderContent(true)}
+          </dialog>,
           document.body
         )}
     </>

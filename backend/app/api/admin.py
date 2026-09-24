@@ -147,7 +147,7 @@ async def delete_document(
 ):
     document = db.query(Document).filter(Document.id == document_id).first()
     if not document:
-        raise HTTPException(status_code=404, detail="文檔不存在")
+        raise HTTPException(status_code=404, detail="文件不存在")
 
     rag_system = get_rag_system()
     await asyncio.to_thread(rag_system.remove_document_by_id, document_id)
@@ -155,7 +155,7 @@ async def delete_document(
     db.delete(document)
     db.commit()
 
-    return {"message": "文檔刪除成功"}
+    return {"message": "文件刪除成功"}
 @router.put("/users/{user_id}")
 async def update_user(
     user_id: int,
@@ -165,7 +165,7 @@ async def update_user(
 ):
     user = db.query(User).filter(User.id == user_id).first()
     if not user:
-        raise HTTPException(status_code=404, detail="用戶不存在")
+        raise HTTPException(status_code=404, detail="使用者不存在")
     
     if user_update.username is not None:
         existing_user = db.query(User).filter(
@@ -173,7 +173,7 @@ async def update_user(
             User.id != user_id
         ).first()
         if existing_user:
-            raise HTTPException(status_code=400, detail="用戶名已存在")
+            raise HTTPException(status_code=400, detail="使用者名稱已存在")
         user.username = user_update.username
     
     if user_update.email is not None:
@@ -182,7 +182,7 @@ async def update_user(
             User.id != user_id
         ).first()
         if existing_user:
-            raise HTTPException(status_code=400, detail="郵箱已存在")
+            raise HTTPException(status_code=400, detail="電子郵件已存在")
         user.email = user_update.email
     
     if user_update.is_active is not None:
@@ -196,7 +196,7 @@ async def update_user(
     
     invalidate_cache("admin_stats")
     
-    return {"message": "用戶更新成功", "user": user}
+    return {"message": "使用者更新成功", "user": user}
 @router.delete("/users/{user_id}")
 async def delete_user(
     user_id: int,
@@ -205,7 +205,7 @@ async def delete_user(
 ):
     user = db.query(User).filter(User.id == user_id).first()
     if not user:
-        raise HTTPException(status_code=404, detail="用戶不存在")
+        raise HTTPException(status_code=404, detail="使用者不存在")
     
     conversations = db.query(Conversation).filter(Conversation.user_id == user_id).all()
     for conv in conversations:
@@ -218,7 +218,7 @@ async def delete_user(
     
     invalidate_cache("admin_stats")
     
-    return {"message": "用戶刪除成功"}
+    return {"message": "使用者刪除成功"}
 @router.get("/vector-store/info")
 async def get_vector_store_info(
     current_user: dict = Depends(get_current_admin_user)

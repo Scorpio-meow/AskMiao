@@ -1,6 +1,6 @@
-import React, { useRef, useEffect, useState, useCallback } from 'react';
+import React, { useRef, useEffect, useLayoutEffect, useState, useCallback } from 'react';
 import { ChatInputAreaProps, ChatAttachment } from './types';
-import { Tooltip, Spinner, Icon } from '../../components/ui';
+import { Tooltip, Icon } from '../../components/ui';
 import styles from './ChatInputArea.module.css';
 const formatFileSize = (bytes?: number): string => {
   if (!bytes) return '';
@@ -19,11 +19,17 @@ const getBadgeClass = (filename: string): { className: string; label: string } =
   }
   return { className: '', label: ext ? ext.toUpperCase() : 'FILE' };
 };
+// 觸控裝置聚焦輸入框會彈出螢幕鍵盤，只在有滑鼠等精確指標的裝置自動聚焦
+const canAutoFocus = () => window.matchMedia('(pointer: fine)').matches;
+// 支援 field-sizing 的瀏覽器由 CSS 自動長高，其餘才用 JS 計算高度
+const supportsFieldSizing = typeof CSS !== 'undefined' && CSS.supports('field-sizing', 'content');
 export const ChatInputArea: React.FC<ChatInputAreaProps> = ({
   value,
   onChange,
   onSend,
-  loading,
+  onStop,
+  sending,
+  streamingHere,
   disabled = false,
   attachments = [],
   onAddAttachments,
@@ -71,10 +77,14 @@ export const ChatInputArea: React.FC<ChatInputAreaProps> = ({
       }
     });
   }, [onAddAttachments]);
+  const hasContent = Boolean(value.trim()) || attachments.length > 0;
+  const canSend = hasContent && !sending && !disabled;
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    // 注音、倉頡等輸入法組字時按 Enter 是在選字，不能當成送出
+    if (e.nativeEvent.isComposing || e.keyCode === 229) return;
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
-      if (!loading && !disabled && (value.trim() || attachments.length > 0)) {
+      if (canSend) {
         onSend();
       }
     }
@@ -105,7 +115,10 @@ export const ChatInputArea: React.FC<ChatInputAreaProps> = ({
   const handleDragLeave = (e: React.DragEvent) => {
     e.preventDefault();
     e.stopPropagation();
-    setIsDragging(false);
+    // 移到子元素上也會觸發 dragleave，只有真的離開輸入區才取消提示
+    if (!e.currentTarget.contains(e.relatedTarget as Node | null)) {
+      setIsDragging(false);
+    }
   };
   const handleDrop = (e: React.DragEvent) => {
     e.preventDefault();
@@ -121,12 +134,29 @@ export const ChatInputArea: React.FC<ChatInputAreaProps> = ({
       e.target.value = '';
     }
   };
+  // 不支援 field-sizing 時依內容調整高度，上限由 CSS 的 max-height 決定
+  useLayoutEffect(() => {
+    const textarea = textareaRef.current;
+    if (supportsFieldSizing || !textarea) return;
+    textarea.style.height = 'auto';
+    const maxHeight = parseFloat(getComputedStyle(textarea).maxHeight);
+    const nextHeight = Number.isNaN(maxHeight) ? textarea.scrollHeight : Math.min(textarea.scrollHeight, maxHeight);
+    textarea.style.height = `${nextHeight}px`;
+    textarea.style.overflowY = textarea.scrollHeight > nextHeight ? 'auto' : 'hidden';
+  }, [value]);
   useEffect(() => {
-    if (!loading && textareaRef.current) {
-      textareaRef.current.focus();
+    if (sending || !canAutoFocus()) return;
+    const active = document.activeElement;
+    // 使用者正在操作其他元素時不搶焦點
+    if (!active || active === document.body) {
+      textareaRef.current?.focus();
     }
-  }, [loading]);
-  const hasContent = Boolean(value.trim()) || attachments.length > 0;
+  }, [sending]);
+  const hint = streamingHere
+    ? '回答產生中，可以先輸入下一個問題'
+    : sending
+      ? '其他對話的回答仍在產生中，完成後才能傳送'
+      : null;
   return (
     <div className={styles.container}>
       <div
@@ -137,27 +167,27 @@ export const ChatInputArea: React.FC<ChatInputAreaProps> = ({
       >
         {/* 附件預覽列 */}
         {attachments.length > 0 && (
-          <div className={styles.attachmentPreviewBar}>
+          <ul className={styles.attachmentPreviewBar} role="list" aria-label="待傳送的附件">
             {attachments.map((att, idx) => {
               const isImg = att.file_type.startsWith('image/') || Boolean(att.data_url?.startsWith('data:image/'));
               const badge = getBadgeClass(att.filename);
               if (isImg && att.data_url) {
                 return (
-                  <div key={att.id || idx} className={styles.imagePreviewCard}>
+                  <li key={att.id || idx} className={styles.imagePreviewCard}>
                     <img src={att.data_url} alt={att.filename} className={styles.imagePreviewThumb} />
                     <button
                       type="button"
                       className={styles.removeAttachmentBtn}
                       onClick={() => onRemoveAttachment && onRemoveAttachment(idx)}
-                      title="移除圖片"
+                      aria-label={`移除圖片 ${att.filename}`}
                     >
                       <Icon name="close" size={12} />
                     </button>
-                  </div>
+                  </li>
                 );
               }
               return (
-                <div key={att.id || idx} className={styles.filePreviewCard}>
+                <li key={att.id || idx} className={styles.filePreviewCard}>
                   <span className={`${styles.fileFormatBadge} ${badge.className}`}>
                     {badge.label}
                   </span>
@@ -169,31 +199,31 @@ export const ChatInputArea: React.FC<ChatInputAreaProps> = ({
                     type="button"
                     className={styles.removeFileBtn}
                     onClick={() => onRemoveAttachment && onRemoveAttachment(idx)}
-                    title="移除檔案"
+                    aria-label={`移除檔案 ${att.filename}`}
                   >
                     <Icon name="close" size={14} />
                   </button>
-                </div>
+                </li>
               );
             })}
-          </div>
+          </ul>
         )}
         <div className={styles.inputRow}>
           {/* 上傳檔案/圖片按鈕 */}
           <input
             type="file"
             ref={fileInputRef}
-            style={{ display: 'none' }}
+            className={styles.hiddenFileInput}
             multiple
             accept=".png,.jpg,.jpeg,.webp,.gif,.pdf,.doc,.docx,.ppt,.pptx,.xls,.xlsx,.csv,.txt,.md,.json,.js,.ts,.py,.html,.css"
             onChange={handleFileInputChange}
           />
-          <Tooltip title="上傳檔案或圖片 (亦支援截圖貼上 Ctrl+V / 拖曳)">
+          <Tooltip title="上傳檔案或圖片（也可以貼上截圖或拖曳檔案）">
             <button
               type="button"
               className={styles.attachButton}
               onClick={() => fileInputRef.current?.click()}
-              disabled={loading || disabled}
+              disabled={disabled}
               aria-label="上傳檔案或圖片"
             >
               <Icon name="upload" size={18} />
@@ -203,35 +233,49 @@ export const ChatInputArea: React.FC<ChatInputAreaProps> = ({
             ref={textareaRef}
             rows={1}
             className={styles.textarea}
-            placeholder="請輸入您的問題... (支援多行、貼上圖片或拖曳檔案)"
+            placeholder="輸入您的問題..."
+            aria-label="輸入訊息"
             value={value}
             onChange={(e) => onChange(e.target.value)}
             onKeyDown={handleKeyDown}
             onPaste={handlePaste}
-            disabled={loading || disabled}
+            disabled={disabled}
           />
-          <Tooltip title="發送訊息 (Enter)">
-            <button
-              type="button"
-              className={`${styles.sendButton} ${hasContent && !loading ? styles.sendButtonActive : ''}`}
-              onClick={onSend}
-              disabled={loading || disabled || !hasContent}
-              aria-label="發送訊息"
-            >
-              {loading ? (
-                <Spinner size={18} color="var(--color-primary)" />
-              ) : (
+          {streamingHere ? (
+            <Tooltip title="停止產生回答">
+              <button
+                type="button"
+                className={`${styles.sendButton} ${styles.stopButton}`}
+                onClick={onStop}
+                aria-label="停止產生回答"
+              >
+                <Icon name="stop" size={16} />
+              </button>
+            </Tooltip>
+          ) : (
+            <Tooltip title="發送訊息 (Enter)">
+              <button
+                type="button"
+                className={`${styles.sendButton} ${canSend ? styles.sendButtonActive : ''}`}
+                onClick={onSend}
+                disabled={!canSend}
+                aria-label="發送訊息"
+              >
                 <Icon name="send" size={18} />
-              )}
-            </button>
-          </Tooltip>
+              </button>
+            </Tooltip>
+          )}
         </div>
       </div>
       <div className={styles.hintRow}>
-        <span className={styles.dragHint}>
-          <Icon name="image" size={13} /> 支援圖片貼上與各類文件解析
-        </span>
-        <span className={styles.hint}>按 Enter 發送，Shift + Enter 換行</span>
+        {hint ? (
+          <span className={styles.hint}>{hint}</span>
+        ) : (
+          <span className={styles.dragHint}>
+            <Icon name="image" size={13} /> 可貼上截圖或拖曳檔案
+          </span>
+        )}
+        <span className={`${styles.hint} ${styles.keyboardHint}`}>按 Enter 發送，Shift + Enter 換行</span>
       </div>
     </div>
   );

@@ -1,17 +1,25 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef, useId } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import api from '../../services/api';
+import api, { Conversation, Message } from '../../services/api';
 import { useChat } from '../../hooks/useChat';
-import { SnackbarState, ModelDetail } from './types';
+import { useDocumentTitle } from '../../hooks/useDocumentTitle';
+import { copyText } from '../../utils/clipboard';
+import { SnackbarState, ModelDetail, ChatAttachment } from './types';
 import ChatSidebar from './ChatSidebar';
 import ChatHeader from './ChatHeader';
 import ChatMessageList from './ChatMessageList';
 import ChatInputArea from './ChatInputArea';
-import { Snackbar, Alert } from '../../components/ui';
+import { Snackbar, Alert, ConfirmDialog } from '../../components/ui';
 import styles from './Chat.module.css';
+const describeSendError = (err: unknown): string => {
+  if (err instanceof TypeError) return '無法連線到伺服器，請檢查網路後再試';
+  if (err instanceof Error && err.message) return err.message;
+  return '請稍後再試';
+};
 export const ChatPage: React.FC = () => {
   const location = useLocation();
   const navigate = useNavigate();
+  const sidebarId = useId();
   const [thinkOpenArr, setThinkOpenArr] = useState<Record<number | string, boolean>>({});
   const [newMessage, setNewMessage] = useState('');
   const [availableModels, setAvailableModels] = useState<string[]>([]);
@@ -21,28 +29,38 @@ export const ChatPage: React.FC = () => {
   const [reasoningEffort, setReasoningEffort] = useState<string>('medium');
   const [modelsLoading, setModelsLoading] = useState(false);
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
+  const [pendingDelete, setPendingDelete] = useState<Conversation | null>(null);
+  const [deleting, setDeleting] = useState(false);
   const [snackbar, setSnackbar] = useState<SnackbarState>({
     open: false,
     message: '',
     severity: 'info',
+    key: 0,
   });
-  const messagesEndRef = useRef<HTMLDivElement | null>(null);
-  const messagesTopRef = useRef<HTMLDivElement | null>(null);
+  const showSnackbar = useCallback((message: string, severity: SnackbarState['severity']) => {
+    setSnackbar((prev) => ({ open: true, message, severity, key: prev.key + 1 }));
+  }, []);
   const {
-    loading,
+    conversationsLoading,
+    conversationsError,
+    conversationLoading,
     loadingMore,
+    sending,
+    isStreamingInView,
+    streamingMessageId,
     conversations,
     currentConversation,
     messages,
-    setMessages,
     hasMoreMessages,
     fetchConversations,
     fetchConversation,
     loadMoreMessages,
     sendChatMessage,
+    stopGenerating,
     deleteConversation,
     startNewConversation,
-  } = useChat();
+  } = useChat((message) => showSnackbar(message, 'error'));
+  useDocumentTitle(currentConversation?.title || '聊天');
   const selectedModelRef = useRef(selectedModel);
   const userSelectedModelRef = useRef(userSelectedModel);
   useEffect(() => {
@@ -51,9 +69,6 @@ export const ChatPage: React.FC = () => {
   useEffect(() => {
     userSelectedModelRef.current = userSelectedModel;
   }, [userSelectedModel]);
-  const scrollToBottom = useCallback(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, []);
   const loadAvailableModels = useCallback(async (force = false) => {
     if (!force && (window as any).__tagsLoading) {
       return;
@@ -138,18 +153,13 @@ export const ChatPage: React.FC = () => {
       [id]: !prev[id],
     }));
   };
-  const handleCopyMessage = (text: string) => {
-    if (navigator.clipboard) {
-      navigator.clipboard.writeText(text);
-      setSnackbar({
-        open: true,
-        message: '已複製內容至剪貼簿',
-        severity: 'success',
-      });
-    }
+  const handleCopyMessage = async (text: string) => {
+    const copied = await copyText(text);
+    showSnackbar(copied ? '已複製內容至剪貼簿' : '無法自動複製，請手動選取文字後複製', copied ? 'success' : 'error');
   };
-  const [attachments, setAttachments] = useState<import('./types').ChatAttachment[]>([]);
+  const [attachments, setAttachments] = useState<ChatAttachment[]>([]);
   const handleSend = async () => {
+    if (sending) return;
     if (!newMessage.trim() && attachments.length === 0) return;
     const toSend = newMessage;
     const toSendAttachments = [...attachments];
@@ -157,25 +167,35 @@ export const ChatPage: React.FC = () => {
     setAttachments([]);
     try {
       await sendChatMessage(toSend, selectedModel, reasoningEffort, toSendAttachments);
-    } catch {
-      setSnackbar({
-        open: true,
-        message: '發送訊息失敗，請稍後再試',
-        severity: 'error',
-      });
+    } catch (err) {
+      // 訊息沒送出去：把內容放回輸入框，使用者已開始輸入新內容時則不覆蓋
+      setNewMessage((current) => current || toSend);
+      setAttachments((current) => (current.length > 0 ? current : toSendAttachments));
+      showSnackbar(`訊息沒有送出：${describeSendError(err)}`, 'error');
     }
   };
-  const handleSelectConversation = async (id: number) => {
-    await fetchConversation(id);
+  const handleRetry = (failedMessage: Message) => {
+    const index = messages.indexOf(failedMessage);
+    const question = messages.slice(0, index).reverse().find((m) => m.is_user);
+    if (!question || sending) return;
+    sendChatMessage(question.content, selectedModel, reasoningEffort, question.attachments).catch((err) => {
+      showSnackbar(`訊息沒有送出：${describeSendError(err)}`, 'error');
+    });
   };
-  const handleDeleteConversation = async (id: number) => {
-    const ok = await deleteConversation(id);
+  const handleSelectConversation = useCallback(async (id: number) => {
+    await fetchConversation(id);
+  }, [fetchConversation]);
+  const handleRequestDelete = (id: number) => {
+    setPendingDelete(conversations.find((c) => c.id === id) ?? null);
+  };
+  const handleConfirmDelete = async () => {
+    if (!pendingDelete) return;
+    setDeleting(true);
+    const ok = await deleteConversation(pendingDelete.id);
+    setDeleting(false);
+    setPendingDelete(null);
     if (ok) {
-      setSnackbar({
-        open: true,
-        message: '對話已成功刪除',
-        severity: 'info',
-      });
+      showSnackbar('對話已刪除', 'success');
     }
   };
   useEffect(() => {
@@ -189,26 +209,27 @@ export const ChatPage: React.FC = () => {
       setNewMessage(location.state.prefillPrompt);
       navigate(location.pathname, { replace: true, state: {} });
     } else if (location.state?.conversationId) {
+      const conversationId = location.state.conversationId;
       queueMicrotask(() => {
-        handleSelectConversation(location.state.conversationId);
+        handleSelectConversation(conversationId);
       });
       navigate(location.pathname, { replace: true, state: {} });
     }
-  }, [location, navigate]);
-  useEffect(() => {
-    scrollToBottom();
-  }, [messages, scrollToBottom]);
+  }, [location, navigate, handleSelectConversation]);
   return (
     <div className={styles.chatContainer}>
       <ChatSidebar
+        id={sidebarId}
         open={mobileSidebarOpen}
         onClose={() => setMobileSidebarOpen(false)}
         conversations={conversations}
         currentConversation={currentConversation}
         onSelectConversation={handleSelectConversation}
         onNewConversation={startNewConversation}
-        onDeleteConversation={handleDeleteConversation}
-        loading={loading}
+        onDeleteConversation={handleRequestDelete}
+        loading={conversationsLoading}
+        loadError={conversationsError}
+        onRetryLoad={fetchConversations}
       />
       <div className={styles.mainArea}>
         <ChatHeader
@@ -221,10 +242,14 @@ export const ChatPage: React.FC = () => {
           onRefreshModels={() => loadAvailableModels(true)}
           currentConversation={currentConversation}
           onOpenSidebar={() => setMobileSidebarOpen(true)}
+          sidebarOpen={mobileSidebarOpen}
+          sidebarId={sidebarId}
         />
         <ChatMessageList
           messages={messages}
-          loading={loading}
+          conversationLoading={conversationLoading}
+          sending={sending}
+          streamingMessageId={streamingMessageId}
           loadingMore={loadingMore}
           hasMoreMessages={hasMoreMessages}
           onLoadMore={loadMoreMessages}
@@ -232,22 +257,34 @@ export const ChatPage: React.FC = () => {
           onToggleThinking={handleToggleThinking}
           onCopyMessage={handleCopyMessage}
           onSelectPrompt={setNewMessage}
-          messagesEndRef={messagesEndRef}
-          messagesTopRef={messagesTopRef}
+          onRetry={handleRetry}
         />
         <ChatInputArea
           value={newMessage}
           onChange={setNewMessage}
           onSend={handleSend}
-          loading={loading}
+          onStop={stopGenerating}
+          sending={sending}
+          streamingHere={isStreamingInView}
           attachments={attachments}
           onAddAttachments={(newAtts) => setAttachments((prev) => [...prev, ...newAtts])}
           onRemoveAttachment={(idx) => setAttachments((prev) => prev.filter((_, i) => i !== idx))}
         />
       </div>
+      <ConfirmDialog
+        open={Boolean(pendingDelete)}
+        title="刪除這段對話？"
+        description={`「${pendingDelete?.title || '未命名對話'}」的所有訊息都會被刪除，刪除後無法復原。`}
+        confirmLabel="刪除"
+        destructive
+        loading={deleting}
+        onConfirm={handleConfirmDelete}
+        onCancel={() => setPendingDelete(null)}
+      />
       <Snackbar
+        key={snackbar.key}
         open={snackbar.open}
-        autoHideDuration={3000}
+        autoHideDuration={snackbar.severity === 'error' ? 6000 : 3000}
         onClose={() => setSnackbar((prev) => ({ ...prev, open: false }))}
       >
         <Alert

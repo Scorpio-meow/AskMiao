@@ -1,7 +1,20 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { chatService, apiToolService, mcpService } from '../services/api';
-import { Button, Icon, Spinner, Switch, Snackbar } from '../components/ui';
+import { useDocumentTitle } from '../hooks/useDocumentTitle';
+import {
+  Alert,
+  Button,
+  ConfirmDialog,
+  Dialog,
+  DialogActions,
+  DialogContent,
+  DialogForm,
+  DialogTitle,
+  Icon,
+  Snackbar,
+  Switch
+} from '../components/ui';
 import styles from './AiTools.module.css';
 const DEFAULT_TOOLS_METADATA = [
   {
@@ -163,6 +176,53 @@ paths:
                   description: 優先等級
               required: [ticket_id, title]`
 };
+const EMPTY_MCP_FORM = {
+  name: '',
+  display_name: '',
+  description: '',
+  transport_type: 'stdio',
+  command: '',
+  args_json: '[]',
+  env_vars_json: '{}',
+  url: '',
+  headers_json: '{}',
+  timeout: 30
+};
+const EMPTY_TOOL_FORM = {
+  name: '',
+  display_name: '',
+  description: '',
+  method: 'GET',
+  url: '',
+  auth_type: 'none',
+  auth_token: '',
+  timeout: 15,
+  parameters_json: '{\n  "type": "object",\n  "properties": {\n    "query": {\n      "type": "string",\n      "description": "參數說明"\n    }\n  },\n  "required": ["query"]\n}'
+};
+// 解析 JSON 欄位；失敗時指出是哪個欄位，讓錯誤訊息能對應到表單上的位置
+const parseJsonField = (value, fieldLabel) => {
+  if (!value) return undefined;
+  try {
+    return JSON.parse(value);
+  } catch (e) {
+    throw new Error(`「${fieldLabel}」不是有效的 JSON：${e.message}`, { cause: e });
+  }
+};
+const getRequestErrorMessage = (err, fallback) => {
+  const detail = err?.response?.data?.detail;
+  if (typeof detail === 'string' && detail) return detail;
+  if (err instanceof Error && err.message && !err.response) return err.message;
+  return fallback;
+};
+const matchesQuery = (query, ...values) =>
+  values.some((value) => typeof value === 'string' && value.toLowerCase().includes(query));
+const CATEGORY_FILTERS = [
+  { value: 'all', label: '全部工具' },
+  { value: 'mcp', label: 'MCP 協定伺服器' },
+  { value: 'knowledge', label: '知識庫與資料' },
+  { value: 'web', label: '聯網與閱讀' },
+  { value: 'custom_api', label: '自訂 API 工具' },
+];
 export default function AiTools() {
   const navigate = useNavigate();
   const [defaultTools, setDefaultTools] = useState(DEFAULT_TOOLS_METADATA);
@@ -171,8 +231,12 @@ export default function AiTools() {
   const [loading, setLoading] = useState(false);
   const [activeCategory, setActiveCategory] = useState('all');
   const [searchQuery, setSearchQuery] = useState('');
-  // 提示訊息
-  const [snackbar, setSnackbar] = useState({ open: false, message: '', severity: 'info' });
+  useDocumentTitle('AI 工具');
+  // 提示訊息（對話框開啟時的錯誤改顯示在對話框內）
+  const [snackbar, setSnackbar] = useState({ open: false, message: '', severity: 'info', key: 0 });
+  const [dialogError, setDialogError] = useState('');
+  const [pendingDelete, setPendingDelete] = useState(null);
+  const [deleting, setDeleting] = useState(false);
   // OpenAPI 匯入 Modal 狀態
   const [importModalOpen, setImportModalOpen] = useState(false);
   const [specInput, setSpecInput] = useState('');
@@ -185,17 +249,8 @@ export default function AiTools() {
   // 手動自訂 API 工具 Modal 狀態
   const [toolModalOpen, setToolModalOpen] = useState(false);
   const [editingTool, setEditingTool] = useState(null);
-  const [formData, setFormData] = useState({
-    name: '',
-    display_name: '',
-    description: '',
-    method: 'GET',
-    url: '',
-    auth_type: 'none',
-    auth_token: '',
-    timeout: 15,
-    parameters_json: '{\n  "type": "object",\n  "properties": {}\n}'
-  });
+  const [formData, setFormData] = useState(EMPTY_TOOL_FORM);
+  const [savingTool, setSavingTool] = useState(false);
   // 自訂 API 工具線上測試 Modal 狀態
   const [testModalOpen, setTestModalOpen] = useState(false);
   const [testingTool, setTestingTool] = useState(null);
@@ -206,18 +261,8 @@ export default function AiTools() {
   const [mcpModalOpen, setMcpModalOpen] = useState(false);
   const [mcpPresets, setMcpPresets] = useState([]);
   const [editingMcpServer, setEditingMcpServer] = useState(null);
-  const [mcpFormData, setMcpFormData] = useState({
-    name: '',
-    display_name: '',
-    description: '',
-    transport_type: 'stdio',
-    command: 'python',
-    args_json: '[]',
-    env_vars_json: '{}',
-    url: '',
-    headers_json: '{}',
-    timeout: 30
-  });
+  const [mcpFormData, setMcpFormData] = useState(EMPTY_MCP_FORM);
+  const [savingMcp, setSavingMcp] = useState(false);
   // MCP 工具線上測試 Modal 狀態
   const [mcpTestModalOpen, setMcpTestModalOpen] = useState(false);
   const [testingMcpServer, setTestingMcpServer] = useState(null);
@@ -226,6 +271,9 @@ export default function AiTools() {
   const [mcpTesting, setMcpTesting] = useState(false);
   const [mcpTestResult, setMcpTestResult] = useState(null);
   const [discoveringId, setDiscoveringId] = useState(null);
+  const showSnackbar = (message, severity) => {
+    setSnackbar((prev) => ({ open: true, message, severity, key: prev.key + 1 }));
+  };
   // 載入後端工具清單與 MCP 伺服器
   const fetchAllTools = useCallback(async () => {
     try {
@@ -279,32 +327,53 @@ export default function AiTools() {
       setCustomTools((prev) =>
         prev.map((t) => (t.id === toolId ? { ...t, is_enabled: res.is_enabled } : t))
       );
-      setSnackbar({ open: true, message: res.message, severity: 'success' });
+      showSnackbar(res.message, 'success');
     } catch (err) {
       console.warn('切換工具狀態失敗:', err);
-      setSnackbar({ open: true, message: '切換狀態失敗', severity: 'error' });
+      showSnackbar(getRequestErrorMessage(err, '切換狀態失敗'), 'error');
     }
   };
-  // 刪除自訂 API 工具
-  const handleDeleteCustomTool = async (toolId) => {
-    if (!window.confirm('確定要刪除此自訂 API 工具嗎？')) return;
+  // 刪除自訂 API 工具或 MCP 伺服器（先經過確認對話框）
+  const handleConfirmDelete = async () => {
+    if (!pendingDelete) return;
+    const { type, item } = pendingDelete;
+    setDeleting(true);
     try {
-      await apiToolService.deleteTool(toolId);
-      setCustomTools((prev) => prev.filter((t) => t.id !== toolId));
-      setSnackbar({ open: true, message: '工具已成功刪除', severity: 'success' });
+      if (type === 'tool') {
+        await apiToolService.deleteTool(item.id);
+        setCustomTools((prev) => prev.filter((t) => t.id !== item.id));
+        showSnackbar(`已刪除工具「${item.display_name}」`, 'success');
+      } else {
+        await mcpService.deleteServer(item.id);
+        setMcpServers((prev) => prev.filter((s) => s.id !== item.id));
+        showSnackbar(`已刪除 MCP 伺服器「${item.display_name}」`, 'success');
+      }
     } catch (err) {
-      console.warn('刪除工具失敗:', err);
-      setSnackbar({ open: true, message: '刪除失敗', severity: 'error' });
+      console.warn('刪除失敗:', err);
+      showSnackbar(getRequestErrorMessage(err, '刪除失敗，請稍後再試'), 'error');
+    } finally {
+      setDeleting(false);
+      setPendingDelete(null);
     }
+  };
+  // 開啟 OpenAPI 匯入 Modal：輸入框保持空白，需要範例時再按按鈕載入
+  const handleOpenImportModal = () => {
+    setSpecInput('');
+    setDefaultBaseUrl('');
+    setParseResult(null);
+    setGlobalAuthToken('');
+    setDialogError('');
+    setImportModalOpen(true);
   };
   // 解析 OpenAPI 規格
   const handleParseSpec = async () => {
     if (!specInput.trim()) {
-      setSnackbar({ open: true, message: '請輸入 OpenAPI 規格內容或網址', severity: 'warning' });
+      setDialogError('請輸入 OpenAPI 規格內容或網址');
       return;
     }
     try {
       setParsing(true);
+      setDialogError('');
       const res = await apiToolService.parseOpenApiSpec(specInput, defaultBaseUrl);
       if (res?.data) {
         setParseResult(res.data);
@@ -315,11 +384,7 @@ export default function AiTools() {
         setSelectedEndpoints(sel);
       }
     } catch (err) {
-      setSnackbar({
-        open: true,
-        message: err.response?.data?.detail || '解析 OpenAPI 規格失敗，請檢查格式',
-        severity: 'error'
-      });
+      setDialogError(getRequestErrorMessage(err, '解析 OpenAPI 規格失敗，請檢查格式'));
     } finally {
       setParsing(false);
     }
@@ -329,11 +394,12 @@ export default function AiTools() {
     if (!parseResult) return;
     const toImport = parseResult.endpoints.filter((ep) => selectedEndpoints[ep.name]);
     if (toImport.length === 0) {
-      setSnackbar({ open: true, message: '請至少勾選一個要匯入的 API 端點', severity: 'warning' });
+      setDialogError('請至少勾選一個要匯入的 API 端點');
       return;
     }
     try {
       setImporting(true);
+      setDialogError('');
       const authConfig = globalAuthToken ? { token: globalAuthToken } : {};
       const authType = globalAuthToken ? 'bearer' : 'none';
       const res = await apiToolService.importTools({
@@ -342,14 +408,14 @@ export default function AiTools() {
         global_auth_type: authType,
         global_auth_config: authConfig
       });
-      setSnackbar({ open: true, message: res.message, severity: 'success' });
       setImportModalOpen(false);
       setParseResult(null);
       setSpecInput('');
+      showSnackbar(res.message, 'success');
       fetchAllTools();
     } catch (err) {
       console.warn('匯入工具失敗:', err);
-      setSnackbar({ open: true, message: '匯入工具失敗', severity: 'error' });
+      setDialogError(getRequestErrorMessage(err, '匯入工具失敗'));
     } finally {
       setImporting(false);
     }
@@ -371,28 +437,17 @@ export default function AiTools() {
       });
     } else {
       setEditingTool(null);
-      setFormData({
-        name: '',
-        display_name: '',
-        description: '',
-        method: 'GET',
-        url: '',
-        auth_type: 'none',
-        auth_token: '',
-        timeout: 15,
-        parameters_json: '{\n  "type": "object",\n  "properties": {\n    "query": {\n      "type": "string",\n      "description": "參數說明"\n    }\n  },\n  "required": ["query"]\n}'
-      });
+      setFormData(EMPTY_TOOL_FORM);
     }
+    setDialogError('');
     setToolModalOpen(true);
   };
   // 儲存自訂 API 工具
   const handleSaveTool = async (e) => {
     e.preventDefault();
     try {
-      let parsedSchema = {};
-      if (formData.parameters_json) {
-        parsedSchema = JSON.parse(formData.parameters_json);
-      }
+      setDialogError('');
+      const parsedSchema = parseJsonField(formData.parameters_json, '參數 JSON Schema 定義') || {};
       const payload = {
         name: formData.name,
         display_name: formData.display_name,
@@ -404,21 +459,20 @@ export default function AiTools() {
         timeout: Number(formData.timeout) || 15,
         parameters_schema: parsedSchema
       };
+      setSavingTool(true);
       if (editingTool) {
         await apiToolService.updateTool(editingTool.id, payload);
-        setSnackbar({ open: true, message: '工具更新成功', severity: 'success' });
+        showSnackbar('工具更新成功', 'success');
       } else {
         await apiToolService.createTool(payload);
-        setSnackbar({ open: true, message: '自訂 API 工具建立成功', severity: 'success' });
+        showSnackbar('自訂 API 工具建立成功', 'success');
       }
       setToolModalOpen(false);
       fetchAllTools();
     } catch (err) {
-      setSnackbar({
-        open: true,
-        message: err.response?.data?.detail || '儲存失敗，請檢查參數格式與必填欄位',
-        severity: 'error'
-      });
+      setDialogError(getRequestErrorMessage(err, '儲存失敗，請檢查參數格式與必填欄位'));
+    } finally {
+      setSavingTool(false);
     }
   };
   // 開啟自訂 API 線上測試 Modal
@@ -445,7 +499,7 @@ export default function AiTools() {
       setTestResult({
         status_code: 500,
         is_success: false,
-        error: err.response?.data?.detail || '測試請求發送失敗'
+        error: getRequestErrorMessage(err, '測試請求發送失敗')
       });
     } finally {
       setTesting(false);
@@ -459,22 +513,10 @@ export default function AiTools() {
       setMcpServers((prev) =>
         prev.map((s) => (s.id === serverId ? { ...s, is_enabled: res.is_enabled } : s))
       );
-      setSnackbar({ open: true, message: res.message, severity: 'success' });
+      showSnackbar(res.message, 'success');
     } catch (err) {
       console.warn('切換 MCP 狀態失敗:', err);
-      setSnackbar({ open: true, message: '切換狀態失敗', severity: 'error' });
-    }
-  };
-  // 刪除 MCP 伺服器
-  const handleDeleteMcpServer = async (serverId) => {
-    if (!window.confirm('確定要刪除此 MCP 伺服器嗎？')) return;
-    try {
-      await mcpService.deleteServer(serverId);
-      setMcpServers((prev) => prev.filter((s) => s.id !== serverId));
-      setSnackbar({ open: true, message: 'MCP 伺服器已成功刪除', severity: 'success' });
-    } catch (err) {
-      console.warn('刪除 MCP 伺服器失敗:', err);
-      setSnackbar({ open: true, message: '刪除失敗', severity: 'error' });
+      showSnackbar(getRequestErrorMessage(err, '切換狀態失敗'), 'error');
     }
   };
   // 探索 MCP 工具清單
@@ -485,14 +527,10 @@ export default function AiTools() {
       setMcpServers((prev) =>
         prev.map((s) => (s.id === serverId ? res.server : s))
       );
-      setSnackbar({ open: true, message: res.message, severity: 'success' });
+      showSnackbar(res.message, 'success');
     } catch (err) {
       console.warn('探索 MCP 伺服器失敗:', err);
-      setSnackbar({
-        open: true,
-        message: err.response?.data?.detail || '連線與探索 MCP 工具失敗',
-        severity: 'error'
-      });
+      showSnackbar(getRequestErrorMessage(err, '連線與探索 MCP 工具失敗'), 'error');
       // 重新整理取得更新後的 error status
       fetchAllTools();
     } finally {
@@ -508,7 +546,7 @@ export default function AiTools() {
         display_name: server.display_name,
         description: server.description || '',
         transport_type: server.transport_type || 'stdio',
-        command: server.command || 'python',
+        command: server.command || '',
         args_json: JSON.stringify(server.args || [], null, 2),
         env_vars_json: JSON.stringify(server.env_vars || {}, null, 2),
         url: server.url || '',
@@ -517,19 +555,9 @@ export default function AiTools() {
       });
     } else {
       setEditingMcpServer(null);
-      setMcpFormData({
-        name: 'mcp_custom',
-        display_name: '自訂 MCP 伺服器',
-        description: '提供客製化本地或遠端 MCP 工具服務',
-        transport_type: 'stdio',
-        command: 'python',
-        args_json: '[]',
-        env_vars_json: '{}',
-        url: '',
-        headers_json: '{}',
-        timeout: 30
-      });
+      setMcpFormData(EMPTY_MCP_FORM);
     }
+    setDialogError('');
     setMcpModalOpen(true);
   };
   // 套用 MCP 官方範本
@@ -551,39 +579,33 @@ export default function AiTools() {
   const handleSaveMcpServer = async (e) => {
     e.preventDefault();
     try {
-      let parsedArgs = [];
-      let parsedEnv = {};
-      let parsedHeaders = {};
-      if (mcpFormData.args_json) parsedArgs = JSON.parse(mcpFormData.args_json);
-      if (mcpFormData.env_vars_json) parsedEnv = JSON.parse(mcpFormData.env_vars_json);
-      if (mcpFormData.headers_json) parsedHeaders = JSON.parse(mcpFormData.headers_json);
+      setDialogError('');
       const payload = {
         name: mcpFormData.name,
         display_name: mcpFormData.display_name,
         description: mcpFormData.description,
         transport_type: mcpFormData.transport_type,
         command: mcpFormData.command,
-        args: parsedArgs,
-        env_vars: parsedEnv,
+        args: parseJsonField(mcpFormData.args_json, '指令參數清單') || [],
+        env_vars: parseJsonField(mcpFormData.env_vars_json, '環境變數配置') || {},
         url: mcpFormData.url,
-        headers: parsedHeaders,
+        headers: parseJsonField(mcpFormData.headers_json, '自訂 HTTP Headers') || {},
         timeout: Number(mcpFormData.timeout) || 30
       };
+      setSavingMcp(true);
       if (editingMcpServer) {
         await mcpService.updateServer(editingMcpServer.id, payload);
-        setSnackbar({ open: true, message: 'MCP 伺服器配置更新成功', severity: 'success' });
+        showSnackbar('MCP 伺服器配置更新成功', 'success');
       } else {
         await mcpService.createServer(payload);
-        setSnackbar({ open: true, message: 'MCP 伺服器建立成功並已嘗試自動連線', severity: 'success' });
+        showSnackbar('MCP 伺服器建立成功並已嘗試自動連線', 'success');
       }
       setMcpModalOpen(false);
       fetchAllTools();
     } catch (err) {
-      setSnackbar({
-        open: true,
-        message: err.response?.data?.detail || '儲存失敗，請檢查 JSON 欄位格式',
-        severity: 'error'
-      });
+      setDialogError(getRequestErrorMessage(err, '儲存失敗，請檢查 JSON 欄位格式'));
+    } finally {
+      setSavingMcp(false);
     }
   };
   // 開啟 MCP 工具測試 Modal
@@ -610,7 +632,7 @@ export default function AiTools() {
     } catch (err) {
       setMcpTestResult({
         is_success: false,
-        error: err.response?.data?.detail || 'MCP 工具調用失敗'
+        error: getRequestErrorMessage(err, 'MCP 工具調用失敗')
       });
     } finally {
       setMcpTesting(false);
@@ -636,21 +658,37 @@ export default function AiTools() {
       examples: [`請調用 ${t.display_name} 查詢相關資料`, `查詢 ${t.name} 的即時結果`]
     }))
   ];
+  const query = searchQuery.trim().toLowerCase();
   const filteredTools = allUnifiedTools.filter((tool) => {
     let matchesCategory = true;
     if (activeCategory === 'knowledge') matchesCategory = tool.category === 'knowledge';
     else if (activeCategory === 'web') matchesCategory = tool.category === 'web';
     else if (activeCategory === 'custom_api') matchesCategory = tool.isCustom;
-    const query = searchQuery.trim().toLowerCase();
-    const matchesQuery =
-      !query ||
-      tool.displayName?.toLowerCase().includes(query) ||
-      tool.display_name?.toLowerCase().includes(query) ||
-      tool.name.toLowerCase().includes(query) ||
-      tool.summary?.toLowerCase().includes(query) ||
-      tool.description?.toLowerCase().includes(query);
-    return matchesCategory && matchesQuery;
+    const matches = !query || matchesQuery(query, tool.displayName, tool.display_name, tool.name, tool.summary, tool.description, tool.url);
+    return matchesCategory && matches;
   });
+  const filteredServers = mcpServers.filter((server) => (
+    !query || matchesQuery(
+      query,
+      server.display_name,
+      server.name,
+      server.description,
+      server.command,
+      ...(server.args || []),
+      server.url,
+      ...(server.discovered_tools || []).map((t) => t.name)
+    )
+  ));
+  const showServers = activeCategory === 'all' || activeCategory === 'mcp';
+  const showTools = activeCategory !== 'mcp';
+  const nothingMatches = Boolean(query) && (!showServers || filteredServers.length === 0) && (!showTools || filteredTools.length === 0);
+  const categoryCounts = {
+    all: allUnifiedTools.length + totalMcpToolsCount,
+    mcp: mcpServers.length,
+    knowledge: defaultTools.filter((t) => t.category === 'knowledge').length,
+    web: defaultTools.filter((t) => t.category === 'web').length,
+    custom_api: customTools.length,
+  };
   const getMethodClass = (method) => {
     switch (method?.toUpperCase()) {
       case 'GET': return styles.methodGet;
@@ -691,10 +729,7 @@ export default function AiTools() {
             </Button>
             <Button
               variant="secondary"
-              onClick={() => {
-                setSpecInput(SAMPLE_OAS_SPECS.oas30);
-                setImportModalOpen(true);
-              }}
+              onClick={handleOpenImportModal}
               startIcon={<Icon name="upload" size={18} />}
             >
               匯入 OpenAPI 規格
@@ -709,8 +744,8 @@ export default function AiTools() {
             <Button
               variant="secondary"
               onClick={fetchAllTools}
-              disabled={loading}
-              startIcon={loading ? <Spinner size="sm" /> : <Icon name="refresh" size={18} />}
+              loading={loading}
+              startIcon={<Icon name="refresh" size={18} />}
             >
               重新整理狀態
             </Button>
@@ -754,59 +789,44 @@ export default function AiTools() {
       </div>
       {/* 篩選與搜尋列 */}
       <div className={styles.filterBar}>
-        <div className={styles.tabGroup}>
-          <button
-            type="button"
-            className={`${styles.tabBtn} ${activeCategory === 'all' ? styles.tabBtnActive : ''}`}
-            onClick={() => setActiveCategory('all')}
-          >
-            全部工具 ({allUnifiedTools.length + totalMcpToolsCount})
-          </button>
-          <button
-            type="button"
-            className={`${styles.tabBtn} ${activeCategory === 'mcp' ? styles.tabBtnActive : ''}`}
-            onClick={() => setActiveCategory('mcp')}
-          >
-            MCP 協定伺服器 ({mcpServers.length})
-          </button>
-          <button
-            type="button"
-            className={`${styles.tabBtn} ${activeCategory === 'knowledge' ? styles.tabBtnActive : ''}`}
-            onClick={() => setActiveCategory('knowledge')}
-          >
-            知識庫與數據 ({defaultTools.filter((t) => t.category === 'knowledge').length})
-          </button>
-          <button
-            type="button"
-            className={`${styles.tabBtn} ${activeCategory === 'web' ? styles.tabBtnActive : ''}`}
-            onClick={() => setActiveCategory('web')}
-          >
-            聯網與閱讀 ({defaultTools.filter((t) => t.category === 'web').length})
-          </button>
-          <button
-            type="button"
-            className={`${styles.tabBtn} ${activeCategory === 'custom_api' ? styles.tabBtnActive : ''}`}
-            onClick={() => setActiveCategory('custom_api')}
-          >
-            自訂 API 工具 ({customTools.length})
-          </button>
+        <div className={styles.tabGroup} role="group" aria-label="工具分類">
+          {CATEGORY_FILTERS.map((filter) => (
+            <button
+              key={filter.value}
+              type="button"
+              className={`${styles.tabBtn} ${activeCategory === filter.value ? styles.tabBtnActive : ''}`}
+              onClick={() => setActiveCategory(filter.value)}
+              aria-pressed={activeCategory === filter.value}
+            >
+              {filter.label} ({categoryCounts[filter.value]})
+            </button>
+          ))}
         </div>
-        <div className={styles.searchBox}>
+        <search className={styles.searchBox}>
           <Icon name="search" size={16} color="var(--text-tertiary)" />
           <input
-            type="text"
+            type="search"
             className={styles.searchInput}
-            placeholder="搜尋工具名稱、路徑、MCP 或關鍵字..."
+            placeholder="搜尋工具名稱、網址、MCP 伺服器…"
+            aria-label="搜尋工具"
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
           />
-        </div>
+        </search>
       </div>
+      {nothingMatches && (
+        <div className={styles.emptyNotice}>
+          <p>查無符合「{searchQuery.trim()}」的工具或 MCP 伺服器</p>
+          <Button variant="secondary" size="sm" onClick={() => setSearchQuery('')}>
+            清除搜尋
+          </Button>
+        </div>
+      )}
       {/* 1. MCP 伺服器列表區塊 (當 activeCategory === 'mcp' 或 'all' 時展示) */}
-      {(activeCategory === 'all' || activeCategory === 'mcp') && (
-        <div style={{ marginBottom: 'var(--space-8)' }}>
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 'var(--space-4)' }}>
-            <h2 style={{ fontSize: 'var(--font-size-xl)', fontWeight: 'var(--font-weight-bold)', display: 'flex', alignItems: 'center', gap: '8px' }}>
+      {showServers && !(query && filteredServers.length === 0) && (
+        <section className={styles.serverSection} aria-labelledby="mcp-section-title">
+          <div className={styles.sectionHeader}>
+            <h2 className={styles.sectionTitle} id="mcp-section-title">
               <Icon name="build" size={20} color="var(--color-primary)" />
               <span>Model Context Protocol (MCP) 伺服器</span>
             </h2>
@@ -818,65 +838,65 @@ export default function AiTools() {
               新增 MCP 伺服器
             </Button>
           </div>
-          {mcpServers.length === 0 ? (
+          {filteredServers.length === 0 ? (
             <div className={styles.emptyNotice}>
-              尚未配置任何 MCP 伺服器，點擊「新增 MCP 伺服器」即可套用 Time、Filesystem 等預設範本或自訂指令。
+              <p>尚未配置任何 MCP 伺服器，點擊「新增 MCP 伺服器」即可套用 Time、Filesystem 等預設範本或自訂指令。</p>
             </div>
           ) : (
             <div className={styles.toolsList}>
-              {mcpServers.map((server) => {
+              {filteredServers.map((server) => {
                 const isEnabled = server.is_enabled;
                 const isConnected = server.status === 'connected';
                 const isError = server.status === 'error';
                 const tools = server.discovered_tools || [];
                 return (
-                  <div key={server.id} className={styles.toolOuterShell}>
+                  <article key={server.id} className={styles.toolOuterShell} aria-labelledby={`mcp-server-${server.id}`}>
                     <div className={styles.toolInnerCore}>
                       <div className={styles.toolHeader}>
                         <div className={styles.toolIdentity}>
-                          <div className={styles.toolIconBox} style={{ background: 'rgba(245, 158, 11, 0.1)', color: '#d97706' }}>
+                          <div className={`${styles.toolIconBox} ${styles.toolIconBoxMcp}`}>
                             <Icon name="build" size={22} />
                           </div>
                           <div className={styles.toolTitleWrap}>
-                            <div className={styles.toolTitle}>
+                            <h3 className={styles.toolTitle} id={`mcp-server-${server.id}`}>
                               <span className={`${styles.methodBadge} ${styles.methodPost}`}>
                                 {server.transport_type}
                               </span>
                               <span>{server.display_name}</span>
-                            </div>
+                            </h3>
                             <div className={styles.toolIdentifier}>{server.name}</div>
                           </div>
                         </div>
                         <div className={styles.toolStatusWrap}>
                           <span className={styles.categoryTag}>MCP Server</span>
-                          <span className={`${styles.statusPill} ${isConnected ? styles.statusActive : isError ? styles.methodDelete : styles.statusDisabled
-                            }`}>
+                          <span className={`${styles.statusPill} ${isConnected ? styles.statusActive : isError ? styles.statusError : styles.statusDisabled}`}>
                             <span className={styles.statusDot} />
                             <span>
                               {isConnected ? '已連線 (Connected)' : isError ? '連線錯誤 (Error)' : '未連線'}
                             </span>
                           </span>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                            <span style={{ fontSize: 'var(--font-size-xs)', color: isEnabled ? 'var(--color-success)' : 'var(--text-tertiary)' }}>
+                          <div className={styles.switchGroup}>
+                            <span className={`${styles.enabledText} ${isEnabled ? styles.enabledTextOn : ''}`}>
                               {isEnabled ? '已啟用' : '已停用'}
                             </span>
                             <Switch
                               checked={isEnabled}
                               onChange={() => handleToggleMcpServer(server.id)}
+                              aria-label={`啟用 MCP 伺服器「${server.display_name}」`}
                             />
                           </div>
                         </div>
                       </div>
                       <p className={styles.toolDescription}>{server.description || 'MCP 協定外部工具伺服器。'}</p>
                       {/* 連線執行配置 */}
-                      <div className={styles.specBlock} style={{ marginBottom: 'var(--space-4)' }}>
+                      <div className={`${styles.specBlock} ${styles.specBlockSpaced}`}>
                         <div className={styles.specLabel}>
                           <Icon name="terminal" size={14} color="var(--color-primary)" />
                           <span>
                             {server.transport_type === 'stdio' ? 'Stdio 啟動指令與參數' : 'HTTP / SSE 連線網址'}
                           </span>
                         </div>
-                        <div className={styles.specContent} style={{ fontFamily: 'var(--font-mono)' }}>
+                        <div className={`${styles.specContent} ${styles.monoText}`}>
                           {server.transport_type === 'stdio'
                             ? `${server.command || ''} ${(server.args || []).join(' ')}`
                             : server.url}
@@ -884,69 +904,54 @@ export default function AiTools() {
                       </div>
                       {/* 錯誤資訊 */}
                       {server.last_error && (
-                        <div className={styles.specBlock} style={{ marginBottom: 'var(--space-4)', borderColor: 'var(--color-error)' }}>
-                          <div className={styles.specLabel} style={{ color: 'var(--color-error)' }}>
-                            <Icon name="warning" size={14} color="var(--color-error)" />
+                        <div className={`${styles.specBlock} ${styles.specBlockSpaced} ${styles.specBlockError}`}>
+                          <div className={styles.specLabel}>
+                            <Icon name="warning" size={14} />
                             <span>最近一次連線/探索異常紀錄</span>
                           </div>
-                          <div className={styles.specContent} style={{ color: 'var(--color-error)' }}>
+                          <div className={styles.specContent}>
                             {server.last_error}
                           </div>
                         </div>
                       )}
                       {/* 探索到的 MCP Tools 清單 */}
-                      <div className={styles.specBlock} style={{ marginBottom: 'var(--space-4)' }}>
-                        <div className={styles.specLabel} style={{ justifyContent: 'space-between' }}>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      <div className={`${styles.specBlock} ${styles.specBlockSpaced}`}>
+                        <div className={`${styles.specLabel} ${styles.specLabelSplit}`}>
+                          <div className={styles.inlineGroup}>
                             <Icon name="code" size={14} color="var(--color-primary)" />
                             <span>提供之 MCP 工具 ({tools.length} 項)</span>
                           </div>
                           <Button
                             variant="secondary"
                             onClick={() => handleDiscoverMcpServer(server.id)}
-                            disabled={discoveringId === server.id}
-                            startIcon={discoveringId === server.id ? <Spinner size="sm" /> : <Icon name="refresh" size={14} />}
+                            loading={discoveringId === server.id}
+                            startIcon={<Icon name="refresh" size={14} />}
                           >
                             {discoveringId === server.id ? '正在連線探索...' : '重新探索工具 (tools/list)'}
                           </Button>
                         </div>
                         {tools.length === 0 ? (
-                          <div style={{ fontSize: 'var(--font-size-xs)', color: 'var(--text-tertiary)', padding: '8px 0' }}>
+                          <p className={styles.mutedNote}>
                             尚未探索到工具，請點擊上方按鈕執行工具探索。
-                          </div>
+                          </p>
                         ) : (
-                          <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginTop: '8px' }}>
+                          <ul className={styles.mcpToolList} role="list">
                             {tools.map((t) => (
-                              <div
-                                key={t.name}
-                                style={{
-                                  display: 'flex',
-                                  alignItems: 'center',
-                                  justifyContent: 'space-between',
-                                  padding: '8px 12px',
-                                  background: 'var(--bg-surface)',
-                                  borderRadius: 'var(--radius-md)',
-                                  border: '1px solid var(--border-default)'
-                                }}
-                              >
-                                <div>
-                                  <div style={{ fontFamily: 'var(--font-mono)', fontWeight: 'bold', fontSize: 'var(--font-size-xs)' }}>
-                                    {t.name}
-                                  </div>
-                                  <div style={{ fontSize: 'var(--font-size-xs)', color: 'var(--text-secondary)' }}>
-                                    {t.description || '無詳細說明'}
-                                  </div>
+                              <li key={t.name} className={styles.mcpToolItem}>
+                                <div className={styles.mcpToolText}>
+                                  <div className={styles.mcpToolName}>{t.name}</div>
+                                  <div className={styles.mcpToolDescription}>{t.description || '無詳細說明'}</div>
                                 </div>
                                 <Button
                                   variant="secondary"
                                   onClick={() => handleOpenMcpTestModal(server, t)}
                                   startIcon={<Icon name="speed" size={14} />}
                                 >
-                                  線上測試
+                                  線上測試<span className="sr-only"> {t.name}</span>
                                 </Button>
-                              </div>
+                              </li>
                             ))}
-                          </div>
+                          </ul>
                         )}
                       </div>
                       {/* 伺服器操作按鈕 */}
@@ -962,31 +967,46 @@ export default function AiTools() {
                         </div>
                         <Button
                           variant="danger"
-                          onClick={() => handleDeleteMcpServer(server.id)}
+                          onClick={() => setPendingDelete({ type: 'server', item: server })}
                           startIcon={<Icon name="delete" size={16} />}
                         >
                           刪除伺服器
                         </Button>
                       </div>
                     </div>
-                  </div>
+                  </article>
                 );
               })}
             </div>
           )}
-        </div>
+        </section>
       )}
       {/* 2. 內部工具與自訂 API 工具列表區塊 */}
-      {activeCategory !== 'mcp' && (
+      {showTools && !nothingMatches && (
         <div className={styles.toolsList}>
           {filteredTools.length === 0 ? (
-            <div className={styles.emptyNotice}>
-              查無符合「{searchQuery}」的相關工具
-            </div>
+            query ? null : activeCategory === 'custom_api' ? (
+              <div className={styles.emptyNotice}>
+                <p>尚未新增自訂 API 工具。可以匯入 OpenAPI 規格一次建立多個工具，或手動新增單一工具。</p>
+                <div className={styles.emptyActions}>
+                  <Button variant="primary" size="sm" onClick={handleOpenImportModal} startIcon={<Icon name="upload" size={16} />}>
+                    匯入 OpenAPI 規格
+                  </Button>
+                  <Button variant="secondary" size="sm" onClick={() => handleOpenToolModal()} startIcon={<Icon name="add" size={16} />}>
+                    手動新增 API 工具
+                  </Button>
+                </div>
+              </div>
+            ) : (
+              <div className={styles.emptyNotice}>
+                <p>這個分類目前沒有工具</p>
+              </div>
+            )
           ) : (
             filteredTools.map((tool) => {
               const title = tool.display_name || tool.displayName;
               const isEnabled = tool.is_enabled !== false;
+              const toolKey = tool.isCustom ? `custom_${tool.id}` : tool.name;
               const parametersList = tool.isCustom
                 ? Object.entries(tool.parameters_schema?.properties || {}).map(([pName, pObj]) => ({
                   name: pName,
@@ -996,7 +1016,7 @@ export default function AiTools() {
                 }))
                 : tool.parameters || [];
               return (
-                <div key={tool.isCustom ? `custom_${tool.id}` : tool.name} className={styles.toolOuterShell}>
+                <article key={toolKey} className={styles.toolOuterShell} aria-labelledby={`tool-${toolKey}`}>
                   <div className={styles.toolInnerCore}>
                     {/* 工具頭部資訊 */}
                     <div className={styles.toolHeader}>
@@ -1005,14 +1025,14 @@ export default function AiTools() {
                           <Icon name={tool.icon || 'code'} size={22} />
                         </div>
                         <div className={styles.toolTitleWrap}>
-                          <div className={styles.toolTitle}>
+                          <h3 className={styles.toolTitle} id={`tool-${toolKey}`}>
                             {tool.isCustom && tool.method && (
                               <span className={`${styles.methodBadge} ${getMethodClass(tool.method)}`}>
                                 {tool.method}
                               </span>
                             )}
                             <span>{title}</span>
-                          </div>
+                          </h3>
                           <div className={styles.toolIdentifier}>{tool.name}</div>
                         </div>
                       </div>
@@ -1022,7 +1042,7 @@ export default function AiTools() {
                           <span className={styles.versionTag}>{tool.spec_version}</span>
                         )}
                         {tool.isCustom ? (
-                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                          <div className={styles.switchGroup}>
                             <span className={`${styles.statusPill} ${isEnabled ? styles.statusActive : styles.statusDisabled}`}>
                               <span className={styles.statusDot} />
                               <span>{isEnabled ? '已啟用' : '已停用'}</span>
@@ -1030,6 +1050,7 @@ export default function AiTools() {
                             <Switch
                               checked={isEnabled}
                               onChange={() => handleToggleCustomTool(tool.id)}
+                              aria-label={`啟用工具「${title}」`}
                             />
                           </div>
                         ) : (
@@ -1044,12 +1065,12 @@ export default function AiTools() {
                     <p className={styles.toolDescription}>{tool.summary}</p>
                     {/* URL 與路徑 (自訂工具) */}
                     {tool.isCustom && tool.url && (
-                      <div className={styles.specBlock} style={{ marginBottom: 'var(--space-4)' }}>
+                      <div className={`${styles.specBlock} ${styles.specBlockSpaced}`}>
                         <div className={styles.specLabel}>
                           <Icon name="link" size={14} color="var(--color-primary)" />
                           <span>目標 API 請求網址 (Endpoint URL)</span>
                         </div>
-                        <div className={styles.specContent} style={{ fontFamily: 'var(--font-mono)' }}>
+                        <div className={`${styles.specContent} ${styles.monoText}`}>
                           {tool.url}
                         </div>
                       </div>
@@ -1076,34 +1097,38 @@ export default function AiTools() {
                     </div>
                     {/* 參數規格說明 */}
                     {parametersList.length > 0 && (
-                      <div className={styles.specBlock} style={{ marginBottom: 'var(--space-4)' }}>
+                      <div className={`${styles.specBlock} ${styles.specBlockSpaced}`}>
                         <div className={styles.specLabel}>
                           <Icon name="code" size={14} color="var(--color-primary)" />
                           <span>支援參數規格 (Parameters Schema)</span>
                         </div>
-                        <table className={styles.paramsTable}>
-                          <thead>
-                            <tr>
-                              <th style={{ width: '25%' }}>參數名稱</th>
-                              <th style={{ width: '15%' }}>資料型態</th>
-                              <th style={{ width: '60%' }}>說明</th>
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {parametersList.map((param) => (
-                              <tr key={param.name}>
-                                <td>
-                                  <span className={styles.paramName}>{param.name}</span>
-                                  {param.required && <span className={styles.paramRequired}>*</span>}
-                                </td>
-                                <td>
-                                  <span className={styles.paramType}>{param.type}</span>
-                                </td>
-                                <td>{param.desc || '無特定說明'}</td>
+                        <div className={styles.paramsTableWrap}>
+                          <table className={styles.paramsTable}>
+                            <thead>
+                              <tr>
+                                <th scope="col" className={styles.paramsColName}>參數名稱</th>
+                                <th scope="col" className={styles.paramsColType}>資料型態</th>
+                                <th scope="col">說明</th>
                               </tr>
-                            ))}
-                          </tbody>
-                        </table>
+                            </thead>
+                            <tbody>
+                              {parametersList.map((param) => (
+                                <tr key={param.name}>
+                                  <td>
+                                    <span className={styles.paramName}>{param.name}</span>
+                                    {param.required && (
+                                      <span className={styles.paramRequired} aria-label="必填">*</span>
+                                    )}
+                                  </td>
+                                  <td>
+                                    <span className={styles.paramType}>{param.type}</span>
+                                  </td>
+                                  <td>{param.desc || '無特定說明'}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
                       </div>
                     )}
                     {/* 自訂工具專屬操作按鈕 */}
@@ -1127,7 +1152,7 @@ export default function AiTools() {
                         </div>
                         <Button
                           variant="danger"
-                          onClick={() => handleDeleteCustomTool(tool.id)}
+                          onClick={() => setPendingDelete({ type: 'tool', item: tool })}
                           startIcon={<Icon name="delete" size={16} />}
                         >
                           刪除工具
@@ -1157,221 +1182,217 @@ export default function AiTools() {
                       </div>
                     )}
                   </div>
-                </div>
+                </article>
               );
             })
           )}
         </div>
       )}
-      {/* 3. MCP 伺服器新增 / 編輯 Modal */}
-      {mcpModalOpen && (
-        <div className={styles.modalOverlay}>
-          <div className={styles.modalCard}>
-            <div className={styles.modalHeader}>
-              <div className={styles.modalTitle}>
-                {editingMcpServer ? '編輯 MCP 伺服器' : '新增 Model Context Protocol (MCP) 伺服器'}
-              </div>
-              <button
-                type="button"
-                style={{ background: 'transparent', border: 'none', cursor: 'pointer' }}
-                onClick={() => setMcpModalOpen(false)}
-              >
-                <Icon name="close" size={20} />
-              </button>
-            </div>
-            <form onSubmit={handleSaveMcpServer}>
-              <div className={styles.modalBody}>
-                {!editingMcpServer && mcpPresets.length > 0 && (
-                  <div className={styles.formGroup}>
-                    <label className={styles.formLabel}>快速套用官方與社群範本：</label>
-                    <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-                      {mcpPresets.map((p) => (
-                        <Button
-                          key={p.name}
-                          variant="secondary"
-                          type="button"
-                          onClick={() => handleApplyMcpPreset(p)}
-                        >
-                          {p.display_name}
-                        </Button>
-                      ))}
-                    </div>
-                  </div>
-                )}
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
-                  <div className={styles.formGroup}>
-                    <label className={styles.formLabel}>伺服器識別名稱 (英文小寫與底線)*：</label>
-                    <input
-                      type="text"
-                      className={styles.formInput}
-                      placeholder="例如 mcp_time"
-                      value={mcpFormData.name}
-                      onChange={(e) => setMcpFormData({ ...mcpFormData, name: e.target.value })}
-                      disabled={!!editingMcpServer}
-                      required
-                    />
-                  </div>
-                  <div className={styles.formGroup}>
-                    <label className={styles.formLabel}>顯示名稱 (繁體中文)*：</label>
-                    <input
-                      type="text"
-                      className={styles.formInput}
-                      placeholder="例如 時間查詢服務"
-                      value={mcpFormData.display_name}
-                      onChange={(e) => setMcpFormData({ ...mcpFormData, display_name: e.target.value })}
-                      required
-                    />
-                  </div>
+      {/* 3. MCP 伺服器新增 / 編輯 */}
+      <Dialog open={mcpModalOpen} onClose={savingMcp ? undefined : () => setMcpModalOpen(false)} maxWidth="lg">
+        <DialogForm onSubmit={handleSaveMcpServer}>
+          <DialogTitle onClose={() => setMcpModalOpen(false)} closeDisabled={savingMcp}>
+            {editingMcpServer ? '編輯 MCP 伺服器' : '新增 Model Context Protocol (MCP) 伺服器'}
+          </DialogTitle>
+          <DialogContent className={styles.dialogBody}>
+            {dialogError && <Alert severity="error">{dialogError}</Alert>}
+            {!editingMcpServer && mcpPresets.length > 0 && (
+              <div className={styles.formGroup}>
+                <span className={styles.formLabel} id="mcp-presets-label">快速套用官方與社群範本：</span>
+                <div className={styles.inlineButtons} role="group" aria-labelledby="mcp-presets-label">
+                  {mcpPresets.map((p) => (
+                    <Button
+                      key={p.name}
+                      variant="secondary"
+                      onClick={() => handleApplyMcpPreset(p)}
+                    >
+                      {p.display_name}
+                    </Button>
+                  ))}
                 </div>
+              </div>
+            )}
+            <div className={styles.formRow}>
+              <div className={styles.formGroup}>
+                <label className={styles.formLabel} htmlFor="mcp-name">伺服器識別名稱（英文小寫與底線）*</label>
+                <input
+                  id="mcp-name"
+                  type="text"
+                  className={styles.formInput}
+                  placeholder="例如 mcp_time"
+                  value={mcpFormData.name}
+                  onChange={(e) => setMcpFormData({ ...mcpFormData, name: e.target.value })}
+                  disabled={!!editingMcpServer}
+                  required
+                  autoComplete="off"
+                />
+              </div>
+              <div className={styles.formGroup}>
+                <label className={styles.formLabel} htmlFor="mcp-display-name">顯示名稱*</label>
+                <input
+                  id="mcp-display-name"
+                  type="text"
+                  className={styles.formInput}
+                  placeholder="例如 時間查詢服務"
+                  value={mcpFormData.display_name}
+                  onChange={(e) => setMcpFormData({ ...mcpFormData, display_name: e.target.value })}
+                  required
+                  autoComplete="off"
+                />
+              </div>
+            </div>
+            <div className={styles.formGroup}>
+              <label className={styles.formLabel} htmlFor="mcp-description">說明描述</label>
+              <input
+                id="mcp-description"
+                type="text"
+                className={styles.formInput}
+                placeholder="說明此 MCP 伺服器的功能與用途"
+                value={mcpFormData.description}
+                onChange={(e) => setMcpFormData({ ...mcpFormData, description: e.target.value })}
+                autoComplete="off"
+              />
+            </div>
+            <div className={`${styles.formRow} ${styles.formRowNarrowFirst}`}>
+              <div className={styles.formGroup}>
+                <label className={styles.formLabel} htmlFor="mcp-transport">傳輸模式</label>
+                <select
+                  id="mcp-transport"
+                  className={styles.formSelect}
+                  value={mcpFormData.transport_type}
+                  onChange={(e) => setMcpFormData({ ...mcpFormData, transport_type: e.target.value })}
+                >
+                  <option value="stdio">Stdio (子進程)</option>
+                  <option value="sse">SSE (Server-Sent Events)</option>
+                  <option value="http">HTTP (POST Stream)</option>
+                </select>
+              </div>
+              {mcpFormData.transport_type === 'stdio' ? (
                 <div className={styles.formGroup}>
-                  <label className={styles.formLabel}>說明描述：</label>
+                  <label className={styles.formLabel} htmlFor="mcp-command">啟動指令 (Command)*</label>
                   <input
+                    id="mcp-command"
                     type="text"
                     className={styles.formInput}
-                    placeholder="說明此 MCP 伺服器的功能與用途"
-                    value={mcpFormData.description}
-                    onChange={(e) => setMcpFormData({ ...mcpFormData, description: e.target.value })}
+                    placeholder="例如 npx, uvx, python"
+                    value={mcpFormData.command}
+                    onChange={(e) => setMcpFormData({ ...mcpFormData, command: e.target.value })}
+                    required
+                    autoComplete="off"
                   />
                 </div>
-                <div style={{ display: 'grid', gridTemplateColumns: '140px 1fr', gap: '16px' }}>
-                  <div className={styles.formGroup}>
-                    <label className={styles.formLabel}>傳輸模式：</label>
-                    <select
-                      className={styles.formSelect}
-                      value={mcpFormData.transport_type}
-                      onChange={(e) => setMcpFormData({ ...mcpFormData, transport_type: e.target.value })}
-                    >
-                      <option value="stdio">Stdio (子進程)</option>
-                      <option value="sse">SSE (Server-Sent Events)</option>
-                      <option value="http">HTTP (POST Stream)</option>
-                    </select>
-                  </div>
-                  {mcpFormData.transport_type === 'stdio' ? (
-                    <div className={styles.formGroup}>
-                      <label className={styles.formLabel}>啟動指令 (Command)*：</label>
-                      <input
-                        type="text"
-                        className={styles.formInput}
-                        placeholder="例如 npx, uvx, python"
-                        value={mcpFormData.command}
-                        onChange={(e) => setMcpFormData({ ...mcpFormData, command: e.target.value })}
-                        required
-                      />
-                    </div>
-                  ) : (
-                    <div className={styles.formGroup}>
-                      <label className={styles.formLabel}>連線網址 (URL)*：</label>
-                      <input
-                        type="text"
-                        className={styles.formInput}
-                        placeholder="例如 http://localhost:8080/sse"
-                        value={mcpFormData.url}
-                        onChange={(e) => setMcpFormData({ ...mcpFormData, url: e.target.value })}
-                        required
-                      />
-                    </div>
-                  )}
+              ) : (
+                <div className={styles.formGroup}>
+                  <label className={styles.formLabel} htmlFor="mcp-url">連線網址 (URL)*</label>
+                  <input
+                    id="mcp-url"
+                    type="url"
+                    className={styles.formInput}
+                    placeholder="例如 http://localhost:8080/sse"
+                    value={mcpFormData.url}
+                    onChange={(e) => setMcpFormData({ ...mcpFormData, url: e.target.value })}
+                    required
+                    autoComplete="off"
+                  />
                 </div>
-                {mcpFormData.transport_type === 'stdio' && (
-                  <>
-                    <div className={styles.formGroup}>
-                      <label className={styles.formLabel}>指令參數清單 (JSON 陣列格式)：</label>
-                      <textarea
-                        className={styles.formTextarea}
-                        style={{ minHeight: '80px' }}
-                        value={mcpFormData.args_json}
-                        onChange={(e) => setMcpFormData({ ...mcpFormData, args_json: e.target.value })}
-                        placeholder='["-y", "@modelcontextprotocol/server-filesystem", "./data"]'
-                      />
-                    </div>
-                    <div className={styles.formGroup}>
-                      <label className={styles.formLabel}>環境變數配置 (JSON 物件格式)：</label>
-                      <textarea
-                        className={styles.formTextarea}
-                        style={{ minHeight: '60px' }}
-                        value={mcpFormData.env_vars_json}
-                        onChange={(e) => setMcpFormData({ ...mcpFormData, env_vars_json: e.target.value })}
-                        placeholder='{"API_KEY": "secret"}'
-                      />
-                    </div>
-                  </>
-                )}
-                {mcpFormData.transport_type !== 'stdio' && (
-                  <div className={styles.formGroup}>
-                    <label className={styles.formLabel}>自訂 HTTP Headers (JSON 物件格式)：</label>
-                    <textarea
-                      className={styles.formTextarea}
-                      style={{ minHeight: '60px' }}
-                      value={mcpFormData.headers_json}
-                      onChange={(e) => setMcpFormData({ ...mcpFormData, headers_json: e.target.value })}
-                      placeholder='{"Authorization": "Bearer ..."}'
-                    />
-                  </div>
-                )}
-              </div>
-              <div className={styles.modalFooter}>
-                <Button variant="secondary" type="button" onClick={() => setMcpModalOpen(false)}>
-                  取消
-                </Button>
-                <Button variant="primary" type="submit" startIcon={<Icon name="save" size={16} />}>
-                  {editingMcpServer ? '儲存變更' : '建立並連線探索'}
-                </Button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
-      {/* 4. MCP 工具線上測試 Modal */}
-      {mcpTestModalOpen && testingMcpServer && testingMcpTool && (
-        <div className={styles.modalOverlay}>
-          <div className={styles.modalCard}>
-            <div className={styles.modalHeader}>
-              <div className={styles.modalTitle}>
-                即時測試 MCP 工具：{testingMcpTool.name}
-              </div>
-              <button
-                type="button"
-                style={{ background: 'transparent', border: 'none', cursor: 'pointer' }}
-                onClick={() => setMcpTestModalOpen(false)}
-              >
-                <Icon name="close" size={20} />
-              </button>
+              )}
             </div>
-            <div className={styles.modalBody}>
+            {mcpFormData.transport_type === 'stdio' && (
+              <>
+                <div className={styles.formGroup}>
+                  <label className={styles.formLabel} htmlFor="mcp-args">指令參數清單（JSON 陣列格式）</label>
+                  <textarea
+                    id="mcp-args"
+                    className={`${styles.formTextarea} ${styles.textareaMd}`}
+                    value={mcpFormData.args_json}
+                    onChange={(e) => setMcpFormData({ ...mcpFormData, args_json: e.target.value })}
+                    placeholder='["-y", "@modelcontextprotocol/server-filesystem", "./data"]'
+                  />
+                </div>
+                <div className={styles.formGroup}>
+                  <label className={styles.formLabel} htmlFor="mcp-env">環境變數配置（JSON 物件格式）</label>
+                  <textarea
+                    id="mcp-env"
+                    className={`${styles.formTextarea} ${styles.textareaSm}`}
+                    value={mcpFormData.env_vars_json}
+                    onChange={(e) => setMcpFormData({ ...mcpFormData, env_vars_json: e.target.value })}
+                    placeholder='{"API_KEY": "secret"}'
+                  />
+                </div>
+              </>
+            )}
+            {mcpFormData.transport_type !== 'stdio' && (
+              <div className={styles.formGroup}>
+                <label className={styles.formLabel} htmlFor="mcp-headers">自訂 HTTP Headers（JSON 物件格式）</label>
+                <textarea
+                  id="mcp-headers"
+                  className={`${styles.formTextarea} ${styles.textareaSm}`}
+                  value={mcpFormData.headers_json}
+                  onChange={(e) => setMcpFormData({ ...mcpFormData, headers_json: e.target.value })}
+                  placeholder='{"Authorization": "Bearer ..."}'
+                />
+              </div>
+            )}
+          </DialogContent>
+          <DialogActions>
+            <Button variant="secondary" onClick={() => setMcpModalOpen(false)} disabled={savingMcp}>
+              取消
+            </Button>
+            <Button variant="primary" type="submit" loading={savingMcp} startIcon={<Icon name="save" size={16} />}>
+              {editingMcpServer ? '儲存變更' : '建立並連線探索'}
+            </Button>
+          </DialogActions>
+        </DialogForm>
+      </Dialog>
+      {/* 4. MCP 工具線上測試 */}
+      <Dialog open={mcpTestModalOpen && Boolean(testingMcpServer && testingMcpTool)} onClose={() => setMcpTestModalOpen(false)} maxWidth="lg">
+        {testingMcpServer && testingMcpTool && (
+          <>
+            <DialogTitle onClose={() => setMcpTestModalOpen(false)}>
+              即時測試 MCP 工具：{testingMcpTool.name}
+            </DialogTitle>
+            <DialogContent className={styles.dialogBody}>
               <div className={styles.specBlock}>
                 <div className={styles.specLabel}>
                   <span className={`${styles.methodBadge} ${styles.methodPost}`}>{testingMcpServer.display_name}</span>
                   <span>{testingMcpTool.description || '無詳細說明'}</span>
                 </div>
               </div>
-              <div className={styles.formGroup}>
-                <label className={styles.formLabel}>輸入參數 (Arguments)：</label>
+              <fieldset className={styles.formFieldset}>
+                <legend className={styles.formLabel}>輸入參數 (Arguments)</legend>
                 {Object.keys(testingMcpTool.inputSchema?.properties || {}).length === 0 ? (
-                  <p style={{ fontSize: 'var(--font-size-xs)', color: 'var(--text-secondary)' }}>此 MCP 工具無須輸入額外參數</p>
+                  <p className={styles.mutedNote}>此 MCP 工具無須輸入額外參數</p>
                 ) : (
-                  Object.entries(testingMcpTool.inputSchema?.properties || {}).map(([pName, pObj]) => (
-                    <div key={pName} style={{ marginBottom: '8px' }}>
-                      <label style={{ fontSize: 'var(--font-size-xs)', fontWeight: 'var(--font-weight-medium)' }}>
-                        {pName} {testingMcpTool.inputSchema?.required?.includes(pName) && <span style={{ color: 'var(--color-error)' }}>*</span>}:
-                        <span style={{ color: 'var(--text-tertiary)', marginLeft: '6px' }}>({pObj.description || pObj.type})</span>
-                      </label>
-                      <input
-                        type="text"
-                        className={styles.formInput}
-                        placeholder={`請輸入 ${pName}`}
-                        value={mcpTestArgs[pName] || ''}
-                        onChange={(e) => setMcpTestArgs({ ...mcpTestArgs, [pName]: e.target.value })}
-                      />
-                    </div>
-                  ))
+                  Object.entries(testingMcpTool.inputSchema?.properties || {}).map(([pName, pObj]) => {
+                    const inputId = `mcp-arg-${pName}`;
+                    const isRequired = testingMcpTool.inputSchema?.required?.includes(pName);
+                    return (
+                      <div key={pName} className={styles.argField}>
+                        <label className={styles.argLabel} htmlFor={inputId}>
+                          {pName}{isRequired && <span className={styles.paramRequired} aria-hidden="true">*</span>}
+                          <span className={styles.argHint}>({pObj.description || pObj.type})</span>
+                        </label>
+                        <input
+                          id={inputId}
+                          type="text"
+                          className={styles.formInput}
+                          value={mcpTestArgs[pName] || ''}
+                          onChange={(e) => setMcpTestArgs({ ...mcpTestArgs, [pName]: e.target.value })}
+                          required={isRequired}
+                          autoComplete="off"
+                        />
+                      </div>
+                    );
+                  })
                 )}
-              </div>
+              </fieldset>
               {mcpTestResult && (
-                <div className={styles.formGroup}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                    <label className={styles.formLabel}>MCP 回傳結果 (tools/call)：</label>
-                    <span style={{ fontSize: 'var(--font-size-xs)', color: mcpTestResult.is_success ? 'var(--color-success)' : 'var(--color-error)' }}>
-                      耗時: {mcpTestResult.duration_seconds}s
+                <div className={styles.formGroup} aria-live="polite">
+                  <div className={styles.resultHeader}>
+                    <span className={styles.formLabel}>MCP 回傳結果 (tools/call)</span>
+                    <span className={mcpTestResult.is_success ? styles.resultSuccess : styles.resultError}>
+                      {mcpTestResult.is_success ? '成功' : '失敗'}
+                      {mcpTestResult.duration_seconds !== undefined && `｜耗時 ${mcpTestResult.duration_seconds}s`}
                     </span>
                   </div>
                   <pre className={styles.jsonViewer}>
@@ -1379,365 +1400,345 @@ export default function AiTools() {
                   </pre>
                 </div>
               )}
-            </div>
-            <div className={styles.modalFooter}>
+            </DialogContent>
+            <DialogActions>
               <Button variant="secondary" onClick={() => setMcpTestModalOpen(false)}>
                 關閉
               </Button>
               <Button
                 variant="primary"
                 onClick={handleRunMcpTest}
-                disabled={mcpTesting}
-                startIcon={mcpTesting ? <Spinner size="sm" /> : <Icon name="send" size={16} />}
+                loading={mcpTesting}
+                startIcon={<Icon name="send" size={16} />}
               >
                 {mcpTesting ? '正在調用 MCP...' : '發送 MCP 測試請求'}
               </Button>
-            </div>
-          </div>
-        </div>
-      )}
-      {/* 5. OpenAPI 匯入 Modal */}
-      {importModalOpen && (
-        <div className={styles.modalOverlay}>
-          <div className={styles.modalCard}>
-            <div className={styles.modalHeader}>
-              <div className={styles.modalTitle}>匯入 OpenAPI / Swagger 規格</div>
-              <button
-                type="button"
-                style={{ background: 'transparent', border: 'none', cursor: 'pointer' }}
-                onClick={() => setImportModalOpen(false)}
-              >
-                <Icon name="close" size={20} />
-              </button>
-            </div>
-            <div className={styles.modalBody}>
-              {!parseResult ? (
-                <>
-                  <div className={styles.formGroup}>
-                    <label className={styles.formLabel}>快速載入官方測試範例：</label>
-                    <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-                      <Button
-                        variant="secondary"
-                        onClick={() => setSpecInput(SAMPLE_OAS_SPECS.oas2)}
+            </DialogActions>
+          </>
+        )}
+      </Dialog>
+      {/* 5. OpenAPI 匯入 */}
+      <Dialog open={importModalOpen} onClose={parsing || importing ? undefined : () => setImportModalOpen(false)} maxWidth="lg">
+        <DialogTitle onClose={() => setImportModalOpen(false)} closeDisabled={parsing || importing}>
+          匯入 OpenAPI / Swagger 規格
+        </DialogTitle>
+        <DialogContent className={styles.dialogBody}>
+          {dialogError && <Alert severity="error">{dialogError}</Alert>}
+          {!parseResult ? (
+            <>
+              <div className={styles.formGroup}>
+                <span className={styles.formLabel} id="oas-samples-label">載入測試範例（會取代下方內容）：</span>
+                <div className={styles.inlineButtons} role="group" aria-labelledby="oas-samples-label">
+                  <Button variant="secondary" onClick={() => setSpecInput(SAMPLE_OAS_SPECS.oas2)}>
+                    Swagger 2.0 (即時天氣)
+                  </Button>
+                  <Button variant="secondary" onClick={() => setSpecInput(SAMPLE_OAS_SPECS.oas30)}>
+                    OpenAPI 3.0 (匯率轉換)
+                  </Button>
+                  <Button variant="secondary" onClick={() => setSpecInput(SAMPLE_OAS_SPECS.oas31)}>
+                    OpenAPI 3.1 (工單派遣)
+                  </Button>
+                </div>
+              </div>
+              <div className={styles.formGroup}>
+                <label className={styles.formLabel} htmlFor="oas-spec">OpenAPI 規格內容 (JSON / YAML) 或遠端 URL</label>
+                <textarea
+                  id="oas-spec"
+                  className={`${styles.formTextarea} ${styles.textareaLg}`}
+                  placeholder="貼上 OpenAPI / Swagger 規範 YAML/JSON，或輸入 https://.../openapi.json 網址"
+                  value={specInput}
+                  onChange={(e) => setSpecInput(e.target.value)}
+                />
+              </div>
+              <div className={styles.formGroup}>
+                <label className={styles.formLabel} htmlFor="oas-base-url">預設 Base URL（選填，覆蓋規格中的伺服器位址）</label>
+                <input
+                  id="oas-base-url"
+                  type="url"
+                  className={styles.formInput}
+                  placeholder="例如 https://api.example.com"
+                  value={defaultBaseUrl}
+                  onChange={(e) => setDefaultBaseUrl(e.target.value)}
+                  autoComplete="off"
+                />
+              </div>
+            </>
+          ) : (
+            <>
+              <div className={styles.parseSummary}>
+                <div>
+                  <span className={styles.versionTag}>{parseResult.version}</span>
+                  <strong className={styles.parseTitle}>{parseResult.title}</strong>
+                </div>
+                <Button variant="secondary" onClick={() => setParseResult(null)}>
+                  重新解析
+                </Button>
+              </div>
+              <div className={styles.formGroup}>
+                <label className={styles.formLabel} htmlFor="oas-token">全域 Bearer Token（選填，將自動注入 Authorization Header）</label>
+                <input
+                  id="oas-token"
+                  type="password"
+                  className={styles.formInput}
+                  placeholder="若 API 需要認證請填寫 Bearer Token 或 API Key"
+                  value={globalAuthToken}
+                  onChange={(e) => setGlobalAuthToken(e.target.value)}
+                  autoComplete="off"
+                />
+              </div>
+              <div className={styles.formGroup} role="group" aria-labelledby="oas-endpoints-label">
+                <div className={styles.resultHeader}>
+                  <span className={styles.formLabel} id="oas-endpoints-label">
+                    選擇要匯入的 API 端點 ({Object.values(selectedEndpoints).filter(Boolean).length} / {parseResult.endpoints.length})
+                  </span>
+                  <button
+                    type="button"
+                    className={styles.linkButton}
+                    onClick={() => {
+                      const allChecked = Object.values(selectedEndpoints).every(Boolean);
+                      const updated = {};
+                      parseResult.endpoints.forEach((ep) => {
+                        updated[ep.name] = !allChecked;
+                      });
+                      setSelectedEndpoints(updated);
+                    }}
+                  >
+                    全選 / 全不選
+                  </button>
+                </div>
+                <div className={styles.endpointList}>
+                  {parseResult.endpoints.map((ep) => {
+                    const isChecked = Boolean(selectedEndpoints[ep.name]);
+                    return (
+                      <label
+                        key={ep.name}
+                        className={`${styles.endpointItem} ${isChecked ? styles.endpointSelected : ''}`}
                       >
-                        Swagger 2.0 (即時天氣)
-                      </Button>
-                      <Button
-                        variant="secondary"
-                        onClick={() => setSpecInput(SAMPLE_OAS_SPECS.oas30)}
-                      >
-                        OpenAPI 3.0 (匯率轉換)
-                      </Button>
-                      <Button
-                        variant="secondary"
-                        onClick={() => setSpecInput(SAMPLE_OAS_SPECS.oas31)}
-                      >
-                        OpenAPI 3.1 (工單派遣)
-                      </Button>
-                    </div>
-                  </div>
-                  <div className={styles.formGroup}>
-                    <label className={styles.formLabel}>OpenAPI 規格內容 (JSON / YAML) 或 遠端 URL：</label>
-                    <textarea
-                      className={styles.formTextarea}
-                      style={{ minHeight: '220px' }}
-                      placeholder="貼上 OpenAPI / Swagger 規範 YAML/JSON，或輸入 https://.../openapi.json 網址"
-                      value={specInput}
-                      onChange={(e) => setSpecInput(e.target.value)}
-                    />
-                  </div>
-                  <div className={styles.formGroup}>
-                    <label className={styles.formLabel}>預設 Base URL (可選，覆蓋規格中的伺服器位址)：</label>
-                    <input
-                      type="text"
-                      className={styles.formInput}
-                      placeholder="例如 https://api.example.com"
-                      value={defaultBaseUrl}
-                      onChange={(e) => setDefaultBaseUrl(e.target.value)}
-                    />
-                  </div>
-                </>
-              ) : (
-                <>
-                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                    <div>
-                      <span className={styles.versionTag}>{parseResult.version}</span>
-                      <strong style={{ marginLeft: '8px', fontSize: 'var(--font-size-base)' }}>{parseResult.title}</strong>
-                    </div>
-                    <Button variant="secondary" onClick={() => setParseResult(null)}>
-                      重新解析
-                    </Button>
-                  </div>
-                  <div className={styles.formGroup}>
-                    <label className={styles.formLabel}>全域 Bearer Token (可選，將自動注入 Authorization Header)：</label>
-                    <input
-                      type="password"
-                      className={styles.formInput}
-                      placeholder="若 API 需要認證請填寫 Bearer Token 或 API Key"
-                      value={globalAuthToken}
-                      onChange={(e) => setGlobalAuthToken(e.target.value)}
-                    />
-                  </div>
-                  <div className={styles.formGroup}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
-                      <label className={styles.formLabel}>
-                        選擇要匯入的 API 端點 ({Object.values(selectedEndpoints).filter(Boolean).length} / {parseResult.endpoints.length})：
+                        <span className={styles.endpointInfo}>
+                          <input
+                            type="checkbox"
+                            checked={isChecked}
+                            onChange={() => setSelectedEndpoints((prev) => ({ ...prev, [ep.name]: !prev[ep.name] }))}
+                          />
+                          <span className={`${styles.methodBadge} ${getMethodClass(ep.method)}`}>
+                            {ep.method}
+                          </span>
+                          <span className={styles.endpointText}>
+                            <span className={styles.endpointPath}>{ep.path}</span>
+                            <span className={styles.endpointSummary}>{ep.display_name}</span>
+                          </span>
+                        </span>
+                        <span className={styles.versionTag}>
+                          {Object.keys(ep.parameters_schema?.properties || {}).length} 參數
+                        </span>
                       </label>
-                      <button
-                        type="button"
-                        style={{ background: 'transparent', border: 'none', color: 'var(--color-primary)', cursor: 'pointer', fontSize: 'var(--font-size-xs)' }}
-                        onClick={() => {
-                          const allChecked = Object.values(selectedEndpoints).every(Boolean);
-                          const updated = {};
-                          parseResult.endpoints.forEach((ep) => {
-                            updated[ep.name] = !allChecked;
-                          });
-                          setSelectedEndpoints(updated);
-                        }}
-                      >
-                        全選 / 全不選
-                      </button>
-                    </div>
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', maxHeight: '280px', overflowY: 'auto' }}>
-                      {parseResult.endpoints.map((ep) => {
-                        const isChecked = Boolean(selectedEndpoints[ep.name]);
-                        return (
-                          <div
-                            key={ep.name}
-                            className={`${styles.endpointItem} ${isChecked ? styles.endpointSelected : ''}`}
-                            onClick={() => setSelectedEndpoints((prev) => ({ ...prev, [ep.name]: !prev[ep.name] }))}
-                          >
-                            <div className={styles.endpointInfo}>
-                              <input
-                                type="checkbox"
-                                checked={isChecked}
-                                onChange={() => { }}
-                              />
-                              <span className={`${styles.methodBadge} ${getMethodClass(ep.method)}`}>
-                                {ep.method}
-                              </span>
-                              <div>
-                                <div className={styles.endpointPath}>{ep.path}</div>
-                                <div className={styles.endpointSummary}>{ep.display_name}</div>
-                              </div>
-                            </div>
-                            <span className={styles.versionTag}>
-                              {Object.keys(ep.parameters_schema?.properties || {}).length} 參數
-                            </span>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  </div>
-                </>
-              )}
+                    );
+                  })}
+                </div>
+              </div>
+            </>
+          )}
+        </DialogContent>
+        <DialogActions>
+          <Button variant="secondary" onClick={() => setImportModalOpen(false)} disabled={parsing || importing}>
+            取消
+          </Button>
+          {!parseResult ? (
+            <Button
+              variant="primary"
+              onClick={handleParseSpec}
+              loading={parsing}
+              startIcon={<Icon name="search" size={16} />}
+            >
+              {parsing ? '正在解析規格...' : '解析規格'}
+            </Button>
+          ) : (
+            <Button
+              variant="primary"
+              onClick={handleExecuteImport}
+              loading={importing}
+              startIcon={<Icon name="check" size={16} />}
+            >
+              {importing ? '正在匯入中...' : `確認匯入 (${Object.values(selectedEndpoints).filter(Boolean).length})`}
+            </Button>
+          )}
+        </DialogActions>
+      </Dialog>
+      {/* 6. 手動新增 / 編輯自訂 API */}
+      <Dialog open={toolModalOpen} onClose={savingTool ? undefined : () => setToolModalOpen(false)} maxWidth="lg">
+        <DialogForm onSubmit={handleSaveTool}>
+          <DialogTitle onClose={() => setToolModalOpen(false)} closeDisabled={savingTool}>
+            {editingTool ? '編輯自訂 API 工具' : '手動建立自訂 API 工具'}
+          </DialogTitle>
+          <DialogContent className={styles.dialogBody}>
+            {dialogError && <Alert severity="error">{dialogError}</Alert>}
+            <div className={styles.formRow}>
+              <div className={styles.formGroup}>
+                <label className={styles.formLabel} htmlFor="tool-name">工具識別碼（英文小寫與底線，供 LLM 調用）*</label>
+                <input
+                  id="tool-name"
+                  type="text"
+                  className={styles.formInput}
+                  placeholder="例如 get_user_profile"
+                  value={formData.name}
+                  onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+                  required
+                  autoComplete="off"
+                />
+              </div>
+              <div className={styles.formGroup}>
+                <label className={styles.formLabel} htmlFor="tool-display-name">顯示名稱*</label>
+                <input
+                  id="tool-display-name"
+                  type="text"
+                  className={styles.formInput}
+                  placeholder="例如 查詢使用者個人檔案"
+                  value={formData.display_name}
+                  onChange={(e) => setFormData({ ...formData, display_name: e.target.value })}
+                  required
+                  autoComplete="off"
+                />
+              </div>
             </div>
-            <div className={styles.modalFooter}>
-              <Button variant="secondary" onClick={() => setImportModalOpen(false)}>
-                取消
-              </Button>
-              {!parseResult ? (
-                <Button
-                  variant="primary"
-                  onClick={handleParseSpec}
-                  disabled={parsing}
-                  startIcon={parsing ? <Spinner size="sm" /> : <Icon name="search" size={16} />}
+            <div className={styles.formGroup}>
+              <label className={styles.formLabel} htmlFor="tool-description">工具用途描述（詳細說明工具功能與調用時機，供 AI 判斷何時使用）*</label>
+              <textarea
+                id="tool-description"
+                className={`${styles.formInput} ${styles.textareaSm}`}
+                placeholder="例如：當使用者需要查詢特定 ID 的使用者基本資料時調用。"
+                value={formData.description}
+                onChange={(e) => setFormData({ ...formData, description: e.target.value })}
+                required
+              />
+            </div>
+            <div className={`${styles.formRow} ${styles.formRowNarrowFirst}`}>
+              <div className={styles.formGroup}>
+                <label className={styles.formLabel} htmlFor="tool-method">HTTP 方法</label>
+                <select
+                  id="tool-method"
+                  className={styles.formSelect}
+                  value={formData.method}
+                  onChange={(e) => setFormData({ ...formData, method: e.target.value })}
                 >
-                  {parsing ? '正在解析規格...' : '解析規格'}
-                </Button>
-              ) : (
-                <Button
-                  variant="primary"
-                  onClick={handleExecuteImport}
-                  disabled={importing}
-                  startIcon={importing ? <Spinner size="sm" /> : <Icon name="check" size={16} />}
+                  <option value="GET">GET</option>
+                  <option value="POST">POST</option>
+                  <option value="PUT">PUT</option>
+                  <option value="DELETE">DELETE</option>
+                  <option value="PATCH">PATCH</option>
+                </select>
+              </div>
+              <div className={styles.formGroup}>
+                <label className={styles.formLabel} htmlFor="tool-url">請求完整 URL（支援 &#123;param&#125; 路徑變數）*</label>
+                <input
+                  id="tool-url"
+                  type="text"
+                  className={styles.formInput}
+                  placeholder="例如 https://api.example.com/users/{userId}"
+                  value={formData.url}
+                  onChange={(e) => setFormData({ ...formData, url: e.target.value })}
+                  required
+                  autoComplete="off"
+                />
+              </div>
+            </div>
+            <div className={styles.formRow}>
+              <div className={styles.formGroup}>
+                <label className={styles.formLabel} htmlFor="tool-auth-type">認證方式</label>
+                <select
+                  id="tool-auth-type"
+                  className={styles.formSelect}
+                  value={formData.auth_type}
+                  onChange={(e) => setFormData({ ...formData, auth_type: e.target.value })}
                 >
-                  {importing ? '正在匯入中...' : `確認匯入 (${Object.values(selectedEndpoints).filter(Boolean).length})`}
-                </Button>
-              )}
+                  <option value="none">無認證 (None)</option>
+                  <option value="bearer">Bearer Token</option>
+                  <option value="api_key">API Key (Header)</option>
+                </select>
+              </div>
+              <div className={styles.formGroup}>
+                <label className={styles.formLabel} htmlFor="tool-auth-token">認證金鑰 / Token</label>
+                <input
+                  id="tool-auth-token"
+                  type="password"
+                  className={styles.formInput}
+                  placeholder="例如 token_abc123"
+                  value={formData.auth_token}
+                  onChange={(e) => setFormData({ ...formData, auth_token: e.target.value })}
+                  autoComplete="off"
+                />
+              </div>
             </div>
-          </div>
-        </div>
-      )}
-      {/* 6. 手動新增 / 編輯自訂 API Modal */}
-      {toolModalOpen && (
-        <div className={styles.modalOverlay}>
-          <div className={styles.modalCard}>
-            <div className={styles.modalHeader}>
-              <div className={styles.modalTitle}>
-                {editingTool ? '編輯自訂 API 工具' : '手動建立自訂 API 工具'}
-              </div>
-              <button
-                type="button"
-                style={{ background: 'transparent', border: 'none', cursor: 'pointer' }}
-                onClick={() => setToolModalOpen(false)}
-              >
-                <Icon name="close" size={20} />
-              </button>
+            <div className={styles.formGroup}>
+              <label className={styles.formLabel} htmlFor="tool-parameters">參數 JSON Schema 定義 (Parameters Schema)</label>
+              <textarea
+                id="tool-parameters"
+                className={`${styles.formTextarea} ${styles.textareaLg}`}
+                value={formData.parameters_json}
+                onChange={(e) => setFormData({ ...formData, parameters_json: e.target.value })}
+              />
             </div>
-            <form onSubmit={handleSaveTool}>
-              <div className={styles.modalBody}>
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
-                  <div className={styles.formGroup}>
-                    <label className={styles.formLabel}>工具識別碼 (英文小寫與底線，供 LLM 調用)*：</label>
-                    <input
-                      type="text"
-                      className={styles.formInput}
-                      placeholder="例如 get_user_profile"
-                      value={formData.name}
-                      onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-                      required
-                    />
-                  </div>
-                  <div className={styles.formGroup}>
-                    <label className={styles.formLabel}>顯示名稱 (繁體中文)*：</label>
-                    <input
-                      type="text"
-                      className={styles.formInput}
-                      placeholder="例如 查詢使用者個人檔案"
-                      value={formData.display_name}
-                      onChange={(e) => setFormData({ ...formData, display_name: e.target.value })}
-                      required
-                    />
-                  </div>
-                </div>
-                <div className={styles.formGroup}>
-                  <label className={styles.formLabel}>工具用途描述 (詳細說明工具功能與調用時機，供 AI 意圖匹配)*：</label>
-                  <textarea
-                    className={styles.formInput}
-                    style={{ minHeight: '60px' }}
-                    placeholder="例如：當使用者需要查詢特定 ID 的用戶基本資料時調用。"
-                    value={formData.description}
-                    onChange={(e) => setFormData({ ...formData, description: e.target.value })}
-                    required
-                  />
-                </div>
-                <div style={{ display: 'grid', gridTemplateColumns: '120px 1fr', gap: '16px' }}>
-                  <div className={styles.formGroup}>
-                    <label className={styles.formLabel}>HTTP 方法：</label>
-                    <select
-                      className={styles.formSelect}
-                      value={formData.method}
-                      onChange={(e) => setFormData({ ...formData, method: e.target.value })}
-                    >
-                      <option value="GET">GET</option>
-                      <option value="POST">POST</option>
-                      <option value="PUT">PUT</option>
-                      <option value="DELETE">DELETE</option>
-                      <option value="PATCH">PATCH</option>
-                    </select>
-                  </div>
-                  <div className={styles.formGroup}>
-                    <label className={styles.formLabel}>請求完整 URL (支援 &#123;param&#125; 路徑變數)*：</label>
-                    <input
-                      type="text"
-                      className={styles.formInput}
-                      placeholder="例如 https://api.example.com/users/{userId}"
-                      value={formData.url}
-                      onChange={(e) => setFormData({ ...formData, url: e.target.value })}
-                      required
-                    />
-                  </div>
-                </div>
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
-                  <div className={styles.formGroup}>
-                    <label className={styles.formLabel}>認證方式：</label>
-                    <select
-                      className={styles.formSelect}
-                      value={formData.auth_type}
-                      onChange={(e) => setFormData({ ...formData, auth_type: e.target.value })}
-                    >
-                      <option value="none">無認證 (None)</option>
-                      <option value="bearer">Bearer Token</option>
-                      <option value="api_key">API Key (Header)</option>
-                    </select>
-                  </div>
-                  <div className={styles.formGroup}>
-                    <label className={styles.formLabel}>認證金鑰 / Token：</label>
-                    <input
-                      type="password"
-                      className={styles.formInput}
-                      placeholder="例如 token_abc123"
-                      value={formData.auth_token}
-                      onChange={(e) => setFormData({ ...formData, auth_token: e.target.value })}
-                    />
-                  </div>
-                </div>
-                <div className={styles.formGroup}>
-                  <label className={styles.formLabel}>參數 JSON Schema 定義 (Parameters Schema)：</label>
-                  <textarea
-                    className={styles.formTextarea}
-                    style={{ minHeight: '140px' }}
-                    value={formData.parameters_json}
-                    onChange={(e) => setFormData({ ...formData, parameters_json: e.target.value })}
-                  />
-                </div>
-              </div>
-              <div className={styles.modalFooter}>
-                <Button variant="secondary" type="button" onClick={() => setToolModalOpen(false)}>
-                  取消
-                </Button>
-                <Button variant="primary" type="submit" startIcon={<Icon name="save" size={16} />}>
-                  {editingTool ? '儲存變更' : '建立工具'}
-                </Button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
-      {/* 7. 自訂 API 線上即時測試 Modal */}
-      {testModalOpen && testingTool && (
-        <div className={styles.modalOverlay}>
-          <div className={styles.modalCard}>
-            <div className={styles.modalHeader}>
-              <div className={styles.modalTitle}>
-                即時線上測試：{testingTool.display_name} ({testingTool.name})
-              </div>
-              <button
-                type="button"
-                style={{ background: 'transparent', border: 'none', cursor: 'pointer' }}
-                onClick={() => setTestModalOpen(false)}
-              >
-                <Icon name="close" size={20} />
-              </button>
-            </div>
-            <div className={styles.modalBody}>
+          </DialogContent>
+          <DialogActions>
+            <Button variant="secondary" onClick={() => setToolModalOpen(false)} disabled={savingTool}>
+              取消
+            </Button>
+            <Button variant="primary" type="submit" loading={savingTool} startIcon={<Icon name="save" size={16} />}>
+              {editingTool ? '儲存變更' : '建立工具'}
+            </Button>
+          </DialogActions>
+        </DialogForm>
+      </Dialog>
+      {/* 7. 自訂 API 線上即時測試 */}
+      <Dialog open={testModalOpen && Boolean(testingTool)} onClose={() => setTestModalOpen(false)} maxWidth="lg">
+        {testingTool && (
+          <>
+            <DialogTitle onClose={() => setTestModalOpen(false)}>
+              即時線上測試：{testingTool.display_name} ({testingTool.name})
+            </DialogTitle>
+            <DialogContent className={styles.dialogBody}>
               <div className={styles.specBlock}>
                 <div className={styles.specLabel}>
                   <span className={`${styles.methodBadge} ${getMethodClass(testingTool.method)}`}>
                     {testingTool.method}
                   </span>
-                  <span>{testingTool.url}</span>
+                  <span className={styles.monoText}>{testingTool.url}</span>
                 </div>
               </div>
-              <div className={styles.formGroup}>
-                <label className={styles.formLabel}>測試輸入參數 (Arguments)：</label>
+              <fieldset className={styles.formFieldset}>
+                <legend className={styles.formLabel}>測試輸入參數 (Arguments)</legend>
                 {Object.keys(testingTool.parameters_schema?.properties || {}).length === 0 ? (
-                  <p style={{ fontSize: 'var(--font-size-xs)', color: 'var(--text-secondary)' }}>此 API 無須輸入額外參數</p>
+                  <p className={styles.mutedNote}>此 API 無須輸入額外參數</p>
                 ) : (
-                  Object.entries(testingTool.parameters_schema?.properties || {}).map(([pName, pObj]) => (
-                    <div key={pName} style={{ marginBottom: '8px' }}>
-                      <label style={{ fontSize: 'var(--font-size-xs)', fontWeight: 'var(--font-weight-medium)' }}>
-                        {pName} {testingTool.parameters_schema?.required?.includes(pName) && <span style={{ color: 'var(--color-error)' }}>*</span>}:
-                        <span style={{ color: 'var(--text-tertiary)', marginLeft: '6px' }}>({pObj.description || pObj.type})</span>
-                      </label>
-                      <input
-                        type="text"
-                        className={styles.formInput}
-                        placeholder={`請輸入 ${pName}`}
-                        value={testArgs[pName] || ''}
-                        onChange={(e) => setTestArgs({ ...testArgs, [pName]: e.target.value })}
-                      />
-                    </div>
-                  ))
+                  Object.entries(testingTool.parameters_schema?.properties || {}).map(([pName, pObj]) => {
+                    const inputId = `tool-arg-${pName}`;
+                    const isRequired = testingTool.parameters_schema?.required?.includes(pName);
+                    return (
+                      <div key={pName} className={styles.argField}>
+                        <label className={styles.argLabel} htmlFor={inputId}>
+                          {pName}{isRequired && <span className={styles.paramRequired} aria-hidden="true">*</span>}
+                          <span className={styles.argHint}>({pObj.description || pObj.type})</span>
+                        </label>
+                        <input
+                          id={inputId}
+                          type="text"
+                          className={styles.formInput}
+                          value={testArgs[pName] || ''}
+                          onChange={(e) => setTestArgs({ ...testArgs, [pName]: e.target.value })}
+                          required={isRequired}
+                          autoComplete="off"
+                        />
+                      </div>
+                    );
+                  })
                 )}
-              </div>
+              </fieldset>
               {testResult && (
-                <div className={styles.formGroup}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                    <label className={styles.formLabel}>API 回應結果 (Response)：</label>
-                    <span style={{ fontSize: 'var(--font-size-xs)', color: testResult.is_success ? 'var(--color-success)' : 'var(--color-error)' }}>
-                      狀態碼: {testResult.status_code} | 耗時: {testResult.duration_seconds}s
+                <div className={styles.formGroup} aria-live="polite">
+                  <div className={styles.resultHeader}>
+                    <span className={styles.formLabel}>API 回應結果 (Response)</span>
+                    <span className={testResult.is_success ? styles.resultSuccess : styles.resultError}>
+                      {testResult.is_success ? '成功' : '失敗'}｜狀態碼 {testResult.status_code}
+                      {testResult.duration_seconds !== undefined && `｜耗時 ${testResult.duration_seconds}s`}
                     </span>
                   </div>
                   <pre className={styles.jsonViewer}>
@@ -1747,30 +1748,47 @@ export default function AiTools() {
                   </pre>
                 </div>
               )}
-            </div>
-            <div className={styles.modalFooter}>
+            </DialogContent>
+            <DialogActions>
               <Button variant="secondary" onClick={() => setTestModalOpen(false)}>
                 關閉
               </Button>
               <Button
                 variant="primary"
                 onClick={handleRunTest}
-                disabled={testing}
-                startIcon={testing ? <Spinner size="sm" /> : <Icon name="send" size={16} />}
+                loading={testing}
+                startIcon={<Icon name="send" size={16} />}
               >
                 {testing ? '正在發送請求...' : '發送測試請求'}
               </Button>
-            </div>
-          </div>
-        </div>
-      )}
+            </DialogActions>
+          </>
+        )}
+      </Dialog>
+      <ConfirmDialog
+        open={Boolean(pendingDelete)}
+        title={pendingDelete?.type === 'tool' ? '刪除這個自訂 API 工具？' : '刪除這台 MCP 伺服器？'}
+        description={`「${pendingDelete?.item.display_name}」刪除後，AI 就無法再使用它提供的工具，此操作無法復原。`}
+        confirmLabel="刪除"
+        destructive
+        loading={deleting}
+        onConfirm={handleConfirmDelete}
+        onCancel={() => setPendingDelete(null)}
+      />
       {/* 通知提示 */}
       <Snackbar
+        key={snackbar.key}
         open={snackbar.open}
-        message={snackbar.message}
-        severity={snackbar.severity}
-        onClose={() => setSnackbar({ ...snackbar, open: false })}
-      />
+        autoHideDuration={snackbar.severity === 'error' ? 6000 : 3000}
+        onClose={() => setSnackbar((prev) => ({ ...prev, open: false }))}
+      >
+        <Alert
+          severity={snackbar.severity}
+          onClose={() => setSnackbar((prev) => ({ ...prev, open: false }))}
+        >
+          {snackbar.message}
+        </Alert>
+      </Snackbar>
     </div>
   );
 }

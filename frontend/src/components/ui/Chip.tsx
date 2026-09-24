@@ -1,23 +1,36 @@
 import React from 'react';
 import styles from './Chip.module.css';
 import { Icon } from './Icon';
-export interface ChipProps extends React.HTMLAttributes<HTMLDivElement> {
+export interface ChipProps extends Omit<React.HTMLAttributes<HTMLElement>, 'onClick'> {
   label?: React.ReactNode;
   icon?: React.ReactNode;
   onDelete?: () => void;
-  onClick?: (e: React.MouseEvent<HTMLDivElement>) => void;
+  deleteLabel?: string;
+  /** 提供時渲染成 <button> */
+  onClick?: (e: React.MouseEvent<HTMLElement>) => void;
+  /** 提供時渲染成 <a> */
+  href?: string;
+  target?: string;
+  rel?: string;
   variant?: 'filled' | 'outlined';
   color?: 'default' | 'primary' | 'success' | 'warning' | 'error' | 'info' | 'secondary';
   size?: 'sm' | 'md' | 'small' | 'medium';
+  /** 長標籤換行而不撐寬容器 */
+  wrap?: boolean;
 }
 export const Chip: React.FC<ChipProps> = ({
   label,
   icon,
   onDelete,
+  deleteLabel = '移除',
   onClick,
+  href,
+  target,
+  rel,
   variant = 'filled',
   color = 'default',
   size = 'md',
+  wrap = false,
   children,
   className = '',
   ...props
@@ -35,21 +48,34 @@ export const Chip: React.FC<ChipProps> = ({
             : color === 'info'
               ? styles.info
               : '';
+  const interactive = Boolean(onClick || href);
   const classes = [
     styles.chip,
     normalizedSize,
     colorClass,
     variant === 'outlined' ? styles.outlined : '',
-    onClick ? styles.clickable : '',
+    interactive ? styles.clickable : '',
+    wrap ? styles.wrap : '',
     className,
   ]
     .filter(Boolean)
     .join(' ');
-  return (
-    <div className={classes} onClick={onClick} {...props}>
-      {icon && <span style={{ display: 'inline-flex', flexShrink: 0 }}>{icon}</span>}
-      <span>{label || children}</span>
-      {onDelete && (
+  const content = (
+    <>
+      {icon && <span className={styles.icon} aria-hidden="true">{icon}</span>}
+      <span className={styles.label}>{label || children}</span>
+    </>
+  );
+  if (onDelete) {
+    return (
+      <span className={classes} {...props}>
+        {onClick ? (
+          <button type="button" className={styles.labelButton} onClick={onClick}>
+            {content}
+          </button>
+        ) : (
+          content
+        )}
         <button
           type="button"
           className={styles.deleteButton}
@@ -57,12 +83,31 @@ export const Chip: React.FC<ChipProps> = ({
             e.stopPropagation();
             onDelete();
           }}
-          aria-label="Delete"
+          aria-label={deleteLabel}
         >
           <Icon name="close" size={12} />
         </button>
-      )}
-    </div>
+      </span>
+    );
+  }
+  if (href) {
+    return (
+      <a className={classes} href={href} target={target} rel={rel} onClick={onClick} {...props}>
+        {content}
+      </a>
+    );
+  }
+  if (onClick) {
+    return (
+      <button type="button" className={classes} onClick={onClick} {...props}>
+        {content}
+      </button>
+    );
+  }
+  return (
+    <span className={classes} {...props}>
+      {content}
+    </span>
   );
 };
 export const Badge = Chip;

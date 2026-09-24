@@ -13,10 +13,18 @@
 }
 
 .header {
+  width: 100%;
+  min-height: 40px;
   padding: var(--space-2) var(--space-3);
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: var(--space-2);
+  font: inherit;
+  text-align: left;
+  color: inherit;
+  background: transparent;
+  border: none;
   cursor: pointer;
   user-select: none;
   transition: background-color var(--transition-fast);
@@ -24,6 +32,10 @@
 
 .header:hover {
   background-color: var(--bg-surface-hover);
+}
+
+.header:focus-visible {
+  outline-offset: -2px;
 }
 
 .titleArea {
@@ -54,6 +66,83 @@
   gap: var(--space-1);
 }
 
+@media (max-width: 599px) {
+  .stepsChipRow {
+    display: none;
+  }
+}
+
+.stepChip {
+  display: inline-flex;
+  align-items: center;
+  height: 20px;
+  padding: 0 6px;
+  border-radius: var(--radius-full);
+  border: 1px solid currentColor;
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
+  line-height: 1;
+}
+
+.stepChipRunning {
+  background-color: var(--color-primary-solid);
+  border-color: var(--color-primary-solid);
+  color: var(--text-on-primary);
+  animation: stepPulse 1.4s ease-in-out infinite;
+}
+
+.stepChipError {
+  color: var(--color-error-text);
+}
+
+@keyframes stepPulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+
+  50% {
+    opacity: 0.6;
+  }
+}
+
+/* 工具色調：文字色同時作為圖示與膠囊邊框顏色，亮暗色各自維持 4.5:1 */
+.toneKnowledge {
+  color: #1d4ed8;
+}
+
+.toneRecords {
+  color: #047857;
+}
+
+.toneSearch {
+  color: #0e7490;
+}
+
+.toneFetch {
+  color: #6d28d9;
+}
+
+.toneDefault {
+  color: var(--text-secondary);
+}
+
+[data-theme="dark"] .toneKnowledge {
+  color: #93c5fd;
+}
+
+[data-theme="dark"] .toneRecords {
+  color: #6ee7b7;
+}
+
+[data-theme="dark"] .toneSearch {
+  color: #67e8f9;
+}
+
+[data-theme="dark"] .toneFetch {
+  color: #c4b5fd;
+}
+
 .chevron {
   transition: transform var(--transition-fast);
   color: var(--text-tertiary);
@@ -70,6 +159,8 @@
 }
 
 .stepList {
+  list-style: none;
+  margin: 0;
   padding: var(--space-3);
   display: flex;
   flex-direction: column;
@@ -94,6 +185,7 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: var(--space-2);
   margin-bottom: var(--space-2);
 }
 
@@ -106,12 +198,17 @@
   color: var(--text-primary);
 }
 
+.toolIcon {
+  display: inline-flex;
+  flex-shrink: 0;
+}
+
 .runningBadge {
-  font-size: 0.65rem;
+  font-size: var(--font-size-xs);
   padding: 1px 6px;
   border-radius: var(--radius-full);
-  background-color: var(--color-primary);
-  color: #FFFFFF;
+  background-color: var(--color-primary-solid);
+  color: var(--text-on-primary);
   font-weight: 600;
   margin-left: 6px;
   display: inline-block;
@@ -122,11 +219,23 @@
   display: flex;
   align-items: center;
   gap: var(--space-1);
+  flex-shrink: 0;
+}
+
+.statusSuccess {
+  display: inline-flex;
+  color: var(--color-success-text);
+}
+
+.statusError {
+  display: inline-flex;
+  color: var(--color-error-text);
 }
 
 .duration {
   color: var(--text-tertiary);
-  font-size: 0.7rem;
+  font-size: var(--font-size-xs);
+  font-variant-numeric: tabular-nums;
 }
 
 .queryBox {
@@ -140,21 +249,20 @@
   border-radius: var(--radius-xs);
   font-size: var(--font-size-xs);
   display: inline-block;
-  word-break: break-all;
+  overflow-wrap: anywhere;
   border: 1px solid var(--border-subtle);
 }
 
 .outputPreview {
   display: block;
   color: var(--text-secondary);
-  font-size: 0.72rem;
+  font-size: var(--font-size-xs);
   line-height: 1.4;
   background-color: var(--bg-surface-secondary);
   padding: var(--space-2);
   border-radius: var(--radius-xs);
-  overflow: hidden;
-  text-overflow: ellipsis;
   white-space: pre-wrap;
+  overflow-wrap: anywhere;
   max-height: 80px;
   overflow-y: auto;
 }

@@ -23,8 +23,8 @@
 | `/api/auth` | Authentication | Registration, login, refresh, profile, logout |
 | `/api/chat` | Chat & autonomous research | SSE chat streaming, model and tool listings, conversation history |
 | `/api/documents` | Knowledge base | Upload, summaries, deletion, index rebuild (admin) |
-| `/api/api-tools` | Custom API tools | OpenAPI parsing and import, tool CRUD, testing |
-| `/api/mcp` | MCP servers | MCP server management, tool discovery, invocation tests |
+| `/api/api-tools` | Custom API tools | OpenAPI parsing and import, tool CRUD, testing (admin) |
+| `/api/mcp` | MCP servers | MCP server management, tool discovery, invocation tests (admin) |
 | `/api/admin` | Admin dashboard | Users, statistics, conversations, vector store operations (admin) |
 | `/api/tags`, `/api/external-tags` | Model listings | Ollama-compatible `tags` payloads |
 | `/health`, `/` | Health checks | Unauthenticated liveness probes |
@@ -433,6 +433,8 @@ Rebuilds the full FAISS and BM25 indices from the documents currently stored in 
 
 Registers external HTTP APIs as tools the agent can call autonomously. Enabled tools are loaded automatically whenever tool definitions are assembled.
 
+> Every endpoint in this module, including the read-only ones, requires **admin** privileges: the tools are shared by every user's agent, and responses include credentials such as API keys.
+
 ### 4.1 POST /api/api-tools/parse-spec
 
 Parses an OpenAPI / Swagger specification (OAS 2.0, 3.0, 3.1) supplied either as raw content or as a URL.
@@ -560,12 +562,16 @@ Issues a real request with the supplied arguments to verify connectivity and res
 ```
 
 > On failure `result.success` is `false` and `error` / `error_id` are returned instead of the internal exception text.
+>
+> The first request and every redirect target are validated by the SSRF guard; a rejected request returns `result.status_code` `403` with the reason in `error`.
 
 ---
 
 ## 5. MCP Servers (`/api/mcp`)
 
 Manages Model Context Protocol servers over `stdio` (local subprocess) and HTTP transports.
+
+> Every endpoint in this module, including the read-only ones, requires **admin** privileges: `stdio` servers run the configured command on the host, and responses include credentials such as environment variables and headers.
 
 ### 5.1 GET /api/mcp/presets
 
@@ -587,7 +593,7 @@ Server fields: `id`, `name`, `display_name`, `description`, `transport_type`, `c
 
 ### 5.3 POST /api/mcp/servers
 
-Creates an MCP server. The backend immediately attempts to connect and discover tools; if discovery fails the server is still created with `status: "error"` and an error code in `last_error`.
+Creates an MCP server. The backend immediately attempts to connect and discover tools; if discovery fails the server is still created with `status: "error"` and an error code in `last_error`. When the SSRF guard rejects the URL, `last_error` states the reason instead.
 
 **Request Body:**
 
@@ -599,8 +605,8 @@ Creates an MCP server. The backend immediately attempts to connect and discover 
 | `transport_type` | string | No | `stdio` or an HTTP transport | `stdio` |
 | `command` | string | No | Executable for `stdio` transport | `null` |
 | `args` | array | No | Command arguments | `null` |
-| `env_vars` | object | No | Environment variables for the subprocess | `null` |
-| `url` | string | No | Server URL for HTTP transport (SSRF-validated) | `null` |
+| `env_vars` | object | No | Environment variables for the subprocess. The subprocess inherits only essential system variables such as `PATH`, never the backend `.env` settings, so list every variable the server needs here | `null` |
+| `url` | string | No | Server URL for HTTP transport (every request and redirect is SSRF-validated; loopback and private addresses are rejected) | `null` |
 | `headers` | object | No | Headers for HTTP transport | `null` |
 | `is_enabled` | boolean | No | Whether the server is active | `true` |
 | `timeout` | integer | No | Connection and call timeout in seconds | `30` |
@@ -636,6 +642,8 @@ Reconnects and re-discovers the server toolset (`initialize` + `tools/list`), re
   "server_info": { "protocolVersion": "2024-11-05" }
 }
 ```
+
+- **400 Bad Request**: connection or discovery failed (error code returned), or the SSRF guard rejected the URL (reason returned).
 
 ### 5.8 PATCH /api/mcp/servers/{server_id}/toggle
 

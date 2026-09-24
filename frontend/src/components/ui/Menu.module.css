@@ -12,7 +12,7 @@
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-lg);
   min-width: 180px;
-  max-width: 320px;
+  max-width: min(320px, calc(100vw - 16px));
   padding: var(--space-1) 0;
   z-index: calc(var(--z-popover) + 1);
   animation: popIn var(--transition-fast) forwards;
@@ -23,6 +23,7 @@
   display: flex;
   align-items: center;
   gap: var(--space-3);
+  min-height: 40px;
   padding: var(--space-2) var(--space-4);
   font-size: var(--font-size-sm);
   color: var(--text-primary);
@@ -34,9 +35,14 @@
   transition: background-color var(--transition-fast), color var(--transition-fast);
 }
 
-.menuItem:hover:not(:disabled) {
+.menuItem:hover:not(:disabled),
+.menuItem:focus-visible {
   background-color: var(--bg-surface-hover);
-  color: var(--color-primary);
+  color: var(--color-primary-text);
+}
+
+.menuItem:focus-visible {
+  outline-offset: -2px;
 }
 
 .menuItem:disabled {
@@ -44,13 +50,41 @@
   cursor: not-allowed;
 }
 
-.menuItemDanger {
-  color: var(--color-error);
+.menuItemIcon {
+  display: inline-flex;
+  flex-shrink: 0;
 }
 
-.menuItemDanger:hover:not(:disabled) {
+.menuItemLabel {
+  flex: 1;
+}
+
+.menuItemCheck {
+  display: inline-flex;
+  width: 16px;
+  flex-shrink: 0;
+  color: var(--color-primary-text);
+}
+
+.menuItemChecked {
+  font-weight: var(--font-weight-semibold);
+}
+
+.menuItemDanger {
+  color: var(--color-error-text);
+}
+
+.menuItemDanger:hover:not(:disabled),
+.menuItemDanger:focus-visible {
   background-color: var(--color-error-bg);
-  color: var(--color-error);
+  color: var(--color-error-text);
+}
+
+.groupLabel {
+  padding: var(--space-2) var(--space-4) var(--space-1);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
+  color: var(--text-tertiary);
 }
 
 .divider {

@@ -10,11 +10,32 @@
   }
 }
 
+.loadingState {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  height: 50vh;
+}
+
+.titleRow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin-bottom: var(--space-6);
+}
+
 .title {
   font-size: var(--font-size-2xl);
   font-weight: var(--font-weight-bold);
   color: var(--text-primary);
-  margin-bottom: var(--space-6);
+}
+
+.refreshing {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--font-size-sm);
+  color: var(--text-secondary);
 }
 
 .statsGrid {
@@ -113,6 +134,13 @@
   color: var(--text-primary);
   border-bottom: 1px solid var(--border-subtle);
   white-space: nowrap;
+}
+
+/* 名稱、信箱等長字串允許換行，讓「操作」欄在一般筆電寬度下不必橫向捲動 */
+.table td.wrapCell {
+  white-space: normal;
+  overflow-wrap: anywhere;
+  min-width: 8em;
 }
 
 .table tr:hover td {

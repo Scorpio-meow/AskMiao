@@ -1,4 +1,4 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import styles from './Snackbar.module.css';
 export interface SnackbarProps {
@@ -22,13 +22,18 @@ export const Snackbar: React.FC<SnackbarProps> = ({
   anchorOrigin = { vertical: 'bottom', horizontal: 'center' },
   className = '',
 }) => {
+  // 以 ref 保存 onClose，父層每次重新渲染都傳新函式時計時器才不會一直被重設
+  const onCloseRef = useRef(onClose);
+  useEffect(() => {
+    onCloseRef.current = onClose;
+  });
   useEffect(() => {
     if (!open || !autoHideDuration) return;
     const timer = setTimeout(() => {
-      onClose?.(undefined, 'timeout');
+      onCloseRef.current?.(undefined, 'timeout');
     }, autoHideDuration);
     return () => clearTimeout(timer);
-  }, [open, autoHideDuration, onClose]);
+  }, [open, autoHideDuration, message]);
   if (!open) return null;
   const { vertical, horizontal } = anchorOrigin;
   const positionClass =
@@ -45,7 +50,11 @@ export const Snackbar: React.FC<SnackbarProps> = ({
           : styles.bottomCenter;
   return createPortal(
     <div className={`${styles.snackbar} ${positionClass} ${className}`}>
-      {children || <div className={styles.defaultMessage}>{message}</div>}
+      {children || (
+        <div className={styles.defaultMessage} role="status">
+          {message}
+        </div>
+      )}
     </div>,
     document.body
   );

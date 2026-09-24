@@ -65,7 +65,12 @@ export type IconName =
   | 'clear-all'
   | 'tools'
   | 'build'
-  | 'account-circle';
+  | 'account-circle'
+  | 'terminal'
+  | 'sparkles'
+  | 'stop'
+  | 'arrow-down'
+  | 'monitor';
 interface IconProps extends React.SVGProps<SVGSVGElement> {
   name: IconName;
   size?: number | string;
@@ -487,6 +492,39 @@ export const Icon: React.FC<IconProps> = ({
       case 'moon':
         return (
           <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" fill="none" />
+        );
+      case 'terminal':
+        return (
+          <>
+            <polyline points="4 17 10 11 4 5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" fill="none" />
+            <line x1="12" y1="19" x2="20" y2="19" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+          </>
+        );
+      case 'sparkles':
+        return (
+          <>
+            <path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9z" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" fill="none" />
+            <path d="M19 15l.8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8z" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" fill="none" />
+          </>
+        );
+      case 'stop':
+        return (
+          <rect x="6" y="6" width="12" height="12" rx="2" stroke="currentColor" strokeWidth="2" fill="currentColor" />
+        );
+      case 'arrow-down':
+        return (
+          <>
+            <line x1="12" y1="5" x2="12" y2="19" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+            <polyline points="19 12 12 19 5 12" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" fill="none" />
+          </>
+        );
+      case 'monitor':
+        return (
+          <>
+            <rect x="2" y="3" width="20" height="14" rx="2" stroke="currentColor" strokeWidth="2" fill="none" />
+            <line x1="8" y1="21" x2="16" y2="21" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+            <line x1="12" y1="17" x2="12" y2="21" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+          </>
         );
       case 'sun':
         return (
