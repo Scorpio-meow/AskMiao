@@ -158,3 +158,33 @@ def test_reranker_load_failure_stops_startup(monkeypatch):
             vector_store=RankedVectorStore([], []), bm25_store=RankedBM25([]), reranker_model="missing-reranker",
             top_k=30, rrf_k=60, rerank_top_k=20, final_k=8, rerank_weight=0.85, relevance_threshold=0.5, use_fp16=False,
         )
+
+
+def test_exact_match_candidates_are_capped_and_reranked_outside_the_index_lock(monkeypatch):
+    posts = [chunk(i, f"日期: 2026-08-01 第 {i} 則貼文", source="posts.json") for i in range(1, 201)]
+
+    class LockCheckingEncoder(FakeCrossEncoder):
+        def predict(self, pairs):
+            # 重排時不應持有索引鎖：另一個執行緒要能立即取得
+            acquired = []
+
+            def try_lock():
+                lock = retriever.vector_store.lock
+                got = lock.acquire(timeout=1)
+                acquired.append(got)
+                if got:
+                    lock.release()
+
+            worker = threading.Thread(target=try_lock)
+            worker.start()
+            worker.join()
+            self.lock_free = acquired[0]
+            return super().predict(pairs)
+
+    encoder = LockCheckingEncoder({}, default_relevance=0.9)
+    retriever = make_retriever(monkeypatch, posts, [], [], encoder, rerank_top_k=20)
+
+    retriever.rank("2026-08-01 有哪些貼文")
+
+    assert encoder.predicted_pairs == 20
+    assert encoder.lock_free is True

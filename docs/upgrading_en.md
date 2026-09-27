@@ -4,6 +4,11 @@
 
 > How to upgrade an existing deployment to a new release, with rollback steps and troubleshooting. See the [CHANGELOG](../CHANGELOG_en.md) for the full list of changes in each version.
 
+- [Upgrading from 3.0.0 to 4.0.0](#upgrading-from-300-to-400)
+  - [Changes and required actions](#changes-and-required-actions)
+  - [Upgrade steps](#upgrade-steps)
+  - [Rolling back](#rolling-back)
+  - [After the upgrade](#after-the-upgrade)
 - [Upgrading from 2.x to 3.0.0](#upgrading-from-2x-to-300)
   - [Overview](#overview)
   - [Step 0: stop and back up](#step-0-stop-and-back-up)
@@ -14,6 +19,104 @@
   - [Step 5: verify the upgrade](#step-5-verify-the-upgrade)
   - [Rolling back to 2.2.x](#rolling-back-to-22x)
   - [Troubleshooting](#troubleshooting)
+
+---
+
+## Upgrading from 3.0.0 to 4.0.0
+
+For upgrading from 3.0.0 to 4.0.0; see the [CHANGELOG](../CHANGELOG_en.md#400---2026-09-27) for every change. This release is a security pass: no index rebuild is needed, and new table columns are added automatically at startup. The hands-on work is mostly about `.env`, `backend/keys/`, the PostgreSQL container, and how the frontend is served.
+
+### Changes and required actions
+
+| Item | 3.0.0 | 4.0.0 | Action |
+|---|---|---|---|
+| JWT signing | Development fell back to HS256 (`JWT_SECRET_KEY`) when the RSA keys could not load | Always RS256; the backend refuses to start if the keys cannot be loaded or generated | Make sure `backend/keys/` exists and is writable by the backend account; `JWT_SECRET_KEY` and `JWT_ALGORITHM` can be removed from `.env` |
+| Token validation | Identity and `is_admin` came from the token | Every request loads the account by `sub`; deactivated or deleted accounts lose access immediately | None; existing tokens stay valid while the account exists and is active |
+| Refresh tokens | `POST /api/auth/refresh` read a claim that does not exist and always failed | Works, and each refresh token is single-use | Clients that call it themselves must use the new cookie from every response |
+| PostgreSQL container | Built-in password `postgres`, port open on every interface | `POSTGRES_PASSWORD` is required, and only `127.0.0.1:7690` is bound | Set `POSTGRES_PASSWORD` and update `DATABASE_URL` |
+| Frontend dev server | Listened on every interface, reachable from the LAN | Listens on `localhost` only and sends anti-framing headers | LAN users switch to a production build behind a real web server |
+| Rate limiting source IP | uvicorn's defaults could trust `X-Forwarded-For` | Only proxies named in `FORWARDED_ALLOW_IPS` are trusted | Set `FORWARDED_ALLOW_IPS` if a reverse proxy in front overwrites that header |
+| Tool calls | The agent ran them directly | Tools with `requires_approval` wait for the user's approval | The columns are added automatically; adjust each tool's flag as needed |
+| MCP presets | `mcp_fetch`, `mcp_filesystem` (root `./data`) | `mcp_fetch` removed; `mcp_filesystem` uses `backend/mcp_filesystem_sandbox` with a pinned version | Review servers created from the old presets |
+| Outbound proxies | Custom API tools, MCP HTTP, and `web_fetch` honored `HTTP(S)_PROXY` | Always connect directly, pinned to the SSRF-validated IP | Environments that must go through a proxy need to handle it at the network layer |
+| Message responses | Included the raw `context_used` string | `context_used` is always `null` in `/api/chat` responses | Read `sources`, `sources_detail`, `research_trace`, and `attachments` instead |
+| Resource limits | Mostly unlimited | Request bodies, messages, attachments, tool results, concurrent streams, and more are capped | None; see [resource limits](configuration_en.md#resource-limits) when needed |
+
+### Upgrade steps
+
+1. **Stop and back up**: stop the backend and back up the database, `backend/data/`, `backend/keys/`, and `backend/.env`.
+2. **Update the code**: after fetching the new code, run `pip install -r requirements.txt` in `backend/` and `bun install` in `frontend/`.
+3. **Tidy `.env`**:
+   - Remove `JWT_SECRET_KEY` and `JWT_ALGORITHM`. Leaving them is harmless; the backend ignores them.
+   - If a reverse proxy in front of the backend *overwrites* `X-Forwarded-For` (for example nginx with `proxy_set_header X-Forwarded-For $remote_addr;`), add `FORWARDED_ALLOW_IPS=<proxy address>`; do **not** set it behind the Vite dev proxy.
+4. **Check the RSA keys**: `backend/keys/jwt_private.pem` and `jwt_public.pem` must exist and be readable; without them the backend generates a pair on first start, so the directory must be writable by the backend account. Keeping the existing keys keeps existing tokens valid.
+5. **PostgreSQL container (when using `backend/docker-compose.yml`)**:
+   - Add `POSTGRES_PASSWORD=<random string>` to `backend/.env`; without it `docker compose` refuses to start.
+   - An existing data volume was initialized with the old password `postgres`, and `POSTGRES_PASSWORD` only applies on first initialization. Start the container with the old setup, change the password, and then update `DATABASE_URL`:
+
+     ```bash
+     cd backend
+     docker compose exec postgres psql -U postgres -c "ALTER USER postgres PASSWORD '<new password>';"
+     ```
+
+   - Set `DATABASE_URL` to `postgresql+psycopg2://postgres:<new password>@localhost:7690/chatbot` (percent-encode special characters), then recreate the container with `docker compose up -d` to apply the port binding on `127.0.0.1` only.
+6. **Start the backend**: `python main.py`. At startup `upgrade_schema()` adds the `requires_approval` column to `custom_api_tools` and `mcp_servers` and backfills it: `true` for API tools whose method is not `GET`, `HEAD`, or `OPTIONS`, and `true` for every MCP server.
+7. **Review the tools**: as an admin, open the AI tools page:
+   - Adjust each tool's "requires user confirmation" to match what it really does. `GET` tools default to no confirmation; turn it on if a tool changes state or sends data out.
+   - Servers created from the old `mcp_fetch` preset are not deleted, but they bypass `web_fetch`'s outbound protections; delete or disable them.
+   - Servers created from the old `mcp_filesystem` preset still point at `./data` (the backend's data directory). Change the root to the absolute path of `backend/mcp_filesystem_sandbox` or another dedicated directory, pin the package to a reviewed version, and run discovery again.
+8. **Serving the frontend**: `bun run dev` and `bun run preview` listen on `localhost` only. Deployments that let LAN devices reach the dev server directly should build with `bun run build`, serve `frontend/build/` from a real web server such as nginx that reverse-proxies `/api`, and send `X-Frame-Options: DENY` or `Content-Security-Policy: frame-ancestors 'none'`.
+9. **Verify**:
+   - [ ] After staying idle past the access token lifetime, the frontend refreshes the token and keeps working.
+   - [ ] After deactivating a test account, that account's next request gets `401` right away.
+   - [ ] Calling a tool that needs approval shows a confirmation card in the chat, and after a denial the agent answers from what it already has.
+   - [ ] Clients that integrate with the API read the parsed message fields instead of `context_used` and handle the `approval_required` event.
+
+### Rolling back
+
+1. Stop the backend, switch the code back to 3.0.0, and restore `.env` (3.0.0 requires `JWT_SECRET_KEY`).
+2. The database can stay as is: 3.0.0 ignores the new `requires_approval` columns. The exception is a brand-new database created by the new version, where these columns are `NOT NULL` without a default, so 3.0.0 fails to create tools; drop the two columns or give them a default first.
+3. The 3.0.0 `backend/docker-compose.yml` goes back to the built-in password `postgres`; if you already changed the database password, keep the new password in `DATABASE_URL`.
+
+### After the upgrade
+
+<details>
+<summary><b>The backend fails to start with an error about <code>backend/keys</code> or the RSA keys</b></summary>
+
+The new release no longer falls back to HS256. Make sure `backend/keys/` exists and is writable by the backend account (needed when the keys are first generated), and that `jwt_private.pem` and `jwt_public.pem` are intact. For containers or read-only file systems, mount pre-generated keys.
+
+</details>
+
+<details>
+<summary><b><code>docker compose up</code> says <code>POSTGRES_PASSWORD</code> must be set</b></summary>
+
+The compose file no longer ships a password. Set `POSTGRES_PASSWORD` in `backend/.env` (or the shell), and change the password of an existing volume separately with `ALTER USER`; see step 5 of the [upgrade steps](#upgrade-steps).
+
+</details>
+
+<details>
+<summary><b>LAN devices cannot reach the frontend</b></summary>
+
+The dev and preview servers listen on `localhost` only, on purpose. Serve a production build from a real web server instead; see step 8 of the [upgrade steps](#upgrade-steps).
+
+</details>
+
+<details>
+<summary><b>All users share one rate limit quota</b></summary>
+
+Without `FORWARDED_ALLOW_IPS`, rate limiting counts the direct peer, so behind a reverse proxy everyone's source IP is the proxy. If the proxy overwrites `X-Forwarded-For`, set its address as `FORWARDED_ALLOW_IPS`; otherwise raise `RATE_LIMIT_PER_MINUTE`.
+
+</details>
+
+<details>
+<summary><b>Sending a message returns <code>400</code>, <code>413</code>, <code>422</code>, or <code>429</code></b></summary>
+
+- `400`: `model_name` is not in the available model list; use a model from `GET /api/chat/models` or add it to `AVAILABLE_MODELS`.
+- `413`: the request body exceeds its limit, or the user's attachment storage reached 200 MiB; delete old conversations with attachments.
+- `422`: the message exceeds 20,000 characters, or there are more than 5 attachments, one over 15 MiB, or more than 20 MiB in total.
+- `429`: the same user already has 2 answers streaming.
+
+</details>
 
 ---
 

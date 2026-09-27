@@ -1,6 +1,6 @@
 import json
 import logging
-from typing import Callable, Dict, List
+from typing import Callable, Dict, List, Set
 
 from sqlalchemy.orm import Session
 
@@ -47,6 +47,15 @@ class ChunkStore:
         for chunk, chunk_id in zip(chunks, ids):
             chunk.metadata["chunk_id"] = chunk_id
         return ids
+
+    def existing_document_ids(self, document_ids: List[int]) -> Set[int]:
+        """回傳仍存在於 documents 表的文件 id"""
+        from app.models import Document as DbDocument
+        if not document_ids:
+            return set()
+        with self.session_factory() as session:
+            rows = session.query(DbDocument.id).filter(DbDocument.id.in_(set(document_ids))).all()
+        return {row.id for row in rows}
 
     def delete_ids(self, chunk_ids: List[int]) -> None:
         from app.models import RagChunk

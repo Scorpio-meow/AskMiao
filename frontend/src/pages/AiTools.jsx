@@ -186,8 +186,13 @@ const EMPTY_MCP_FORM = {
   env_vars_json: '{}',
   url: '',
   headers_json: '{}',
+  // MCP 工具的行為無法事先得知，預設每次呼叫都要使用者在對話中確認
+  requires_approval: true,
   timeout: 30
 };
+// 與後端 tool_approval.SAFE_HTTP_METHODS 一致：其他方法可能改變外部狀態，預設需要確認
+const SAFE_HTTP_METHODS = ['GET', 'HEAD', 'OPTIONS'];
+const defaultRequiresApproval = (method) => !SAFE_HTTP_METHODS.includes((method || 'GET').toUpperCase());
 const EMPTY_TOOL_FORM = {
   name: '',
   display_name: '',
@@ -196,6 +201,7 @@ const EMPTY_TOOL_FORM = {
   url: '',
   auth_type: 'none',
   auth_token: '',
+  requires_approval: false,
   timeout: 15,
   parameters_json: '{\n  "type": "object",\n  "properties": {\n    "query": {\n      "type": "string",\n      "description": "參數說明"\n    }\n  },\n  "required": ["query"]\n}'
 };
@@ -432,6 +438,7 @@ export default function AiTools() {
         url: tool.url,
         auth_type: tool.auth_type || 'none',
         auth_token: tool.auth_config?.token || '',
+        requires_approval: Boolean(tool.requires_approval),
         timeout: tool.timeout || 15,
         parameters_json: JSON.stringify(tool.parameters_schema || { type: 'object', properties: {} }, null, 2)
       });
@@ -456,6 +463,7 @@ export default function AiTools() {
         url: formData.url,
         auth_type: formData.auth_type,
         auth_config: formData.auth_token ? { token: formData.auth_token } : {},
+        requires_approval: formData.requires_approval,
         timeout: Number(formData.timeout) || 15,
         parameters_schema: parsedSchema
       };
@@ -551,6 +559,7 @@ export default function AiTools() {
         env_vars_json: JSON.stringify(server.env_vars || {}, null, 2),
         url: server.url || '',
         headers_json: JSON.stringify(server.headers || {}, null, 2),
+        requires_approval: Boolean(server.requires_approval),
         timeout: server.timeout || 30
       });
     } else {
@@ -572,6 +581,7 @@ export default function AiTools() {
       env_vars_json: JSON.stringify(preset.env_vars || {}, null, 2),
       url: preset.url || '',
       headers_json: JSON.stringify(preset.headers || {}, null, 2),
+      requires_approval: true,
       timeout: preset.timeout || 30
     });
   };
@@ -590,6 +600,7 @@ export default function AiTools() {
         env_vars: parseJsonField(mcpFormData.env_vars_json, '環境變數配置') || {},
         url: mcpFormData.url,
         headers: parseJsonField(mcpFormData.headers_json, '自訂 HTTP Headers') || {},
+        requires_approval: mcpFormData.requires_approval,
         timeout: Number(mcpFormData.timeout) || 30
       };
       setSavingMcp(true);
@@ -1306,7 +1317,7 @@ export default function AiTools() {
                     className={`${styles.formTextarea} ${styles.textareaMd}`}
                     value={mcpFormData.args_json}
                     onChange={(e) => setMcpFormData({ ...mcpFormData, args_json: e.target.value })}
-                    placeholder='["-y", "@modelcontextprotocol/server-filesystem", "./data"]'
+                    placeholder='["-y", "@modelcontextprotocol/server-filesystem@2026.8.31", "./mcp_filesystem_sandbox"]'
                   />
                 </div>
                 <div className={styles.formGroup}>
@@ -1333,6 +1344,17 @@ export default function AiTools() {
                 />
               </div>
             )}
+            <label className={styles.approvalOption}>
+              <input
+                type="checkbox"
+                checked={mcpFormData.requires_approval}
+                onChange={(e) => setMcpFormData({ ...mcpFormData, requires_approval: e.target.checked })}
+              />
+              <span>
+                AI 呼叫此伺服器的工具前需使用者在對話中確認
+                <span className={styles.approvalHint}>MCP 工具可能讀寫檔案或呼叫外部服務，建議保持開啟</span>
+              </span>
+            </label>
           </DialogContent>
           <DialogActions>
             <Button variant="secondary" onClick={() => setMcpModalOpen(false)} disabled={savingMcp}>
@@ -1618,7 +1640,11 @@ export default function AiTools() {
                   id="tool-method"
                   className={styles.formSelect}
                   value={formData.method}
-                  onChange={(e) => setFormData({ ...formData, method: e.target.value })}
+                  onChange={(e) => setFormData({
+                    ...formData,
+                    method: e.target.value,
+                    requires_approval: defaultRequiresApproval(e.target.value)
+                  })}
                 >
                   <option value="GET">GET</option>
                   <option value="POST">POST</option>
@@ -1677,6 +1703,17 @@ export default function AiTools() {
                 onChange={(e) => setFormData({ ...formData, parameters_json: e.target.value })}
               />
             </div>
+            <label className={styles.approvalOption}>
+              <input
+                type="checkbox"
+                checked={formData.requires_approval}
+                onChange={(e) => setFormData({ ...formData, requires_approval: e.target.checked })}
+              />
+              <span>
+                AI 呼叫前需使用者在對話中確認
+                <span className={styles.approvalHint}>會修改外部資料的工具（POST、PUT、PATCH、DELETE）預設開啟</span>
+              </span>
+            </label>
           </DialogContent>
           <DialogActions>
             <Button variant="secondary" onClick={() => setToolModalOpen(false)} disabled={savingTool}>

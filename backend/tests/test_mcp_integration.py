@@ -35,6 +35,7 @@ async def test_mcp_stdio_lifecycle():
         args=json.dumps(time_preset["args"], ensure_ascii=False),
         discovered_tools=json.dumps(tools, ensure_ascii=False),
         is_enabled=True,
+        requires_approval=False,
         status="connected"
     )
     db.add(server)

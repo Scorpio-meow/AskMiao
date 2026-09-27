@@ -1,10 +1,12 @@
 import os
 import logging
+from logging.handlers import RotatingFileHandler
 import torch
 import uvicorn
 from fastapi import FastAPI
 from app import __version__
 from app.core.config import settings
+from app.core.limits import LOG_FILE_BACKUP_COUNT, LOG_FILE_MAX_BYTES
 from app.core.lifespan import lifespan
 from app.middleware import setup_middlewares
 from app.api import chat, admin, documents, tags as tags_router, auth, api_tools, mcp
@@ -18,10 +20,18 @@ logging.basicConfig(
     datefmt='%Y-%m-%d %H:%M:%S',
     handlers=[
         logging.StreamHandler(),
-        logging.FileHandler(os.path.join(LOGS_DIR, 'app.log'), encoding='utf-8')
+        RotatingFileHandler(
+            os.path.join(LOGS_DIR, 'app.log'),
+            maxBytes=LOG_FILE_MAX_BYTES,
+            backupCount=LOG_FILE_BACKUP_COUNT,
+            encoding='utf-8'
+        )
     ]
 )
 logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
+# httpx／httpcore 的 INFO 日誌會記下完整請求網址，查詢字串型 API 金鑰等憑證會因此明文落地
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("httpcore").setLevel(logging.WARNING)
 logger = logging.getLogger(__name__)
 app = FastAPI(
     title="AskMiao API",
@@ -76,5 +86,9 @@ if __name__ == "__main__":
         reload=args.reload,
         reload_dirs=reload_dirs if args.reload else None,
         reload_excludes=reload_excludes if args.reload else None,
-        app_dir=BASE_DIR
+        app_dir=BASE_DIR,
+        # 預設不採信 X-Forwarded-For：本機代理（例如 Vite）會原樣轉送用戶端自帶的標頭。
+        # 前方有會覆寫該標頭的反向代理時，以 FORWARDED_ALLOW_IPS 明確指定信任的代理位址
+        proxy_headers=bool(settings.FORWARDED_ALLOW_IPS),
+        forwarded_allow_ips=settings.FORWARDED_ALLOW_IPS
     )

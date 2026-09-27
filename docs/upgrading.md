@@ -4,6 +4,11 @@
 
 > 本文件說明如何把既有部署升級到新版本，並附上回退步驟與常見問題。每個版本的完整變更見 [CHANGELOG](../CHANGELOG.md)。
 
+- [從 3.0.0 升級到 4.0.0](#從-300-升級到-400)
+  - [變更與需要的動作](#變更與需要的動作)
+  - [升級步驟](#升級步驟)
+  - [回退方式](#回退方式)
+  - [升級後的常見狀況](#升級後的常見狀況)
 - [從 2.x 升級到 3.0.0](#從-2x-升級到-300)
   - [升級總覽](#升級總覽)
   - [步驟 0：停機並備份](#步驟-0停機並備份)
@@ -14,6 +19,104 @@
   - [步驟 5：驗證升級結果](#步驟-5驗證升級結果)
   - [回退到 2.2.x](#回退到-22x)
   - [常見問題](#常見問題)
+
+---
+
+## 從 3.0.0 升級到 4.0.0
+
+適用於從 3.0.0 升級到 4.0.0，完整變更見 [CHANGELOG](../CHANGELOG.md#400---2026-09-27)。這一版是安全性修正，不需要重建索引，資料表的新欄位會在啟動時自動加入；需要動手的主要是 `.env`、`backend/keys/`、PostgreSQL 容器與前端的對外提供方式。
+
+### 變更與需要的動作
+
+| 項目 | 3.0.0 | 4.0.0 | 需要的動作 |
+|---|---|---|---|
+| JWT 簽署 | RSA 金鑰無法載入時，開發環境退回 HS256（`JWT_SECRET_KEY`） | 一律 RS256，金鑰無法載入或產生時拒絕啟動 | 確認 `backend/keys/` 存在且後端帳號可寫入；`JWT_SECRET_KEY`、`JWT_ALGORITHM` 可從 `.env` 刪除 |
+| 權杖驗證 | 身分與 `is_admin` 取自權杖內容 | 每次請求依 `sub` 讀取資料庫帳號，停用或刪除的帳號立即失效 | 無；既有權杖在帳號仍存在且啟用時繼續有效 |
+| 重新整理權杖 | `POST /api/auth/refresh` 讀取不存在的聲明而一律失敗 | 可以正常換發，且每個重新整理權杖只能使用一次 | 自行呼叫此端點的客戶端需改用每次回應的新 Cookie |
+| PostgreSQL 容器 | 內建密碼 `postgres`，埠號對所有介面開放 | 必須設定 `POSTGRES_PASSWORD`，只綁定 `127.0.0.1:7690` | 設定 `POSTGRES_PASSWORD` 並更新 `DATABASE_URL` |
+| 前端開發伺服器 | 監聽所有介面，區網可連 | 只監聽 `localhost`，並送出反框架標頭 | 區網使用者改用建置產物與正式網頁伺服器 |
+| 速率限制的來源 IP | uvicorn 預設可能採信 `X-Forwarded-For` | 只採信 `FORWARDED_ALLOW_IPS` 指定的代理 | 前方有會覆寫該標頭的反向代理時設定 `FORWARDED_ALLOW_IPS` |
+| 工具呼叫 | Agent 直接執行 | `requires_approval` 的工具先經使用者核准 | 欄位自動加入；依需要調整各工具的旗標 |
+| MCP 範本 | `mcp_fetch`、`mcp_filesystem`（根目錄 `./data`） | 移除 `mcp_fetch`；`mcp_filesystem` 改用 `backend/mcp_filesystem_sandbox` 並釘選版本 | 檢查以舊範本建立的伺服器 |
+| 出站代理 | 自訂 API 工具、MCP HTTP 與 `web_fetch` 會讀取 `HTTP(S)_PROXY` | 一律直接連線，連線固定在 SSRF 驗證過的 IP | 需要經代理連外的環境請改由網路層處理 |
+| 訊息回應 | 含原始 `context_used` 字串 | `/api/chat` 的回應中 `context_used` 一律為 `null` | 改讀 `sources`、`sources_detail`、`research_trace`、`attachments` |
+| 資源上限 | 大多沒有上限 | 請求本文、訊息、附件、工具結果、同時串流數等都有上限 | 無；需要時參考 [資源上限](configuration.md#資源上限) |
+
+### 升級步驟
+
+1. **停機並備份**：停止後端，備份資料庫、`backend/data/`、`backend/keys/` 與 `backend/.env`。
+2. **更新程式碼**：取得新版程式碼後，在 `backend/` 執行 `pip install -r requirements.txt`，在 `frontend/` 執行 `bun install`。
+3. **整理 `.env`**：
+   - 刪除 `JWT_SECRET_KEY` 與 `JWT_ALGORITHM`。留著也不會出錯，後端會忽略。
+   - 後端前方有會「覆寫」`X-Forwarded-For` 的反向代理（例如 nginx 的 `proxy_set_header X-Forwarded-For $remote_addr;`）時，加上 `FORWARDED_ALLOW_IPS=<代理位址>`；經由 Vite 開發代理時**不要**設定。
+4. **確認 RSA 金鑰**：`backend/keys/jwt_private.pem` 與 `jwt_public.pem` 必須存在且可讀；沒有金鑰時後端會在首次啟動產生，因此目錄需要能讓後端帳號寫入。沿用原本的金鑰，既有的權杖就不會失效。
+5. **PostgreSQL 容器（使用 `backend/docker-compose.yml` 時）**：
+   - 在 `backend/.env` 加上 `POSTGRES_PASSWORD=<隨機字串>`，未設定時 `docker compose` 會拒絕啟動。
+   - 既有的資料卷已以舊密碼 `postgres` 初始化，`POSTGRES_PASSWORD` 只在第一次初始化時生效。請先以舊設定啟動容器並改掉密碼，再更新 `DATABASE_URL`：
+
+     ```bash
+     cd backend
+     docker compose exec postgres psql -U postgres -c "ALTER USER postgres PASSWORD '<新密碼>';"
+     ```
+
+   - 把 `DATABASE_URL` 改成 `postgresql+psycopg2://postgres:<新密碼>@localhost:7690/chatbot`（特殊字元需百分比編碼），再以 `docker compose up -d` 重新建立容器，套用只綁定 `127.0.0.1` 的埠號設定。
+6. **啟動後端**：`python main.py`。啟動時 `upgrade_schema()` 會替 `custom_api_tools` 與 `mcp_servers` 加上 `requires_approval` 欄位並回填：API 工具的方法不是 `GET`、`HEAD`、`OPTIONS` 時為 `true`，MCP 伺服器一律為 `true`。
+7. **檢查工具設定**：以管理員進入「AI 工具」：
+   - 依實際行為調整各工具的「需使用者確認」。`GET` 工具預設不需確認，若它會改變狀態或把資料送往外部，請打開。
+   - 以舊版 `mcp_fetch` 範本建立的伺服器不會被刪除，但它繞過 `web_fetch` 的出站防護，建議刪除或停用。
+   - 以舊版 `mcp_filesystem` 範本建立的伺服器仍指向 `./data`（後端的資料目錄），請改為 `backend/mcp_filesystem_sandbox` 的絕對路徑或其他專屬目錄，並把套件釘選到審閱過的版本，再按「重新探索」。
+8. **前端的對外提供**：`bun run dev` 與 `bun run preview` 只監聽 `localhost`。原本讓區網裝置直接連開發伺服器的部署，請改以 `bun run build` 建置，由 nginx 等正式網頁伺服器提供 `frontend/build/`、反向代理 `/api`，並送出 `X-Frame-Options: DENY` 或 `Content-Security-Policy: frame-ancestors 'none'`。
+9. **驗證**：
+   - [ ] 登入後閒置超過存取權杖效期，前端能自動換發並繼續使用。
+   - [ ] 停用某位測試帳號後，該帳號下一個請求立即回傳 `401`。
+   - [ ] 呼叫一個需要核准的工具時，聊天畫面出現確認卡片，拒絕後 Agent 改以既有資料回答。
+   - [ ] 自行串接 API 的客戶端已改讀解析後的訊息欄位，不再依賴 `context_used`，並能處理 `approval_required` 事件。
+
+### 回退方式
+
+1. 停止後端，把程式碼切回 3.0.0，還原 `.env`（3.0.0 需要 `JWT_SECRET_KEY`）。
+2. 資料庫可以沿用：3.0.0 會忽略新增的 `requires_approval` 欄位。例外是由新版建立的全新資料庫，其中這兩個欄位是 `NOT NULL` 且沒有預設值，3.0.0 新增工具時會失敗，請先移除這兩個欄位或給定預設值。
+3. `backend/docker-compose.yml` 回到 3.0.0 版本時會改用內建密碼 `postgres` 的設定；若已改過資料庫密碼，`DATABASE_URL` 維持新密碼即可。
+
+### 升級後的常見狀況
+
+<details>
+<summary><b>後端啟動失敗，錯誤與 <code>backend/keys</code> 或 RSA 金鑰有關</b></summary>
+
+新版不再退回 HS256。請確認 `backend/keys/` 存在、後端帳號可以寫入（首次產生金鑰時需要），且 `jwt_private.pem`、`jwt_public.pem` 沒有損毀。以容器或唯讀檔案系統部署時，請把事先產生好的金鑰掛載進去。
+
+</details>
+
+<details>
+<summary><b><code>docker compose up</code> 回報需要設定 <code>POSTGRES_PASSWORD</code></b></summary>
+
+compose 檔已不含內建密碼。請在 `backend/.env`（或殼層環境）設定 `POSTGRES_PASSWORD`，既有資料卷的密碼需另外以 `ALTER USER` 修改，見 [升級步驟](#升級步驟) 第 5 點。
+
+</details>
+
+<details>
+<summary><b>區網裝置連不上前端</b></summary>
+
+開發與預覽伺服器只監聽 `localhost`，這是刻意的限制。請改以建置產物搭配正式網頁伺服器提供服務，見 [升級步驟](#升級步驟) 第 8 點。
+
+</details>
+
+<details>
+<summary><b>所有使用者共用同一個速率限制額度</b></summary>
+
+未設定 `FORWARDED_ALLOW_IPS` 時，速率限制以實際連線對端計算；經由反向代理時所有人的來源 IP 都是代理本身。代理會覆寫 `X-Forwarded-For` 時，把代理位址設為 `FORWARDED_ALLOW_IPS`；否則請調高 `RATE_LIMIT_PER_MINUTE`。
+
+</details>
+
+<details>
+<summary><b>送出訊息回傳 <code>400</code>、<code>413</code>、<code>422</code> 或 <code>429</code></b></summary>
+
+- `400`：`model_name` 不在可用模型清單內，請改用 `GET /api/chat/models` 列出的模型，或把它加進 `AVAILABLE_MODELS`。
+- `413`：請求本文超過上限，或該使用者的附件儲存量已達 200 MiB，刪除含附件的舊對話即可。
+- `422`：訊息超過 20,000 字、附件超過 5 個、單一附件超過 15 MiB 或合計超過 20 MiB。
+- `429`：同一位使用者已有 2 個回答正在串流。
+
+</details>
 
 ---
 

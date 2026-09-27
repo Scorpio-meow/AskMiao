@@ -1,3 +1,5 @@
+import asyncio
+import time
 from fastapi import APIRouter
 from fastapi.responses import JSONResponse
 from fastapi import status
@@ -10,6 +12,27 @@ from app.core.config import settings
 from app.core.llm_client import get_available_models
 logger = logging.getLogger(__name__)
 router = APIRouter()
+# 遠端模型清單的快取：此路由不需登入，每次請求都外連會讓匿名請求占滿執行緒並放大對外流量
+REMOTE_MODELS_CACHE_SECONDS = 30.0
+_remote_models_lock = asyncio.Lock()
+_remote_models_cache: Optional[tuple[float, tuple[list[str], Optional[str]], Optional[Exception]]] = None
+
+
+async def fetch_remote_models_cached() -> tuple[list[str], Optional[str]]:
+    """在執行緒中查詢遠端模型清單，結果（含失敗）快取 REMOTE_MODELS_CACHE_SECONDS 秒，同時只有一個查詢在進行"""
+    global _remote_models_cache
+    async with _remote_models_lock:
+        now = time.monotonic()
+        if _remote_models_cache is None or now - _remote_models_cache[0] >= REMOTE_MODELS_CACHE_SECONDS:
+            try:
+                result = await asyncio.to_thread(_fetch_remote_models)
+                _remote_models_cache = (now, result, None)
+            except Exception as exc:
+                _remote_models_cache = (now, ([], None), exc)
+        _, result, error = _remote_models_cache
+    if error is not None:
+        raise error
+    return result
 @router.get("/tags")
 async def get_tags():
     configured_models = get_available_models()
@@ -24,7 +47,7 @@ async def get_tags():
     default_model: Optional[str] = configured_default
     models: list[str] = []
     try:
-        remote_models, remote_default = _fetch_remote_models()
+        remote_models, remote_default = await fetch_remote_models_cached()
         if remote_models:
             models = remote_models
             if remote_default:

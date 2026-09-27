@@ -4,35 +4,57 @@ import json
 import csv
 import logging
 import hashlib
+import re
+import zipfile
 from typing import Optional
-from html.parser import HTMLParser
 from pypdf import PdfReader
 from docx import Document as DocxDocument
 from pptx import Presentation
 import openpyxl
 from app.core.config import settings
 from app.core.domain_profile import domain_profile
+from app.core.html_text import extract_text_and_title
+from app.core.limits import MAX_OOXML_COMPRESSION_RATIO, MAX_OOXML_UNCOMPRESSED_BYTES, MIB
 logger = logging.getLogger(__name__)
-class _HTMLTextExtractor(HTMLParser):
-    def __init__(self):
-        super().__init__()
-        self.result = []
-        self.skip = False
-    def handle_starttag(self, tag, attrs):
-        if tag in ('script', 'style', 'head', 'meta', 'link'):
-            self.skip = True
-    def handle_endtag(self, tag):
-        if tag in ('script', 'style', 'head', 'meta', 'link'):
-            self.skip = False
-        elif tag in ('p', 'div', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'li', 'tr', 'br', 'section', 'article'):
-            self.result.append("\n")
-    def handle_data(self, data):
-        if not self.skip:
-            text = data.strip()
-            if text:
-                self.result.append(text + " ")
-    def get_text(self):
-        return "".join(self.result).strip()
+# 摘要啟發式只看每行開頭的這些字元
+MAX_TOC_LINE_CHARS = 300
+# 小於此大小的 ZIP 成員不檢查壓縮比：一般 XML 本來就能壓縮很多倍
+OOXML_RATIO_CHECK_MIN_BYTES = 10 * MIB
+JSON_DECLARATION_PATTERN = re.compile(r'(?:\b(?:const|let|var)\s+\w+\s*=|module\.exports\s*=)\s*')
+SVG_OPEN = "<svg"
+SVG_CLOSE = "</svg>"
+
+
+def _extract_declared_json(text: str) -> str:
+    """取出 `const x = [...]`、`module.exports = {...}` 右側的 JSON 本體；找不到宣告時回傳整段文字。
+    以線性掃描（第一個開頭括號到最後一個對應的結尾括號）取代含多個無界 [\s\S]* 的正規式，避免回溯爆炸"""
+    match = JSON_DECLARATION_PATTERN.search(text)
+    if not match:
+        return text.strip()
+    rest = text[match.end():]
+    closing = {"[": "]", "{": "}"}.get(rest[:1])
+    if closing is None:
+        return text.strip()
+    end = rest.rfind(closing)
+    return rest[:end + 1] if end >= 0 else text.strip()
+
+
+def _replace_svg_blocks(text: str) -> str:
+    """把完整的 <svg ...>...</svg> 區塊換成佔位字；沒有結尾標籤的 <svg 保留原樣。線性時間"""
+    parts = []
+    position = 0
+    while True:
+        start = text.find(SVG_OPEN, position)
+        if start < 0:
+            break
+        end = text.find(SVG_CLOSE, start)
+        if end < 0:
+            break
+        parts.append(text[position:start])
+        parts.append("[SVG_ICON_OMITTED]")
+        position = end + len(SVG_CLOSE)
+    parts.append(text[position:])
+    return "".join(parts)
 class DocumentProcessor:
     
     FILE_SIGNATURES = {
@@ -92,7 +114,8 @@ class DocumentProcessor:
         return sha256_hash.hexdigest()
     
     @staticmethod
-    def extract_text_from_file(file_path: str, content_type: str) -> Optional[str]:
+    def extract_text_from_file(file_path: str, content_type: str, max_ocr_pages: Optional[int] = None) -> Optional[str]:
+        """max_ocr_pages：PDF 最多送 Vision OCR 的頁數；None 表示不限，只用於管理員上傳"""
         try:
             ext = os.path.splitext(file_path)[1].lower()
             
@@ -118,12 +141,15 @@ class DocumentProcessor:
             if file_size > max_size:
                 raise ValueError(f"檔案大小 ({file_size} bytes) 超過限制")
             if ext == ".pdf" or content_type == "application/pdf":
-                return DocumentProcessor._extract_from_pdf(file_path)
+                return DocumentProcessor._extract_from_pdf(file_path, max_ocr_pages)
             elif ext == ".docx" or content_type == "application/vnd.openxmlformats-officedocument.wordprocessingml.document":
+                DocumentProcessor._check_ooxml_archive(file_path)
                 return DocumentProcessor._extract_from_docx(file_path)
             elif ext == ".pptx" or content_type == "application/vnd.openxmlformats-officedocument.presentationml.presentation":
+                DocumentProcessor._check_ooxml_archive(file_path)
                 return DocumentProcessor._extract_from_pptx(file_path)
             elif ext == ".xlsx" or content_type == "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet":
+                DocumentProcessor._check_ooxml_archive(file_path)
                 return DocumentProcessor._extract_from_xlsx(file_path)
             elif ext == ".csv" or content_type == "text/csv":
                 return DocumentProcessor._extract_from_csv(file_path)
@@ -137,6 +163,20 @@ class DocumentProcessor:
             logger.error(f"提取文本時發生錯誤: {e}")
             raise
     
+    @staticmethod
+    def _check_ooxml_archive(file_path: str) -> None:
+        """OOXML 是 ZIP：解析前先檢查成員宣告的解壓大小與壓縮比，擋下壓縮炸彈"""
+        try:
+            with zipfile.ZipFile(file_path) as archive:
+                total = 0
+                for info in archive.infolist():
+                    total += info.file_size
+                    if total > MAX_OOXML_UNCOMPRESSED_BYTES:
+                        raise ValueError("文件解壓後的大小超過上限")
+                    if info.file_size > OOXML_RATIO_CHECK_MIN_BYTES and info.file_size > info.compress_size * MAX_OOXML_COMPRESSION_RATIO:
+                        raise ValueError("文件的壓縮比異常，疑似壓縮炸彈")
+        except zipfile.BadZipFile as e:
+            raise ValueError("無效的 Office 文件格式") from e
     @staticmethod
     def _extract_from_txt(file_path: str) -> str:
         encodings = ['utf-8', 'utf-8-sig', 'big5', 'gbk', 'gb2312', 'latin1']
@@ -176,9 +216,7 @@ class DocumentProcessor:
         智慧識別並清洗 JS/JSON 格式的設定或資料清單 (如 const posts = [...])，
         過濾掉巨大 SVG、HTML 樣式與 Base64 等干擾噪音，重構為高密度語意文字。
         """
-        import re
-        match = re.search(r'(?:const|let|var|module\.exports\s*=)\s*\w*\s*=?\s*(\[\s*\{[\s\S]*\}\s*\]|\{\s*\"[\s\S]*\"\s*:\s*[\s\S]*\});?', text)
-        raw_json = match.group(1) if match else text.strip()
+        raw_json = _extract_declared_json(text)
         
         try:
             data = json.loads(raw_json)
@@ -330,25 +368,19 @@ class DocumentProcessor:
         
         import re
         cleaned_code = re.sub(r'data:image\/[a-zA-Z]+;base64,[a-zA-Z0-9+/=]{100,}', '[BASE64_IMAGE_OMITTED]', raw_text)
-        cleaned_code = re.sub(r'<svg[\s\S]*?<\/svg>', '[SVG_ICON_OMITTED]', cleaned_code)
-        return cleaned_code
+        return _replace_svg_blocks(cleaned_code)
     @staticmethod
     def _extract_from_html(file_path: str) -> str:
         raw_text = DocumentProcessor._extract_from_txt(file_path)
-        try:
-            parser = _HTMLTextExtractor()
-            parser.feed(raw_text)
-            extracted = parser.get_text()
-            if extracted:
-                return extracted
-        except Exception as e:
-            logger.warning(f"HTML 解析失敗，改為純文字讀取: {e}")
-        return raw_text
+        # 線性掃描：標準函式庫 html.parser 遇到大量未閉合的標籤會呈二次時間
+        _, _, blocks = extract_text_and_title(raw_text)
+        extracted = "\n".join(blocks)
+        return extracted or raw_text
     
     @staticmethod
-    def _extract_from_pdf(file_path: str) -> str:
+    def _extract_from_pdf(file_path: str, max_ocr_pages: Optional[int] = None) -> str:
         from app.services.pdf_service import PDFService
-        return PDFService.extract_text_robust(file_path)
+        return PDFService.extract_text_robust(file_path, max_ocr_pages=max_ocr_pages)
     
     @staticmethod
     def _extract_from_docx(file_path: str) -> str:
@@ -399,7 +431,8 @@ class DocumentProcessor:
         return full_text
     @staticmethod
     def _extract_from_xlsx(file_path: str) -> str:
-        wb = openpyxl.load_workbook(file_path, data_only=True)
+        # read_only 以串流方式讀取工作表，不把整份活頁簿展開到記憶體
+        wb = openpyxl.load_workbook(file_path, data_only=True, read_only=True)
         sheets_text = []
         for sheetname in wb.sheetnames:
             sheet = wb[sheetname]
@@ -416,6 +449,7 @@ class DocumentProcessor:
         
         full_text = "\n\n".join(sheets_text)
         logger.info(f"成功從 XLSX 提取 {len(wb.sheetnames)} 個工作表，共 {len(full_text)} 字符")
+        wb.close()
         return full_text
     
     @staticmethod
@@ -553,9 +587,18 @@ class DocumentProcessor:
             cleaned_lines.append(line_str)
         if not cleaned_lines:
             return f"收錄內部文件《{filename}》。"
+        def strip_toc_leader(text: str) -> str:
+            """移除目錄行尾的「.....12」引導線與頁碼；以字元掃描取代含重疊量詞的正規式"""
+            without_page = text.rstrip("0123456789")
+            end = len(without_page)
+            while end > 0 and (without_page[end - 1] in ".·_" or without_page[end - 1].isspace()):
+                end -= 1
+            if len(without_page) - end >= 3:
+                return without_page[:end]
+            return text
         def clean_toc_line(text: str) -> str:
-            cleaned = text.lstrip("#*- •\t ")
-            cleaned = re.sub(r'[\.\·\s\_]{3,}\s*\d*$', '', cleaned).strip()
+            cleaned = text[:MAX_TOC_LINE_CHARS].lstrip("#*- •\t ")
+            cleaned = strip_toc_leader(cleaned).strip()
             cleaned = re.sub(r'^(?:[0-9]+(?:\.[0-9]+)*\.?|[一二三四五六七八九十]+[、\.]|第[0-9一二三四五六七八九十]+[章節點條項篇]|【[^】]+】)\s*', '', cleaned).strip()
             return re.sub(r'\s+', ' ', cleaned)
         headers = []

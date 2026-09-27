@@ -199,6 +199,8 @@ async def test_rebuild_index_endpoint_regenerates_chunks(rag, session_factory, m
     async def fake_summary(filename, content, file_type=""):
         return f"summary of {filename}"
 
+    for doc in db_documents:
+        add_db_document(session_factory, doc.id, doc.filename, doc.content)
     monkeypatch.setattr(documents_api, "get_rag_system", lambda: rag)
     monkeypatch.setattr(documents_api.DocumentProcessor, "generate_document_summary_async", fake_summary)
 

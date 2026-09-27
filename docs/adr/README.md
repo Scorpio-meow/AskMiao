@@ -15,6 +15,7 @@
 | [ADR-0003](./0003-rrf-relevance-citations-and-tool-trust.md) | RRF 融合、相關性門檻、引用對應與工具輸出信任邊界 | 已通過 (Accepted) | 2026-09-24 | 3.0.0 | 兩軌必跑的標準 RRF、以重排機率為相關性門檻、答案引用對應來源，並為工具輸出設立信任邊界與聯網限制；取代 ADR-0001 的分數歸一化融合 |
 | [ADR-0004](./0004-tool-admin-permissions-and-subprocess-isolation.md) | 工具管理權限、MCP 子行程隔離與逐跳 SSRF 驗證 | 已通過 (Accepted) | 2026-09-25 | 3.0.0 | MCP 伺服器與自訂 API 工具只開放管理員管理，stdio 子行程不繼承後端機密環境變數，出站請求的每次轉址都重新做 SSRF 驗證；補充 ADR-0002 |
 | [ADR-0005](./0005-chunk-id-index-and-database-source-of-truth.md) | 以資料庫 chunk_id 為準的片段索引 | 已通過 (Accepted) | 2026-09-24 | 3.0.0 | 片段改存資料庫 `rag_chunks`，FAISS（`IndexIDMap2`）與 BM25 以 chunk_id 對應，啟動時依資料庫校正，取代依清單位置對齊與每日自動重建；補充 ADR-0001 |
+| [ADR-0006](./0006-tool-call-approval.md) | 有副作用工具的對話內核准 | 已通過 (Accepted) | 2026-09-27 | 4.0.0 | 自訂 API 工具與 MCP 伺服器新增 `requires_approval` 旗標，Agent 呼叫前暫停並由發問的使用者在對話中核准，逾時或無人可核准時不執行；補充 ADR-0003 與 ADR-0004 |
 
 ```mermaid
 flowchart LR
@@ -22,6 +23,8 @@ flowchart LR
     A1 -->|片段儲存方式補充| A5["ADR-0005<br/>chunk_id 索引"]
     A5 -->|提供引用的穩定鍵| A3
     A2["ADR-0002<br/>外部工具與出站防護"] -->|權限與隔離補充| A4["ADR-0004<br/>工具權限、子行程隔離"]
+    A4 -->|呼叫時機補充| A6["ADR-0006<br/>工具呼叫核准"]
+    A3 -->|已知風險的緩解| A6
 ```
 
 ---

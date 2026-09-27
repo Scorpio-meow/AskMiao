@@ -10,7 +10,7 @@ AskMiao answers with hybrid retrieval (FAISS + BM25 + Cross-Encoder) and agentic
 
 [繁體中文](README.md) | [English](README_en.md)
 
-[![Version](https://img.shields.io/badge/version-3.0.0-2563eb?style=flat)](CHANGELOG_en.md)
+[![Version](https://img.shields.io/badge/version-4.0.0-2563eb?style=flat)](CHANGELOG_en.md)
 [![Python](https://img.shields.io/badge/Python-3.10+-3776AB?style=flat&logo=python&logoColor=white)](https://www.python.org/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-005571?style=flat&logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
 [![React](https://img.shields.io/badge/React-19.2-61DAFB?style=flat&logo=react&logoColor=black)](https://react.dev/)
@@ -31,7 +31,7 @@ AskMiao answers with hybrid retrieval (FAISS + BM25 + Cross-Encoder) and agentic
 </picture>
 
 > [!IMPORTANT]
-> **3.0.0 contains breaking changes**: 8 new required settings, indexes keyed by chunk_id (rebuild the index once after upgrading), and admin-only tool management. Upgrading from 2.x? Read the [upgrade guide](docs/upgrading_en.md) first.
+> **4.0.0 contains breaking changes**: `JWT_SECRET_KEY` and `JWT_ALGORITHM` are removed, RSA keys are mandatory, compose needs `POSTGRES_PASSWORD`, the dev server only accepts local connections, and tool calls with side effects need user approval. Read the [upgrade guide](docs/upgrading_en.md) before upgrading.
 
 ## Contents
 
@@ -60,8 +60,8 @@ AskMiao answers with hybrid retrieval (FAISS + BM25 + Cross-Encoder) and agentic
 | 3 | **Autonomous research** | A ReAct agent decides whether to search the knowledge base, count records precisely, search the web, or read a page, with the research trace shown live |
 | 4 | **Hybrid retrieval** | Vector search and BM25 always both run, fused by rank with RRF and reranked by a Cross-Encoder; chunks are keyed by a database chunk_id |
 | 5 | **Five LLM providers** | Ollama, OpenAI, Azure OpenAI, Anthropic Claude, and Google Gemini all support tool calling and streaming |
-| 6 | **External tools and MCP** | Paste an OpenAPI spec to import API tools or connect MCP servers; managed by admins only |
-| 7 | **Defense in depth** | RSA JWT, Argon2 password hashing, per-hop SSRF validation, a trust boundary for tool output, and error codes instead of stack traces |
+| 6 | **External tools and MCP** | Paste an OpenAPI spec to import API tools or connect MCP servers; managed by admins only, and calls with side effects need the user's approval first |
+| 7 | **Defense in depth** | RSA JWT, Argon2 password hashing, per-hop SSRF validation with the connection pinned to the checked IP, a trust boundary for tool output, resource limits, and error codes instead of stack traces |
 
 ## Features
 
@@ -78,7 +78,7 @@ AskMiao answers with hybrid retrieval (FAISS + BM25 + Cross-Encoder) and agentic
   | `web_fetch` | Read a full web page, limited to URLs that appear verbatim in the user's message or in this question's tool results |
 
 - **Research trace**: each step's tool, arguments, result preview, and duration stream over SSE and appear as a collapsible timeline.
-- **Multimodal questions**: attach images and files; images go to vision models as `image_url` parts, and text attachments are extracted into the question.
+- **Multimodal questions**: attach images and files (up to 5 per message, 15 MiB each, 20 MiB in total); images go to vision models as `image_url` parts, and text attachments are extracted into the question.
 - **Conversation history**: each question loads the latest `CONVERSATION_HISTORY_MESSAGES` messages from the database, so restarts keep the context.
 
 ### Traceable answers
@@ -124,17 +124,19 @@ flowchart LR
 ### External tools and MCP
 
 - **Custom API tools**: create them with a form or bulk-import from an OpenAPI / Swagger spec (OAS 2.0, 3.0, 3.1), with Bearer, API key (header / query), and Basic auth, plus a live test.
-- **MCP client**: `stdio` and HTTP transports, automatic tool discovery, and tools added to the agent as `mcp_<server>_<tool>`; presets for time, filesystem, and web fetch servers are built in.
+- **MCP client**: `stdio` and HTTP transports, automatic tool discovery, and tools added to the agent as `mcp_<server>_<tool>`; presets for time and filesystem servers are built in (the filesystem preset exposes only the dedicated sandbox directory `backend/mcp_filesystem_sandbox`).
 - **Loaded dynamically**: enabled tools are read from the database whenever tool definitions are assembled, so changes need no restart.
-- **Admins only**: tools are shared by every user's agent, so `/api/api-tools`, `/api/mcp`, and the AI tools page are admin-only; `stdio` subprocesses inherit only system variables such as `PATH` and never see the backend's keys ([ADR-0004](docs/adr/0004-tool-admin-permissions-and-subprocess-isolation_en.md)).
+- **Approval before calls**: when the agent calls a tool marked "requires approval" (new MCP servers, and API tools using a method other than GET, HEAD, or OPTIONS), the chat shows the tool and its arguments and the asking user approves or denies it; no answer within 5 minutes counts as a denial ([ADR-0006](docs/adr/0006-tool-call-approval_en.md)).
+- **Admins only**: tools are shared by every user's agent, so `/api/api-tools`, `/api/mcp`, and the AI tools page are admin-only; `stdio` subprocesses inherit only system variables such as `PATH`, never see the backend's keys, and are terminated together with their whole process tree on close ([ADR-0004](docs/adr/0004-tool-admin-permissions-and-subprocess-isolation_en.md)).
 
 ### Security
 
-- **Authentication**: RSA-2048 signed JWT access tokens with the refresh token in an HttpOnly cookie; logout revokes both; passwords are hashed with Argon2 (legacy bcrypt hashes are upgraded at login).
-- **Outbound requests**: OpenAPI spec URLs, `web_fetch`, custom API tools, and the MCP HTTP transport go through `ssrf_protection.py`, which re-checks every redirect and blocks private networks, cloud metadata endpoints, and dangerous ports.
+- **Authentication**: RSA-2048 signed JWT access tokens (the backend refuses to start without usable RSA keys), with the account's status and permissions read from the database on every request; the refresh token lives in an HttpOnly cookie and is single-use; logout revokes both; passwords are hashed with Argon2 (legacy bcrypt hashes are upgraded at login).
+- **Outbound requests**: OpenAPI spec URLs, `web_fetch`, custom API tools, and the MCP HTTP transport go through `ssrf_protection.py`, which re-checks every redirect, pins the connection to the validated IP, and blocks private networks, cloud metadata endpoints, and dangerous ports.
+- **Resource limits**: request bodies, message length, attachment count and size, tool results, concurrent streams, and attachment storage are all capped; see [resource limits](docs/configuration_en.md#resource-limits).
 - **Error codes**: unexpected exceptions reach clients only as a random error code, while full stack traces stay in the server log (CWE-209 / CWE-497).
 - **Log redaction**: recursive object masking plus regex masking render passwords, tokens, and Authorization headers as `[REDACTED]`.
-- **More**: security response headers, per-IP rate limiting, a CORS allowlist, and filename and path traversal checks.
+- **More**: security response headers, per-IP rate limiting (`X-Forwarded-For` is ignored unless a trusted reverse proxy is named in `FORWARDED_ALLOW_IPS`), a CORS allowlist, filename and path traversal checks, and clickjacking protection in the frontend.
 
 ### Frontend experience
 
@@ -142,6 +144,7 @@ flowchart LR
 - Light, dark, and follow-system appearance, applied before first paint with no white flash.
 - Fully usable with a keyboard and screen readers, with WCAG AA contrast; phones get a single-row top bar and a chat page that fits one viewport.
 - Deletions ask for confirmation, offline and back-online states are announced, and non-admins see a "no permission" page on admin routes.
+- Markdown images in answers appear as links that open in a new tab only when clicked, so nothing is loaded from external hosts automatically.
 
 ## Screenshots
 
@@ -246,6 +249,12 @@ sequenceDiagram
         AG->>LLM: Conversation and tool definitions
         LLM-->>AG: Tool calls
         API-->>FE: event: step_start
+        opt The tool requires approval
+            API-->>FE: event: approval_required
+            U->>FE: Approve or deny
+            FE->>API: POST /api/chat/approvals/…
+            API-->>FE: event: approval_resolved
+        end
         AG->>T: Run tools (URL provenance and web limits checked first)
         T-->>AG: Results (numbered for citation, wrapped as untrusted data)
         API-->>FE: event: step_end
@@ -297,7 +306,7 @@ cp .env.example .env
 Edit `backend/.env` before starting:
 
 1. **Database**: the template's `DATABASE_URL` points to PostgreSQL; for a zero-dependency start use `DATABASE_URL=sqlite:///./chatbot.db`.
-2. **Keys**: replace `JWT_SECRET_KEY` and `ADMIN_API_KEY` with random strings, for example from `python -c "import secrets; print(secrets.token_urlsafe(32))"`.
+2. **Keys**: replace `ADMIN_API_KEY` with a random string, for example from `python -c "import secrets; print(secrets.token_urlsafe(32))"`. JWTs are always signed with the RSA keys in `backend/keys/`, so no separate signing secret is needed.
 3. **Models**: for a local Ollama keep `LLM_API_BASE=http://localhost:11434`; for cloud models fill in the matching API key, and add `ANTHROPIC_MAX_TOKENS` for Claude.
 
 The template already contains the other required settings, so the template values are enough to start. Then run the backend:
@@ -306,7 +315,7 @@ The template already contains the other required settings, so the template value
 python main.py
 ```
 
-The first start creates the database tables, generates the RSA keys for JWT (`backend/keys/`), and downloads the embedding and reranker models. When it is up:
+The first start creates the database tables, generates the RSA keys for JWT (`backend/keys/`, which the backend account must be able to write; the backend refuses to start if the keys cannot be loaded), and downloads the embedding and reranker models. When it is up:
 
 - API: `http://localhost:8001`
 - Interactive API docs (Swagger UI): `http://localhost:8001/docs`
@@ -325,6 +334,9 @@ bun run dev
 ```
 
 Open `http://localhost:3000`. Without `frontend/.env`, the frontend calls the relative path `/api`, which the Vite dev server proxies to `http://127.0.0.1:8001`, so no CORS setup is needed. If you copied `frontend/.env.example` (`PORT=3001`, calling the backend directly), open `http://localhost:3001` instead.
+
+> [!NOTE]
+> The Vite dev and preview servers listen on `localhost` only, so other devices on the LAN cannot reach them. To serve other devices, build with `bun run build` and serve `frontend/build/` from a real web server that reverse-proxies `/api`.
 
 ### 4. Create the first admin
 
@@ -348,27 +360,29 @@ The command goes through the backend's own database settings, so it works for bo
 
 ### Using PostgreSQL (optional)
 
-`backend/docker-compose.yml` provides PostgreSQL 17 and applies `init.sql` on first start:
+`backend/docker-compose.yml` provides PostgreSQL 17 and applies `init.sql` on first start. First set the database superuser password in `backend/.env` (required; compose refuses to start without it) and use the same password in `DATABASE_URL`:
+
+```dotenv
+POSTGRES_PASSWORD=<random string>
+DATABASE_URL=postgresql+psycopg2://postgres:<the same random string>@localhost:7690/chatbot
+```
+
+Then start the container:
 
 ```bash
 cd backend
 docker compose up -d
 ```
 
-The container publishes port **7690**, so set `.env` to:
-
-```dotenv
-DATABASE_URL=postgresql+psycopg2://postgres:postgres@localhost:7690/chatbot
-```
+The container is published on the loopback address `127.0.0.1:7690` only, so neither the LAN nor the internet can reach it. If the password contains characters such as `@`, `:`, or `/`, percent-encode them in `DATABASE_URL`.
 
 ## Configuration
 
-Backend settings live in `backend/.env`. These 11 have no defaults, and the backend refuses to start if any is missing (the template provides recommended values):
+Backend settings live in `backend/.env`. These 10 have no defaults, and the backend refuses to start if any is missing (the template provides recommended values):
 
 | Variable | Template | Description |
 |---|---|---|
 | `DATABASE_URL` | PostgreSQL example | Connection string; use `sqlite:///./chatbot.db` for SQLite |
-| `JWT_SECRET_KEY` | placeholder | HS256 signing key used when the RSA keys are unavailable |
 | `ADMIN_API_KEY` | placeholder | Admin API key (unused by routes today, but required by settings validation) |
 | `ENABLE_WEB_SEARCH` | `true` | Offer `web_search` and `web_fetch` |
 | `AGENT_MAX_TURNS` | `5` | Tool-calling turn limit per question (≥ 1) |
@@ -390,8 +404,9 @@ Common optional settings:
 | `CHUNK_SIZE`, `CHUNK_OVERLAP` | Chunk length and overlap (template 300 / 100) |
 | `HF_HOME`, `HF_HUB_OFFLINE` | Model cache location and offline mode |
 | `ALLOWED_ORIGINS` | CORS origins (needed when the frontend calls the backend directly) |
+| `FORWARDED_ALLOW_IPS` | Address of a reverse proxy that overwrites `X-Forwarded-For`; when unset, rate limiting uses the direct peer |
 
-Every setting, with defaults, template values, provider routing rules, and frontend variables, is in the **[configuration reference](docs/configuration_en.md)**.
+Every setting, with defaults, template values, provider routing rules, resource limits, and frontend variables, is in the **[configuration reference](docs/configuration_en.md)**.
 
 ## Project Structure
 
@@ -407,7 +422,9 @@ AskMiao/
 │   │   │   ├── lifespan.py           # Startup: create tables, initialize RAG, watch uploads
 │   │   │   ├── llm_client.py         # One calling layer for five providers (tool calls, streaming)
 │   │   │   ├── jwt_auth.py           # RSA JWT, Argon2 password hashing, revocation checks
-│   │   │   ├── ssrf_protection.py    # Outbound URL validation and per-hop SSRF checks
+│   │   │   ├── limits.py             # Resource limit constants (request bodies, attachments, tool results, logs, ...)
+│   │   │   ├── body_limit.py         # Request body size limit middleware
+│   │   │   ├── ssrf_protection.py    # Outbound URL validation, per-hop SSRF checks, and IP pinning
 │   │   │   ├── error_response.py     # Client-facing error codes
 │   │   │   ├── security_logging.py   # Two-layer log redaction
 │   │   │   └── domain_profile.py     # Domain profile loading and validation
@@ -417,6 +434,7 @@ AskMiao/
 │   │   │   ├── agent.py              # ResearchAgent: ReAct tool loop and streaming events
 │   │   │   ├── research_session.py   # Per-question citations, URL provenance, untrusted-data wrapping
 │   │   │   ├── tools.py              # Built-in tools plus custom API / MCP tool registration and execution
+│   │   │   ├── tool_approval.py      # In-chat approval for tools with side effects
 │   │   │   ├── pipeline.py           # Chunking and the agent streaming pipeline
 │   │   │   ├── tokenizers.py         # jieba tokenizer and tokenizer signature
 │   │   │   ├── evaluator.py          # Retrieval evaluation (hit@k, MRR, negative rejection)
@@ -428,7 +446,7 @@ AskMiao/
 │   ├── eval/                         # Retrieval evaluation golden sets
 │   ├── scripts/                      # Maintenance scripts
 │   ├── tests/                        # pytest suite
-│   ├── docker-compose.yml            # Optional PostgreSQL 17 (published on port 7690)
+│   ├── docker-compose.yml            # Optional PostgreSQL 17 (local 127.0.0.1:7690, needs POSTGRES_PASSWORD)
 │   ├── init.sql                      # PostgreSQL schema bootstrap
 │   ├── init_db.py                    # Compatibility patch for older PostgreSQL databases
 │   ├── requirements.txt
@@ -504,6 +522,13 @@ A required setting is missing from `.env`; the error names the fields. Add them 
 </details>
 
 <details>
+<summary><b>The backend fails to start with an error about the RSA keys or <code>backend/keys</code></b></summary>
+
+JWTs are always signed with the RSA keys, and the backend refuses to start when it cannot load or generate them instead of falling back to a shared secret. Make sure `jwt_private.pem` and `jwt_public.pem` in `backend/keys/` are intact and readable; on the first start the backend account must be able to write to that directory.
+
+</details>
+
+<details>
 <summary><b>The backend fails to start because the reranker cannot load</b></summary>
 
 The reranker is required. The first start downloads it from Hugging Face, so check the network and make sure `HF_HUB_OFFLINE` is not `true`; if the models were downloaded before, point `HF_HOME` at that cache.
@@ -540,6 +565,13 @@ Make sure documents were uploaded and that `total_vectors` in `GET /api/admin/ve
 </details>
 
 <details>
+<summary><b>Other devices on the LAN cannot reach the frontend started with <code>bun run dev</code></b></summary>
+
+The Vite dev and preview servers listen on `localhost` only, on purpose (dev-server endpoints such as `/__open-in-editor` must not be exposed). Build with `bun run build` and serve `frontend/build/` from a real web server such as nginx that reverse-proxies `/api` to the backend.
+
+</details>
+
+<details>
 <summary><b><code>bun install</code> on Windows fails with EPERM or creates a folder named <code>~</code> inside frontend</b></summary>
 
 The cache path `~/.bun/install/cache` in `frontend/bunfig.toml` is not expanded on Windows. Pass a cache directory explicitly: `bun install --cache-dir <cache path>`.
@@ -549,7 +581,8 @@ The cache path `~/.bun/install/cache` in `frontend/bunfig.toml` is not expanded 
 <details>
 <summary><b>The API returns <code>429 Too Many Requests</code></b></summary>
 
-Rate limiting counts requests per client IP, 60 per 60 seconds by default. Behind the Vite dev proxy or a reverse proxy every user shares one IP, so raise `RATE_LIMIT_PER_MINUTE` if needed.
+- Rate limiting counts requests per connecting IP, 60 per 60 seconds by default. Behind the Vite dev proxy or a reverse proxy every user shares one IP, so raise `RATE_LIMIT_PER_MINUTE` if needed; if the reverse proxy in front overwrites `X-Forwarded-For`, set its address as `FORWARDED_ALLOW_IPS` to count real client IPs instead.
+- A 429 from `POST /api/chat/send` means the same user already has 2 answers streaming; wait for one to finish.
 
 </details>
 
@@ -560,7 +593,7 @@ Rate limiting counts requests per client IP, 60 per 60 seconds by default. Behin
 | [API Reference](docs/api_en.md) | Every endpoint's permission, request and response format, the SSE event contract, and error codes |
 | [Architecture & Design](docs/architecture_en.md) | Layers, data model, retrieval pipeline, agent loop, authentication, and security design |
 | [Configuration Reference](docs/configuration_en.md) | Defaults and effects of every environment variable, provider routing, threshold calibration, frontend settings |
-| [Upgrade Guide](docs/upgrading_en.md) | Steps from 2.x to 3.0.0, rollback, and troubleshooting |
+| [Upgrade Guide](docs/upgrading_en.md) | Steps from 2.x to 3.0.0 and from 3.0.0 to 4.0.0, rollback, and troubleshooting |
 | [Architecture Decision Records](docs/adr/README_en.md) | Context, trade-offs, and amendments of major design decisions |
 | [llms_en.txt](llms_en.txt) | File map, system constraints, and verification steps for AI agents |
 | [Changelog](CHANGELOG_en.md) | What was added, changed, removed, and fixed in each release |
@@ -568,7 +601,7 @@ Rate limiting counts requests per client IP, 60 per 60 seconds by default. Behin
 
 ## Versioning
 
-- **Current version**: 3.0.0 (2026-09-25); see the [changelog](CHANGELOG_en.md).
+- **Current version**: 4.0.0 (2026-09-27); see the [changelog](CHANGELOG_en.md).
 - **Policy**: [Semantic Versioning](https://semver.org/). Incompatible changes, such as new required settings or changes to API permissions or the index format, bump the major version.
 - **Where the version lives**: `__version__` in `backend/app/__init__.py` (used by the OpenAPI document and the MCP handshake) and `frontend/package.json`, updated together with `CHANGELOG.md` for each release.
 

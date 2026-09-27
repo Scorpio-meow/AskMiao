@@ -15,6 +15,7 @@ This directory records the major architectural decisions made while building Ask
 | [ADR-0003](./0003-rrf-relevance-citations-and-tool-trust_en.md) | RRF Fusion, Relevance Threshold, Citations & Tool-Output Trust Boundary | Accepted | 2026-09-24 | 3.0.0 | Standard RRF with both tracks always running, a relevance threshold on the reranker probability, answer citations mapped to sources, and a trust boundary plus web restrictions for tool output; supersedes ADR-0001's score normalization fusion |
 | [ADR-0004](./0004-tool-admin-permissions-and-subprocess-isolation_en.md) | Tool Management Permissions, MCP Subprocess Isolation & Per-Hop SSRF Validation | Accepted | 2026-09-25 | 3.0.0 | MCP servers and custom API tools are managed by admins only, stdio subprocesses no longer inherit backend secrets, and every redirect of an outbound request is SSRF-validated again; extends ADR-0002 |
 | [ADR-0005](./0005-chunk-id-index-and-database-source-of-truth_en.md) | Chunk Index Keyed by Database chunk_id | Accepted | 2026-09-24 | 3.0.0 | Chunks live in the `rag_chunks` table, FAISS (`IndexIDMap2`) and BM25 are keyed by chunk_id and reconciled against the database at startup, replacing list-position alignment and daily rebuilds; extends ADR-0001 |
+| [ADR-0006](./0006-tool-call-approval_en.md) | In-Chat Approval for Tools with Side Effects | Accepted | 2026-09-27 | 4.0.0 | Custom API tools and MCP servers gain a `requires_approval` flag; the agent pauses before calling them until the asking user approves in the chat, and nothing runs on a timeout or without an approver; extends ADR-0003 and ADR-0004 |
 
 ```mermaid
 flowchart LR
@@ -22,6 +23,8 @@ flowchart LR
     A1 -->|chunk storage extended| A5["ADR-0005<br/>chunk_id index"]
     A5 -->|stable key for citations| A3
     A2["ADR-0002<br/>External tools and outbound safety"] -->|permissions and isolation extended| A4["ADR-0004<br/>Tool permissions, subprocess isolation"]
+    A4 -->|call time extended| A6["ADR-0006<br/>Tool call approval"]
+    A3 -->|known risk mitigated| A6
 ```
 
 ---

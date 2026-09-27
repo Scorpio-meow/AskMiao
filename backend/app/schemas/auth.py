@@ -2,10 +2,11 @@
 from pydantic import BaseModel, EmailStr, Field, field_validator, ConfigDict, validator
 from typing import Optional
 from datetime import datetime
+from app.core.limits import MAX_LOGIN_IDENTIFIER_CHARS, MAX_PASSWORD_CHARS
 class UserRegister(BaseModel):
     username: str = Field(..., min_length=3, max_length=50, description="用戶名")
     email: EmailStr = Field(..., description="電子郵件地址")
-    password: str = Field(..., min_length=8, description="密碼")
+    password: str = Field(..., min_length=8, max_length=MAX_PASSWORD_CHARS, description="密碼")
     
     @validator('username')
     def username_alphanumeric(cls, v):
@@ -23,8 +24,8 @@ class UserRegister(BaseModel):
             }
         }
 class UserLogin(BaseModel):
-    username: str = Field(..., description="用戶名或電子郵件")
-    password: str = Field(..., description="密碼")
+    username: str = Field(..., max_length=MAX_LOGIN_IDENTIFIER_CHARS, description="用戶名或電子郵件")
+    password: str = Field(..., max_length=MAX_PASSWORD_CHARS, description="密碼")
     
     class Config:
         json_schema_extra = {
@@ -70,8 +71,8 @@ class UserProfile(BaseModel):
     last_login: Optional[datetime] = None
 class UserUpdate(BaseModel):
     email: Optional[EmailStr] = None
-    current_password: Optional[str] = None
-    new_password: Optional[str] = Field(None, min_length=8)
+    current_password: Optional[str] = Field(None, max_length=MAX_PASSWORD_CHARS)
+    new_password: Optional[str] = Field(None, min_length=8, max_length=MAX_PASSWORD_CHARS)
     
     class Config:
         json_schema_extra = {
@@ -82,9 +83,9 @@ class UserUpdate(BaseModel):
             }
         }
 class PasswordChange(BaseModel):
-    current_password: str = Field(..., description="當前密碼")
-    new_password: str = Field(..., min_length=8, description="新密碼")
-    confirm_password: str = Field(..., description="確認新密碼")
+    current_password: str = Field(..., max_length=MAX_PASSWORD_CHARS, description="當前密碼")
+    new_password: str = Field(..., min_length=8, max_length=MAX_PASSWORD_CHARS, description="新密碼")
+    confirm_password: str = Field(..., max_length=MAX_PASSWORD_CHARS, description="確認新密碼")
     
     @validator('confirm_password')
     def passwords_match(cls, v, values):
@@ -102,7 +103,7 @@ class PasswordChange(BaseModel):
         }
 class PasswordReset(BaseModel):
     user_id: int = Field(..., description="用戶 ID")
-    new_password: str = Field(..., min_length=8, description="新密碼")
+    new_password: str = Field(..., min_length=8, max_length=MAX_PASSWORD_CHARS, description="新密碼")
     
     class Config:
         json_schema_extra = {
@@ -114,7 +115,7 @@ class PasswordReset(BaseModel):
 class UserCreate(BaseModel):
     username: str = Field(..., min_length=3, max_length=50)
     email: EmailStr
-    password: str = Field(..., min_length=8)
+    password: str = Field(..., min_length=8, max_length=MAX_PASSWORD_CHARS)
     role: str = Field(default="user", pattern="^(user|admin|moderator)$")
     is_active: bool = Field(default=True)
     is_admin: bool = Field(default=False)

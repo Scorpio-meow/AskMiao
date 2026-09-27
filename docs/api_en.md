@@ -2,7 +2,7 @@
 
 [繁體中文](api.md) | [English](api_en.md)
 
-> REST, SSE streaming, and WebSocket endpoints of the AskMiao **3.0.0** backend, written against the actual routers in `backend/app/api/`. Once the backend is running you can also try them at `http://localhost:8001/docs` (Swagger UI) and `http://localhost:8001/redoc`; the OpenAPI document is served at `/openapi.json`.
+> REST, SSE streaming, and WebSocket endpoints of the AskMiao **4.0.0** backend, written against the actual routers in `backend/app/api/`. Once the backend is running you can also try them at `http://localhost:8001/docs` (Swagger UI) and `http://localhost:8001/redoc`; the OpenAPI document is served at `/openapi.json`.
 
 ## Contents
 
@@ -28,18 +28,19 @@
 | Authentication | Send `Authorization: Bearer <access_token>`; the refresh token lives in the HttpOnly cookie `refresh_token` (path `/api/auth`) and is sent by the browser automatically |
 | Content types | `multipart/form-data` for uploads, `text/event-stream` for chat streaming, `application/json` for everything else |
 | Timestamps | ISO 8601 in UTC without a timezone suffix (for example `2026-09-25T02:30:00`) |
-| Rate limit | `RATE_LIMIT_PER_MINUTE` requests per client IP per 60 seconds (default 60); beyond that the API returns `429` |
+| Rate limit | `RATE_LIMIT_PER_MINUTE` requests per client IP per 60 seconds (default 60); beyond that the API returns `429`. The client IP is the direct peer unless `FORWARDED_ALLOW_IPS` names a proxy whose `X-Forwarded-For` is trusted |
+| Request body limit | 1 MiB for general requests; `POST /api/chat/send` and `POST /api/documents/upload` allow more with a valid access token. Larger bodies get `413` `{"detail": "請求內容超過大小上限"}`; see [configuration reference: resource limits](configuration_en.md#resource-limits) |
 
 ### Permission levels
 
 | Level | Requirement | Otherwise |
 |---|---|---|
 | Public | No token needed | — |
-| Signed in | A valid, unrevoked access token | `401` |
-| Admin | `is_admin` is `true` in the access token | `403` (`{"detail": "需要管理員權限"}`, "admin permission required") |
+| Signed in | A valid, unrevoked access token whose account still exists and is active | `401` |
+| Admin | The account's `is_admin` is `true` in the database | `403` (`{"detail": "需要管理員權限"}`, "admin permission required") |
 
 > [!NOTE]
-> `is_admin` comes from the access token. After changing someone's admin status, the change applies once they sign in again or their token is refreshed.
+> Every request loads the account named by the token's `sub` from the database: once an account is deleted or deactivated, its issued access tokens stop working immediately, and `is_admin` and the role also come from the database, so admin changes apply on the next request. Tokens issued before the account was created (for example after a deleted account's id was reused) get `401`.
 
 API messages are in Traditional Chinese; the English glosses in this document are for reference only.
 
@@ -57,7 +58,8 @@ API messages are in Traditional Chinese; the English glosses in this document ar
 | POST | `/api/auth/validate-token` | Signed in | Check that the access token is valid |
 | POST | `/api/chat/send` | Signed in | Send a message; the reply streams over SSE |
 | GET | `/api/chat/models` | Public | Available models and the default model |
-| GET | `/api/chat/tools` | Public | Tool definitions currently available to the agent |
+| GET | `/api/chat/tools` | Signed in | Tool definitions currently available to the agent |
+| POST | `/api/chat/approvals/{approval_id}` | Signed in (asking user only) | Approve or deny a pending tool call |
 | GET | `/api/chat/conversations` | Signed in | Your conversations |
 | POST | `/api/chat/conversations` | Signed in | Create a conversation |
 | GET | `/api/chat/conversations/{conversation_id}` | Signed in | One conversation with all messages |
@@ -115,10 +117,10 @@ API messages are in Traditional Chinese; the English glosses in this document ar
 
 | Token | Where it lives | Lifetime | Purpose |
 |---|---|---|---|
-| Access token | `tokens.access_token` in the JSON response; the frontend sends it in the `Authorization` header | `ACCESS_TOKEN_EXPIRE_MINUTES` (30 minutes by default) | Calls every signed-in endpoint; carries `sub`, `username`, `email`, `role`, and `is_admin` |
-| Refresh token | HttpOnly cookie `refresh_token`, path `/api/auth` | `REFRESH_TOKEN_EXPIRE_DAYS` (7 days by default) | Used only by `POST /api/auth/refresh`; every exchange resets the cookie |
+| Access token | `tokens.access_token` in the JSON response; the frontend sends it in the `Authorization` header | `ACCESS_TOKEN_EXPIRE_MINUTES` (30 minutes by default) | Calls every signed-in endpoint; carries `sub`, `username`, `email`, `role`, and `is_admin`, but the backend uses only `sub` and `iat` to find the database account, whose identity and permissions are authoritative |
+| Refresh token | HttpOnly cookie `refresh_token`, path `/api/auth` | `REFRESH_TOKEN_EXPIRE_DAYS` (7 days by default) | Used only by `POST /api/auth/refresh`, and only once; every exchange resets the cookie |
 
-Tokens are signed RS256 with an RSA-2048 private key (development setups without usable RSA keys fall back to HS256 with `JWT_SECRET_KEY`). `tokens.refresh_token` in the JSON response is always an empty string because the real refresh token only lives in the cookie, and `expires_in` is currently always `1800`; the `exp` claim inside the token is authoritative.
+Tokens are always signed RS256 with an RSA-2048 private key; the backend refuses to start if the RSA keys cannot be loaded. `tokens.refresh_token` in the JSON response is always an empty string because the real refresh token only lives in the cookie, and `expires_in` is currently always `1800`; the `exp` claim inside the token is authoritative.
 
 ### 1.1 POST /api/auth/register
 
@@ -130,7 +132,7 @@ Create an account and sign in: the access token is returned and the refresh toke
 |---|---|---|---|
 | `username` | string | Yes | 3–50 characters: letters (including CJK), digits, underscores, and hyphens only |
 | `email` | string | Yes | A valid email address |
-| `password` | string | Yes | At least 8 characters with an uppercase letter, a lowercase letter, and a digit |
+| `password` | string | Yes | 8–256 characters with an uppercase letter, a lowercase letter, and a digit |
 
 **Response**: `201 Created`
 
@@ -165,17 +167,18 @@ Create an account and sign in: the access token is returned and the refresh toke
 
 Sign in with a username **or** an email address.
 
-**Request body**: `{"username": "miao_user", "password": "Secret123"}`
+**Request body**: `{"username": "miao_user", "password": "Secret123"}` (`username` at most 254 characters, `password` at most 256)
 
 **Response**: `200 OK` with the same shape as registration (`message` is `登入成功`), and `last_login` is updated. Passwords stored as legacy bcrypt hashes are re-hashed with Argon2 on a successful sign-in.
 
 | Status | When |
 |---|---|
 | `401` | `使用者名稱或密碼錯誤` (wrong username or password); deactivated accounts get the same response |
+| `422` | A field exceeds its length limit |
 
 ### 1.3 POST /api/auth/refresh
 
-Read the refresh token from the cookie, issue a new access token, and reset the cookie; no `Authorization` header is needed.
+Read the refresh token from the cookie, issue a new access token, and reset the cookie; no `Authorization` header is needed. The token is likewise mapped to the database account by `sub` (the account must exist and be active), and the used refresh token is revoked immediately, so reusing it returns `401`.
 
 **Response**: `200 OK`
 
@@ -190,7 +193,7 @@ Read the refresh token from the cookie, issue a new access token, and reset the 
 
 | Status | When |
 |---|---|
-| `401` | Refresh token missing (`找不到重新整理權杖`), invalid (`重新整理權杖無效`), of the wrong type (`重新整理權杖類型無效`), revoked (`權杖已被撤銷`), or expired |
+| `401` | Refresh token missing (`找不到重新整理權杖`), invalid (`重新整理權杖無效`), of the wrong type (`重新整理權杖類型無效`), revoked (`權杖已被撤銷`, including an already used token), belonging to a missing or deactivated account, or expired |
 
 ### 1.4 GET /api/auth/me
 
@@ -206,7 +209,7 @@ Update the email or password; send only the fields you change.
 | `current_password` | string | When changing the password | Current password |
 | `new_password` | string | No | New password, same rules as registration |
 
-**Response**: `200 OK` with the updated `UserProfile`. Errors return `400`: email taken (`該電子郵件已被使用`), current password missing (`請提供目前的密碼`) or wrong (`目前的密碼錯誤`), or a password strength message.
+Password fields accept at most 256 characters. **Response**: `200 OK` with the updated `UserProfile`. Errors return `400`: email taken (`該電子郵件已被使用`), current password missing (`請提供目前的密碼`) or wrong (`目前的密碼錯誤`), or a password strength message.
 
 ### 1.6 POST /api/auth/change-password
 
@@ -225,7 +228,7 @@ Add the access token from the `Authorization` header and the refresh token from 
 **Response**: `200 OK` `{"message": "登出成功", "success": true}`
 
 > [!NOTE]
-> The revocation list lives in the backend process's memory. It is cleared when the backend restarts, and unexpired tokens become valid again.
+> The revocation list lives in the backend process's memory (at most 100,000 entries; when full, the entries expiring soonest are evicted first). It is cleared when the backend restarts, and unexpired tokens become valid again.
 
 ### 1.8 POST /api/auth/validate-token
 
@@ -243,21 +246,30 @@ Send a message and start the `ResearchAgent`. The response is a **Server-Sent Ev
 
 | Field | Type | Required | Default | Description |
 |---|---|---|---|---|
-| `content` | string | Yes | — | The user's question |
+| `content` | string | Yes | — | The user's question, at most 20,000 characters |
 | `conversation_id` | integer | No | `null` | Conversation ID; a new conversation is created when it is empty, unknown, or not yours |
-| `model_name` | string | No | Default model | Model to use; the provider is routed by name |
+| `model_name` | string | No | Default model | Model to use; it must be in the [available model list](configuration_en.md#model-list) or equal `MODEL_NAME`, otherwise `400` `不支援的模型` ("unsupported model"); the provider is routed by name |
 | `reasoning_effort` | string | No | `medium` | Reasoning level, sent only to OpenAI and Azure OpenAI; see below |
-| `attachments` | array | No | `[]` | Attachments; see the table below |
+| `attachments` | array | No | `[]` | Attachments, at most 5; see the table below |
 
 `attachments[]` fields:
 
 | Field | Type | Description |
 |---|---|---|
-| `filename` | string | File name |
-| `file_type` | string | MIME type; `image/*` goes to the vision model, other types are extracted as text |
+| `filename` | string | File name, at most 255 characters |
+| `file_type` | string | MIME type, at most 255 characters; `image/*` goes to the vision model, other types are extracted as text |
 | `file_size` | integer | Optional file size |
-| `data_url` | string | Optional Base64 data URL; required for images |
-| `content` | string | Optional pre-extracted plain text; when absent, text is extracted from the decoded `data_url` |
+| `data_url` | string | Optional; must be a base64 `data:` URL (remote URLs such as `http(s)://` are rejected), at most 15 MiB decoded per attachment and 20 MiB in total per message; required for images |
+| `content` | string | Optional pre-extracted plain text, at most 50,000 characters; when absent, text is extracted from the decoded `data_url` (at most 20 PDF pages are OCR'd) |
+
+At most 50,000 characters of each attachment's text go into the model context; the rest is truncated.
+
+| Status | When |
+|---|---|
+| `400` | `model_name` is not in the available model list |
+| `413` | The request body exceeds its limit (1 MiB without a valid access token), or this user's stored attachments would exceed 200 MiB (`附件儲存空間已達上限…`, "attachment storage is full") |
+| `422` | Field validation failed: message too long, too many or too large attachments, a `data_url` that is not a base64 `data:` URL, and so on |
+| `429` | This user already has 2 answers streaming |
 
 **How `reasoning_effort` is handled**: the frontend offers `none`, `low`, `medium`, `high`, and `xhigh`; the backend accepts `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, and `max`, and drops any other value. Models whose name contains `gpt-5` always get `none` when tools are attached.
 
@@ -269,6 +281,8 @@ Each event is formatted as `event: <name>\ndata: <JSON>\n\n`, in this order:
 |---|---|---|
 | `start` | The user message has been saved | `conversation_id`, `user_message_id` |
 | `step_start` | A tool call starts | `step` (from 1), `tool`, `arguments` |
+| `approval_required` | The tool needs approval and the agent pauses (see [2.10](#210-post-apichatapprovalsapproval_id)) | `approval_id`, `step`, `tool`, `tool_display_name`, `arguments` |
+| `approval_resolved` | The user answered or the wait timed out | `approval_id`, `approved` (`false` on timeout) |
 | `step_end` | A tool call ends | `step`, `tool`, `arguments`, `output_preview` (first 300 characters of the result JSON), `duration_seconds`, `status` (`success` / `error`) |
 | `token` | Answer text | `content` |
 | `sources` | After the answer | `sources` (deduplicated source names), `sources_detail` (see below) |
@@ -311,11 +325,13 @@ data: {"message_id": 108, "conversation_id": 42, "answer": "特休假需先在�
 - A failed model call or an interrupted stream is reported inside a `token` event with an error code (for example 在執行自主研究時遇到連線異常（錯誤代碼：…）, "a connection error occurred during research"), not as an `error` event; the code maps to the full exception in the server log.
 - The assistant message is saved only after the stream completes. If the client disconnects mid-stream (for example by pressing stop), that answer is not saved, while the user message already is.
 - A new conversation takes the first 50 characters of its first message as its title.
-- The assistant message stores `sources`, `sources_detail`, and `research_trace` as JSON in its `context_used` column; attachment details are stored in the user message's `context_used`.
+- The assistant message stores `sources`, `sources_detail`, and `research_trace` as JSON in its `context_used` database column; attachment details are stored in the user message's `context_used`. API responses carry only the parsed fields and no longer return the raw `context_used`.
+- Each tool result is truncated to 20,000 characters before it enters the model context.
+- While streaming, the backend returns its database connection to the pool and takes one again at the end to save the answer.
 
 ### 2.2 GET /api/chat/models
 
-Available models and the default model. See [configuration reference: model list](configuration_en.md#model-list) for how the list and the default are chosen.
+Available models and the default model. See [configuration reference: model list](configuration_en.md#model-list) for how the list and the default are chosen; when the remote list is queried, the result (failures included) is cached for 30 seconds.
 
 ```json
 {
@@ -326,7 +342,7 @@ Available models and the default model. See [configuration reference: model list
 
 ### 2.3 GET /api/chat/tools
 
-The tool definitions currently available to the agent, in the OpenAI Function Calling `tools` format:
+The tool definitions currently available to the agent (sign-in required), in the OpenAI Function Calling `tools` format:
 
 - Built-in tools `search_knowledge_base`, `filter_and_count_records`, `web_search`, and `web_fetch` (the last two are omitted when `ENABLE_WEB_SEARCH=false`). The `search_knowledge_base` description lists every document's file name and AI summary so the model can choose where to search.
 - Enabled custom API tools (description prefixed with `【外部自訂 API】`).
@@ -360,7 +376,7 @@ If loading external tools raises an exception, `status` is `partial` with `error
 
 ### 2.4 GET /api/chat/conversations
 
-Your conversations, most recently updated first; each includes its **5 most recent** messages in chronological order.
+Your conversations, most recently updated first, at most **200**; each includes its **5 most recent** messages in chronological order, whose attachments list the file name and similar details but no `data_url`.
 
 ```json
 [
@@ -375,7 +391,7 @@ Your conversations, most recently updated first; each includes its **5 most rece
         "content": "特休假需先在系統填寫假單……[1]。",
         "is_user": false,
         "created_at": "2026-09-25T01:30:00",
-        "context_used": "{\"sources\": [...], \"sources_detail\": [...], \"research_trace\": [...]}",
+        "context_used": null,
         "model_name": "gpt-6-sol",
         "reasoning_effort": null,
         "attachments": [],
@@ -388,7 +404,7 @@ Your conversations, most recently updated first; each includes its **5 most rece
 ]
 ```
 
-A message's `sources`, `sources_detail`, `research_trace`, and `attachments` are parsed from `context_used`; `reasoning_effort` is not stored and is always `null`.
+A message's `sources`, `sources_detail`, `research_trace`, and `attachments` are parsed from the `context_used` database column; `context_used` in the response is always `null` (the raw value holds attachment base64 and is no longer repeated). `reasoning_effort` is not stored and is always `null`.
 
 ### 2.5 POST /api/chat/conversations
 
@@ -396,7 +412,7 @@ Create an empty conversation; no request body is needed, and the title is `DEFAU
 
 ### 2.6 GET /api/chat/conversations/{conversation_id}
 
-One conversation with all its messages in chronological order. Returns `404` `找不到該對話` (conversation not found) when it does not exist or is not yours.
+One conversation with its latest 500 messages in chronological order. Returns `404` `找不到該對話` (conversation not found) when it does not exist or is not yours.
 
 ### 2.7 GET /api/chat/conversations/{conversation_id}/messages
 
@@ -404,7 +420,7 @@ Paged messages.
 
 | Query parameter | Default | Description |
 |---|---|---|
-| `limit` | `100` | Number of messages to return |
+| `limit` | `100` | Number of messages to return, at most 500 |
 | `offset` | `0` | Number of newest messages to skip |
 
 Returns the newest `limit` messages in chronological order; page back with `offset`. An unknown conversation, or one that is not yours, returns an empty array.
@@ -419,6 +435,24 @@ Delete one of your conversations and all its messages.
 
 A demo echo channel: for `{"content": "..."}` it replies `{"type": "message", "content": "收到訊息: ...", "timestamp": "now"}`. It does not authenticate and the frontend does not use it; use the [SSE endpoint in 2.1](#21-post-apichatsend) for chat.
 
+### 2.10 POST /api/chat/approvals/{approval_id}
+
+Approve or deny a tool call the agent is waiting on. Custom API tools and MCP servers carry a `requires_approval` flag (see [Tool object](#tool-object) and [Server object](#server-object)); when the agent wants to call such a tool, the `POST /api/chat/send` stream first sends an `approval_required` event and pauses until the user answers through this endpoint, then sends `approval_resolved`. See [ADR-0006](adr/0006-tool-call-approval_en.md) for the rationale.
+
+**Request body**: `{"approved": true}` (`false` denies)
+
+**Response**: `200 OK` `{"approval_id": "…", "approved": true}`
+
+| Status | When |
+|---|---|
+| `404` | `找不到待核准的工具呼叫，可能已逾時或已處理` ("no pending tool call; it may have timed out or been handled"): the `approval_id` is unknown, already handled, timed out, or was not created by a stream the signed-in user started |
+
+- Only the asking user can answer their own items; admins cannot approve on their behalf.
+- No answer within 300 seconds counts as a denial; when the user interrupts the stream, the pending item is cancelled with it.
+- On a denial or timeout the tool does not run, and the agent receives a "not approved by the user" tool result and answers from what it already has.
+- When no user can approve (a non-interactive run), tools that need approval never run.
+- Pending items live in the backend process's memory and are lost when the backend restarts.
+
 ---
 
 ## 3. Knowledge-base documents `/api/documents`
@@ -432,7 +466,8 @@ Upload documents to the knowledge base. Each file goes through: name and extensi
 **Request**: `multipart/form-data` with the field name `file`, repeatable, up to 10 files per request.
 
 - Supported extensions: `.txt`, `.md`, `.markdown`, `.pdf`, `.docx`, `.pptx`, `.xlsx`, `.csv`, `.json`, `.yaml`, `.yml`, `.xml`, `.html`, `.htm`, `.log`, `.py`, `.js`, `.ts`, `.tsx`, `.jsx`, `.java`, `.cpp`, `.c`, `.sql`, `.sh`, `.ini`, `.env`.
-- Per-file limit: `MAX_FILE_SIZE_MB` (10 MB in the template).
+- Per-file limit: `MAX_FILE_SIZE_MB` (10 MB in the template). The whole request body may be 10 × `MAX_FILE_SIZE_MB` MiB + 1 MiB, and only with a valid access token (1 MiB otherwise); larger bodies get `413`.
+- A `.docx`, `.pptx`, or `.xlsx` whose total uncompressed size exceeds 200 MiB, or whose large members compress more than 100:1, is rejected before parsing; scanned PDF pages are rasterized at no more than 25 MP each.
 - Spaces in file names become underscores; a name that already exists gets a `_1`, `_2`, … suffix; names containing `/`, `\`, `..`, `<`, `>`, `:`, `"`, `|`, `?`, or `*` are rejected.
 - A file whose extracted text is identical to an existing document's is a duplicate and is not stored again.
 - Chunking: Q&A documents become one chunk per pair, structured records and JSON become one chunk per record, and everything else is split recursively by `CHUNK_SIZE` / `CHUNK_OVERLAP`.
@@ -493,7 +528,7 @@ Edit the summary. **Request body**: `{"description": "Custom summary"}`; **respo
 
 ### 3.5 DELETE /api/documents/{document_id}
 
-Delete a document: remove its chunks, vectors, and BM25 entries, delete the uploaded file, then delete the database record.
+Delete a document: delete the database record first, then remove its chunks, vectors, and BM25 entries, and finally delete the uploaded file. An index write in progress checks, while holding the lock, that the document still exists, so chunks of a deleted document are never written back.
 
 **Response**: `200 OK` `{"message": "文件刪除成功"}`; `404` `文件不存在` (document not found).
 
@@ -543,6 +578,7 @@ Register external HTTP APIs as tools the agent can call. Enabled tools are loade
 | `param_locations` | object | Where each parameter goes: `path`, `query`, `header`, or `body` |
 | `response_mapping` | string | Reserved, currently unused |
 | `is_enabled` | boolean | Whether the tool is enabled |
+| `requires_approval` | boolean | Whether the asking user must approve in the chat before the agent calls it (see [2.10](#210-post-apichatapprovalsapproval_id)). When omitted on create or import it follows the method: `false` for `GET`, `HEAD`, and `OPTIONS`, `true` for everything else |
 | `timeout` | integer | Timeout in seconds, 15 by default |
 | `spec_version` | string | Source spec version, `manual` for hand-made tools |
 | `created_at` / `updated_at` | string | Timestamps |
@@ -555,6 +591,8 @@ Register external HTTP APIs as tools the agent can call. Enabled tools are loade
 
 **Parameter assembly**: parameters that appear as `{name}` in the URL or are located in `path` are substituted into the URL; `header` parameters go into headers, `query` parameters into the query string, and `body` parameters into the JSON body. Parameters without a location go into the body for `POST`, `PUT`, and `PATCH`, and into the query string otherwise. A `request_body` object passed by the model replaces the whole body.
 
+**Path parameters and host**: path parameters are always percent-encoded (`/`, `?`, `#`, and `%` included), and the values `.` and `..` are rejected; after substitution the URL must keep the scheme, host, and port of the configured URL, or the request is not sent.
+
 ### 4.1 POST /api/api-tools/parse-spec
 
 Parse an OpenAPI / Swagger spec (OAS 2.0, 3.0, 3.1) from JSON / YAML text or a spec URL.
@@ -564,7 +602,7 @@ Parse an OpenAPI / Swagger spec (OAS 2.0, 3.0, 3.1) from JSON / YAML text or a s
 | `spec_content_or_url` | string | Yes | Spec text, or a spec URL starting with `http://` or `https://` |
 | `default_base_url` | string | No | Overrides the server URL in the spec |
 
-Spec URLs are SSRF-validated first and fetched with a 10 MB limit, a 15-second timeout, and at most 5 redirects.
+Spec URLs are SSRF-validated first (every hop is pinned to the validated IP) and fetched with a 10 MB limit, a 15-second timeout, and at most 5 redirects.
 
 **Response**: `200 OK`
 
@@ -605,7 +643,7 @@ Tool names come from `operationId` (lowercased, with non-alphanumeric characters
 
 | Status | When |
 |---|---|
-| `400` | Invalid spec, unrecognized version, or a URL rejected by the SSRF guard or unreachable (the message is safe to show to users) |
+| `400` | Invalid spec, unrecognized version, or an unreachable URL (the message is safe to show to users); a URL rejected by the SSRF guard only reports the rejection with an error code, and the full reason goes to the server log |
 | `500` | Any other unexpected exception; only an error code is returned |
 
 ### 4.2 POST /api/api-tools/import
@@ -619,6 +657,8 @@ Bulk-import the endpoints selected from a parsed spec. Tools with the same name 
 | `global_headers` | object | No | Shared headers; an endpoint's own header of the same name wins |
 | `global_auth_type` | string | No | Used when an endpoint has no auth type |
 | `global_auth_config` | object | No | Used when an endpoint has no auth settings |
+
+Newly imported tools get `requires_approval` from their method (`true` for anything other than `GET`, `HEAD`, and `OPTIONS`); when an existing tool is overwritten, a tool that required approval keeps requiring it. Change it afterwards with 4.6.
 
 ```json
 {
@@ -651,7 +691,7 @@ Create a tool manually. `name`, `display_name`, `description`, and `url` are req
 
 ### 4.6 PUT /api/api-tools/{tool_id}
 
-Send only the fields you change (`name` cannot be changed). **Response**: `{"status": "success", "message": "自訂 API 工具更新成功", "tool": {...}}`.
+Send only the fields you change (`name` cannot be changed). Changing `method` to anything other than `GET`, `HEAD`, or `OPTIONS` without also sending `requires_approval` sets `requires_approval` to `true`. **Response**: `{"status": "success", "message": "自訂 API 工具更新成功", "tool": {...}}`.
 
 ### 4.7 PATCH /api/api-tools/{tool_id}/toggle
 
@@ -681,9 +721,14 @@ Send one real request with the given arguments.
 }
 ```
 
-- `data` is the parsed object for JSON responses and the first 4000 characters of text otherwise.
-- The first request and every redirect are SSRF-validated again; a rejection reports `status_code` `403`, `is_success` `false`, and the reason in `error`.
+- `data` is the parsed object for JSON responses and the first 4000 characters of text otherwise. If the upstream body exceeds 1 MiB, reading stops and `status_code` is `502`.
+- Credentials injected into this request (header values, Bearer token, API key, Basic auth) are replaced with `[已遮蔽]` ("redacted") wherever they appear in `data` or `url`; a query-string API key is masked in `url` too.
+- At most 5 redirects are followed; a redirect to another origin (different scheme, host, or port) does not carry the admin-configured headers or the auth header.
+- The first request and every redirect are SSRF-validated again, with the connection pinned to the validated IP; a rejection reports `status_code` `403`, `is_success` `false`, an `error` that only states the SSRF rejection with an error code, and `error_id`; the full reason goes to the server log.
+- An invalid path parameter or a host mismatch after substitution reports `status_code` `400`.
 - Other failures report `status_code` `500` with only `error` (including an error code) and `error_id`.
+- Custom API tools, the MCP HTTP transport, and `web_fetch`'s direct fetches ignore the `HTTP_PROXY` and `HTTPS_PROXY` environment variables and always connect directly.
+- Agent calls run the same code; when `requires_approval` is `true` they need the user's approval first, while this admin test endpoint does not.
 
 ---
 
@@ -705,6 +750,7 @@ Manage Model Context Protocol servers, protocol version `2024-11-05`, using JSON
 | `env_vars` | object | Extra environment variables for the `stdio` subprocess |
 | `url` / `headers` | string / object | Server URL and request headers for HTTP |
 | `is_enabled` | boolean | Whether it is enabled; disabled servers do not provide tools to the agent |
+| `requires_approval` | boolean | Whether the asking user must approve in the chat before the agent calls this server's tools (see [2.10](#210-post-apichatapprovalsapproval_id)); `true` when omitted on create, and admins can turn it off per server |
 | `status` | string | `connected`, `disconnected`, or `error` |
 | `last_error` | string | Why the latest discovery failed |
 | `discovered_tools` | array | Cached tools from the latest discovery (`name`, `description`, `inputSchema`) |
@@ -713,11 +759,13 @@ Manage Model Context Protocol servers, protocol version `2024-11-05`, using JSON
 
 **The `stdio` subprocess environment** inherits only essential system variables, plus `env_vars`: `APPDATA`, `HOMEDRIVE`, `HOMEPATH`, `LOCALAPPDATA`, `PATH`, `PATHEXT`, `PROCESSOR_ARCHITECTURE`, `SYSTEMDRIVE`, `SYSTEMROOT`, `TEMP`, `USERNAME`, and `USERPROFILE` on Windows; `HOME`, `LOGNAME`, `PATH`, `SHELL`, `TERM`, and `USER` elsewhere. Settings from the backend `.env` are never passed on.
 
-**HTTP servers** are SSRF-validated on every request and redirect, so servers on loopback or intranet addresses are rejected; use `stdio` for local MCP servers.
+**`stdio` subprocess lifetime**: each subprocess runs in its own process group (a new process group on Windows, a new session elsewhere), and closing it terminates the whole tree, including grandchildren started by `npx` or `uvx` (`taskkill /T /F` on Windows; `SIGTERM`, then `SIGKILL`, to the group elsewhere). Every discovery or tool call starts a subprocess; at most 4 run at once and the rest wait.
+
+**HTTP servers** are SSRF-validated on every request and redirect, with the connection pinned to the validated IP, so servers on loopback or intranet addresses are rejected; use `stdio` for local MCP servers. One response may be at most 4 MiB, and error messages no longer include the peer's response body.
 
 ### 5.1 GET /api/mcp/presets
 
-The built-in presets: `mcp_time` (time and time zones, an inline Python script), `mcp_filesystem` (`npx -y @modelcontextprotocol/server-filesystem ./data`), and `mcp_fetch` (`uvx mcp-server-fetch`).
+The built-in presets: `mcp_time` (time and time zones, an inline Python script) and `mcp_filesystem` (`npx -y @modelcontextprotocol/server-filesystem@2026.8.31 <absolute path of backend/mcp_filesystem_sandbox>`). The filesystem preset pins the package version and exposes only its dedicated sandbox directory (kept apart from `DATA_DIR`, which holds index metadata); calling this endpoint creates the directory. There is no web-fetch preset: outbound connections from a `stdio` subprocess are not bound by `web_fetch`'s SSRF checks, domain allowlist, or URL provenance rule.
 
 **Response**: `{"status": "success", "presets": [...]}`
 
@@ -738,6 +786,7 @@ Add a server; it connects and discovers tools right away.
 | `command` / `args` / `env_vars` | string / array / object | `command` for `stdio` | `null` |
 | `url` / `headers` | string / object | `url` for HTTP | `null` |
 | `is_enabled` | boolean | No | `true` |
+| `requires_approval` | boolean | No | `true` |
 | `timeout` | integer | No | `30` |
 
 **Response**: `{"status": "success", "message": "MCP 伺服器建立成功", "server": {...}}`. If discovery fails, the server is still created with `status` `error`, and `last_error` records only an error code; an SSRF rejection also says the SSRF guard rejected it, and its full reason likewise goes only to the server log. A duplicate name returns `400` `已存在同名 MCP 伺服器: <name>`.
@@ -805,7 +854,7 @@ Model lists in the Ollama `tags` format; neither endpoint requires sign-in.
 
 ### 6.1 GET /api/tags
 
-When any model source is configured (`AVAILABLE_MODELS` or a cloud key), returns `{"tags": [...], "default": "..."}` with the same default rule as `GET /api/chat/models`. Otherwise it queries the remote list at `EXTERNAL_TAGS_URL` (or `{LLM_API_BASE}/api/tags`) and returns an empty list if that fails.
+When any model source is configured (`AVAILABLE_MODELS` or a cloud key), returns `{"tags": [...], "default": "..."}` with the same default rule as `GET /api/chat/models`. Otherwise it queries the remote list at `EXTERNAL_TAGS_URL` (or `{LLM_API_BASE}/api/tags`) and returns an empty list if that fails. The remote query runs in a worker thread, its result (failures included) is cached for 30 seconds, and only one query runs at a time, so anonymous requests do not trigger an outbound call each time.
 
 ```json
 {"tags": ["gpt-6-sol", "gpt-6-luna"], "default": "gpt-6-sol"}
@@ -857,7 +906,7 @@ Returns `{"tags": [...], "default": "..."}` when a model source is configured; o
 | Method | Path | Description |
 |---|---|---|
 | GET | `/api/admin/conversations` | The 50 most recently updated conversations system-wide |
-| GET | `/api/admin/conversations/{conversation_id}/messages` | All messages of any conversation, oldest first |
+| GET | `/api/admin/conversations/{conversation_id}/messages` | All messages of any conversation, oldest first; the table is serialized directly, including the raw `context_used` |
 | DELETE | `/api/admin/conversations/{conversation_id}` | Delete any conversation and its messages |
 | GET | `/api/admin/documents` | All documents, newest first, including the full `content` |
 | DELETE | `/api/admin/documents/{document_id}` | Remove a document's chunks and indexes and delete its record (the uploaded file stays; use `DELETE /api/documents/{document_id}` to remove it too) |
@@ -931,7 +980,7 @@ Error messages are in the `detail` field:
 {"detail": "找不到該自訂 API 工具"}
 ```
 
-For field validation failures (`422`), `detail` is FastAPI's error array:
+For field validation failures (`422`), `detail` is FastAPI's error array (when sending a chat message, the frontend shows each item's `msg`, for example an oversized attachment):
 
 ```json
 {"detail": [{"type": "missing", "loc": ["body", "content"], "msg": "Field required", "input": {}}]}
@@ -948,18 +997,19 @@ Unexpected server exceptions **never** return exception messages or stack traces
 }
 ```
 
-Validation errors that only describe the user's own input (such as an invalid OpenAPI spec or a spec URL rejected by the SSRF guard) return an actionable message instead.
+Validation errors that only describe the user's own input (such as an invalid OpenAPI spec) return an actionable message instead. SSRF rejection reasons can contain intranet IPs resolved on the server or redirect targets, so `parse-spec`, custom API tools, and `web_fetch` only report "SSRF 防護拒絕連線" (connection rejected by the SSRF guard) with an error code, and the full reason goes to the server log.
 
 ### Common status codes
 
 | Status | Meaning |
 |---|---|
-| `400` | Bad request content: duplicate names, spec parsing failures, URLs rejected by SSRF validation, password rules not met |
-| `401` | Missing or invalid access token (`Not authenticated`, `認證權杖無效：驗證失敗` "token verification failed", `權杖已被撤銷` "token revoked") or a failed sign-in |
+| `400` | Bad request content: duplicate names, spec parsing failures, URLs rejected by SSRF validation, password rules not met, unsupported model |
+| `401` | Missing or invalid access token (`Not authenticated`, `認證權杖無效：驗證失敗` "token verification failed", `權杖已被撤銷` "token revoked"; a deleted or deactivated account also gets `認證權杖無效：驗證失敗`) or a failed sign-in |
 | `403` | Insufficient permission (`需要管理員權限`), or the client IP was blocked for suspicious activity (the block list lives in memory and clears on restart) |
-| `404` | The resource (conversation, document, tool, MCP server, user) does not exist |
-| `422` | Field validation failed |
-| `429` | Rate limit exceeded; the response includes a `Retry-After` header |
+| `404` | The resource (conversation, document, tool, MCP server, user, pending tool call) does not exist |
+| `413` | The request body exceeds its limit, or the user's attachment storage is full |
+| `422` | Field validation failed (including length, count, and size limits) |
+| `429` | Rate limit exceeded (the response includes a `Retry-After` header), or the same user has more than 2 answers streaming |
 | `500` | Unexpected exception; only an error code is returned |
 | `502` | `GET /api/external-tags` failed to reach the remote list |
 
@@ -971,12 +1021,12 @@ Every response carries `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY
 
 ## 10. Known limitations
 
-The state of 3.0.0, worth knowing when integrating:
+The current state, worth knowing when integrating:
 
-- `GET /api/chat/models`, `GET /api/chat/tools`, `GET /api/tags`, `GET /api/external-tags`, and the WebSocket `/api/chat/ws/{user_id}` require no sign-in, and the tool descriptions from `GET /api/chat/tools` include knowledge-base file names and summaries. Restrict them at the reverse proxy when deploying on a public network.
+- `GET /api/chat/models`, `GET /api/tags`, `GET /api/external-tags`, and the WebSocket `/api/chat/ws/{user_id}` require no sign-in (`GET /api/chat/tools` now does). Restrict them at the reverse proxy when deploying on a public network.
 - `GET /api/admin/users` and `PUT /api/admin/users/{user_id}` serialize the table directly, so responses include the `hashed_password` field (visible to admins only).
 - `GET /api/documents/` and `GET /api/admin/documents` return each document's full text in `content`.
 - Failed MCP tool calls include the raw exception message in `error` instead of an error code.
-- Deactivating an account (`is_active=false`) only blocks later password sign-ins: issued access tokens stay valid until they expire, and `POST /api/auth/refresh` does not check the account status, so signed-in sessions can keep exchanging tokens. To cut off access, delete the account: later token exchanges fail, but an unexpired access token keeps working until it expires.
 - `expires_in` in token responses is always `1800`, regardless of `ACCESS_TOKEN_EXPIRE_MINUTES`.
-- The token revocation list and rate limit counters live in one backend process's memory and are not shared across processes or hosts.
+- The token revocation list, rate limit counters, per-user concurrent streams, and pending tool approvals live in one backend process's memory; they are not shared across processes or hosts and are cleared on restart.
+- Attachment storage is never purged automatically: once a user reaches the 200 MiB limit, they must delete conversations with attachments before sending attachments again.

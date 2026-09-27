@@ -178,6 +178,15 @@ class HybridContextualRAG:
         if not chunks:
             return 0
         with self.vector_store.lock:
+            # 刪除文件時會先刪 documents 列、再持鎖移除片段；持鎖後才確認文件仍存在，
+            # 已被刪除（或正在刪除）的文件不會再把片段寫回知識庫
+            existing = self.chunk_store.existing_document_ids([chunk.metadata.get("document_id") for chunk in chunks])
+            kept = [chunk for chunk in chunks if chunk.metadata.get("document_id") in existing]
+            if len(kept) != len(chunks):
+                logger.warning(f"略過 {len(chunks) - len(kept)} 個所屬文件已刪除的片段")
+            chunks = kept
+            if not chunks:
+                return 0
             embeddings = self.vector_store.embed([chunk.page_content for chunk in chunks])
             with self.chunk_store.session_factory() as session:
                 chunk_ids = self.chunk_store.insert(session, chunks)
@@ -218,14 +227,16 @@ class HybridContextualRAG:
         conversation_history: List[Dict[str, str]],
         model_name: Optional[str] = None,
         reasoning_effort: Optional[str] = "medium",
-        attachments: Optional[List[Any]] = None
+        attachments: Optional[List[Any]] = None,
+        approval_user_id: Optional[int] = None
     ) -> AsyncGenerator[Dict[str, Any], None]:
         async for event in self.pipeline.generate_response_stream(
             query=query,
             conversation_history=conversation_history,
             model_name=model_name,
             reasoning_effort=reasoning_effort,
-            attachments=attachments
+            attachments=attachments,
+            approval_user_id=approval_user_id
         ):
             yield event
 

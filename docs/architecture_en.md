@@ -2,7 +2,7 @@
 
 [繁體中文](architecture.md) | [English](architecture_en.md)
 
-> The architecture of AskMiao **3.0.0**: layers, startup, data model, document processing and retrieval, the agentic RAG research loop, the LLM layer, external tool integration, authentication and security, and the frontend. The trade-offs behind these designs are recorded in the [Architecture Decision Records](adr/README_en.md).
+> The architecture of AskMiao **4.0.0**: layers, startup, data model, document processing and retrieval, the agentic RAG research loop, the LLM layer, external tool integration, authentication and security, and the frontend. The trade-offs behind these designs are recorded in the [Architecture Decision Records](adr/README_en.md).
 
 ## Contents
 
@@ -25,7 +25,7 @@
 
 ## 1. System overview
 
-AskMiao separates frontend and backend. The frontend is built with React 19, TypeScript 7, and Vite 8 (packages managed by Bun); the backend is FastAPI serving REST and SSE, with SQLAlchemy on SQLite or PostgreSQL. The vector index (FAISS) and keyword index (Whoosh BM25) are local files, while the authoritative chunk data lives in the database; the token revocation list, rate limit counters, and statistics cache live in the backend process's memory, with no Redis or other external dependency.
+AskMiao separates frontend and backend. The frontend is built with React 19, TypeScript 7, and Vite 8 (packages managed by Bun); the backend is FastAPI serving REST and SSE, with SQLAlchemy on SQLite or PostgreSQL. The vector index (FAISS) and keyword index (Whoosh BM25) are local files, while the authoritative chunk data lives in the database; the token revocation list, rate limit counters, concurrent stream counts, pending tool approvals, and statistics cache live in the backend process's memory, with no Redis or other external dependency.
 
 ```mermaid
 flowchart TB
@@ -37,6 +37,7 @@ flowchart TB
     end
 
     subgraph Gateway ["Middleware"]
+        BodyLimit["RequestBodyLimitMiddleware<br/>request body limit"]
         SecHeaders["SecurityHeadersMiddleware<br/>security response headers"]
         RateLimit["RateLimitMiddleware<br/>per-IP rate limit"]
         CORS["CORSMiddleware<br/>origin allowlist"]
@@ -50,6 +51,7 @@ flowchart TB
         AdminAPI["/api/admin"]
         RAG["HybridContextualRAG<br/>reconciliation, writes, and search"]
         Agent["ResearchAgent + ResearchSession"]
+        Approval["ToolApprovalBroker<br/>tool call approval"]
         Registry["ResearchToolRegistry"]
         LLM["llm_client.py"]
         SSRF["ssrf_protection.py"]
@@ -61,12 +63,14 @@ flowchart TB
         FAISS["FAISS IndexIDMap2"]
         BM25["Whoosh BM25"]
         Files["data/uploads"]
-        Mem[("Process memory<br/>revocation list, rate counters, cache")]
+        Mem[("Process memory<br/>revocation list, rate counters, pending approvals, cache")]
     end
 
-    Client --> SecHeaders --> RateLimit --> CORS
+    Client --> BodyLimit --> SecHeaders --> RateLimit --> CORS
     CORS --> AuthAPI & ChatAPI & DocAPI & ToolAPI & AdminAPI
     ChatAPI --> Agent --> Registry
+    Agent --> Approval
+    ChatAPI --> Approval
     Agent --> LLM
     Registry --> RAG
     Registry --> SSRF
@@ -111,7 +115,7 @@ sequenceDiagram
     Imp->>Imp: Validate the domain profile, load or generate RSA keys
     Main->>Main: Configure logging, register middleware and routers
     Main->>Life: uvicorn starts
-    Life->>Life: Create tables (create_all)
+    Life->>Life: Create tables (create_all) and add missing columns (upgrade_schema)
     Life->>RAG: Initialize
     RAG->>RAG: Configure the jieba dictionary and compute the tokenizer signature
     RAG->>RAG: Load the embedding model and FAISS (legacy format renamed .legacy.bak, dimension mismatch renamed .mismatch.bak)
@@ -126,7 +130,7 @@ Common startup failures:
 |---|---|---|
 | Settings validation | A missing required setting, an out-of-range value, or a malformed `WEB_FETCH_ALLOWED_DOMAINS` | `Field required`, `Input should be ...`, or a domain format explanation |
 | Domain profile | The file is missing or malformed | "domain profile not found" or "domain profile format error" (in Chinese) |
-| RSA keys | `ENVIRONMENT=production` and the keys cannot load | "production requires RSA keys for JWT signing" (in Chinese) |
+| RSA keys | The keys in `backend/keys/` cannot be loaded or generated (any `ENVIRONMENT`) | The key read or write exception raised while importing `jwt_auth.py` |
 | jieba dictionary | `JIEBA_DICTIONARY` points to a missing file | "JIEBA_DICTIONARY file not found" (in Chinese) |
 | Models | The embedding model or reranker cannot load | "cannot load the embedding model" / "cannot load the reranker model" (in Chinese) |
 | FAISS | The index file is corrupted or locked | "vector index failed to load" (the file is kept; move it away and restart to rebuild from the database) |
@@ -196,6 +200,7 @@ erDiagram
         text parameters_schema "JSON"
         text param_locations "JSON"
         bool is_enabled
+        bool requires_approval
     }
     mcp_servers {
         int id PK
@@ -207,14 +212,16 @@ erDiagram
         text discovered_tools "JSON tool cache"
         string status
         bool is_enabled
+        bool requires_approval
     }
 ```
 
 - **`rag_chunks` is the source of truth for chunks**: its `id` is the chunk_id that keys both FAISS and BM25. `chunk_metadata` holds `source`, `document_id`, `chunk_index`, `original_filename`, and `content_type`, plus `question` for Q&A chunks and `record_index`, `author`, and `link` for structured records.
-- **`messages.context_used`**: assistant messages store `sources`, `sources_detail`, and `research_trace`; user messages store `attachments`.
-- **Files outside the database**: `backend/data/` (`faiss_index.bin`, `index_metadata.pkl`, `bm25_index/`, `uploads/`), `backend/keys/` (the JWT key pair), and `backend/logs/` (logs).
+- **`messages.context_used`**: assistant messages store `sources`, `sources_detail`, and `research_trace`; user messages store `attachments` (including the attachments' base64, capped at 200 MiB per user). `/api/chat` responses carry only the parsed fields, and `context_used` is always `null`.
+- **`requires_approval`**: the approval-before-call flag of custom API tools and MCP servers; see section 9.
+- **Files outside the database**: `backend/data/` (`faiss_index.bin`, `index_metadata.pkl`, `bm25_index/`, `uploads/`, `jieba_cache/`), `backend/keys/` (the JWT key pair), `backend/mcp_filesystem_sandbox/` (the root of the filesystem MCP preset), and `backend/logs/` (logs).
 
-Tables are created at startup with SQLAlchemy `create_all`; `backend/init.sql` is the schema bootstrap for the PostgreSQL container.
+Tables are created at startup with SQLAlchemy `create_all`, after which `upgrade_schema()` adds columns introduced later to existing tables and backfills them (currently the two `requires_approval` columns: API tools are backfilled from their method, `true` for anything other than `GET`, `HEAD`, and `OPTIONS`; MCP servers are always `true`). New SQLite databases create `users` and `documents` with `AUTOINCREMENT`, so deleted ids are never reused. `backend/init.sql` is the schema bootstrap for the PostgreSQL container.
 
 ---
 
@@ -240,16 +247,16 @@ flowchart TB
 
 | Format | How |
 |---|---|
-| PDF | PyMuPDF extraction with repair of embedded fonts missing ToUnicode maps; blank or garbled pages are rendered at 150 DPI and OCR'd by a vision model (Azure OpenAI, OpenAI, or Gemini, in that order, up to 4 pages in parallel); pypdf is the last fallback |
+| PDF | PyMuPDF extraction with repair of embedded fonts missing ToUnicode maps; blank or garbled pages are rendered at 150 DPI and OCR'd by a vision model (Azure OpenAI, OpenAI, or Gemini, in that order). Pages are rasterized one at a time on the document's thread, at most 25 MP each (larger pages get a lower resolution), and only the vision calls run up to 4 pages in parallel; chat attachments are OCR'd for at most 20 pages, admin uploads without a limit. pypdf is the last fallback |
 | DOCX | Paragraph text plus tables (cells of each row joined with `\|`) |
 | PPTX | Text of each slide |
-| XLSX | Each sheet, row by row, cells joined with `\|` |
+| XLSX | Opened read-only; each sheet, row by row, cells joined with `\|` |
 | CSV | Row by row, cells joined with `\|` |
 | JSON, YAML, INI, ENV, SQL, and code | Read as text; arrays of objects in JS / JSON (such as `const posts = [...]`) are restructured into "【記錄 N】" records, and Base64 images and SVGs are replaced by placeholders |
-| HTML | Text with tags removed |
+| HTML | Text left after a single linear scan by `app/core/html_text.py` removes tags, `script`, `style`, and `noscript` |
 | Other text files | Tried as UTF-8, UTF-8 with BOM, Big5, GBK, GB2312, and Latin-1 in order |
 
-Before extraction the file header is checked against the declared type; files that yield no text are reported as failures and removed.
+Before extraction the file header is checked against the declared type; OOXML files (DOCX, PPTX, XLSX) additionally have their ZIP members' declared uncompressed sizes (≤ 200 MiB in total) and compression ratios (≤ 100 for members over 10 MiB uncompressed) checked to stop zip bombs. Files that yield no text are reported as failures and removed. SVG stripping, JSON declaration extraction, Q&A splitting, and table-of-contents cleanup now run in linear time, so crafted input cannot trigger quadratic regex backtracking.
 
 ### AI summaries
 
@@ -275,7 +282,7 @@ Adding a document runs these steps under one lock (`vector_store.lock`):
 4. Commit the transaction; on failure, remove the just-added vectors from FAISS and raise.
 5. Add the chunks to BM25, then write FAISS and its metadata to disk (via temporary files that replace the originals).
 
-Searches and writes hold the same lock and run in worker threads, so they never block the event loop.
+Searches and writes hold the same lock and run in worker threads, so they never block the event loop. After taking the lock, a write first checks that each chunk's document still exists in `documents` and skips chunks of deleted documents; deleting a document removes its `documents` row before its chunks. Together they keep an index write that races a deletion from writing chunks back into the knowledge base.
 
 ### Reconciliation at startup
 
@@ -338,7 +345,11 @@ flowchart TB
     Call --> HasTools{"Does the model call tools?"}
     HasTools -->|no| Answer["That response is the final answer<br/>sent as one token event"]
     HasTools -->|yes| Check["ResearchSession checks<br/>web limits, URL provenance"]
-    Check --> Exec["Run the tool"]
+    Check --> Approve{"Does the tool need approval?"}
+    Approve -->|no| Exec["Run the tool"]
+    Approve -->|yes| Ask["approval_required<br/>wait for the user, up to 300 s"]
+    Ask -->|approved| Exec
+    Ask -->|denied or timed out| Record
     Exec --> Record["Assign citation numbers<br/>record URL sources and knowledge-base reads"]
     Record --> Wrap["Wrap in &lt;untrusted_tool_result&gt;"]
     Wrap --> More{"Rounds < AGENT_MAX_TURNS?"}
@@ -352,11 +363,13 @@ flowchart TB
 | Tool | Behavior |
 |---|---|
 | `search_knowledge_base` | Searches as in section 6 and returns `chunk_id`, `source`, `chunk_index`, `score`, and the full chunk text; all exact matches are returned, the rest limited by `top_k` (default 3) |
-| `filter_and_count_records` | Scans every chunk and filters precisely by date (checking the domain profile's date fields first), author, keyword, and document, returning the total count and the first `limit` records (default 50) |
+| `filter_and_count_records` | Scans every chunk in a worker thread and filters precisely by date (checking the domain profile's date fields first), author, keyword, and document, returning the total count and the first `limit` records (default 50, also the maximum); `date_range` is at most 200 characters and may expand to at most 93 days |
 | `web_search` | Uses Ollama Web Search when `OLLAMA_API_KEY` is set, falling back to DuckDuckGo |
-| `web_fetch` | Checks the domain allowlist and SSRF first; with `OLLAMA_API_KEY` it tries Ollama Web Fetch, otherwise it fetches the HTML safely and converts it to plain text (first 3500 characters) |
-| Custom API tools | Build an HTTP request from the tool settings; see section 9 |
-| `mcp_<server>_<tool>` | Call the MCP server with `tools/call` |
+| `web_fetch` | Checks the domain allowlist and SSRF first; with `OLLAMA_API_KEY` it tries Ollama Web Fetch, otherwise it fetches the HTML safely and converts it to plain text with a linear scan in a worker thread (first 3500 characters) |
+| Custom API tools | Build an HTTP request from the tool settings; see section 9. When `requires_approval` is `true`, the user approves first |
+| `mcp_<server>_<tool>` | Call the MCP server with `tools/call`. When the server's `requires_approval` is `true`, the user approves first |
+
+Each tool result is truncated to 20,000 characters and each attachment's extracted text to 50,000 characters before entering the model context.
 
 ### System prompt rules
 
@@ -371,7 +384,7 @@ flowchart TB
 | Responsibility | Details |
 |---|---|
 | Citation table | Knowledge-base chunks are keyed `chunk:<chunk_id>` and web pages `url:<URL>`; a number is assigned on first appearance and written into the tool result's `citation` field, and later appearances reuse it |
-| URL provenance | `web_fetch` may only read URLs that appear verbatim in the user's messages (including attachment text and earlier user messages) or in the data fields of this question's built-in tool results; query arguments echoed by tools do not count |
+| URL provenance | `web_fetch` may only read URLs that appeared as a whole URL in the user's messages (including attachment text and earlier user messages) or in the data fields of this question's built-in tool results: whole URL tokens are cut from the source text, both sides are normalized to httpx's form and compared exactly, and the matched normalized URL is what gets fetched; query arguments echoed by tools do not count |
 | Web tools off after the knowledge base | With `BLOCK_WEB_TOOLS_AFTER_KB=true`, `web_search` and `web_fetch` are refused once a knowledge-base tool has returned content |
 | Untrusted-data wrapping | Every tool result is wrapped in `<untrusted_tool_result id="...">` with a random id per question, so data cannot forge the closing marker in advance |
 | Citation parsing | After the answer completes, `[1]`, `[1,2]`, `[1、2]`, and `[1][2]` are parsed; only numbers in the citation table are listed, deduplicated in order of first citation |
@@ -380,8 +393,21 @@ Results from custom API and MCP tools are wrapped as untrusted too, but they are
 
 ### Streaming and persistence
 
-- `step_start` / `step_end` are pushed around each tool call; the final answer is pushed as `token` events, followed by `sources` and `done`. See [API reference 2.1](api_en.md#21-post-apichatsend) for the event format.
-- The user message is saved before streaming starts; the assistant message is saved only after the stream completes, so an answer stopped midway is not stored.
+- `step_start` / `step_end` are pushed around each tool call, with `approval_required` / `approval_resolved` in between when approval is needed; the final answer is pushed as `token` events, followed by `sources` and `done`. See [API reference 2.1](api_en.md#21-post-apichatsend) for the event format.
+- The user message is saved before streaming starts; the assistant message is saved only after the stream completes, so an answer stopped midway is not stored. During the stream the database connection goes back to the pool, and database access plus attachment decoding and parsing run in worker threads without blocking the event loop.
+- Each user may have at most 2 answer streams at once (more get `429`); before sending, the backend checks that `model_name` is in the available model list and that the user's attachment storage stays within 200 MiB.
+
+### Tool call approval
+
+`ToolApprovalBroker` in `app/rag/tool_approval.py` lets the asking user decide in the chat whether a tool with side effects runs; see [ADR-0006](adr/0006-tool-call-approval_en.md) for the rationale:
+
+1. Before running a tool, the agent asks `ResearchToolRegistry.approval_requirement()` for the `requires_approval` flag of the matching custom API tool or MCP server; built-in tools need no approval.
+2. When approval is needed, the broker creates a pending item bound to the asking user's `user_id` (with a random `approval_id`), the stream sends `approval_required` (tool name, display name, and arguments), and the agent pauses.
+3. The frontend shows a confirmation card inside that answer; the user's approve or deny click calls `POST /api/chat/approvals/{approval_id}`. Only the same user can answer; anyone else, or an item already handled or timed out, gets `404`.
+4. The stream sends `approval_resolved`. On approval the tool runs as usual; on a denial or a 300-second timeout it does not, and the agent receives a "not approved by the user" tool result and answers from what it already has.
+5. When no user can approve (`approval_user_id` is `None`, for example in a non-interactive run), tools that need approval never run.
+
+Pending items live only in process memory; when the user interrupts the stream, the waiting item is cancelled with it.
 - History is the latest `CONVERSATION_HISTORY_MESSAGES` messages from the database, always starting with a user message, with `[n]` markers removed from earlier answers so the model does not reuse stale numbers.
 
 ---
@@ -401,7 +427,9 @@ Results from custom API and MCP tools are wrapped as untrusted too, but they are
 - **Routing**: the provider follows the model name (Azure deployment → `claude-` → `gemini-` → `gpt-` / `o1` / `o3` / `o4` → Ollama); see [configuration reference: provider routing](configuration_en.md#provider-routing) for the full rules.
 - **Reasoning effort**: `reasoning_effort` goes only to OpenAI and Azure OpenAI; models whose name contains `gpt-5` always get `none` when tools are attached.
 - **Two call types**: `chat_completion` serves each research round (non-streaming, returning `content` and `tool_calls`); `stream_completion` is used only to regenerate a final answer, and Claude streams with `tool_choice: none` so no further tools fire.
-- **Timeouts**: the shared httpx client uses `LLM_TIMEOUT`; document summaries are capped at 18 seconds.
+- **Timeouts**: the shared httpx client uses `LLM_TIMEOUT`, and waiting for a connection pool slot has its own 15-second limit so a saturated pool fails fast; document summaries are capped at 18 seconds.
+- **Image input**: only inline `data:` URLs are accepted; remote image URLs are rejected so model providers never fetch arbitrary user-chosen addresses on our behalf.
+- **Model list**: the remote model list is queried in a worker thread and cached for 30 seconds (failures included); the model named when sending a message must be in the available list or equal `MODEL_NAME`.
 
 ---
 
@@ -431,18 +459,23 @@ flowchart TB
     DB --> DynamicApi
     McpDB --> DynamicMcp
     Builtin & DynamicApi & DynamicMcp --> Agent["Agent toolset"]
-    Agent --> Exec{"execute_tool(name, arguments)"}
+    Agent --> Gate{"requires_approval?"}
+    Gate -->|yes| Ask["User approves in the chat"]
+    Gate -->|no| Exec{"execute_tool(name, arguments)"}
+    Ask -->|approved| Exec
     Exec -->|built-in| Internal["Internal implementation"]
     Exec -->|mcp_ prefix| McpCall["McpManager.execute_mcp_tool (tools/call)"]
-    Exec -->|any other name| Http["execute_http_api_tool (httpx + per-hop SSRF validation)"]
+    Exec -->|any other name| Http["execute_http_api_tool (httpx + SSRFSafeTransport)"]
 ```
 
 1. **Dynamic loading**: the database is queried whenever tool definitions are assembled, so tool changes apply immediately. MCP tools come from the cache written at discovery, without reconnecting each time.
 2. **Naming**: custom API tools register under their `name` (from `operationId` or the method and path, letters, digits, and underscores only); MCP tools are `mcp_<server>_<tool>` with non-alphanumeric characters replaced by underscores and lowercased, and `execute_tool` routes on that prefix.
-3. **HTTP executor**: substitutes path parameters, assembles the query string and headers, injects auth (Bearer, API key, Basic), serializes the JSON body, and re-runs SSRF validation before the first request and every redirect through the `reject_unsafe_request` request hook.
-4. **MCP transports**: `McpStdioClient` exchanges JSON-RPC over a subprocess's standard input and output; `McpHttpClient` exchanges JSON-RPC over HTTP POST (both the `http` and `sse` settings use this path), with the same per-hop SSRF validation. Every call opens a fresh connection and completes the `initialize` handshake.
-5. **Subprocess isolation**: `build_stdio_env()` inherits only the system variables on the MCP SDK's default list, skips shell function definitions starting with `()`, and adds the server's `env_vars`; the backend's JWT key, database URL, and model keys never reach third-party MCP servers.
-6. **Admin only**: tools are shared by every user's agent and `stdio` servers run commands on the host, so every endpoint under `/api/api-tools` and `/api/mcp`, including reads, is admin-only. Regular users can only let the agent use enabled tools in chat. See [ADR-0002](adr/0002-external-tools-and-outbound-safety_en.md) and [ADR-0004](adr/0004-tool-admin-permissions-and-subprocess-isolation_en.md).
+3. **HTTP executor**: substitutes percent-encoded path parameters (rejecting `.` and `..`; the scheme, host, and port after substitution must match the configured URL), assembles the query string and headers, injects auth (Bearer, API key, Basic), serializes the JSON body, and sends everything through `SSRFSafeTransport`, which re-runs SSRF validation before the first request and every redirect and pins the connection to the validated IP. At most 5 redirects are followed, and cross-origin redirects drop the admin-configured headers and auth header; response bodies are capped at 1 MiB; credential values appearing in the result or URL are replaced with `[已遮蔽]` ("redacted").
+4. **MCP transports**: `McpStdioClient` exchanges JSON-RPC over a subprocess's standard input and output; `McpHttpClient` exchanges JSON-RPC over HTTP POST (both the `http` and `sse` settings use this path), likewise through `SSRFSafeTransport` with per-hop validation and IP pinning, and one response may be at most 4 MiB. Every call opens a fresh connection and completes the `initialize` handshake.
+5. **Subprocess isolation**: `build_stdio_env()` inherits only the system variables on the MCP SDK's default list, skips shell function definitions starting with `()`, and adds the server's `env_vars`; the backend's database URL and model keys never reach third-party MCP servers. Each subprocess runs in its own process group, and closing it terminates the whole tree, including grandchildren started by `npx` or `uvx`; at most 4 subprocesses run at once.
+6. **Built-in presets**: only `mcp_time` and `mcp_filesystem`. The filesystem preset pins `@modelcontextprotocol/server-filesystem@2026.8.31` and is rooted at the dedicated `backend/mcp_filesystem_sandbox` (an absolute path, kept apart from `DATA_DIR`, which holds pickled index metadata). The web-fetch preset was removed because outbound connections from a `stdio` subprocess are not bound by `web_fetch`'s SSRF checks, domain allowlist, or URL provenance rule.
+7. **Approval before calls**: custom API tools and MCP servers each carry a `requires_approval` flag; the asking user must approve before the agent calls such a tool. See "Tool call approval" in section 7 and [ADR-0006](adr/0006-tool-call-approval_en.md).
+8. **Admin only**: tools are shared by every user's agent and `stdio` servers run commands on the host, so every endpoint under `/api/api-tools` and `/api/mcp`, including reads, is admin-only. Regular users can only let the agent use enabled tools in chat. See [ADR-0002](adr/0002-external-tools-and-outbound-safety_en.md) and [ADR-0004](adr/0004-tool-admin-permissions-and-subprocess-isolation_en.md).
 
 ---
 
@@ -462,10 +495,12 @@ sequenceDiagram
     User->>API: Call the API (Authorization: Bearer)
     API->>BL: Check whether the token is revoked
     API->>API: Verify the RS256 signature, expiry, and token type
-    API-->>User: Response
+    API->>DB: Load the account by sub: exists, active, token not issued before the account
+    API-->>User: Response (identity and permissions from the database)
     Note over User,API: With less than 5 minutes left or on a 401, the frontend calls /api/auth/refresh
     User->>API: POST /api/auth/refresh (cookie)
-    API->>DB: Confirm the user exists
+    API->>DB: Likewise confirm by sub that the account exists and is active
+    API->>BL: Revoke the used refresh token
     API-->>User: New access token + reset cookie
     User->>API: POST /api/auth/logout
     API->>BL: Revoke both tokens until they expire
@@ -474,14 +509,15 @@ sequenceDiagram
 
 | Aspect | Design |
 |---|---|
-| Signing | RSA-2048 RS256; the key pair lives in `backend/keys/` and is generated on first start. Without usable RSA keys, development falls back to HS256 (`JWT_SECRET_KEY`) and `production` refuses to start |
-| Access token | Valid for `ACCESS_TOKEN_EXPIRE_MINUTES` minutes; carries `sub`, `username`, `email`, `role`, `is_admin`, and `type: access` |
-| Refresh token | Valid for `REFRESH_TOKEN_EXPIRE_DAYS` days; carries only `sub` and `type: refresh`, stored in an HttpOnly cookie (path `/api/auth`, `Secure` per `COOKIE_SECURE` or `production`, `SameSite` `lax` by default) and reset on every exchange |
-| Passwords | Argon2 hashes; legacy bcrypt hashes still verify and are re-hashed with Argon2 on sign-in. Registration and password changes require 8+ characters with upper- and lowercase letters and a digit |
-| Authorization | Admin endpoints check the token's `is_admin` claim without a database lookup |
-| Revocation | Logout adds the token strings to an in-process revocation list until they expire, pruning expired entries automatically |
+| Signing | Always RSA-2048 RS256; the key pair lives in `backend/keys/` and is generated on first start. If the keys cannot be loaded or generated, the backend refuses to start in every environment; there is no shared-secret fallback |
+| Access token | Valid for `ACCESS_TOKEN_EXPIRE_MINUTES` minutes; carries `sub`, `username`, `email`, `role`, `is_admin`, `iat`, and `type: access` |
+| Account binding | On every request `resolve_token_user()` loads the account by `sub`: a missing or deactivated account, or an `iat` earlier than the account's `created_at` (a deleted account's id reused), gets `401`; `username`, `role`, and `is_admin` come from the database, not the token |
+| Refresh token | Valid for `REFRESH_TOKEN_EXPIRE_DAYS` days; carries only `sub` and `type: refresh`, stored in an HttpOnly cookie (path `/api/auth`, `Secure` per `COOKIE_SECURE` or `production`, `SameSite` `lax` by default); single-use, so each exchange revokes the old token and resets the cookie |
+| Passwords | Argon2 hashes; legacy bcrypt hashes still verify and are re-hashed with Argon2 on sign-in. Registration and password changes require 8 to 256 characters with upper- and lowercase letters and a digit; hashing and verification run in worker threads, at most 4 at once |
+| Authorization | Admin endpoints check the account's `is_admin` in the database, so changes apply on the next request |
+| Revocation | Logout adds the token strings to an in-process revocation list until they expire, pruning expired entries automatically; the list holds at most 100,000 entries and evicts the soonest-expiring ones first |
 
-**Known limitations**: the revocation list is cleared on restart and is not shared across processes; after revoking admin rights or deactivating an account, issued access tokens stay valid until they expire, and the refresh endpoint does not check whether the account is deactivated. See [API reference: known limitations](api_en.md#10-known-limitations).
+**Known limitations**: the revocation list is cleared on restart and is not shared across processes. See [API reference: known limitations](api_en.md#10-known-limitations).
 
 ---
 
@@ -494,6 +530,8 @@ sequenceDiagram
 1. **Recursive object masking (`sanitize_sensitive_data`)**: walks dicts, lists, and tuples and replaces with `[REDACTED]` the values whose keys contain (case-insensitively) words such as `password`, `pass`, `passwd`, `secret`, `token`, `api_key`, `apikey`, `authorization`, `auth`, `cred`, `credentials`, `private_key`, `ssn`, `card_number`, `credit_card`, and `cookie`.
 2. **Regex string masking**: after JSON serialization, a second pass masks any remaining sensitive fields.
 
+Each string field in the security log (such as an account name or User-Agent that anonymous requests control) keeps at most 200 characters; security events go only to `security.log` and are no longer duplicated into `app.log`, and both rotate at 10 MiB × 5 files. `httpx` and `httpcore` are pinned to `WARNING`, so full request URLs (which may carry query-string API keys) are not logged.
+
 ### 11.2 Error codes (CWE-209 / CWE-497)
 
 `app/core/error_response.py`:
@@ -501,6 +539,8 @@ sequenceDiagram
 - `log_and_get_error_id()`: writes the full exception and stack trace to the server log and returns a random 12-character code.
 - `format_client_error()` / `build_error_payload()`: build a message with the `error_id` and no internal details.
 - `SafeClientError`: marks validation errors whose message only describes the user's own input, so they can be returned verbatim and tell the user what to fix.
+
+- `format_ssrf_rejection()`: SSRF rejection reasons can contain intranet IPs resolved on the server or redirect targets, so clients only learn that the request was rejected, plus an error code (used by `parse-spec`, custom API tools, and `web_fetch`).
 
 REST responses, SSE `error` events, and errors reported inside `token` events during research all use error codes.
 
@@ -513,10 +553,10 @@ flowchart LR
     Input["URL"] --> Scheme{"Scheme<br/>http / https"}
     Scheme --> Port{"Port<br/>dangerous port list"}
     Port --> Host{"Hostname<br/>localhost, .internal, ..."}
-    Host --> Resolve["Resolve every IP via DNS"]
+    Host --> Resolve["Resolve every IP via DNS<br/>dedicated thread pool, 5 s timeout"]
     Resolve --> IPCheck{"IP ranges"}
     IPCheck -->|private, loopback, link-local, reserved, cloud metadata| Block["Reject (SSRFProtectionError)"]
-    IPCheck -->|public| Allow["Send; re-validate every redirect"]
+    IPCheck -->|public| Allow["Connect to the validated IP; re-validate every redirect"]
 ```
 
 | Category | Blocked |
@@ -526,7 +566,7 @@ flowchart LR
 | Hostnames | `localhost`, `localhost.localdomain`, `broadcasthost`, `ip6-localhost`, `ip6-loopback`, `local`, `internal`, `metadata.google.internal`, `metadata.internal`, and names ending in `.localhost`, `.local`, `.internal`, `.lan`, `.home.arpa`, `.localdomain`, or `.corp` |
 | Ports | 22, 23, 25, 111, 135, 139, 445, 1433, 1521, 2375, 2376, 3306, 5432, 6379, 11211, 27017 |
 
-Every httpx client that follows redirects carries the `reject_unsafe_request` request hook, re-validating before the first request and every redirect; `safe_fetch_text` also caps the download size and the number of redirects. `backend/tests/test_ssrf_protection.py` covers this behavior.
+The httpx clients of custom API tools and the MCP HTTP transport use `SSRFSafeTransport`: it re-validates before the first request and every redirect and pins the connection to the IP approved during validation (the `Host` header and TLS SNI and certificate checks keep the original hostname), so a second DNS lookup at connect time cannot be steered into the intranet by DNS rebinding. `safe_fetch_text` (`web_fetch` and spec URLs) validates each redirect by hand, pins the IP the same way, and caps the download size and the number of redirects. DNS lookups run in a dedicated 4-thread pool with a 5-second timeout, treated as unresolvable when it expires, so they never occupy the shared thread pool. These clients ignore the `HTTP_PROXY` and `HTTPS_PROXY` environment variables. `backend/tests/test_ssrf_protection.py` covers this behavior.
 
 > [!NOTE]
 > The SSRF demo on the intro site (`site/`) reproduces this check order and these block lists in the browser; update `site/index.html` and `site/main.js` whenever the rules change.
@@ -535,21 +575,25 @@ Every httpx client that follows redirects carries the `reject_unsafe_request` re
 
 Tool results (knowledge-base chunks, web pages, external API responses) may carry prompt injection. The agent always wraps them in an `<untrusted_tool_result>` marker whose id changes per question; the system prompt treats them as data only and forbids splicing conversation or knowledge-base content into URLs or search queries. Code enforces three more limits:
 
-1. **URL provenance**: `web_fetch` may only read URLs that appear verbatim in the user's messages or in the data fields of this question's built-in tool results (compared after URL decoding).
+1. **URL provenance**: `web_fetch` may only read URLs that appeared as a whole URL in the user's messages or in the data fields of this question's built-in tool results (both sides normalized to httpx's form and compared exactly; the matched URL is what gets fetched).
 2. **Domain allowlist**: `WEB_FETCH_ALLOWED_DOMAINS` restricts the readable domains (subdomains included); only an explicit `*` means unrestricted. The allowlist checks the initial URL only.
 3. **Web tools off after the knowledge base**: with `BLOCK_WEB_TOOLS_AFTER_KB=true`, once a knowledge-base tool has returned content in a question, later `web_search` and `web_fetch` calls are refused.
 
-Results from custom API and MCP tools are wrapped as untrusted too, but they are not URL sources and receive no citation numbers, and their outbound requests are outside these three limits (a known risk; see [ADR-0003](adr/0003-rrf-relevance-citations-and-tool-trust_en.md)).
+Results from custom API and MCP tools are wrapped as untrusted too, but they are not URL sources and receive no citation numbers, and their outbound requests are outside these three limits (a known risk; see [ADR-0003](adr/0003-rrf-relevance-citations-and-tool-trust_en.md)). The mitigation is approval before calls: tools with side effects run only after the asking user has seen the tool and its arguments ([ADR-0006](adr/0006-tool-call-approval_en.md)).
 
 ### 11.5 Other protections
 
 | Mechanism | Details |
 |---|---|
 | Security response headers | `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `X-XSS-Protection: 1; mode=block`, `Referrer-Policy: strict-origin-when-cross-origin`, `Permissions-Policy: geolocation=(), microphone=(), camera=()`, with the `Server` header removed |
-| Rate limiting | At most `RATE_LIMIT_PER_MINUTE` requests per client IP in a sliding 60-second window, beyond which the API returns `429` with `Retry-After`; IPs on the intrusion detector's block list get `403` |
+| Request body limit | `RequestBodyLimitMiddleware` (pure ASGI, outermost) checks bodies before FastAPI reads them: 1 MiB for general requests, raised for chat sends and document uploads only with a validly signed access token; an oversized `Content-Length` gets `413` at once, and chunked bodies are counted as they arrive |
+| Rate limiting | At most `RATE_LIMIT_PER_MINUTE` requests per client IP in a sliding 60-second window, beyond which the API returns `429` with `Retry-After`; IPs on the intrusion detector's block list get `403`. The client IP is the direct peer by default (uvicorn's `proxy_headers` is on only when `FORWARDED_ALLOW_IPS` is set), so a client-supplied `X-Forwarded-For` is never trusted |
+| Intrusion detection | Bounded sliding windows per address and event type, tracking at most 10,000 addresses (least recently active evicted first), so recording an event costs the same regardless of history |
 | CORS | Only `ALLOWED_ORIGINS` (plus `DEVTUNNEL_URL`), with credentials allowed |
-| Upload checks | File name length and dangerous characters, extension allowlist, header signatures, size limit |
-| Frontend rendering | Answers render through react-markdown, which does not render raw HTML |
+| Upload checks | File name length and dangerous characters, extension allowlist, header signatures, size limit, OOXML zip bomb checks |
+| Resource limits | Message length, attachment count and size, tool result length, per-user concurrent streams, attachment storage, and more, defined in `app/core/limits.py`; see [configuration reference: resource limits](configuration_en.md#resource-limits) for the full list |
+| Frontend rendering | Answers render through react-markdown, which does not render raw HTML; Markdown images become links that open only when clicked, so nothing loads from external hosts automatically |
+| Clickjacking protection | The Vite dev and preview servers send `X-Frame-Options: DENY` and `Content-Security-Policy: frame-ancestors 'none'; img-src 'self' data: blob:`; an inline style guard in `index.html` keeps the page hidden when it is framed |
 
 ---
 
@@ -567,7 +611,8 @@ Results from custom API and MCP tools are wrapped as untrusted too, but they are
 
 - **Route guards**: `PrivateRoute` sends signed-out users to the login page; `AdminRoute` shows a "no permission" page to non-admins; `PublicRoute` moves signed-in users away from the login and register pages. Pages load lazily with `React.lazy`.
 - **API client** (`services/api.ts`): an Axios instance attaches the access token, refreshes it when less than 5 minutes remain, and on a `401` refreshes and retries once; `401` responses from the login, register, and refresh endpoints themselves never trigger a refresh.
-- **SSE** (`services/sse.ts`, `hooks/useChat.ts`): reads the stream with `fetch` and parses events per the spec (handling events split across reads, CRLF, and multi-line data); supports stopping, retrying, and switching conversations mid-stream.
+- **SSE** (`services/sse.ts`, `hooks/useChat.ts`): reads the stream with `fetch` and parses events per the spec (handling events split across reads, CRLF, and multi-line data); supports stopping, retrying, and switching conversations mid-stream. When a send fails with a `422` validation error, each item's message is shown (for example an oversized attachment).
+- **Tool approval card** (`pages/Chat/ToolApprovalCard`): on `approval_required`, the answer shows the tool name and arguments, and the approve or deny button calls `POST /api/chat/approvals/{approval_id}`; the card closes on `approval_resolved` or when the stream stops. On the AI tools page, the custom API tool and MCP server forms each have a "requires user confirmation" checkbox, pre-checked for API tools according to the HTTP method.
 - **Appearance**: `ThemeContext` offers light, dark, and follow-system, stored in `localStorage` under `askmiao_theme_mode`; an inline script in `index.html` applies it before first paint to avoid a white flash.
 - **Component library** (`components/ui/`): Dialog, Menu, Tooltip, Snackbar, and others built on the native `<dialog>` and ARIA patterns, with keyboard support and focus management; design tokens live in `styles/tokens.css`.
 - **Model list**: the chat page calls `GET /api/chat/models` and caches the result in `localStorage` for 5 minutes.
@@ -576,9 +621,11 @@ Results from custom API and MCP tools are wrapped as untrusted too, but they are
 
 ## 13. Deployment and operations
 
-- **Single process**: the token revocation list, rate limit counters, intrusion detector block list, and statistics cache live in the backend process's memory. With several workers or hosts these states are not shared, and the revocation list is cleared on restart.
-- **Data and backups**: back up the database and `backend/data/` (indexes, uploads, model cache); indexes can be rebuilt from the database, and the uploaded originals are used to re-extract text. If `backend/keys/` is lost, a new key pair is generated and every existing token becomes invalid.
-- **Logs**: application logs go to `backend/logs/app.log`; security events go to `logs/security.log` under the startup directory (`backend/logs/` when started in `backend/`). Search the logs for an error code to find the full exception.
+- **Single process**: the token revocation list, rate limit counters, intrusion detector block list, per-user concurrent streams, pending tool approvals, and statistics cache live in the backend process's memory. With several workers or hosts these states are not shared, and the revocation list is cleared on restart.
+- **Serving other devices**: the Vite dev and preview servers listen on `localhost` only. To serve other devices, build with `bun run build` and let a real web server serve `frontend/build/`, send anti-framing headers, and reverse-proxy `/api`; if that proxy overwrites `X-Forwarded-For`, set its address as `FORWARDED_ALLOW_IPS` so rate limiting counts real client IPs.
+- **PostgreSQL container**: `backend/docker-compose.yml` requires `POSTGRES_PASSWORD` and binds `127.0.0.1:7690` only.
+- **Data and backups**: back up the database and `backend/data/` (indexes, uploads, model cache); indexes can be rebuilt from the database, and the uploaded originals are used to re-extract text. If `backend/keys/` is lost, a new key pair is generated and every existing token becomes invalid; if the directory is not writable or the keys are corrupt, the backend cannot start.
+- **Logs**: application logs go to `backend/logs/app.log`; security events go only to `logs/security.log` under the startup directory (`backend/logs/` when started in `backend/`), and both rotate at 10 MiB × 5 files. Search the logs for an error code to find the full exception.
 - **Intro site**: `.github/workflows/deploy-pages.yml` deploys the whole `site/` directory to GitHub Pages when it changes on the `New` branch.
 - **Version**: the backend reads `__version__` from `backend/app/__init__.py` (used by the OpenAPI document and the MCP handshake) and the frontend uses `version` in `frontend/package.json`; both are updated with `CHANGELOG.md` for each release.
 
@@ -591,7 +638,8 @@ Results from custom API and MCP tools are wrapped as untrusted too, but they are
 | [ADR-0001](adr/0001-hybrid-rag-and-security_en.md) | Contextual hybrid RAG and dual-token security | Accepted; fusion superseded by ADR-0003 |
 | [ADR-0002](adr/0002-external-tools-and-outbound-safety_en.md) | External tool extensibility and outbound request safety | Accepted; extended by ADR-0004 |
 | [ADR-0003](adr/0003-rrf-relevance-citations-and-tool-trust_en.md) | RRF fusion, relevance threshold, citations, and tool-output trust boundary | Accepted |
-| [ADR-0004](adr/0004-tool-admin-permissions-and-subprocess-isolation_en.md) | Tool management permissions, MCP subprocess isolation, and per-hop SSRF validation | Accepted |
+| [ADR-0004](adr/0004-tool-admin-permissions-and-subprocess-isolation_en.md) | Tool management permissions, MCP subprocess isolation, and per-hop SSRF validation | Accepted; see the follow-up amendments at the end |
 | [ADR-0005](adr/0005-chunk-id-index-and-database-source-of-truth_en.md) | Chunk index keyed by database chunk_id | Accepted |
+| [ADR-0006](adr/0006-tool-call-approval_en.md) | In-chat approval for tools with side effects | Accepted |
 
 See the [ADR index](adr/README_en.md) for the full list and the writing guidelines.

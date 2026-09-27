@@ -1,18 +1,26 @@
 
 import logging
 from datetime import datetime, timedelta
-from typing import Dict, List, Optional
-from collections import defaultdict
+from typing import Deque, Dict, List, Optional
+from collections import OrderedDict, deque
 import json
 from pathlib import Path
+from app.core.limits import MAX_EVENTS_PER_ADDRESS, MAX_TRACKED_ADDRESSES
 logger = logging.getLogger(__name__)
+# 沒有專屬門檻的事件類型保留多久
+DEFAULT_EVENT_WINDOW_SECONDS = 3600
 class IntrusionDetector:
+    """以位址與事件類型分組的滑動視窗計數。
+
+    每種事件只保留門檻所需的最近事件（deque 有長度上限、依時間排序，過期的從左端移除），
+    追蹤的位址數也有上限（最久未活動的先淘汰），單次記錄的成本與歷史事件數無關。
+    """
     
     def __init__(self, log_file: str = "logs/intrusion_detection.log"):
         self.log_file = Path(log_file)
         self.log_file.parent.mkdir(exist_ok=True)
         
-        self.ip_events: Dict[str, List[Dict]] = defaultdict(list)
+        self.ip_events: "OrderedDict[str, Dict[str, Deque[datetime]]]" = OrderedDict()
         
         self.blacklist: set = set()
         
@@ -24,6 +32,19 @@ class IntrusionDetector:
             'file_uploads_max': 50,
             'file_uploads_window': 3600,
         }
+        # 事件類型 -> (門檻, 視窗秒數, 警報類型)
+        self._rules = {
+            'failed_login': ('failed_login', 'BRUTE_FORCE_ATTACK'),
+            'api_request': ('api_requests', 'DDOS_ATTACK'),
+            'file_upload': ('file_uploads', 'SUSPICIOUS_FILE_UPLOAD'),
+        }
+    
+    def _limits_for(self, event_type: str):
+        rule = self._rules.get(event_type)
+        if rule is None:
+            return MAX_EVENTS_PER_ADDRESS, DEFAULT_EVENT_WINDOW_SECONDS
+        prefix = rule[0]
+        return self.thresholds[f'{prefix}_max'], self.thresholds[f'{prefix}_window']
     
     def record_event(
         self, 
@@ -32,90 +53,44 @@ class IntrusionDetector:
         user_id: Optional[int] = None,
         details: Optional[Dict] = None
     ):
-        event = {
-            'timestamp': datetime.utcnow(),
-            'type': event_type,
-            'ip': ip_address,
-            'user_id': user_id,
-            'details': details or {}
+        now = datetime.utcnow()
+        events_by_type = self.ip_events.get(ip_address)
+        if events_by_type is None:
+            events_by_type = {}
+            self.ip_events[ip_address] = events_by_type
+            while len(self.ip_events) > MAX_TRACKED_ADDRESSES:
+                self.ip_events.popitem(last=False)
+        else:
+            self.ip_events.move_to_end(ip_address)
+        max_events, window = self._limits_for(event_type)
+        events = events_by_type.get(event_type)
+        if events is None:
+            # 多留一格：計數停在門檻 +1，不會每筆新事件都重新「達到門檻」而重複警報
+            events = deque(maxlen=max_events + 1)
+            events_by_type[event_type] = events
+        events.append(now)
+        cutoff = now - timedelta(seconds=window)
+        while events and events[0] <= cutoff:
+            events.popleft()
+        self._check_threshold(ip_address, event_type, len(events))
+    
+    def _check_threshold(self, ip_address: str, event_type: str, count: int):
+        rule = self._rules.get(event_type)
+        if rule is None:
+            return
+        threshold, _ = self._limits_for(event_type)
+        # 只在剛達到門檻時發出一次警報，之後持續超量不重複寫檔
+        if count != threshold:
+            return
+        prefix, threat_type = rule
+        messages = {
+            'failed_login': f"檢測到 {count} 次失敗的登入嘗試",
+            'api_request': f"檢測到異常高頻率的 API 請求: {count} 次",
+            'file_upload': f"檢測到異常高頻率的文件上傳: {count} 次",
         }
-        
-        self.ip_events[ip_address].append(event)
-        
-        self._cleanup_old_events(ip_address)
-        
-        self._check_for_threats(ip_address)
-    
-    def _cleanup_old_events(self, ip_address: str):
-        cutoff_time = datetime.utcnow() - timedelta(hours=24)
-        self.ip_events[ip_address] = [
-            event for event in self.ip_events[ip_address]
-            if event['timestamp'] > cutoff_time
-        ]
-    
-    def _check_for_threats(self, ip_address: str):
-        events = self.ip_events[ip_address]
-        
-        self._check_failed_logins(ip_address, events)
-        
-        self._check_api_requests(ip_address, events)
-        
-        self._check_file_uploads(ip_address, events)
-    
-    def _check_failed_logins(self, ip_address: str, events: List[Dict]):
-        cutoff_time = datetime.utcnow() - timedelta(
-            seconds=self.thresholds['failed_login_window']
-        )
-        
-        failed_logins = [
-            e for e in events 
-            if e['type'] == 'failed_login' and e['timestamp'] > cutoff_time
-        ]
-        
-        if len(failed_logins) >= self.thresholds['failed_login_max']:
-            self._trigger_alert(
-                ip_address,
-                'BRUTE_FORCE_ATTACK',
-                f"檢測到 {len(failed_logins)} 次失敗的登入嘗試",
-                {'failed_attempts': len(failed_logins)}
-            )
+        self._trigger_alert(ip_address, threat_type, messages[event_type], {'count': count})
+        if event_type == 'failed_login':
             self.blacklist.add(ip_address)
-    
-    def _check_api_requests(self, ip_address: str, events: List[Dict]):
-        cutoff_time = datetime.utcnow() - timedelta(
-            seconds=self.thresholds['api_requests_window']
-        )
-        
-        api_requests = [
-            e for e in events 
-            if e['type'] == 'api_request' and e['timestamp'] > cutoff_time
-        ]
-        
-        if len(api_requests) >= self.thresholds['api_requests_max']:
-            self._trigger_alert(
-                ip_address,
-                'DDOS_ATTACK',
-                f"檢測到異常高頻率的 API 請求: {len(api_requests)} 次",
-                {'request_count': len(api_requests)}
-            )
-    
-    def _check_file_uploads(self, ip_address: str, events: List[Dict]):
-        cutoff_time = datetime.utcnow() - timedelta(
-            seconds=self.thresholds['file_uploads_window']
-        )
-        
-        file_uploads = [
-            e for e in events 
-            if e['type'] == 'file_upload' and e['timestamp'] > cutoff_time
-        ]
-        
-        if len(file_uploads) >= self.thresholds['file_uploads_max']:
-            self._trigger_alert(
-                ip_address,
-                'SUSPICIOUS_FILE_UPLOAD',
-                f"檢測到異常高頻率的文件上傳: {len(file_uploads)} 次",
-                {'upload_count': len(file_uploads)}
-            )
     
     def _trigger_alert(
         self, 
@@ -151,18 +126,16 @@ class IntrusionDetector:
     
     def get_suspicious_ips(self, limit: int = 10) -> List[Dict]:
         ip_scores = []
+        cutoff = datetime.utcnow() - timedelta(hours=1)
         
-        for ip, events in self.ip_events.items():
-            recent_events = [
-                e for e in events 
-                if e['timestamp'] > datetime.utcnow() - timedelta(hours=1)
-            ]
-            
-            if recent_events:
+        for ip, events_by_type in self.ip_events.items():
+            recent = {event_type: sum(1 for ts in events if ts > cutoff) for event_type, events in events_by_type.items()}
+            event_count = sum(recent.values())
+            if event_count:
                 ip_scores.append({
                     'ip': ip,
-                    'event_count': len(recent_events),
-                    'failed_logins': len([e for e in recent_events if e['type'] == 'failed_login']),
+                    'event_count': event_count,
+                    'failed_logins': recent.get('failed_login', 0),
                     'is_blacklisted': ip in self.blacklist
                 })
         

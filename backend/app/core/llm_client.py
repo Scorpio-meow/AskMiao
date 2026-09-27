@@ -17,12 +17,14 @@ OLLAMA_HEADERS = {
     "Content-Type": "application/json",
     "ngrok-skip-browser-warning": "true"
 }
+# 等待連線池名額的上限與單次請求逾時分開：池被占滿時很快失敗，而不是排隊到 LLM_TIMEOUT
+LLM_POOL_ACQUIRE_TIMEOUT_SECONDS = 15.0
 async def get_llm_http_client() -> httpx.AsyncClient:
     global _http_client
     async with _client_lock:
         if _http_client is None or _http_client.is_closed:
             _http_client = httpx.AsyncClient(
-                timeout=httpx.Timeout(settings.LLM_TIMEOUT),
+                timeout=httpx.Timeout(settings.LLM_TIMEOUT, pool=LLM_POOL_ACQUIRE_TIMEOUT_SECONDS),
                 limits=httpx.Limits(max_keepalive_connections=10, max_connections=20)
             )
         return _http_client
@@ -94,12 +96,13 @@ def resolve_provider(model_name: str) -> str:
     return "ollama"
 def _public_message(message: Dict[str, Any]) -> Dict[str, Any]:
     return {key: value for key, value in message.items() if not key.startswith("_")}
-def _parse_image_url(url: str) -> Tuple[Optional[str], str]:
-    """data URL 回傳 (media_type, base64 內容)；其他網址回傳 (None, 原字串)"""
+def _parse_image_url(url: str) -> Tuple[str, str]:
+    """data URL 回傳 (media_type, base64 內容)。
+    只接受內嵌影像：遠端網址會讓模型供應商代為擷取使用者指定的任意位址"""
     if url.startswith("data:") and "," in url:
         header, data = url.split(",", 1)
         return header[5:].split(";")[0], data
-    return None, url
+    raise ValueError("影像只接受 base64 data: URL")
 def _as_arguments_dict(arguments: Any) -> Dict[str, Any]:
     if isinstance(arguments, dict):
         return arguments
@@ -311,10 +314,7 @@ def _anthropic_user_content(content: Any) -> Any:
             blocks.append({"type": "text", "text": part["text"]})
         elif part.get("type") == "image_url":
             media_type, data = _parse_image_url(part["image_url"]["url"])
-            if media_type:
-                blocks.append({"type": "image", "source": {"type": "base64", "media_type": media_type, "data": data}})
-            else:
-                blocks.append({"type": "image", "source": {"type": "url", "url": data}})
+            blocks.append({"type": "image", "source": {"type": "base64", "media_type": media_type, "data": data}})
     return blocks
 def _anthropic_request(
     messages: List[Dict[str, Any]],

@@ -3,7 +3,12 @@ import hashlib
 import logging
 import os
 
+from app.core.config import settings
+
 logger = logging.getLogger(__name__)
+# jieba 預設把前綴詞典快取（marshal 格式）以可預測的檔名放在系統暫存目錄並直接載入；
+# 改放在只有後端帳號可存取的資料目錄子目錄，避免其他本機帳號預先放入竄改過的快取
+JIEBA_CACHE_DIR = os.path.join(settings.DATA_DIR, "jieba_cache")
 
 try:
     from whoosh.analysis import StandardAnalyzer, Analyzer, Tokenizer, Token
@@ -43,6 +48,8 @@ def configure_tokenizer(dictionary_path: Optional[str], domain_words: Sequence[s
         raise FileNotFoundError(f"找不到 JIEBA_DICTIONARY 指定的詞典檔：{dictionary_path}")
 
     tokenizer = jieba.Tokenizer(dictionary_path) if dictionary_path else jieba.Tokenizer()
+    os.makedirs(JIEBA_CACHE_DIR, mode=0o700, exist_ok=True)
+    tokenizer.tmp_dir = JIEBA_CACHE_DIR
     tokenizer.initialize()
     for word in words:
         tokenizer.add_word(word)

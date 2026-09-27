@@ -3,14 +3,28 @@ import json
 import logging
 import os
 import re
+import signal
+import subprocess
 import sys
 import time
 from typing import Any, Dict, List, Optional, Tuple
 import httpx
 from app import __version__
-from app.core.ssrf_protection import reject_unsafe_request
+from app.core.ssrf_protection import SSRFSafeTransport
 logger = logging.getLogger(__name__)
 MCP_PROTOCOL_VERSION = "2024-11-05"
+# 同時存在的 stdio MCP 子行程數上限（每次探索或工具呼叫都會啟動一個）
+MAX_CONCURRENT_STDIO_PROCESSES = 4
+_stdio_process_slots = asyncio.Semaphore(MAX_CONCURRENT_STDIO_PROCESSES)
+# HTTP/SSE MCP 伺服器的單次回應上限：對端不受信任，超過即中止讀取
+MAX_MCP_HTTP_RESPONSE_BYTES = 4 * 1024 * 1024
+# 檔案系統範本的專屬根目錄：與 DATA_DIR（含以 pickle 載入的索引中繼資料）完全分開
+MCP_FILESYSTEM_SANDBOX_DIR = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+    "mcp_filesystem_sandbox",
+)
+# 範本中的登錄庫套件一律釘選確切版本，避免每次執行時解析到管理員未審閱的新版
+MCP_FILESYSTEM_PACKAGE = "@modelcontextprotocol/server-filesystem@2026.8.31"
 # stdio 子行程只繼承執行所需的系統變數（與 MCP 官方 SDK 的預設清單相同），
 # 後端的 JWT 金鑰、資料庫連線與模型 API 金鑰不會外流給第三方 MCP 伺服器；
 # 伺服器需要的其他變數要寫在該伺服器的 env_vars
@@ -65,32 +79,74 @@ class McpStdioClient:
         self._request_id += 1
         return self._request_id
     async def start(self):
-        """啟動子進程"""
+        """啟動子進程（自成一個程序群組，關閉時可連同 npx／uvx 啟動的孫行程一起終止）"""
         env = build_stdio_env(self.env_vars)
         full_cmd = [self.command] + self.args
+        await _stdio_process_slots.acquire()
+        self._holds_slot = True
+        group_kwargs: Dict[str, Any] = (
+            {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP}
+            if sys.platform == "win32"
+            else {"start_new_session": True}
+        )
         try:
             self.process = await asyncio.create_subprocess_exec(
                 *full_cmd,
                 stdin=asyncio.subprocess.PIPE,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
-                env=env
+                env=env,
+                **group_kwargs
             )
         except Exception as e:
+            self._release_slot()
             raise RuntimeError(f"無法啟動 MCP 子行程 ({' '.join(full_cmd)}): {str(e)}")
-    async def close(self):
-        """關閉子進程"""
-        if self.process:
+    def _release_slot(self):
+        if getattr(self, "_holds_slot", False):
+            self._holds_slot = False
+            _stdio_process_slots.release()
+    async def _kill_process_tree(self, process: asyncio.subprocess.Process):
+        if sys.platform == "win32":
+            # taskkill /T 會終止整棵子行程樹
+            killer = await asyncio.create_subprocess_exec(
+                "taskkill", "/PID", str(process.pid), "/T", "/F",
+                stdout=asyncio.subprocess.DEVNULL,
+                stderr=asyncio.subprocess.DEVNULL,
+            )
+            await asyncio.wait_for(killer.wait(), timeout=5.0)
+        else:
             try:
-                self.process.terminate()
-                await asyncio.wait_for(self.process.wait(), timeout=3.0)
-            except Exception:
+                os.killpg(process.pid, signal.SIGTERM)
+                await asyncio.wait_for(process.wait(), timeout=3.0)
+            except (ProcessLookupError, asyncio.TimeoutError):
                 try:
-                    self.process.kill()
-                except Exception:
+                    os.killpg(process.pid, signal.SIGKILL)
+                except ProcessLookupError:
                     pass
-            finally:
-                self.process = None
+    async def close(self):
+        """關閉子進程：先關閉管線，再終止整個程序群組（含孫行程）"""
+        process = self.process
+        self.process = None
+        if process is None:
+            self._release_slot()
+            return
+        try:
+            if process.stdin and not process.stdin.is_closing():
+                process.stdin.close()
+            if process.returncode is None:
+                await self._kill_process_tree(process)
+            try:
+                await asyncio.wait_for(process.wait(), timeout=3.0)
+            except asyncio.TimeoutError:
+                process.kill()
+        except Exception as e:
+            logger.warning(f"關閉 MCP 子行程時發生錯誤: {e}")
+            try:
+                process.kill()
+            except Exception:
+                pass
+        finally:
+            self._release_slot()
     async def _send_rpc_request(self, method: str, params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         """發送單次 JSON-RPC 2.0 請求並讀取回應"""
         if not self.process or not self.process.stdin or not self.process.stdout:
@@ -195,16 +251,26 @@ class McpHttpClient:
             "method": method,
             "params": params or {}
         }
-        # 與自訂 API 工具相同：第一跳與每次轉址都要通過 SSRF 檢查
+        # 與自訂 API 工具相同：第一跳與每次轉址都要通過 SSRF 檢查，並固定連線到核可的 IP
         async with httpx.AsyncClient(
             timeout=self.timeout,
             follow_redirects=True,
-            event_hooks={"request": [reject_unsafe_request]},
+            transport=SSRFSafeTransport(),
         ) as client:
-            resp = await client.post(self.url, headers=self.headers, json=payload)
+            async with client.stream("POST", self.url, headers=self.headers, json=payload) as resp:
+                content_length = resp.headers.get("content-length")
+                if content_length and content_length.isdigit() and int(content_length) > MAX_MCP_HTTP_RESPONSE_BYTES:
+                    raise RuntimeError(f"HTTP MCP 伺服器回應超過 {MAX_MCP_HTTP_RESPONSE_BYTES} 位元組上限")
+                chunks = []
+                total = 0
+                async for chunk in resp.aiter_bytes():
+                    total += len(chunk)
+                    if total > MAX_MCP_HTTP_RESPONSE_BYTES:
+                        raise RuntimeError(f"HTTP MCP 伺服器回應超過 {MAX_MCP_HTTP_RESPONSE_BYTES} 位元組上限")
+                    chunks.append(chunk)
             if resp.status_code != 200:
-                raise RuntimeError(f"HTTP MCP 伺服器返回狀態碼 {resp.status_code}: {resp.text}")
-            data = resp.json()
+                raise RuntimeError(f"HTTP MCP 伺服器返回狀態碼 {resp.status_code}")
+            data = json.loads(b"".join(chunks))
             if "error" in data:
                 raise RuntimeError(f"MCP JSON-RPC 錯誤: {data['error']}")
             return data.get("result", {})
@@ -231,7 +297,12 @@ class McpManager:
     """
     @classmethod
     def get_preset_servers(cls) -> List[Dict[str, Any]]:
-        """常見官方與社群 MCP 伺服器快速範本"""
+        """常見官方與社群 MCP 伺服器快速範本
+
+        不提供網頁擷取類範本：stdio 子行程的出站連線不受 web_fetch 的 SSRF、
+        網域白名單與網址來源防護約束。
+        """
+        os.makedirs(MCP_FILESYSTEM_SANDBOX_DIR, exist_ok=True)
         return [
             {
                 "name": "mcp_time",
@@ -285,21 +356,12 @@ if __name__ == '__main__':
             {
                 "name": "mcp_filesystem",
                 "display_name": "檔案系統安全讀取 (Filesystem)",
-                "description": "提供本機安全沙箱目錄下的檔案瀏覽、搜尋與檔案讀取工具。",
+                "description": "提供專屬沙箱目錄下的檔案瀏覽、搜尋與檔案讀取工具（不含後端資料目錄）。",
                 "transport_type": "stdio",
                 "command": "npx",
-                "args": ["-y", "@modelcontextprotocol/server-filesystem", "./data"],
+                "args": ["-y", MCP_FILESYSTEM_PACKAGE, MCP_FILESYSTEM_SANDBOX_DIR],
                 "env_vars": {}
             },
-            {
-                "name": "mcp_fetch",
-                "display_name": "網頁內容深度擷取 (Fetch)",
-                "description": "提供將指定公開網址之 HTML 轉換為乾淨 Markdown 的網頁讀取工具。",
-                "transport_type": "stdio",
-                "command": "uvx",
-                "args": ["mcp-server-fetch"],
-                "env_vars": {}
-            }
         ]
     @classmethod
     async def discover_server_tools(cls, server_dict: Dict[str, Any]) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:

@@ -1,5 +1,6 @@
 import base64
 import io
+import math
 import os
 import logging
 from typing import Optional, List, Dict, Any
@@ -8,6 +9,7 @@ import pymupdf as fitz
 from pypdf import PdfReader
 from fontTools.ttLib import TTFont
 from app.core.config import settings
+from app.core.limits import MAX_OCR_PIXELS
 logger = logging.getLogger(__name__)
 class PDFService:
     """企業級穩健 PDF 處理服務"""
@@ -144,18 +146,26 @@ class PDFService:
             or settings.GEMINI_API_KEY
         )
     @classmethod
-    def _ocr_page_sync(cls, page, page_num: int) -> str:
+    def _render_page_png(cls, page) -> bytes:
+        """把頁面點陣化為 PNG。輸出像素數超過 MAX_OCR_PIXELS 時降低解析度，
+        頁面尺寸由上傳者控制，不能讓它直接決定點陣圖的記憶體配置。
+        PyMuPDF 不支援多執行緒，只能在開啟文件的同一執行緒呼叫。"""
+        zoom = cls.OCR_RENDER_DPI / 72.0
+        width = max(page.rect.width, 1.0) * zoom
+        height = max(page.rect.height, 1.0) * zoom
+        if width * height > MAX_OCR_PIXELS:
+            zoom *= math.sqrt(MAX_OCR_PIXELS / (width * height))
+        pix = page.get_pixmap(matrix=fitz.Matrix(zoom, zoom), alpha=False)
+        return pix.tobytes("png")
+    @classmethod
+    def _ocr_page_sync(cls, img_bytes: bytes, page_num: int) -> str:
         """
-        針對掃描圖檔或文字損毀之頁面，轉為高解析度圖檔後調用 Vision 模型識別（同步執行）
+        把已點陣化的頁面影像交給 Vision 模型識別（同步執行；只做網路呼叫，可並行）
         """
         if not cls._is_vision_available():
             logger.warning(f"第 {page_num} 頁文字為空，但未配置 Vision API 端點，略過 OCR")
             return f"[第 {page_num} 頁為掃描圖片或複雜版面]"
         try:
-            zoom = cls.OCR_RENDER_DPI / 72.0
-            mat = fitz.Matrix(zoom, zoom)
-            pix = page.get_pixmap(matrix=mat, alpha=False)
-            img_bytes = pix.tobytes("png")
             b64_img = base64.b64encode(img_bytes).decode("utf-8")
             if settings.AZURE_OPENAI_ENDPOINT and settings.AZURE_OPENAI_API_KEY:
                 endpoint = settings.AZURE_OPENAI_ENDPOINT.rstrip('/')
@@ -261,13 +271,14 @@ class PDFService:
             logger.warning(f"第 {page_num} 頁執行 Vision OCR 失敗: {e}")
         return f"[第 {page_num} 頁為掃描圖片或複雜版面，已記錄]"
     @classmethod
-    def extract_text_robust(cls, file_path: str) -> str:
+    def extract_text_robust(cls, file_path: str, max_ocr_pages: Optional[int] = None) -> str:
         """
         同步/標準進入點：執行多層防護 PDF 抽取（支援內嵌字型修復 + Vision OCR 智慧補全）
+        max_ocr_pages：最多送 Vision OCR 的頁數（每頁一次付費呼叫）；None 表示不限，只用於管理員上傳
         """
-        return cls._extract_sync_internal(file_path)
+        return cls._extract_sync_internal(file_path, max_ocr_pages)
     @classmethod
-    def _extract_sync_internal(cls, file_path: str) -> str:
+    def _extract_sync_internal(cls, file_path: str, max_ocr_pages: Optional[int] = None) -> str:
         """內部提取實作：PyMuPDF + 字型 CMap 修復 + Vision OCR + pypdf 雙重備援"""
         import concurrent.futures
         try:
@@ -298,13 +309,26 @@ class PDFService:
                     else:
                         logger.warning(f"第 {page_num} 頁文字為空或判定為亂碼 (文字長度: {len(page_raw)})，加入 OCR 佇列")
                         ocr_jobs.append((page_idx, page_num, page))
+            if ocr_jobs and max_ocr_pages is not None and len(ocr_jobs) > max_ocr_pages:
+                logger.warning(f"需要 OCR 的頁數 ({len(ocr_jobs)}) 超過上限 {max_ocr_pages}，其餘頁面略過")
+                for page_idx, page_num, _ in ocr_jobs[max_ocr_pages:]:
+                    pages_text[page_idx] = f"--- 第 {page_num} 頁 ---\n[本頁未進行 OCR：超過每份文件的 OCR 頁數上限]\n"
+                ocr_jobs = ocr_jobs[:max_ocr_pages]
             if ocr_jobs and cls._is_vision_available():
                 logger.info(f"正在對 {len(ocr_jobs)} 頁純圖檔/掃描頁面啟動 Vision OCR 並行識別...")
-                max_workers = min(len(ocr_jobs), 4)
+                # 點陣化在本執行緒依序完成（PyMuPDF 不支援多執行緒），只有 Vision API 呼叫並行
+                rendered_jobs = []
+                for page_idx, page_num, page in ocr_jobs:
+                    try:
+                        rendered_jobs.append((page_idx, page_num, cls._render_page_png(page)))
+                    except Exception as e:
+                        logger.warning(f"第 {page_num} 頁點陣化失敗: {e}")
+                        pages_text[page_idx] = f"--- 第 {page_num} 頁 ---\n[本頁為圖檔或無可提取純文字]\n"
+                max_workers = max(1, min(len(rendered_jobs), 4))
                 with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
                     future_to_job = {
                         executor.submit(cls._ocr_page_sync, job[2], job[1]): job
-                        for job in ocr_jobs
+                        for job in rendered_jobs
                     }
                     for future in concurrent.futures.as_completed(future_to_job):
                         job = future_to_job[future]

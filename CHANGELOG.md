@@ -6,6 +6,7 @@
 
 | 版本 | 發行日期 | 重點 |
 |---|---|---|
+| [4.0.0](#400---2026-09-27) | 2026-09-27 | 安全稽核修正：權杖綁定資料庫帳號、工具呼叫需使用者核准、出站連線固定 IP、資源上限 |
 | [3.0.0](#300---2026-09-25) | 2026-09-25 | chunk_id 索引、RRF 與相關性門檻、答案引用出處、工具信任邊界與管理權限、前端 UI/UX 全面修整 |
 | [2.2.1](#221---2026-09-19) | 2026-09-19 | 錯誤回應改用錯誤代碼 |
 | [2.2.0](#220---2026-09-01) | 2026-09-01 | 集中式 SSRF 防護 |
@@ -15,16 +16,98 @@
 | [1.0.0](#100---2026-08-01) | 2026-08-01 | 混合 RAG 與安全基礎 |
 
 > [!TIP]
-> 從 2.x 升級到 3.0.0 前，請先閱讀 [升級指南](docs/upgrading.md)：需要補齊 `.env` 設定，並重建一次知識庫索引。
+> 從 3.0.0 升級到 4.0.0 前，請先閱讀 [升級指南](docs/upgrading.md#從-300-升級到-400)：RSA 金鑰改為必要、compose 需設定 `POSTGRES_PASSWORD`，開發伺服器只接受本機連線。從 2.x 升級請先完成 [升級到 3.0.0](docs/upgrading.md#從-2x-升級到-300) 的步驟。
 
 ---
 
 ## [Unreleased]
 
+---
+
+## [4.0.0] - 2026-09-27
+
+這一版處理安全稽核提出的 52 項線索：權杖改為每次請求對應資料庫帳號、有副作用的工具呼叫前須由使用者核准、出站連線固定在 SSRF 驗證過的 IP，並為請求本文、附件、工具結果與同時串流數等資源加上上限。
+
+> [!WARNING]
+> **本版含需要手動處理的變更**，升級前請依 [升級指南](docs/upgrading.md#從-300-升級到-400) 逐項確認：
+>
+> - `JWT_SECRET_KEY` 與 `JWT_ALGORITHM` 已移除；`backend/keys/` 的 RSA 金鑰在任何環境都是必要的，無法載入或產生時後端拒絕啟動。
+> - `backend/docker-compose.yml` 必須設定 `POSTGRES_PASSWORD`，且只綁定 `127.0.0.1:7690`；既有資料卷的密碼需另外修改。
+> - Vite 開發與預覽伺服器只監聽 `localhost`，區網裝置請改用建置產物與正式網頁伺服器。
+> - `/api/chat` 的訊息回應不再包含原始 `context_used`（一律為 `null`）；`GET /api/chat/tools` 需要登入；`model_name` 必須在可用模型清單內。
+> - 自訂 API 工具與 MCP 伺服器新增 `requires_approval`（啟動時自動加入並回填），既有 MCP 伺服器的工具呼叫起會先要求使用者核准。
+
 ### 安全性 (Security)
 
+#### 認證
+
+- **移除 HS256 退路**：RSA 金鑰無法載入時，開發環境不再改用 `.env` 中的共用密鑰簽署權杖；金鑰在任何環境都必須可用，否則拒絕啟動（CWE-1188）。
+- **權杖綁定資料庫帳號**：每次請求依 `sub` 讀取帳號，帳號必須存在且啟用，`is_admin` 與角色取自資料庫而非權杖內容，簽發時間早於帳號建立時間的權杖（刪除後 id 被重用）一律拒絕；停用、刪除或降權即時生效（CWE-613、CWE-285）。新建立的 SQLite 資料庫中 `users` 與 `documents` 改用 `AUTOINCREMENT`，id 不再重用。
+- **重新整理權杖只能使用一次**：換發後立即撤銷舊權杖（CWE-294）。
+- 密碼最多 256 字元、登入識別最多 254 字元，Argon2 雜湊與驗證移到執行緒並限制同時 4 個；撤銷名單最多 100,000 筆（CWE-400）。
+
+#### 部署
+
+- **PostgreSQL 容器不再內建密碼**：`POSTGRES_PASSWORD` 改為必填，埠號只綁定 `127.0.0.1:7690`（CWE-798、CWE-1327）。
+- **不採信用戶端的 `X-Forwarded-For`**：`python main.py` 預設關閉 uvicorn 的 `proxy_headers`，速率限制與封鎖名單以實際連線對端為準；只有新設定 `FORWARDED_ALLOW_IPS` 指定的反向代理才被信任（CWE-348）。
+- **Vite 開發伺服器只對本機開放**：開發與預覽伺服器改為只監聽 `localhost`，`/__open-in-editor` 只回應本機回送位址（CWE-1327）；兩者送出 `X-Frame-Options: DENY` 與 `Content-Security-Policy: frame-ancestors 'none'; img-src 'self' data: blob:`，`index.html` 另加反框架樣式守衛（CWE-1021）。
+
+#### 工具與出站請求
+
+- **呼叫前核准**：有副作用的自訂 API 工具與 MCP 工具由發問的使用者在對話中核准後才執行，見下方「新增」（CWE-862）。
+- **SSRF 驗證固定連線 IP**：自訂 API 工具、MCP HTTP 傳輸與 `safe_fetch_text` 每一跳驗證後把連線固定在核可的 IP，DNS rebinding 無法在驗證與連線之間改變目標；DNS 查詢改在 4 條執行緒的專用執行緒池中進行，5 秒逾時（CWE-918、CWE-367）。
+- **自訂 API 工具**：路徑參數百分比編碼，代入後的主機必須與設定相同；跨來源轉址時移除管理員設定的標頭與認證標頭；結果與網址中的憑證值遮蔽為 `[已遮蔽]`；回應本文上限 1 MiB（CWE-918、CWE-522、CWE-200、CWE-400）。
+- **SSRF 拒絕只回錯誤代碼**：自訂 API 工具、`web_fetch` 與 `POST /api/api-tools/parse-spec` 遭拒時不再回傳可能含內網 IP 的原因；MCP HTTP 錯誤不再夾帶對端回應本文，單次回應上限 4 MiB（CWE-209、CWE-400）。
+- **`web_fetch` 網址來源比對更嚴格**：只接受以完整網址出現過的網址，兩邊以 httpx 正規化後逐字比對，實際送出比對到的網址（CWE-918）。
+- **MCP 範本**：移除繞過 `web_fetch` 出站防護的 `mcp_fetch`；`mcp_filesystem` 改以專屬的 `backend/mcp_filesystem_sandbox` 為根目錄（原本是含 pickle 索引中繼資料的 `./data`），並釘選 `@modelcontextprotocol/server-filesystem@2026.8.31`（CWE-918、CWE-552、CWE-829）。
+- **MCP 子行程**：自成程序群組，關閉時終止整個子行程樹，同時最多 4 個（CWE-404、CWE-400）。
+- **聊天附件只接受 base64 `data:` URL**，遠端網址不再交給模型供應商擷取（CWE-918）；回答中的 Markdown 圖片改為點擊才開啟的連結，不再自動向外部主機載入（CWE-201）。
+- `httpx` 與 `httpcore` 日誌層級固定為 `WARNING`，含查詢字串金鑰的完整網址不再寫進日誌（CWE-532）。
+
+#### 資源上限
+
+- 新增 `RequestBodyLimitMiddleware`：一般請求本文上限 1 MiB，聊天送出與文件上傳只有帶有效存取權杖時才放寬，超過回傳 `413`（CWE-770）。
+- 聊天訊息最多 20,000 字、附件最多 5 個（單一 15 MiB、合計 20 MiB）、附件文字與工具結果放進模型前截斷；每位使用者附件儲存量 200 MiB（`413`）、同時最多 2 個回答串流（`429`）；聊天附件 PDF 最多 OCR 20 頁、每頁點陣化最多 25 MP；LLM 連線池等待上限 15 秒（CWE-400、CWE-770）。
+- OOXML 解析前檢查解壓大小與壓縮比（CWE-409）；HTML 抽取、SVG 去除、JSON 宣告抽取、Q&A 切分與目錄行清理改為線性時間，`filter_and_count_records` 限制日期範圍與筆數（CWE-1333）。
+- 對話清單最多 200 段、每段 5 則預覽且不含附件本文；單段對話最多回傳 500 則；遠端模型清單快取 30 秒並在執行緒中查詢（CWE-400）。
+- 安全日誌欄位最多 200 字元，`app.log` 與 `security.log` 以 10 MiB × 5 份輪替，安全事件不再重複寫入 `app.log`；入侵偵測的事件與追蹤位址數有上限（CWE-779、CWE-400）。
+
+#### 其他
+
+- **`send` 的模型名稱必須在可用清單內**：避免以操作者的金鑰呼叫清單外的模型（CWE-770）；`GET /api/chat/tools` 改為需要登入（CWE-200）。
+- jieba 詞典快取改放 `DATA_DIR/jieba_cache`（權限 `0700`），不再以可預測的檔名放在系統暫存目錄（CWE-377）。
 - **MCP 伺服器的 SSRF 拒絕訊息不再帶出解析結果**：建立或探索 MCP 伺服器時網址被 SSRF 防護拒絕，`last_error` 與 400 回應改為註明遭拒並附錯誤代碼；完整原因可能含伺服器端 DNS 解析出的內網 IP 或轉址目標，只寫入伺服器日誌（CWE-209）。
 - **介紹頁 RRF 示範跳脫片段 ID**：`site/main.js` 把內嵌 JSON 的片段 ID 與重排機率插入 HTML 前改經 `escapeHtml`，資料含引號或角括號時不再被當成 HTML 解析（CWE-79）。
+
+### 新增 (Added)
+
+- **工具呼叫核准**：自訂 API 工具與 MCP 伺服器新增 `requires_approval`（API 工具依 HTTP 方法預設，`GET`、`HEAD`、`OPTIONS` 以外為 `true`；MCP 伺服器預設 `true`）。Agent 呼叫這類工具時送出 SSE `approval_required` 並暫停，使用者以 `POST /api/chat/approvals/{approval_id}` 回覆後送出 `approval_resolved`；只有發問者能回覆，300 秒逾時或沒有可核准的使用者時不執行。前端在回答中顯示確認卡片，「AI 工具」頁的表單新增對應核取方塊。詳見 [ADR-0006](docs/adr/0006-tool-call-approval.md)。
+- `FORWARDED_ALLOW_IPS` 設定：指定會覆寫 `X-Forwarded-For` 的反向代理，速率限制才以真實用戶端 IP 計算。
+- `backend/app/core/limits.py` 集中定義資源上限，[設定參考](docs/configuration.md#資源上限) 新增「資源上限」一節。
+- `upgrade_schema()`：啟動時（以及 `init_db.py`）替既有資料表補上新欄位並回填。
+- 前端送出訊息遇到 `422` 欄位驗證錯誤時，逐項顯示原因（例如附件過大）。
+- 新增 [ADR-0006](docs/adr/0006-tool-call-approval.md) 與 ADR-0004 的後續修訂；[升級指南](docs/upgrading.md#從-300-升級到-400) 新增本版的升級步驟。
+- 新增後端測試 `test_auth_token_binding.py`、`test_outbound_tool_security.py`、`test_process_hardening.py`、`test_resource_limits.py`、`test_tool_approval.py`。
+
+### 變更 (Changed)
+
+- `/api/chat` 的訊息回應不再包含原始 `context_used`（一律為 `null`），改由已解析的 `sources`、`sources_detail`、`research_trace` 與 `attachments` 提供；對話清單的附件不含 `data_url`。
+- 聊天串流期間把資料庫連線還給連線池，資料庫存取與附件解碼、解析改在執行緒中進行；對話讀取路由改為同步函式，由執行緒池執行。
+- 自訂 API 工具、MCP HTTP 傳輸與 `web_fetch` 的直接抓取不再使用 `HTTP_PROXY`、`HTTPS_PROXY` 環境變數。
+- PDF OCR 的點陣化改在文件執行緒上逐頁進行，只有視覺模型呼叫平行；XLSX 以唯讀模式開啟。
+- 刪除文件時先刪除資料庫紀錄再移除索引片段，索引寫入持鎖後略過所屬文件已刪除的片段。
+- `backend/.env.example`：移除 `JWT_SECRET_KEY`、`JWT_ALGORITHM`，新增 `POSTGRES_PASSWORD` 與 `FORWARDED_ALLOW_IPS` 範例。
+
+### 移除 (Removed)
+
+- `JWT_SECRET_KEY`、`JWT_ALGORITHM` 設定與 HS256 簽署路徑（留在 `.env` 中會被忽略）。
+- MCP 範本 `mcp_fetch`（`uvx mcp-server-fetch`）。
+
+### 修正 (Fixed)
+
+- `POST /api/auth/refresh` 讀取不存在的 `user_id` 聲明，換發一律失敗；改以 `sub` 對應帳號。
+- 刪除文件與同時進行的索引寫入競爭時，已刪除文件的片段可能被寫回知識庫（CWE-362）。
+- SQLite 重用已刪除的使用者或文件 id，舊權杖或舊片段因此對應到新資料。
 
 ---
 

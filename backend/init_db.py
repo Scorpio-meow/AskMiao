@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 import asyncio
 from sqlalchemy import text
-from app.models.database import Base, engine
+from app.models.database import Base, engine, upgrade_schema
 from app.models import User, Conversation, Message, Document
 
 
@@ -21,6 +21,7 @@ async def main():
     
     Base.metadata.create_all(bind=engine)
     ensure_schema_compatibility()
+    upgrade_schema()
     print("Database tables created successfully!")
 
 

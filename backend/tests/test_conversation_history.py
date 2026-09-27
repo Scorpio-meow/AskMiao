@@ -11,7 +11,8 @@ from app.services.chat_service import ChatService
 
 @pytest.fixture
 def db(tmp_path):
-    engine = create_engine(f"sqlite:///{tmp_path / 'chat.db'}")
+    # 聊天路由會在執行緒中使用同一個 Session，與正式環境的 SQLite 設定一致
+    engine = create_engine(f"sqlite:///{tmp_path / 'chat.db'}", connect_args={"check_same_thread": False})
     Base.metadata.create_all(engine)
     session = sessionmaker(bind=engine)()
     yield session
@@ -45,12 +46,12 @@ def test_recent_history_starts_with_user_and_excludes_current_message(db):
 
 @pytest.mark.asyncio
 async def test_send_message_passes_database_history_to_rag(db, monkeypatch):
-    conversation = add_conversation(db, [(True, "特休有幾天？"), (False, "依年資計算。")])
+    conversation_id = add_conversation(db, [(True, "特休有幾天？"), (False, "依年資計算。")]).id
     captured = {}
 
     class FakeRag:
         async def generate_response_stream(self, query, conversation_history, model_name=None,
-                                           reasoning_effort=None, attachments=None):
+                                           reasoning_effort=None, attachments=None, approval_user_id=None):
             captured["query"] = query
             captured["history"] = conversation_history
             yield {"event": "token", "data": {"content": "滿一年七天。"}}
@@ -60,7 +61,7 @@ async def test_send_message_passes_database_history_to_rag(db, monkeypatch):
     monkeypatch.setattr(chat_api, "get_rag_system", lambda: FakeRag())
 
     response = await chat_api.send_message(
-        MessageCreate(content="那滿一年呢？", conversation_id=conversation.id),
+        MessageCreate(content="那滿一年呢？", conversation_id=conversation_id),
         db=db,
         user_id=1,
     )
@@ -72,4 +73,4 @@ async def test_send_message_passes_database_history_to_rag(db, monkeypatch):
         {"role": "assistant", "content": "依年資計算。"},
     ]
     assert "event: done" in body
-    assert db.query(Message).filter(Message.conversation_id == conversation.id).count() == 4
+    assert db.query(Message).filter(Message.conversation_id == conversation_id).count() == 4

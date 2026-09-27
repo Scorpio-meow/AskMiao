@@ -998,12 +998,18 @@ AZURE_OPENAI_DEPLOYMENT=gpt-6-sol,gpt-6-luna</pre>
           <h3>錯誤代碼機制</h3>
           <ul><li>對外只回傳隨機 error_id</li><li>RAG 串流不再夾帶例外文字</li><li>文件與實作全面校正</li></ul>
         </article>
-        <article class="tl tl--release">
+        <article class="tl">
           <span class="tl__ver">3.0.0</span><span class="tl__date">2026-09-25</span>
-          <span class="tl__flag">最新發行</span>
           <span class="tl__flag tl__flag--warn">含破壞性變更</span>
           <h3>引用出處、信任邊界與工具權限</h3>
           <ul><li>chunk_id 索引、RRF 融合與重排機率門檻</li><li>答案 [n] 引用對應來源</li><li>工具輸出信任邊界與聯網限制</li><li>工具管理只限管理員、子行程隔離</li><li>前端 UI/UX 全面修整</li></ul>
+        </article>
+        <article class="tl tl--release">
+          <span class="tl__ver">4.0.0</span><span class="tl__date">2026-09-27</span>
+          <span class="tl__flag">最新發行</span>
+          <span class="tl__flag tl__flag--warn">含破壞性變更</span>
+          <h3>安全稽核修正</h3>
+          <ul><li>權杖每次請求對應資料庫帳號，RSA 金鑰必要</li><li>有副作用的工具呼叫需使用者核准</li><li>出站連線固定在 SSRF 驗證過的 IP</li><li>請求、附件與工具結果的資源上限</li></ul>
         </article>
       </div>
       <a class="link-more reveal" href="https://github.com/Scorpio-meow/AskMiao/blob/HEAD/CHANGELOG.md" target="_blank" rel="noopener">
@@ -1044,7 +1050,7 @@ AZURE_OPENAI_DEPLOYMENT=gpt-6-sol,gpt-6-luna</pre>
           </a></li>
           <li><a class="doc" href="https://github.com/Scorpio-meow/AskMiao/blob/HEAD/docs/upgrading.md" target="_blank" rel="noopener">
             <svg class="icon doc__icon" aria-hidden="true"><use href="#i-arrows-clockwise"></use></svg>
-            <span><b>升級指南</b><span>從 2.x 升級到 3.0.0 的步驟、回退與常見問題</span></span>
+            <span><b>升級指南</b><span>各版本的升級步驟、回退與常見問題</span></span>
             <svg class="icon doc__arrow" aria-hidden="true"><use href="#i-arrow-up-right"></use></svg>
           </a></li>
           <li><a class="doc" href="https://github.com/Scorpio-meow/AskMiao/blob/HEAD/llms.txt" target="_blank" rel="noopener">

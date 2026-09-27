@@ -1,5 +1,5 @@
 import os
-from sqlalchemy import create_engine, MetaData
+from sqlalchemy import create_engine, MetaData, inspect, text
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 from app.core.config import settings
@@ -30,8 +30,31 @@ else:
     )
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
+# 既有資料庫缺少的欄位：(資料表, 欄位, 補值 SQL)。create_all 不會替已存在的資料表加欄位
+COLUMN_UPGRADES = (
+    (
+        "custom_api_tools",
+        "requires_approval",
+        "UPDATE custom_api_tools SET requires_approval = "
+        "(UPPER(COALESCE(method, 'GET')) NOT IN ('GET', 'HEAD', 'OPTIONS'))",
+    ),
+    ("mcp_servers", "requires_approval", "UPDATE mcp_servers SET requires_approval = TRUE"),
+)
+def upgrade_schema(target_engine=None) -> None:
+    target_engine = target_engine or engine
+    inspector = inspect(target_engine)
+    tables = set(inspector.get_table_names())
+    with target_engine.begin() as conn:
+        for table, column, backfill in COLUMN_UPGRADES:
+            if table not in tables:
+                continue
+            if column in {c["name"] for c in inspector.get_columns(table)}:
+                continue
+            conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {column} BOOLEAN"))
+            conn.execute(text(backfill))
 async def create_tables():
     Base.metadata.create_all(bind=engine)
+    upgrade_schema()
 def get_db():
     db = SessionLocal()
     try:

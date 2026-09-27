@@ -1,4 +1,5 @@
 
+import calendar
 from datetime import datetime, timedelta
 from typing import Optional, Dict, Any
 import logging
@@ -9,28 +10,16 @@ from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from sqlalchemy.orm import Session
 from app.core.config import settings
+from app.models import User
+from app.models.database import get_db
 logger = logging.getLogger(__name__)
-SECRET_KEY = settings.JWT_SECRET_KEY
-ALGORITHM = settings.JWT_ALGORITHM
 ACCESS_TOKEN_EXPIRE_MINUTES = settings.ACCESS_TOKEN_EXPIRE_MINUTES
 REFRESH_TOKEN_EXPIRE_DAYS = settings.REFRESH_TOKEN_EXPIRE_DAYS
-try:
-    from app.core.rsa_keys import rsa_manager
-    USE_RSA = True
-    RSA_PRIVATE_KEY = rsa_manager.get_private_key_pem()
-    RSA_PUBLIC_KEY = rsa_manager.get_public_key_pem()
-    logger.info("使用 RSA 非對稱加密進行 JWT 簽名")
-except Exception as e:
-    if settings.ENVIRONMENT == "production":
-        logger.error(f"生產環境 RSA 金鑰載入失敗: {e}")
-        raise RuntimeError("生產環境必須使用 RSA 金鑰進行 JWT 簽名") from e
-    else:
-        USE_RSA = False
-        RSA_PRIVATE_KEY = None
-        RSA_PUBLIC_KEY = None
-        ALGORITHM = "HS256"
-        logger.warning(f"開發環境 RSA 金鑰載入失敗，暫時使用 HS256: {e}")
-        logger.warning("警告：請盡快修復 RSA 金鑰配置！")
+ALGORITHM = "RS256"
+# RSA 金鑰無法載入時一律拒絕啟動，不退回以共用密鑰簽署的演算法
+from app.core.rsa_keys import rsa_manager
+RSA_PRIVATE_KEY = rsa_manager.get_private_key_pem()
+RSA_PUBLIC_KEY = rsa_manager.get_public_key_pem()
 try:
     from app.core.redis_client import TokenBlacklist
     USE_BLACKLIST = True
@@ -84,11 +73,7 @@ class TokenManager:
             "iat": datetime.utcnow()
         })
         
-        if USE_RSA:
-            encoded_jwt = jwt.encode(to_encode, RSA_PRIVATE_KEY, algorithm="RS256")
-        else:
-            encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm="HS256")
-        return encoded_jwt
+        return jwt.encode(to_encode, RSA_PRIVATE_KEY, algorithm=ALGORITHM)
     
     @staticmethod
     def create_refresh_token(
@@ -108,11 +93,7 @@ class TokenManager:
             "iat": datetime.utcnow()
         })
         
-        if USE_RSA:
-            encoded_jwt = jwt.encode(to_encode, RSA_PRIVATE_KEY, algorithm="RS256")
-        else:
-            encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm="HS256")
-        return encoded_jwt
+        return jwt.encode(to_encode, RSA_PRIVATE_KEY, algorithm=ALGORITHM)
     
     @staticmethod
     def decode_token(token: str) -> Dict[str, Any]:
@@ -124,21 +105,12 @@ class TokenManager:
             )
         
         try:
-            if USE_RSA:
-                payload = jwt.decode(
-                    token, 
-                    RSA_PUBLIC_KEY, 
-                    algorithms=["RS256"],
-                    options={"verify_signature": True, "verify_exp": True}
-                )
-            else:
-                payload = jwt.decode(
-                    token, 
-                    SECRET_KEY, 
-                    algorithms=["HS256"],
-                    options={"verify_signature": True, "verify_exp": True}
-                )
-            return payload
+            return jwt.decode(
+                token,
+                RSA_PUBLIC_KEY,
+                algorithms=[ALGORITHM],
+                options={"verify_signature": True, "verify_exp": True}
+            )
         except JWTError:
             logger.exception("無效的認證令牌: 驗證失敗")
             raise HTTPException(
@@ -150,34 +122,52 @@ class TokenManager:
     @staticmethod
     def verify_token_type(payload: Dict[str, Any], expected_type: str) -> bool:
         return payload.get("type") == expected_type
-async def get_current_user_from_token(
+def resolve_token_user(db: Session, payload: Dict[str, Any]) -> User:
+    """把已驗簽的權杖綁定到資料庫中的現存帳號。
+
+    帳號不存在、已停用，或權杖簽發早於帳號建立時間（刪除後 id 被重用）都視為無效；
+    身分與權限一律取自資料庫，不信任權杖內的聲明。
+    """
+    invalid = HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="認證權杖無效：驗證失敗",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+    sub = payload.get("sub")
+    issued_at = payload.get("iat")
+    if sub is None or not isinstance(issued_at, (int, float)):
+        raise invalid
+    try:
+        user_id = int(sub)
+    except (TypeError, ValueError):
+        raise invalid
+    user = db.query(User).filter(User.id == user_id).first()
+    if user is None or not user.is_active or user.created_at is None:
+        raise invalid
+    if issued_at < calendar.timegm(user.created_at.utctimetuple()):
+        raise invalid
+    return user
+def get_current_user_from_token(
     credentials: HTTPAuthorizationCredentials = Depends(security),
-    db: Session = Depends(lambda: None)
+    db: Session = Depends(get_db)
 ) -> Dict[str, Any]:
     token = credentials.credentials
     payload = TokenManager.decode_token(token)
-    
+
     if not TokenManager.verify_token_type(payload, "access"):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="權杖類型無效",
             headers={"WWW-Authenticate": "Bearer"},
         )
-    
-    user_id = payload.get("sub")
-    if user_id is None:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="權杖中缺少使用者資訊",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
-    
+
+    user = resolve_token_user(db, payload)
     return {
-        "user_id": int(user_id),
-        "username": payload.get("username"),
-        "email": payload.get("email"),
-        "role": payload.get("role", "user"),
-        "is_admin": payload.get("is_admin", False)
+        "user_id": user.id,
+        "username": user.username,
+        "email": user.email,
+        "role": user.role,
+        "is_admin": bool(user.is_admin)
     }
 async def get_current_active_user(
     current_user: Dict[str, Any] = Depends(get_current_user_from_token)

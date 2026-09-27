@@ -7,10 +7,12 @@ services:
     environment:
       POSTGRES_DB: chatbot
       POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
+      # 必須在 backend/.env 或殼層環境設定 POSTGRES_PASSWORD，未設定時拒絕啟動
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?請在 backend/.env 設定 POSTGRES_PASSWORD}
       TZ: Asia/Taipei
     ports:
-      - "7690:5432"
+      # 只綁定本機回送位址，不對區網或公網開放
+      - "127.0.0.1:7690:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./init.sql:/docker-entrypoint-initdb.d/init.sql:ro

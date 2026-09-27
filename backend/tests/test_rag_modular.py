@@ -2,7 +2,7 @@ import os
 import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
-from app.models import RagChunk
+from app.models import Document as DbDocument, RagChunk
 from app.models.database import Base
 from app.core.domain_profile import domain_profile
 from app.rag.types import Document, RecursiveCharacterTextSplitter
@@ -58,6 +58,13 @@ def test_rag_facade_lifecycle(session_factory):
     rag = HybridContextualRAG(session_factory=session_factory)
     assert rag.documents == []
     assert rag.embedding_dimension > 0
+    # 片段只能寫給資料庫中存在的文件
+    with session_factory() as session:
+        session.add_all([
+            DbDocument(id=101, filename="差勤管理辦法.docx", content="", file_type="text/plain"),
+            DbDocument(id=102, filename="員工手冊.pdf", content="", file_type="text/plain"),
+        ])
+        session.commit()
     sample_docs = [
         Document(
             page_content="員工加班申請需於當日或事前由主管核准，加班時數可選擇換取加班費或補休。",
