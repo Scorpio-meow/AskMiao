@@ -1,7 +1,9 @@
+import base64
 import json
 import logging
 import time
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Set
+from urllib.parse import quote
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
@@ -16,9 +18,10 @@ from app.models import (
     ToolTestRequest,
 )
 from app.core.jwt_auth import get_current_admin_user
-from app.core.ssrf_protection import SSRFProtectionError, reject_unsafe_request
+from app.core.ssrf_protection import SSRFProtectionError, SSRFSafeTransport
 from app.services.openapi_parser import OpenApiParser
-from app.core.error_response import SafeClientError, log_and_get_error_id, format_client_error
+from app.rag.tool_approval import default_requires_approval
+from app.core.error_response import SafeClientError, log_and_get_error_id, format_client_error, format_ssrf_rejection
 logger = logging.getLogger(__name__)
 # 自訂 API 工具是所有使用者的 Agent 共用的全域設定，回應中也含 API 金鑰等憑證，
 # 因此整個模組（含查詢）只開放管理員
@@ -73,22 +76,83 @@ def _serialize_tool_model(tool: CustomApiTool) -> Dict[str, Any]:
         "param_locations": param_locations,
         "response_mapping": tool.response_mapping,
         "is_enabled": bool(tool.is_enabled),
+        "requires_approval": bool(tool.requires_approval),
         "timeout": tool.timeout or 15,
         "spec_version": tool.spec_version or "manual",
         "created_at": tool.created_at,
         "updated_at": tool.updated_at,
     }
+# 回應本文上限：超過即中止讀取，避免單一上游回應耗盡後端行程記憶體或灌爆模型脈絡
+MAX_API_TOOL_RESPONSE_BYTES = 1024 * 1024
+MAX_API_TOOL_TEXT_CHARS = 4000
+MAX_API_TOOL_REDIRECTS = 5
+REDACTED = "[已遮蔽]"
+# 這些標頭的值不是憑證，不做遮蔽（避免把回應中的一般字詞一併替換掉）
+NON_SECRET_HEADER_NAMES = {"accept", "accept-encoding", "accept-language", "cache-control", "content-type", "user-agent"}
+MIN_SECRET_LENGTH = 4
+
+
+class ApiToolResponseTooLarge(ValueError):
+    pass
+
+
+def _encode_path_value(value: Any) -> str:
+    """路徑參數逐段百分比編碼；/、?、#、%、.. 都不能改變請求目標"""
+    text = str(value)
+    if text in (".", ".."):
+        raise ValueError("路徑參數不可為 . 或 ..")
+    return quote(text, safe="")
+
+
+def _collect_secrets(headers: Dict[str, str], auth_type: str, auth_config: Dict[str, Any]) -> Set[str]:
+    """收集本次請求實際注入的憑證值，供遮蔽回應與網址"""
+    secrets: Set[str] = set()
+    for name, value in headers.items():
+        if name.lower() not in NON_SECRET_HEADER_NAMES and value:
+            secrets.add(str(value))
+    if auth_type == "bearer" and auth_config.get("token"):
+        secrets.add(str(auth_config["token"]))
+    elif auth_type == "api_key" and auth_config.get("key_value"):
+        secrets.add(str(auth_config["key_value"]))
+    elif auth_type == "basic" and auth_config.get("username"):
+        username = str(auth_config.get("username", ""))
+        password = str(auth_config.get("password", ""))
+        secrets.add(password)
+        secrets.add(base64.b64encode(f"{username}:{password}".encode()).decode())
+    return {s for s in secrets if len(s) >= MIN_SECRET_LENGTH}
+
+
+def _redact(value: Any, secrets: Set[str]) -> Any:
+    """把回應（含巢狀 JSON 的鍵與值）中出現的憑證值換成遮蔽字樣"""
+    if not secrets:
+        return value
+    if isinstance(value, str):
+        for secret in sorted(secrets, key=len, reverse=True):
+            value = value.replace(secret, REDACTED)
+        return value
+    if isinstance(value, dict):
+        return {_redact(k, secrets): _redact(v, secrets) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_redact(v, secrets) for v in value]
+    return value
+
+
+def _same_origin(a: httpx.URL, b: httpx.URL) -> bool:
+    return (a.scheme, a.host, a.port) == (b.scheme, b.host, b.port)
+
+
 async def execute_http_api_tool(tool_dict: Dict[str, Any], arguments: Dict[str, Any]) -> Dict[str, Any]:
     """
     通用 HTTP API 工具非同步執行器
     支援：
-    - Path 變數替換（如 /pets/{petId}）
+    - Path 變數替換（如 /pets/{petId}），參數值經百分比編碼，不能改變請求的主機或路徑層級
     - Query 參數組裝
-    - Header 參數與 Auth 注入
+    - Header 參數與 Auth 注入；跨來源轉址時不轉送憑證
     - JSON Body 或 FormData 序列化
-    - 隔離超時與錯誤保護
+    - 隔離超時、回應大小上限、憑證遮蔽與錯誤保護
     """
     start_time = time.time()
+    arguments = dict(arguments or {})
     method = (tool_dict.get("method") or "GET").upper()
     base_url = (tool_dict.get("base_url") or "").rstrip("/")
     path = tool_dict.get("path") or ""
@@ -98,52 +162,90 @@ async def execute_http_api_tool(tool_dict: Dict[str, Any], arguments: Dict[str, 
     elif not url:
         url = path
     param_locations = tool_dict.get("param_locations") or {}
-    headers = dict(tool_dict.get("headers") or {})
+    configured_headers = dict(tool_dict.get("headers") or {})
+    headers = dict(configured_headers)
     timeout = int(tool_dict.get("timeout") or 15)
     auth_type = tool_dict.get("auth_type", "none")
     auth_config = tool_dict.get("auth_config") or {}
+    credential_query_key: Optional[str] = None
+    credential_header_names: Set[str] = {name.lower() for name in configured_headers}
     if auth_type == "bearer" and auth_config.get("token"):
         headers["Authorization"] = f"Bearer {auth_config['token']}"
+        credential_header_names.add("authorization")
     elif auth_type == "api_key":
         key_name = auth_config.get("key_name", "X-API-Key")
         key_value = auth_config.get("key_value", "")
         key_in = auth_config.get("key_in", "header")
         if key_in == "header" and key_name and key_value:
             headers[key_name] = key_value
+            credential_header_names.add(key_name.lower())
         elif key_in == "query" and key_name and key_value:
             arguments[key_name] = key_value
+            credential_query_key = key_name
     elif auth_type == "basic" and auth_config.get("username"):
-        import base64
         u = auth_config.get("username", "")
         p = auth_config.get("password", "")
         b64_auth = base64.b64encode(f"{u}:{p}".encode()).decode()
         headers["Authorization"] = f"Basic {b64_auth}"
+        credential_header_names.add("authorization")
+    secrets = _collect_secrets(headers, auth_type, auth_config)
     query_params: Dict[str, Any] = {}
     body_data: Dict[str, Any] = {}
     path_replaced_url = url
-    for k, v in arguments.items():
-        loc = param_locations.get(k)
-        if f"{{{k}}}" in path_replaced_url or loc == "path":
-            path_replaced_url = path_replaced_url.replace(f"{{{k}}}", str(v))
-        elif loc == "header":
-            headers[k] = str(v)
-        elif loc == "body":
-            body_data[k] = v
-        elif loc == "query":
-            query_params[k] = v
-        else:
-            if method in ["POST", "PUT", "PATCH"]:
-                body_data[k] = v
-            else:
+    try:
+        for k, v in arguments.items():
+            loc = param_locations.get(k)
+            if k == credential_query_key:
                 query_params[k] = v
+            elif f"{{{k}}}" in path_replaced_url or loc == "path":
+                path_replaced_url = path_replaced_url.replace(f"{{{k}}}", _encode_path_value(v))
+            elif loc == "header":
+                headers[k] = str(v)
+            elif loc == "body":
+                body_data[k] = v
+            elif loc == "query":
+                query_params[k] = v
+            else:
+                if method in ["POST", "PUT", "PATCH"]:
+                    body_data[k] = v
+                else:
+                    query_params[k] = v
+    except ValueError as e:
+        return {
+            "status_code": 400,
+            "is_success": False,
+            "duration_seconds": round(time.time() - start_time, 3),
+            "url": url,
+            "error": f"工具參數無效：{e}",
+        }
     if "request_body" in arguments and isinstance(arguments["request_body"], dict):
         body_data = arguments["request_body"]
+
+    def display_url(target: httpx.URL) -> str:
+        if credential_query_key and credential_query_key in target.params:
+            target = target.copy_set_param(credential_query_key, REDACTED)
+        return _redact(str(target), secrets)
+
     try:
-        # 第一跳與每次轉址都要通過 SSRF 檢查，只驗第一個網址會被轉址繞過
+        original_url = httpx.URL(path_replaced_url)
+        template_url = httpx.URL(url.replace("{", "").replace("}", ""))
+        if not _same_origin(original_url, template_url):
+            raise SafeClientError("代入參數後的網址與工具設定的主機不符")
+
+        async def strip_credentials_cross_origin(request: httpx.Request) -> None:
+            # 轉址到其他來源時不轉送管理員設定的憑證標頭
+            if not _same_origin(request.url, original_url):
+                for name in list(request.headers.keys()):
+                    if name.lower() in credential_header_names:
+                        del request.headers[name]
+
+        # 每一跳（含轉址）都在傳輸層做 SSRF 檢查，並固定連線到檢查時核可的 IP
         async with httpx.AsyncClient(
             timeout=float(timeout),
             follow_redirects=True,
-            event_hooks={"request": [reject_unsafe_request]},
+            max_redirects=MAX_API_TOOL_REDIRECTS,
+            transport=SSRFSafeTransport(),
+            event_hooks={"request": [strip_credentials_cross_origin]},
         ) as client:
             req_kwargs: Dict[str, Any] = {
                 "method": method,
@@ -154,31 +256,68 @@ async def execute_http_api_tool(tool_dict: Dict[str, Any], arguments: Dict[str, 
             if method in ["POST", "PUT", "PATCH", "DELETE"]:
                 if body_data:
                     req_kwargs["json"] = body_data
-            response = await client.request(**req_kwargs)
-            duration = round(time.time() - start_time, 3)
-            content_type = response.headers.get("content-type", "").lower()
-            if "application/json" in content_type:
+            async with client.stream(**req_kwargs) as response:
+                content_length = response.headers.get("content-length")
+                if content_length and content_length.isdigit() and int(content_length) > MAX_API_TOOL_RESPONSE_BYTES:
+                    raise ApiToolResponseTooLarge()
+                chunks = []
+                total = 0
+                async for chunk in response.aiter_bytes():
+                    total += len(chunk)
+                    if total > MAX_API_TOOL_RESPONSE_BYTES:
+                        raise ApiToolResponseTooLarge()
+                    chunks.append(chunk)
+                raw = b"".join(chunks)
+                duration = round(time.time() - start_time, 3)
+                encoding = response.encoding or "utf-8"
                 try:
-                    res_body = response.json()
-                except Exception:
-                    res_body = response.text
-            else:
-                res_body = response.text[:4000]
-            return {
-                "status_code": response.status_code,
-                "is_success": response.is_success,
-                "duration_seconds": duration,
-                "url": str(response.url),
-                "data": res_body
-            }
+                    text = raw.decode(encoding)
+                except (UnicodeDecodeError, LookupError):
+                    text = raw.decode("utf-8", errors="replace")
+                content_type = response.headers.get("content-type", "").lower()
+                res_body: Any
+                if "application/json" in content_type:
+                    try:
+                        res_body = json.loads(text)
+                    except Exception:
+                        res_body = text[:MAX_API_TOOL_TEXT_CHARS]
+                else:
+                    res_body = text[:MAX_API_TOOL_TEXT_CHARS]
+                return {
+                    "status_code": response.status_code,
+                    "is_success": response.is_success,
+                    "duration_seconds": duration,
+                    "url": display_url(response.url),
+                    "data": _redact(res_body, secrets)
+                }
+    except ApiToolResponseTooLarge:
+        return {
+            "status_code": 502,
+            "is_success": False,
+            "duration_seconds": round(time.time() - start_time, 3),
+            "url": display_url(httpx.URL(path_replaced_url)),
+            "error": f"上游回應超過 {MAX_API_TOOL_RESPONSE_BYTES} 位元組上限，已中止讀取",
+        }
+    except SafeClientError as e:
+        return {
+            "status_code": 400,
+            "is_success": False,
+            "duration_seconds": round(time.time() - start_time, 3),
+            "url": url,
+            "error": str(e),
+        }
     except SSRFProtectionError as e:
         duration = round(time.time() - start_time, 3)
+        error_id = log_and_get_error_id(
+            logger, f"自訂 API 工具 {tool_dict.get('name')} 被 SSRF 防護拒絕", e, logging.WARNING
+        )
         return {
             "status_code": 403,
             "is_success": False,
             "duration_seconds": duration,
-            "url": path_replaced_url,
-            "error": str(e)
+            "url": display_url(httpx.URL(path_replaced_url)),
+            "error": format_ssrf_rejection(error_id),
+            "error_id": error_id
         }
     except Exception as e:
         duration = round(time.time() - start_time, 3)
@@ -189,7 +328,7 @@ async def execute_http_api_tool(tool_dict: Dict[str, Any], arguments: Dict[str, 
             "status_code": 500,
             "is_success": False,
             "duration_seconds": duration,
-            "url": path_replaced_url,
+            "url": _redact(path_replaced_url, secrets),
             "error": format_client_error(error_id),
             "error_id": error_id
         }
@@ -252,6 +391,8 @@ async def import_openapi_tools(
             existing.param_locations = json.dumps(item.param_locations, ensure_ascii=False) if item.param_locations else None
             existing.spec_version = item.spec_version
             existing.is_enabled = True
+            # 重新匯入不會自動放寬既有的核准設定
+            existing.requires_approval = bool(existing.requires_approval) or default_requires_approval(item.method)
             updated_count += 1
         else:
             new_tool = CustomApiTool(
@@ -270,6 +411,7 @@ async def import_openapi_tools(
                 param_locations=json.dumps(item.param_locations, ensure_ascii=False) if item.param_locations else None,
                 spec_version=item.spec_version,
                 is_enabled=True,
+                requires_approval=default_requires_approval(item.method),
                 created_by=current_user.get("id") if isinstance(current_user, dict) else getattr(current_user, "id", None)
             )
             db.add(new_tool)
@@ -337,6 +479,11 @@ async def create_api_tool(
         param_locations=json.dumps(tool_data.param_locations, ensure_ascii=False) if tool_data.param_locations else None,
         response_mapping=tool_data.response_mapping,
         is_enabled=tool_data.is_enabled if tool_data.is_enabled is not None else True,
+        requires_approval=(
+            tool_data.requires_approval
+            if tool_data.requires_approval is not None
+            else default_requires_approval(tool_data.method)
+        ),
         timeout=tool_data.timeout or 15,
         spec_version=tool_data.spec_version or "manual",
         created_by=current_user.get("id") if isinstance(current_user, dict) else getattr(current_user, "id", None)
@@ -402,6 +549,11 @@ async def update_api_tool(
         tool.param_locations = json.dumps(tool_data.param_locations, ensure_ascii=False) if tool_data.param_locations else None
     if tool_data.is_enabled is not None:
         tool.is_enabled = tool_data.is_enabled
+    if tool_data.requires_approval is not None:
+        tool.requires_approval = tool_data.requires_approval
+    elif tool_data.method is not None and default_requires_approval(tool_data.method):
+        # 改成會改變狀態的方法時，未明確指定就改為需要核准
+        tool.requires_approval = True
     if tool_data.timeout is not None:
         tool.timeout = tool_data.timeout
     db.commit()

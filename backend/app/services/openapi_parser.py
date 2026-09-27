@@ -4,7 +4,7 @@ import re
 from typing import Any, Dict, List, Optional, Tuple, Union
 import yaml
 from app.core.ssrf_protection import safe_fetch_text, SSRFProtectionError
-from app.core.error_response import SafeClientError, log_and_get_error_id
+from app.core.error_response import SafeClientError, format_ssrf_rejection, log_and_get_error_id
 
 logger = logging.getLogger(__name__)
 
@@ -45,7 +45,8 @@ class OpenApiParser:
                     max_size_bytes=10 * 1024 * 1024
                 )
             except SSRFProtectionError as e:
-                raise SafeClientError(f"安全防護拒絕存取該 URL: {str(e)}")
+                error_id = log_and_get_error_id(logger, "OpenAPI 規格網址被 SSRF 防護拒絕", e, logging.WARNING)
+                raise SafeClientError(format_ssrf_rejection(error_id))
             except Exception as e:
                 error_id = log_and_get_error_id(logger, "獲取遠端 OpenAPI 規格失敗", e)
                 raise SafeClientError(

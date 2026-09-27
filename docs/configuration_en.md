@@ -2,7 +2,7 @@
 
 [繁體中文](configuration.md) | [English](configuration_en.md)
 
-> Every setting in the backend `backend/.env` and the frontend `frontend/.env`, with its default and what it actually does, as of **3.0.0**. The source of truth is `Settings` in `backend/app/core/config.py`; the template is [`backend/.env.example`](../backend/.env.example).
+> Every setting in the backend `backend/.env` and the frontend `frontend/.env`, with its default and what it actually does, as of **4.0.0**. The source of truth is `Settings` in `backend/app/core/config.py`; the template is [`backend/.env.example`](../backend/.env.example).
 
 - [How settings are read](#how-settings-are-read)
 - [Required settings](#required-settings)
@@ -16,6 +16,7 @@
 - [Authentication and tokens](#authentication-and-tokens)
 - [Network access control](#network-access-control)
 - [Server and runtime](#server-and-runtime)
+- [Resource limits](#resource-limits)
 - [Reserved settings](#reserved-settings)
 - [Removed settings](#removed-settings)
 - [Domain profile](#domain-profile)
@@ -37,8 +38,7 @@
 
 | Variable | Template | Description |
 |---|---|---|
-| `DATABASE_URL` | `postgresql+psycopg2://postgres:postgres@localhost:5432/chatbot` | Database connection string; see [Database](#database) |
-| `JWT_SECRET_KEY` | `your_jwt_secret_key_here` | HS256 signing key used when the RSA keys are unavailable; replace with a random string |
+| `DATABASE_URL` | `postgresql+psycopg2://postgres:your_postgres_password_here@localhost:5432/chatbot` | Database connection string; see [Database](#database) |
 | `ADMIN_API_KEY` | `your_admin_api_key_here` | Admin API key (required by settings validation, currently unused by any route); replace with a random string |
 | `ENABLE_WEB_SEARCH` | `true` | Offer the web tools |
 | `AGENT_MAX_TURNS` | `5` | Tool-calling turn limit per question |
@@ -56,7 +56,7 @@ Claude models also require `ANTHROPIC_MAX_TOKENS` (without it Claude calls fail,
 | Variable | Code default | Template | Description |
 |---|---|---|---|
 | `LLM_API_BASE` | `http://localhost:5000` | `http://localhost:11434` | Ollama base URL, used to call Ollama models (`/api/chat`) and to query remote model lists (`/api/tags`) |
-| `LLM_TIMEOUT` | `120` | `120` | LLM call timeout in seconds, also used for the vision model calls of PDF OCR |
+| `LLM_TIMEOUT` | `120` | `120` | LLM call timeout in seconds, also used for the vision model calls of PDF OCR; waiting for a connection pool slot has its own fixed 15-second limit (see [Resource limits](#resource-limits)) |
 | `MODEL_NAME` | empty | — | Default model; when unset, the "default model" rule below applies |
 | `AVAILABLE_MODELS` | empty | commented example | Models offered to the frontend (comma-separated); when set, it fully replaces the generated list |
 | `OLLAMA_TEMPERATURE` | empty | `0.3` | Ollama `temperature`; model default when unset |
@@ -83,9 +83,11 @@ Claude models also require `ANTHROPIC_MAX_TOKENS` (without it Claude calls fail,
 
 1. `AVAILABLE_MODELS` is set: use it as is.
 2. Otherwise merge, in order: the Azure deployments (`gpt-6-sol` when none is set), the built-in OpenAI list if `OPENAI_API_KEY` is set, the built-in Claude list if `ANTHROPIC_API_KEY` is set, and the built-in Gemini list if `GEMINI_API_KEY` is set.
-3. Still empty: query the remote list at `EXTERNAL_TAGS_URL` (or `{LLM_API_BASE}/api/tags`), such as the models pulled into a local Ollama.
+3. Still empty: query the remote list at `EXTERNAL_TAGS_URL` (or `{LLM_API_BASE}/api/tags`), such as the models pulled into a local Ollama. The remote query runs in a worker thread, its result (failures included) is cached for 30 seconds, and only one query runs at a time.
 
-| Provider | Built-in list (3.0.0) |
+The `model_name` given to `POST /api/chat/send` must be in this list (or equal `MODEL_NAME`); otherwise the request fails with `400`, so nobody can call an unlisted model with the operator's keys.
+
+| Provider | Built-in list (4.0.0) |
 |---|---|
 | OpenAI | `gpt-6-sol`, `gpt-6-luna`, `gpt-6-astra`, `gpt-5.6-sol`, `gpt-5.6-luna`, `gpt-5.6-terra`, `gpt-5.4`, `gpt-5.4-mini` |
 | Anthropic | `claude-opus-5-5`, `claude-fable-5-1`, `claude-sonnet-5`, `claude-opus-5`, `claude-fable-5`, `claude-opus-4-8`, `claude-haiku-4-5` |
@@ -127,7 +129,7 @@ Format rules for `WEB_FETCH_ALLOWED_DOMAINS`:
 
 - It cannot be empty; write `*` explicitly for no restriction, and `*` cannot be combined with other domains.
 - List bare domains only (lowercase letters, digits, hyphens, and dots) without `https://` or paths, for example `gov.tw,example.com`.
-- Whatever the allowlist says, `web_fetch` only reads URLs that appear verbatim in the user's message or in this question's tool results, and every fetch passes SSRF validation.
+- Whatever the allowlist says, `web_fetch` only reads URLs that appeared as a whole URL in the user's message or in this question's tool results (both sides normalized to httpx's form and compared exactly), and every fetch passes SSRF validation.
 
 ## Retrieval, reranking, and chunking
 
@@ -180,12 +182,12 @@ These settings are exported to the environment before any model loads (booleans 
 
 | Variable | Code default | Template | Description |
 |---|---|---|---|
-| `DATA_DIR` | `data` | `data` | Root directory for indexes and runtime data |
+| `DATA_DIR` | `data` | `data` | Root directory for indexes and runtime data; the jieba dictionary cache also lives in its `jieba_cache/` subdirectory (no longer in the system temp directory) |
 | `UPLOAD_DIR` | `data/uploads` | `data/uploads` | Original uploaded files; index rebuilds re-extract text from here first |
 | `FAISS_INDEX_PATH` | `data/faiss_index.bin` | same | FAISS vector index (`IndexIDMap2`, ids are chunk_ids) |
 | `BM25_INDEX_DIR` | `data/bm25_index` | same | Whoosh BM25 index directory (including `tokenizer_signature.json`) |
 | `METADATA_PATH` | `data/index_metadata.pkl` | same | Index metadata such as the last rebuild time |
-| `MAX_FILE_SIZE_MB` | `50` | `10` | Per-file upload limit for the knowledge base (MB) |
+| `MAX_FILE_SIZE_MB` | `50` | `10` | Per-file upload limit for the knowledge base (MB); also sets the upload request body limit, see [Resource limits](#resource-limits) |
 | `UPLOADS_WATCHER_INTERVAL` | `30` | `30` | Seconds between checks for missing uploads; a missing file is logged once and nothing is deleted |
 
 ## Database
@@ -204,24 +206,26 @@ Common `DATABASE_URL` values:
 | Scenario | Connection string |
 |---|---|
 | SQLite (zero dependencies) | `sqlite:///./chatbot.db` (relative to the startup directory, so starting in `backend/` gives `backend/chatbot.db`) |
-| PostgreSQL 17 from `backend/docker-compose.yml` | `postgresql+psycopg2://postgres:postgres@localhost:7690/chatbot` (the container publishes port 7690) |
+| PostgreSQL 17 from `backend/docker-compose.yml` | `postgresql+psycopg2://postgres:<POSTGRES_PASSWORD>@localhost:7690/chatbot` (the container binds `127.0.0.1:7690` only) |
 | Your own PostgreSQL | `postgresql+psycopg2://<user>:<password>@<host>:5432/<database>` |
 
-Tables are created automatically when the backend starts. `init_db.py` is a compatibility script that adds columns and indexes to older PostgreSQL databases; SQLite does not need it (SQLite does not support its `ADD COLUMN IF NOT EXISTS` statement).
+`backend/docker-compose.yml` no longer ships a password: set `POSTGRES_PASSWORD` in `backend/.env` or the shell before starting (`docker compose` refuses to start without it), and use the same password in `DATABASE_URL` (percent-encode characters such as `@`, `:`, and `/`). The container port is published on the loopback address only, so neither the LAN nor the internet can reach it. `POSTGRES_PASSWORD` is read by compose only; the backend ignores it.
+
+Tables are created automatically when the backend starts, and missing new columns (such as `custom_api_tools.requires_approval` and `mcp_servers.requires_approval`) are added and backfilled at startup too. New SQLite databases create `users` and `documents` with `AUTOINCREMENT`, so deleted ids are never reused; existing SQLite tables are not rewritten. `init_db.py` is a compatibility script that adds columns and indexes to older PostgreSQL databases; SQLite does not need it (SQLite does not support its `ADD COLUMN IF NOT EXISTS` statement).
 
 ## Authentication and tokens
 
 | Variable | Code default | Template | Description |
 |---|---|---|---|
-| `JWT_SECRET_KEY` | — (required) | placeholder | Tokens are normally signed RS256 with the RSA keys; when those cannot load (non-`production` only), this key signs HS256 instead |
-| `JWT_ALGORITHM` | `RS256` | `RS256` | Currently not used by the code: RS256 whenever the RSA keys are available, otherwise HS256 |
-| `ADMIN_API_KEY` | — (required) | placeholder | Required by settings validation; no route currently checks `X-API-Key`, and admin endpoints rely on the `is_admin` claim of the access token |
+| `ADMIN_API_KEY` | — (required) | placeholder | Required by settings validation; no route currently checks `X-API-Key`, and admin endpoints rely on the account's `is_admin` flag in the database |
 | `ACCESS_TOKEN_EXPIRE_MINUTES` | `30` | `30` | Access token lifetime in minutes |
 | `REFRESH_TOKEN_EXPIRE_DAYS` | `7` | `7` | Refresh token lifetime in days, also the cookie `max-age` |
 | `COOKIE_SECURE` | empty (`true` when `ENVIRONMENT=production`) | — | `Secure` attribute of the refresh token cookie |
 | `COOKIE_SAMESITE` | `lax` | — | `SameSite` attribute of the refresh token cookie |
 
-The RSA key pair lives in `backend/keys/jwt_private.pem` and `jwt_public.pem` and is generated on first start if missing (2048-bit, ignored by git). When several backends serve the same users, give them the same key pair.
+Access and refresh tokens are always signed RS256; there is no other algorithm to choose. The RSA key pair lives in `backend/keys/jwt_private.pem` and `jwt_public.pem` and is generated on first start if missing (2048-bit, ignored by git), so the backend account must be able to write to `backend/keys/`; if the keys cannot be loaded or generated, the backend refuses to start in every `ENVIRONMENT`. When several backends serve the same users, give them the same key pair.
+
+Every request maps the access token back to the account in the database: the account must exist and be active, `is_admin` and the role come from the database rather than the token, and tokens issued before the account was created (for example after a deleted account's id was reused) are rejected. Refresh tokens are single-use: issuing a new pair revokes the old one immediately.
 
 ## Network access control
 
@@ -231,24 +235,89 @@ The RSA key pair lives in `backend/keys/jwt_private.pem` and `jwt_public.pem` an
 | `DEVTUNNEL_URL` | empty | empty | One extra origin added to the CORS allowlist, such as a Dev Tunnels URL |
 | `RATE_LIMIT_ENABLED` | `true` | `true` | Enable rate limiting |
 | `RATE_LIMIT_PER_MINUTE` | `60` | `60` | Requests allowed per client IP in 60 seconds; beyond that the backend returns `429` with `Retry-After` |
+| `FORWARDED_ALLOW_IPS` | empty | commented example `127.0.0.1` | Reverse proxy addresses whose `X-Forwarded-For` is trusted (passed to uvicorn's `forwarded_allow_ips`); when unset, uvicorn ignores proxy headers |
 
 > [!NOTE]
-> Rate limiting counts requests per connecting IP. Behind the Vite dev proxy or a reverse proxy, every user shares the proxy's IP and therefore one quota.
+> Rate limiting counts requests per connecting IP. Without `FORWARDED_ALLOW_IPS`, a client-supplied `X-Forwarded-For` is never trusted, so behind the Vite dev proxy or a reverse proxy every user shares the proxy's IP and therefore one quota.
+>
+> Set `FORWARDED_ALLOW_IPS` to the proxy's address only when the reverse proxy in front of the backend *overwrites* `X-Forwarded-For` (for example nginx with `proxy_set_header X-Forwarded-For $remote_addr;`); rate limiting then counts real client IPs. The Vite dev proxy forwards client-supplied headers unchanged, so **never** set it for Vite, or anyone could forge their source IP to evade rate limiting and blocking. The setting only takes effect when the backend is started with `python main.py`.
 
 ## Server and runtime
 
 | Variable | Code default | Template | Description |
 |---|---|---|---|
-| `ENVIRONMENT` | `development` | `development` | With `production`, cookies get `Secure` by default and the backend refuses to start without usable RSA keys |
+| `ENVIRONMENT` | `development` | `development` | With `production`, cookies get `Secure` by default (the backend refuses to start without usable RSA keys in every environment) |
 | `HOST` | `0.0.0.0` | `0.0.0.0` | Default bind address of `python main.py` (override with `--host`) |
 | `PORT` | `8001` | `8001` | Default port (override with `--port`) |
 | `RELOAD` | `true` | `true` | Reload on code changes (disable with `--no-reload`) |
-| `LOG_LEVEL` | `INFO` | `INFO` | Log level; application logs go to `backend/logs/app.log` |
+| `LOG_LEVEL` | `INFO` | `INFO` | Log level; application logs go to `backend/logs/app.log` and security events only to `backend/logs/security.log` (both rotate by size). `httpx` and `httpcore` are pinned to `WARNING`, so full request URLs (which may carry query-string API keys) are not logged |
 | `BASE_URL` | `http://backend:8001` | `http://localhost:8001` | Used only by `healthcheck.py`, which reads the process environment and not `.env` |
+
+The uvicorn server started by `python main.py` processes proxy headers (`proxy_headers`) only when `FORWARDED_ALLOW_IPS` is set; see [Network access control](#network-access-control).
+
+## Resource limits
+
+The limits below protect a single backend process and the operator's paid usage. They are code constants, **not** `.env` settings, and live in [`backend/app/core/limits.py`](../backend/app/core/limits.py) (a few constants tied to one module are defined there, as noted in the tables). To change one, edit the source and update this section.
+
+**Requests and chat**
+
+| Constant | Value | Description |
+|---|---|---|
+| `MAX_REQUEST_BODY_BYTES` | 1 MiB | Body limit for general API requests and for every request without a valid access token; larger bodies get `413`. An oversized `Content-Length` is rejected up front, and chunked bodies are counted as they arrive |
+| `MAX_CHAT_REQUEST_BODY_BYTES` | about 27.7 MiB | Body limit of `POST /api/chat/send` (20 MiB of attachments inflated 4/3 by base64, plus 1 MiB); applies only with a validly signed access token, otherwise the limit stays 1 MiB |
+| Document upload body limit | `MAX_FILES_PER_UPLOAD` × `MAX_FILE_SIZE_MB` MiB + 1 MiB | Body limit of `POST /api/documents/upload` (101 MiB with the template's `MAX_FILE_SIZE_MB=10`); likewise raised only for a valid access token |
+| `MAX_FILES_PER_UPLOAD` | 10 | Files per upload |
+| `MAX_CHAT_MESSAGE_CHARS` | 20,000 characters | Length of one chat message; longer messages get `422` |
+| `MAX_CHAT_ATTACHMENTS` | 5 | Attachments per message |
+| `MAX_CHAT_ATTACHMENT_BYTES` | 15 MiB | Decoded size of one attachment; an attachment's `data_url` must be a base64 `data:` URL, and remote URLs are rejected |
+| `MAX_CHAT_ATTACHMENTS_TOTAL_BYTES` | 20 MiB | Decoded size of all attachments in one message |
+| `MAX_ATTACHMENT_TEXT_CHARS` | 50,000 characters | Text per attachment placed into the model context (the rest is truncated), and the length limit of an attachment's `content` field in the request |
+| `MAX_USER_ATTACHMENT_STORAGE_BYTES` | 200 MiB | Attachment storage per user in the database; beyond it, sending a message returns `413`. Old attachments are never purged automatically; deleting conversations with attachments frees the space |
+| `MAX_CONCURRENT_CHAT_STREAMS_PER_USER` | 2 | Answer streams one user may run at once; more get `429` |
+| `MAX_LISTED_CONVERSATIONS` (`services/chat_service.py`) | 200 | `GET /api/chat/conversations` lists only the 200 most recently updated conversations |
+| `LIST_PREVIEW_MESSAGES` (`services/chat_service.py`) | 5 | Latest messages included with each conversation in the list (without attachment bodies) |
+| `MAX_CONVERSATION_MESSAGES` (`services/chat_service.py`) | 500 | Latest messages returned when reading one conversation |
+
+**Tools and outbound requests**
+
+| Constant | Value | Description |
+|---|---|---|
+| `MAX_TOOL_RESULT_CHARS` | 20,000 characters | Each tool call's result is truncated to this length before it enters the model context |
+| `MAX_TEXT_CLEANUP_CHARS` | 2,000,000 characters | HTML is truncated to this length before `web_fetch` extracts text |
+| `MAX_DATE_RANGE_CHARS`, `MAX_TARGET_DATES`, `MAX_FILTER_RECORDS` (`rag/tools.py`) | 200 characters, 93 days, 50 records | Length of `filter_and_count_records`' `date_range`, the number of dates it may expand to, and the records returned (a larger `limit` is clamped to 50) |
+| `MAX_API_TOOL_RESPONSE_BYTES` (`api/api_tools.py`) | 1 MiB | Response body limit of custom API tools; reading stops and the call returns `502` |
+| `MAX_MCP_HTTP_RESPONSE_BYTES` (`services/mcp_service.py`) | 4 MiB | Limit for one response from an HTTP MCP server |
+| `MAX_CONCURRENT_STDIO_PROCESSES` (`services/mcp_service.py`) | 4 | `stdio` MCP subprocesses alive at once |
+| `APPROVAL_TIMEOUT_SECONDS` (`rag/tool_approval.py`) | 300 seconds | How long a tool call waits for the user's approval; a timeout counts as a denial |
+| `DNS_RESOLVE_TIMEOUT_SECONDS`, `DNS_RESOLVER_MAX_WORKERS` (`core/ssrf_protection.py`) | 5 seconds, 4 threads | SSRF validation resolves DNS in a dedicated thread pool; a timeout counts as unresolvable |
+| `LLM_POOL_ACQUIRE_TIMEOUT_SECONDS` (`core/llm_client.py`) | 15 seconds | Limit for waiting on an LLM connection pool slot, separate from `LLM_TIMEOUT`, so a saturated pool fails fast |
+| `REMOTE_MODELS_CACHE_SECONDS` (`api/tags.py`) | 30 seconds | Cache lifetime of the remote model list (failures included) |
+
+**Document parsing**
+
+| Constant | Value | Description |
+|---|---|---|
+| `MAX_PDF_OCR_PAGES` | 20 pages | Pages OCR'd for a PDF chat attachment; documents uploaded by admins to the knowledge base are not limited |
+| `MAX_OCR_PIXELS` | 25,000,000 pixels | Pixel budget for rasterizing one page for OCR; larger pages are rendered at a lower resolution |
+| `MAX_OOXML_UNCOMPRESSED_BYTES` | 200 MiB | Total uncompressed size of a `.docx`, `.pptx`, or `.xlsx`; larger files are rejected before parsing |
+| `MAX_OOXML_COMPRESSION_RATIO` | 100 | Maximum compression ratio for OOXML members larger than 10 MiB uncompressed |
+
+**Accounts, logs, and detection**
+
+| Constant | Value | Description |
+|---|---|---|
+| `MAX_PASSWORD_CHARS` | 256 characters | Password length limit for registration, login, and password changes (Argon2 cost grows with length) |
+| `MAX_LOGIN_IDENTIFIER_CHARS` | 254 characters | Length limit of the user name or email used to log in |
+| `MAX_CONCURRENT_PASSWORD_HASHES` | 4 | Argon2 hashes and verifications running at once, in worker threads |
+| `MAX_REVOKED_TOKENS` | 100,000 | Entries in the in-process token revocation list; when full, the entries expiring soonest are evicted first |
+| `MAX_LOG_FIELD_CHARS` | 200 characters | Length limit of one string field in the security log (such as the account name or User-Agent) |
+| `LOG_FILE_MAX_BYTES`, `LOG_FILE_BACKUP_COUNT` | 10 MiB, 5 files | Rotation size and retained backups of `app.log` and `security.log` |
+| `MAX_EVENTS_PER_ADDRESS` | 200 | Events kept per address by the intrusion detector for event types without a rule |
+| `MAX_TRACKED_ADDRESSES` | 10,000 | Addresses the intrusion detector tracks at once; the least recently active are evicted first |
 
 ## Reserved settings
 
-These settings can appear in `.env`, but no code path uses them in 3.0.0:
+These settings can appear in `.env`, but no code path uses them in 4.0.0:
 
 | Variable | Code default | Description |
 |---|---|---|
@@ -261,6 +330,7 @@ Ignored if left in `.env`; safe to delete:
 
 | Variable | Removed in | Replacement |
 |---|---|---|
+| `JWT_SECRET_KEY`, `JWT_ALGORITHM` | 4.0.0 | Tokens are always signed RS256 with the RSA keys in `backend/keys/`; the HS256 fallback is gone |
 | `HYBRID_ALPHA`, `NORMALIZATION` | 3.0.0 | Standard RRF fusion with `RRF_K` |
 | `FINAL_THRESHOLD` | 3.0.0 | `RERANK_RELEVANCE_THRESHOLD` |
 | `DOCUMENTS_PATH` | 3.0.0 | Chunks live in the `rag_chunks` table |
@@ -326,3 +396,5 @@ The frontend works without a `.env`: the API base defaults to the relative path 
 | `GENERATE_SOURCEMAP` | emitted | Emit source maps in builds; only `false` turns them off |
 
 `frontend/.env.example` uses the direct mode: `VITE_API_BASE=http://localhost:8001` with `PORT=3001`, an origin already in the backend's default `ALLOWED_ORIGINS`.
+
+The Vite dev and preview servers always listen on `localhost` only (set in `frontend/vite.config.js`, not by an environment variable) and send `X-Frame-Options: DENY` and `Content-Security-Policy: frame-ancestors 'none'; img-src 'self' data: blob:`; `/__open-in-editor` answers loopback clients only. To serve devices on the LAN, build with `bun run build`, serve the output from a real web server, and send the same anti-framing headers there.

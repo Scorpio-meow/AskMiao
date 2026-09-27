@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, status, Request, Response
 from fastapi.security import HTTPBearer
 from sqlalchemy.orm import Session
 from typing import List
+import asyncio
 import logging
 import os
 logger = logging.getLogger(__name__)
@@ -21,14 +22,20 @@ from app.core.jwt_auth import (
     create_token_pair, verify_refresh_token,
     get_current_active_user, get_current_admin_user,
     validate_password_strength, sanitize_username,
-    PasswordManager, revoke_token
+    PasswordManager, revoke_token, resolve_token_user
 )
 from app.core.config import settings
+from app.core.limits import MAX_CONCURRENT_PASSWORD_HASHES
 from app.core.security_logging import log_security_event
 REFRESH_COOKIE_NAME = "refresh_token"
 REFRESH_COOKIE_PATH = "/api/auth"
 router = APIRouter(prefix="/api/auth", tags=["Authentication"])
 security = HTTPBearer()
+# Argon2 雜湊與驗證刻意耗費 CPU 與記憶體：移到執行緒，並限制同時進行的數量
+_password_hash_slots = asyncio.Semaphore(MAX_CONCURRENT_PASSWORD_HASHES)
+async def _run_password_work(func, *args):
+    async with _password_hash_slots:
+        return await asyncio.to_thread(func, *args)
 def _get_cookie_secure() -> bool:
     if settings.COOKIE_SECURE is not None:
         return settings.COOKIE_SECURE
@@ -77,13 +84,15 @@ async def register(
         )
     
     try:
-        new_user = create_user(
-            db=db,
-            username=username,
-            email=user_data.email,
-            password=user_data.password,
-            role="user",
-            is_admin=False
+        new_user = await _run_password_work(
+            lambda: create_user(
+                db=db,
+                username=username,
+                email=user_data.email,
+                password=user_data.password,
+                role="user",
+                is_admin=False
+            )
         )
         
         tokens = create_token_pair({
@@ -125,7 +134,7 @@ async def login(
     response: Response,
     db: Session = Depends(get_db)
 ):
-    user = authenticate_user(db, credentials.username, credentials.password)
+    user = await _run_password_work(authenticate_user, db, credentials.username, credentials.password)
     
     if not user:
         log_security_event("LOGIN_FAILED", request=request, details={
@@ -179,21 +188,10 @@ async def refresh_token(
             )
         
         payload = verify_refresh_token(refresh_token_value)
-        
-        user_id = payload.get("user_id")
-        if not user_id:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="重新整理權杖無效"
-            )
-        
-        user = get_user_by_id(db, user_id)
-        if not user:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="重新整理權杖無效"
-            )
-        
+        user = resolve_token_user(db, payload)
+        # 重新整理權杖只能使用一次，換發後立即撤銷舊權杖
+        revoke_token(refresh_token_value)
+
         tokens = create_token_pair({
             "user_id": user.id,
             "username": user.username,
@@ -266,8 +264,7 @@ async def update_current_user_profile(
                 detail="請提供目前的密碼"
             )
         
-        pwd_mgr = PasswordManager()
-        if not pwd_mgr.verify_password(user_update.current_password, user_obj.hashed_password):
+        if not await _run_password_work(PasswordManager.verify_password, user_update.current_password, user_obj.hashed_password):
             log_security_event("PASSWORD_CHANGE_FAILED", request=request, user_id=user_obj.id, details={
                 "reason": "當前密碼錯誤"
             })
@@ -283,7 +280,7 @@ async def update_current_user_profile(
                 detail=error_msg
             )
         
-        update_user_password(db, user_obj.id, user_update.new_password)
+        await _run_password_work(update_user_password, db, user_obj.id, user_update.new_password)
         log_security_event("PASSWORD_CHANGED", request=request, user_id=user_obj.id)
     
     user_obj = get_user_by_id(db, user_obj.id)
@@ -303,8 +300,7 @@ async def change_password(
             detail="使用者不存在"
         )
     
-    pwd_mgr = PasswordManager()
-    if not pwd_mgr.verify_password(password_data.current_password, user_obj.hashed_password):
+    if not await _run_password_work(PasswordManager.verify_password, password_data.current_password, user_obj.hashed_password):
         log_security_event("PASSWORD_CHANGE_FAILED", request=request, user_id=user_obj.id, details={
             "reason": "當前密碼錯誤"
         })
@@ -320,7 +316,7 @@ async def change_password(
             detail=error_msg
         )
     
-    update_user_password(db, user_obj.id, password_data.new_password)
+    await _run_password_work(update_user_password, db, user_obj.id, password_data.new_password)
     log_security_event("PASSWORD_CHANGED", request=request, user_id=user_obj.id)
     
     return MessageResponse(message="密碼修改成功")

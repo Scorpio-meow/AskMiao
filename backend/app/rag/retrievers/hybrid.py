@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 from typing import Callable, Iterable, List, Tuple, Dict, Optional, Sequence
 import re
+import threading
 import time
 import logging
 import numpy as np
@@ -109,6 +110,8 @@ class HybridRetriever:
         self.top_k = top_k
         self.rrf_k = rrf_k
         self.rerank_top_k = rerank_top_k
+        # CrossEncoder 的 fast tokenizer 不能被多個執行緒同時使用；重排用自己的鎖，不占用索引鎖
+        self._rerank_lock = threading.Lock()
         self.final_k = final_k
         self.rerank_weight = rerank_weight
         self.relevance_threshold = relevance_threshold
@@ -150,7 +153,9 @@ class HybridRetriever:
         return fused[: self.rerank_top_k]
 
     def _relevance(self, query: str, documents: List[Document]) -> List[float]:
-        scores = np.asarray(self.cross_encoder.predict([(query, doc.page_content) for doc in documents]), dtype=float)
+        with self._rerank_lock:
+            predicted = self.cross_encoder.predict([(query, doc.page_content) for doc in documents])
+        scores = np.asarray(predicted, dtype=float)
         if not self.reranker_outputs_probability:
             scores = 1.0 / (1.0 + np.exp(-np.clip(scores, -20.0, 20.0)))
         return scores.tolist()
@@ -162,6 +167,8 @@ class HybridRetriever:
             exact = find_exact_matches(
                 query, (doc for doc in self.vector_store.chunks.values() if allowed is None or allowed(doc))
             )
+            # 精確比對候選與融合軌一樣以 RERANK_TOP_K 為上限（分數高者優先），重排成本不隨語料規模成長
+            exact = sorted(exact, key=lambda item: item[1], reverse=True)[: self.rerank_top_k]
             fused = self.hybrid_search(query, allowed)
 
             exact_ids = {doc.metadata["chunk_id"] for doc, _ in exact}
@@ -170,22 +177,23 @@ class HybridRetriever:
             # 精確比對以其比對分數、融合結果以 RRF 分數 / 最高分作為候選原分數，兩者同在 0~1
             candidates = [(doc, score, score >= PINNED_MATCH_SCORE) for doc, score in exact]
             candidates += [(doc, score / max_fused, False) for doc, score in fused]
-            if not candidates:
-                return []
+        if not candidates:
+            return []
 
-            started = time.time()
-            relevances = self._relevance(query, [doc for doc, _, _ in candidates])
-            w = min(max(self.rerank_weight, 0.0), 1.0)
-            ranked = [
-                RetrievedChunk(document=doc, score=float(w * rel + (1 - w) * base), relevance=float(rel), pinned=pinned)
-                for (doc, base, pinned), rel in zip(candidates, relevances)
-            ]
-            ranked.sort(key=lambda r: (r.pinned, r.score), reverse=True)
-            logger.info(
-                f"Retrieval query='{query}' exact={len(exact)} fused={len(fused)} "
-                f"reranked={len(ranked)} in {time.time() - started:.2f}s"
-            )
-            return ranked
+        # 重排只讀取已取出的候選片段，不需持有索引鎖，避免阻擋其他查詢與索引寫入
+        started = time.time()
+        relevances = self._relevance(query, [doc for doc, _, _ in candidates])
+        w = min(max(self.rerank_weight, 0.0), 1.0)
+        ranked = [
+            RetrievedChunk(document=doc, score=float(w * rel + (1 - w) * base), relevance=float(rel), pinned=pinned)
+            for (doc, base, pinned), rel in zip(candidates, relevances)
+        ]
+        ranked.sort(key=lambda r: (r.pinned, r.score), reverse=True)
+        logger.info(
+            f"Retrieval query='{query}' exact={len(exact)} fused={len(fused)} "
+            f"reranked={len(ranked)} in {time.time() - started:.2f}s"
+        )
+        return ranked
 
     def select(self, ranked: List[RetrievedChunk], relevance_threshold: float) -> List[RetrievedChunk]:
         """套用相關性門檻（精確比對到網址、貼文 ID、日期者不受限制），取前 FINAL_K 筆"""

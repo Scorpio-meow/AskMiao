@@ -70,3 +70,9 @@
 ## 後續修訂 (Amendments)
 
 - **2026-09-25｜SSRF 拒絕原因只寫入日誌**：拒絕原因可能含伺服器端 DNS 解析出的內網 IP 或轉址目標，不只描述管理員填入的網址（CodeQL `py/stack-trace-exposure`）。MCP 伺服器被拒絕時，`last_error` 與探索端點的 400 回應改為註明遭 SSRF 防護拒絕並附錯誤代碼，完整原因只寫入伺服器日誌。
+- **2026-09-27｜移除 `mcp_fetch` 範本**：`uvx mcp-server-fetch` 以 `stdio` 子行程自行連外，完全繞過 `web_fetch` 的 SSRF 驗證、`WEB_FETCH_ALLOWED_DOMAINS` 與網址來源限制，且子行程無法套用本 ADR 第 3 點的逐跳驗證。範本清單不再提供網頁擷取類伺服器；已建立的同名伺服器不會被刪除，由管理員自行評估。
+- **2026-09-27｜檔案系統範本改用專屬沙箱**：`mcp_filesystem` 原本以相對路徑 `./data` 為根目錄，實際指向後端的資料目錄（含以 pickle 載入的索引中繼資料與上傳原檔）。範本改為絕對路徑 `backend/mcp_filesystem_sandbox`（呼叫範本清單時自動建立），並釘選 `@modelcontextprotocol/server-filesystem@2026.8.31`，避免每次執行時解析到未審閱的新版。
+- **2026-09-27｜終止整個子行程樹並限制數量**：`npx`、`uvx` 會再啟動孫行程，原本只終止直接子行程會留下孤兒行程。`stdio` 子行程改為自成一個程序群組（Windows 為新的 process group，其他平台為新的 session），關閉時以 `taskkill /T /F` 或對整個群組送 `SIGTERM`、`SIGKILL` 終止；同時最多 4 個子行程，其餘排隊等候。
+- **2026-09-27｜SSRF 驗證固定連線 IP**：第 3 點的 request hook 驗證與實際連線各做一次 DNS 解析，可被 DNS rebinding 繞過。自訂 API 工具與 MCP HTTP 傳輸改用 `SSRFSafeTransport`，每一跳驗證後把連線固定在核可的 IP（`Host` 與 TLS SNI 仍用原主機名稱）；這些請求因此不再使用 `HTTP_PROXY`、`HTTPS_PROXY`。
+- **2026-09-27｜降權即時生效**：負面影響中的「降權有延遲」不再成立。每次請求都依權杖的 `sub` 從資料庫讀取帳號，`is_admin` 取自資料庫，停用或刪除帳號後既有權杖立即失效。
+- **2026-09-27｜呼叫前核准**：管理員啟用的工具仍可能被提示注入誘導執行有副作用的呼叫。自訂 API 工具與 MCP 伺服器新增 `requires_approval` 旗標，Agent 呼叫前須由發問的使用者在對話中核准，見 [ADR-0006](./0006-tool-call-approval.md)。

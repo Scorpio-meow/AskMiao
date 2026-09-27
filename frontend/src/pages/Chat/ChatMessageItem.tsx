@@ -6,6 +6,7 @@ import { ChatMessageItemProps } from './types';
 import ThinkBlock from './ThinkBlock';
 import SourceBadges from './SourceBadges';
 import ResearchTraceBlock from './ResearchTraceBlock';
+import ToolApprovalCard from './ToolApprovalCard';
 import { Avatar, Tooltip, IconButton, Spinner, Icon, Button, useModalDialog } from '../../components/ui';
 import styles from './ChatMessageItem.module.css';
 const SOCIAL_PLATFORM_DOMAINS = ['threads.com', 'threads.net', 'instagram.com', 'twitter.com', 'x.com'];
@@ -290,6 +291,9 @@ export const ChatMessageItem: React.FC<ChatMessageItemProps> = ({
               isStreaming={isStreaming}
             />
           )}
+          {!isUser && isStreaming && message.pending_approval && (
+            <ToolApprovalCard key={message.pending_approval.approval_id} approval={message.pending_approval} />
+          )}
           {!isUser && thinkContent && (
             <ThinkBlock
               thinkContent={thinkContent}
@@ -328,6 +332,27 @@ export const ChatMessageItem: React.FC<ChatMessageItemProps> = ({
                           <span className={styles.externalIcon} aria-hidden="true">↗</span>
                         )}
                         {isExternal && <span className="sr-only">（在新分頁開啟）</span>}
+                      </a>
+                    );
+                  },
+                  // 模型回答可能受外部資料影響，圖片若自動載入會在不需點擊的情況下把網址中的資料送往外部主機；
+                  // 一律改成需使用者點擊的連結
+                  img: ({ node, src, alt }) => {
+                    const label = `圖片：${alt || src || '（無說明）'}`;
+                    const isExternal = typeof src === 'string' && /^https?:\/\//i.test(src);
+                    if (!isExternal) return <span>{label}</span>;
+                    return (
+                      <a
+                        href={src}
+                        target="_blank"
+                        rel="noopener noreferrer nofollow"
+                        referrerPolicy="no-referrer"
+                        className={styles.markdownLink}
+                        title={`在新分頁開啟 ${src}`}
+                      >
+                        {label}
+                        <span className={styles.externalIcon} aria-hidden="true">↗</span>
+                        <span className="sr-only">（在新分頁開啟）</span>
                       </a>
                     );
                   },

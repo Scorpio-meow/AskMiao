@@ -1,0 +1,196 @@
+"""
+工具外送請求的安全邊界
+驗證：
+1. SSRF 檢查後連線固定到核可的 IP（DNS rebinding），DNS 解析有逾時
+2. 自訂 API 工具：路徑參數編碼、跨來源轉址不轉送憑證、回應與網址中的憑證遮蔽、回應大小上限
+3. web_fetch 與 SSRF 拒絕訊息不帶出伺服器端 DNS 解析結果
+4. HTTP MCP 回應大小上限
+5. MCP 範本不含網頁擷取、檔案系統範本不與資料目錄重疊且釘選版本
+"""
+import ipaddress
+import os
+import time
+from unittest.mock import AsyncMock, patch
+
+import httpx
+import pytest
+
+from app.api.api_tools import MAX_API_TOOL_RESPONSE_BYTES, execute_http_api_tool
+from app.core import ssrf_protection
+from app.core.config import settings
+from app.core.ssrf_protection import safe_fetch_text
+from app.rag.tools import ResearchToolRegistry
+from app.services import mcp_service
+from app.services.mcp_service import McpHttpClient, McpManager
+
+PUBLIC_IP = ipaddress.ip_address("93.184.216.34")
+OTHER_PUBLIC_IP = ipaddress.ip_address("93.184.216.35")
+
+
+@pytest.fixture
+def public_dns():
+    with patch("app.core.ssrf_protection.resolve_hostname", new_callable=AsyncMock) as mock_dns:
+        mock_dns.return_value = [PUBLIC_IP]
+        yield mock_dns
+
+
+@pytest.fixture
+def upstream(monkeypatch):
+    """以函式決定上游回應，並記錄實際送到傳輸層的請求"""
+    state = {"sent": [], "handler": None}
+
+    async def fake_send(self, request):
+        state["sent"].append(request)
+        return state["handler"](request)
+
+    monkeypatch.setattr(httpx.AsyncHTTPTransport, "handle_async_request", fake_send)
+    return state
+
+
+@pytest.mark.anyio
+async def test_connection_is_pinned_to_validated_ip(upstream):
+    # 第一次解析得到公開 IP，之後改解析到內網（DNS rebinding）；連線必須用檢查時核可的 IP
+    answers = [[PUBLIC_IP], [ipaddress.ip_address("10.0.0.5")]]
+    upstream["handler"] = lambda request: httpx.Response(200, text="ok", request=request)
+    with patch("app.core.ssrf_protection.resolve_hostname", new_callable=AsyncMock) as mock_dns:
+        mock_dns.side_effect = lambda *args, **kwargs: answers.pop(0)
+        async with httpx.AsyncClient(transport=ssrf_protection.SSRFSafeTransport()) as client:
+            response = await client.get("https://rebind.example.com/page")
+    assert response.text == "ok"
+    request = upstream["sent"][0]
+    assert request.url.host == str(PUBLIC_IP)
+    assert request.headers["host"] == "rebind.example.com"
+    assert request.extensions["sni_hostname"] == "rebind.example.com"
+
+
+@pytest.mark.anyio
+async def test_safe_fetch_text_never_connects_to_rebound_address(upstream):
+    answers = [[PUBLIC_IP], [ipaddress.ip_address("10.0.0.5")]]
+    upstream["handler"] = lambda request: httpx.Response(200, text="ok", request=request)
+    with patch("app.core.ssrf_protection.resolve_hostname", new_callable=AsyncMock) as mock_dns:
+        mock_dns.side_effect = lambda *args, **kwargs: answers.pop(0) if answers else [ipaddress.ip_address("10.0.0.5")]
+        with pytest.raises(ssrf_protection.SSRFProtectionError):
+            await safe_fetch_text("https://rebind.example.com/page")
+    assert upstream["sent"] == []
+
+
+@pytest.mark.anyio
+async def test_dns_resolution_times_out(monkeypatch):
+    monkeypatch.setattr(ssrf_protection, "DNS_RESOLVE_TIMEOUT_SECONDS", 0.2)
+    monkeypatch.setattr(ssrf_protection, "_resolve_hostname_sync", lambda host, port: time.sleep(1) or [PUBLIC_IP])
+    started = time.monotonic()
+    assert await ssrf_protection.resolve_hostname("slow.example.com") == []
+    assert time.monotonic() - started < 0.9
+
+
+@pytest.mark.anyio
+async def test_path_parameters_cannot_change_request_target(public_dns, upstream):
+    upstream["handler"] = lambda request: httpx.Response(200, json={}, request=request)
+    tool = {"name": "pets", "method": "GET", "url": "https://api.example.com/v1/pets/{petId}", "param_locations": {"petId": "path"}}
+    await execute_http_api_tool(tool, {"petId": "../../admin/users?all=1#x"})
+    assert upstream["sent"][0].url.raw_path == b"/v1/pets/..%2F..%2Fadmin%2Fusers%3Fall%3D1%23x"
+
+    result = await execute_http_api_tool(tool, {"petId": ".."})
+    assert result["status_code"] == 400
+    assert len(upstream["sent"]) == 1
+
+
+@pytest.mark.anyio
+async def test_cross_origin_redirect_drops_credentials(public_dns, upstream):
+    def handler(request):
+        if request.headers["host"] == "api.example.com":
+            return httpx.Response(302, headers={"Location": "https://collector.example.net/steal"}, request=request)
+        return httpx.Response(200, json={"ok": True}, request=request)
+
+    upstream["handler"] = handler
+    tool = {
+        "name": "redirecting",
+        "method": "GET",
+        "url": "https://api.example.com/data",
+        "headers": {"X-Tenant-Secret": "tenant-secret-value"},
+        "auth_type": "api_key",
+        "auth_config": {"key_name": "X-API-Key", "key_value": "admin-api-key-value", "key_in": "header"},
+    }
+    result = await execute_http_api_tool(tool, {})
+    assert result["is_success"] is True
+    first, second = upstream["sent"]
+    assert first.headers["x-api-key"] == "admin-api-key-value"
+    assert first.headers["x-tenant-secret"] == "tenant-secret-value"
+    assert second.headers["host"] == "collector.example.net"
+    assert "x-api-key" not in second.headers
+    assert "x-tenant-secret" not in second.headers
+
+
+@pytest.mark.anyio
+async def test_credentials_are_redacted_from_result(public_dns, upstream):
+    def echo(request):
+        return httpx.Response(
+            200,
+            json={"echo_url": str(request.url), "echo_auth": request.headers.get("authorization"), "api_key": request.url.params.get("key")},
+            request=request,
+        )
+
+    upstream["handler"] = echo
+    query_tool = {
+        "name": "query_key",
+        "method": "GET",
+        "url": "https://api.example.com/search",
+        "auth_type": "api_key",
+        "auth_config": {"key_name": "key", "key_value": "query-secret-123", "key_in": "query"},
+    }
+    result = await execute_http_api_tool(query_tool, {"q": "cats"})
+    assert "query-secret-123" not in str(result)
+    assert "key=" in result["url"]
+    assert upstream["sent"][0].url.params["key"] == "query-secret-123"
+
+    bearer_tool = {
+        "name": "bearer",
+        "method": "GET",
+        "url": "https://api.example.com/me",
+        "auth_type": "bearer",
+        "auth_config": {"token": "bearer-secret-456"},
+    }
+    result = await execute_http_api_tool(bearer_tool, {})
+    assert "bearer-secret-456" not in str(result)
+
+
+@pytest.mark.anyio
+async def test_oversized_response_is_not_buffered(public_dns, upstream):
+    upstream["handler"] = lambda request: httpx.Response(
+        200, content=b"x" * (MAX_API_TOOL_RESPONSE_BYTES + 1), headers={"content-type": "text/plain"}, request=request
+    )
+    result = await execute_http_api_tool({"name": "big", "method": "GET", "url": "https://api.example.com/big"}, {})
+    assert result["is_success"] is False
+    assert result["status_code"] == 502
+    assert "data" not in result
+
+
+@pytest.mark.anyio
+async def test_mcp_http_response_size_is_bounded(public_dns, upstream, monkeypatch):
+    monkeypatch.setattr(mcp_service, "MAX_MCP_HTTP_RESPONSE_BYTES", 1024)
+    upstream["handler"] = lambda request: httpx.Response(200, content=b"{" + b" " * 2048 + b"}", request=request)
+    with pytest.raises(RuntimeError, match="上限"):
+        await McpHttpClient(url="https://mcp.example.com/rpc").list_tools()
+
+
+@pytest.mark.anyio
+async def test_web_fetch_rejection_hides_resolved_address(monkeypatch):
+    monkeypatch.setattr(settings, "OLLAMA_API_KEY", None)
+    with patch("app.core.ssrf_protection.resolve_hostname", new_callable=AsyncMock) as mock_dns:
+        mock_dns.return_value = [ipaddress.ip_address("10.20.30.40")]
+        result = await ResearchToolRegistry().web_fetch("https://internal-alias.example.com/")
+    assert "SSRF" in result["error"]
+    assert "10.20.30.40" not in str(result)
+
+
+def test_mcp_presets_are_constrained():
+    presets = {preset["name"]: preset for preset in McpManager.get_preset_servers()}
+    assert "mcp_fetch" not in presets
+    filesystem_args = presets["mcp_filesystem"]["args"]
+    package = next(arg for arg in filesystem_args if "server-filesystem" in arg)
+    assert package.rsplit("@", 1)[1][0].isdigit()
+    root = os.path.realpath(filesystem_args[-1])
+    data_dir = os.path.realpath(settings.DATA_DIR)
+    assert os.path.isabs(filesystem_args[-1])
+    assert not root.startswith(data_dir + os.sep) and root != data_dir
+    assert not data_dir.startswith(root + os.sep)

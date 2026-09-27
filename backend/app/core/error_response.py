@@ -39,6 +39,14 @@ def format_client_error(error_id: str) -> str:
     return f"{GENERIC_ERROR_MESSAGE}（錯誤代碼：{error_id}）"
 
 
+def format_ssrf_rejection(error_id: str) -> str:
+    """SSRF 拒絕原因可能含伺服器端 DNS 解析出的內網 IP 或轉址目標，只寫入日誌；對外只說明遭拒並附錯誤代碼。"""
+    return (
+        "SSRF 防護拒絕連線：網址或其轉址目標未通過安全檢查，完整原因記錄於伺服器日誌"
+        f"（錯誤代碼：{error_id}）"
+    )
+
+
 def build_error_payload(
     logger: logging.Logger,
     context: str,

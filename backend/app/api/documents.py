@@ -5,6 +5,8 @@ from app.models import Document as DBDocument
 from app.core.rag_manager import get_rag_system
 from app.core.user_context import get_current_user_id, get_default_user_id
 from app.core.jwt_auth import get_current_admin_user
+from app.core.limits import MAX_FILES_PER_UPLOAD
+from app.rag.tools import invalidate_knowledge_base_description
 from app.services.document_processor import DocumentProcessor
 from app.core.input_validator import InputValidator
 from pydantic import BaseModel
@@ -21,8 +23,9 @@ router = APIRouter()
 MAX_FILE_SIZE_MB = settings.MAX_FILE_SIZE_MB
 UPLOAD_DIR = settings.UPLOAD_DIR
 ALLOWED_EXTENSIONS = DocumentProcessor.SUPPORTED_EXTENSIONS
-QA_PATTERN = re.compile(r"(?:^|\n)\s*[QＱ]\s*[：:]\s*(.*?)\s*[\r\n]+\s*[AＡ]\s*[：:]\s*(.*?)(?=(?:\n\s*[QＱ]\s*[：:]|\Z))",
-                        re.DOTALL)
+# 逐行判斷 Q／A 開頭；舊的跨行 DOTALL 正規式遇到大量沒有對應 A： 的 Q： 會呈超線性回溯
+Q_LINE_PATTERN = re.compile(r"\s*[QＱ]\s*[：:]\s*(.*)")
+A_LINE_PATTERN = re.compile(r"\s*[AＡ]\s*[：:]\s*(.*)")
 def validate_filename(filename: str) -> str:
     dangerous_chars = ['/', '\\', '..', '<', '>', ':', '"', '|', '?', '*', '\0']
     for char in dangerous_chars:
@@ -36,12 +39,36 @@ def validate_filename(filename: str) -> str:
         raise ValueError("檔名過長")
     return filename.replace(" ", "_")
 def split_faq(text: str):
+    """把「Q：…／A：…」格式的文字切成問答對。問題延續到第一個 A： 行，答案延續到下一個 Q： 行；線性時間"""
     pairs = []
-    for m in QA_PATTERN.finditer(text):
-        q = m.group(1).strip()
-        a = m.group(2).strip()
-        if q and a:
-            pairs.append((q, a))
+    question = None
+    answer = None
+
+    def flush():
+        if question is not None and answer is not None:
+            q = "\n".join(question).strip()
+            a = "\n".join(answer).strip()
+            if q and a:
+                pairs.append((q, a))
+
+    for line in text.splitlines():
+        q_match = Q_LINE_PATTERN.match(line)
+        if q_match and (question is None or answer is not None):
+            flush()
+            question = [q_match.group(1)]
+            answer = None
+            continue
+        if question is None:
+            continue
+        if answer is None:
+            a_match = A_LINE_PATTERN.match(line)
+            if a_match:
+                answer = [a_match.group(1)]
+            else:
+                question.append(line)
+        else:
+            answer.append(line)
+    flush()
     return pairs
 def process_document_for_rag(content: str, metadata: dict, rag_system) -> tuple:
     try:
@@ -98,7 +125,6 @@ async def upload_document(
 ):
     if not file or len(file) == 0:
         raise HTTPException(status_code=400, detail="請上傳至少一個文件")
-    MAX_FILES_PER_UPLOAD = 10
     if len(file) > MAX_FILES_PER_UPLOAD:
         raise HTTPException(
             status_code=400, 
@@ -226,6 +252,7 @@ async def upload_document(
             )
             db.add(document)
             db.commit()
+            invalidate_knowledge_base_description()
             db.refresh(document)
             rag_system = get_rag_system()
             base_metadata = {
@@ -243,6 +270,7 @@ async def upload_document(
             added_chunks = await asyncio.to_thread(rag_system.add_documents, langchain_docs)
             document.is_processed = True
             db.commit()
+            invalidate_knowledge_base_description()
             logger.info(f"文件 {safe_filename} 成功入庫並完成向量索引 (共 {added_chunks} 塊)")
             results.append({
                 "filename": safe_filename,
@@ -283,6 +311,7 @@ async def get_documents(
                 updated = True
         if updated:
             db.commit()
+            invalidate_knowledge_base_description()
         return documents
     except Exception:
         logger.exception("獲取文件列表失敗")
@@ -305,6 +334,7 @@ async def regenerate_document_summary(
     document.description = new_desc
     db.add(document)
     db.commit()
+    invalidate_knowledge_base_description()
     db.refresh(document)
     return {
         "message": "文件大綱與摘要重新生成成功",
@@ -325,6 +355,7 @@ async def update_document_summary(
     document.description = payload.description.strip()
     db.add(document)
     db.commit()
+    invalidate_knowledge_base_description()
     db.refresh(document)
     return {
         "message": "文件大綱更新成功",
@@ -340,6 +371,12 @@ async def delete_document(
     document = db.query(DBDocument).filter(DBDocument.id == document_id).first()
     if not document:
         raise HTTPException(status_code=404, detail="文件不存在")
+    filename = document.filename
+    # 先刪除文件列再移除索引片段：進行中的索引寫入持鎖後會確認文件仍存在，
+    # 順序反過來的話，刪除片段之後才完成的寫入會把片段寫回知識庫
+    db.delete(document)
+    db.commit()
+    invalidate_knowledge_base_description()
     try:
         rag_system = get_rag_system()
         await asyncio.to_thread(rag_system.remove_document_by_id, document_id)
@@ -347,13 +384,11 @@ async def delete_document(
         logger.warning("Failed to remove document from RAG system: %s", str(e))
     try:
         upload_dir = UPLOAD_DIR
-        file_path = os.path.join(upload_dir, document.filename)
+        file_path = os.path.join(upload_dir, filename)
         if os.path.exists(file_path):
             os.remove(file_path)
     except Exception as e:
         logger.warning("Failed to remove physical file: %s", str(e))
-    db.delete(document)
-    db.commit()
     return {"message": "文件刪除成功"}
 @router.post("/rebuild-index")
 async def rebuild_index(
@@ -399,6 +434,7 @@ async def rebuild_index(
                 )
                 db.add(doc)
                 db.commit()
+                invalidate_knowledge_base_description()
                 base_metadata = {
                     "source": doc.filename,
                     "document_id": doc.id,

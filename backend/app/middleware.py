@@ -2,6 +2,7 @@ import logging
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.core.config import settings
+from app.core.body_limit import RequestBodyLimitMiddleware
 from app.core.security import (
     SecurityHeadersMiddleware, 
     RateLimitMiddleware
@@ -31,6 +32,9 @@ def setup_middlewares(app: FastAPI) -> None:
     )
     logger.info(f"CORS 白名單: {allowed_origins}")
     
+    # 最後加入的中介層最先執行：本文上限要在任何讀取本文的處理之前生效
+    app.add_middleware(RequestBodyLimitMiddleware)
+
     if settings.ENVIRONMENT == "production":
         logger.info("CORS 生產模式：嚴格白名單")
     else:

@@ -162,6 +162,7 @@ export function useChat(onError: (message: string) => void) {
     const markInterrupted = () => {
       updateBotMessage(m => ({
         ...m,
+        pending_approval: null,
         error: STREAM_INTERRUPTED_MESSAGE,
         research_trace: settleRunningSteps(m.research_trace)
       }));
@@ -200,6 +201,12 @@ export function useChat(onError: (message: string) => void) {
               }
               return { ...m, research_trace: updated };
             });
+          } else if (ev.event === 'approval_required') {
+            updateBotMessage(m => ({ ...m, pending_approval: ev.data }));
+          } else if (ev.event === 'approval_resolved') {
+            updateBotMessage(m => (
+              m.pending_approval?.approval_id === ev.data?.approval_id ? { ...m, pending_approval: null } : m
+            ));
           } else if (ev.event === 'token') {
             const token = ev.data?.content || '';
             updateBotMessage(m => ({ ...m, content: (m.content || '') + token }));
@@ -225,6 +232,7 @@ export function useChat(onError: (message: string) => void) {
             finished = true;
             updateBotMessage(m => ({
               ...m,
+              pending_approval: null,
               error: ev.data?.detail || '處理訊息時發生錯誤',
               research_trace: settleRunningSteps(m.research_trace)
             }));
@@ -238,7 +246,7 @@ export function useChat(onError: (message: string) => void) {
       }
     } catch (err: any) {
       if (isAbortError(err)) {
-        updateBotMessage(m => ({ ...m, stopped: true, research_trace: settleRunningSteps(m.research_trace) }));
+        updateBotMessage(m => ({ ...m, stopped: true, pending_approval: null, research_trace: settleRunningSteps(m.research_trace) }));
       } else if (!started) {
         // 後端尚未開始處理：移除剛加入的兩則訊息，交由呼叫端把內容放回輸入框
         setMessages(prev => prev.filter(m => m.id !== userMsgId && m.id !== botMsgId));

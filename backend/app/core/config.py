@@ -63,8 +63,6 @@ class Settings(BaseSettings):
     LLM_TAGS_TIMEOUT: float = 10.0
     ADD_NGROK_HEADER: bool = False
     ADMIN_API_KEY: str
-    JWT_SECRET_KEY: str
-    JWT_ALGORITHM: str = "RS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
     REFRESH_TOKEN_EXPIRE_DAYS: int = 7
     ENVIRONMENT: str = "development"
@@ -116,6 +114,9 @@ class Settings(BaseSettings):
     DEVTUNNEL_URL: str = ""
     RATE_LIMIT_ENABLED: bool = True
     RATE_LIMIT_PER_MINUTE: int = 60
+    # 只有在後端前方有會「覆寫」X-Forwarded-For 的反向代理時才設定（例如 127.0.0.1）；
+    # 未設定時一律以實際連線對端作為速率限制的來源，不採信用戶端可偽造的標頭
+    FORWARDED_ALLOW_IPS: Optional[str] = None
     UPLOADS_WATCHER_INTERVAL: int = 30
     ENABLE_BATCH_ACCUMULATION: bool = False
     BATCH_ACCUMULATOR_SIZE: int = 32

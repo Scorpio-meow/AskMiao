@@ -10,7 +10,7 @@
 
 [繁體中文](README.md) | [English](README_en.md)
 
-[![Version](https://img.shields.io/badge/version-3.0.0-2563eb?style=flat)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-4.0.0-2563eb?style=flat)](CHANGELOG.md)
 [![Python](https://img.shields.io/badge/Python-3.10+-3776AB?style=flat&logo=python&logoColor=white)](https://www.python.org/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-005571?style=flat&logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
 [![React](https://img.shields.io/badge/React-19.2-61DAFB?style=flat&logo=react&logoColor=black)](https://react.dev/)
@@ -31,7 +31,7 @@
 </picture>
 
 > [!IMPORTANT]
-> **3.0.0 含破壞性變更**：新增 8 個必填設定、索引改以 chunk_id 對應（升級後需重建一次索引）、工具管理只限管理員。從 2.x 升級請先閱讀 [升級指南](docs/upgrading.md)。
+> **4.0.0 含破壞性變更**：移除 `JWT_SECRET_KEY` 與 `JWT_ALGORITHM`、RSA 金鑰改為必要、compose 需設定 `POSTGRES_PASSWORD`、開發伺服器只接受本機連線、有副作用的工具呼叫需使用者核准。升級前請先閱讀 [升級指南](docs/upgrading.md)。
 
 ## 目錄
 
@@ -60,8 +60,8 @@
 | 3 | **自主研究** | ReAct Agent 自行決定查知識庫、精確統計記錄、上網搜尋或深入閱讀網頁，研究歷程即時顯示 |
 | 4 | **混合檢索** | 向量與 BM25 每次必跑，以 RRF 依名次融合，再由 Cross-Encoder 重排；片段以資料庫 chunk_id 為準 |
 | 5 | **五家模型供應商** | Ollama、OpenAI、Azure OpenAI、Anthropic Claude、Google Gemini 都能呼叫工具與串流 |
-| 6 | **外部工具與 MCP** | 貼上 OpenAPI 規格即可匯入 API 工具，也能接入 MCP 伺服器；只限管理員管理 |
-| 7 | **防護完整** | RSA JWT、Argon2 密碼雜湊、逐跳 SSRF 驗證、工具輸出信任邊界、對外只回錯誤代碼 |
+| 6 | **外部工具與 MCP** | 貼上 OpenAPI 規格即可匯入 API 工具，也能接入 MCP 伺服器；只限管理員管理，有副作用的呼叫先經使用者核准 |
+| 7 | **防護完整** | RSA JWT、Argon2 密碼雜湊、逐跳 SSRF 驗證並固定連線 IP、工具輸出信任邊界、資源上限、對外只回錯誤代碼 |
 
 ## 功能特色
 
@@ -78,7 +78,7 @@
   | `web_fetch` | 深入閱讀網頁全文，只能讀取使用者訊息或本次工具結果中原樣出現過的網址 |
 
 - **研究歷程**：每一步的工具、參數、結果摘要與耗時以 SSE 即時推送，前端以可折疊時間軸呈現。
-- **多模態提問**：對話可附圖片與檔案，圖片以 `image_url` 交給視覺模型，文字類附件抽取內容併入提問。
+- **多模態提問**：對話可附圖片與檔案（每則最多 5 個、單檔 15 MiB、合計 20 MiB），圖片以 `image_url` 交給視覺模型，文字類附件抽取內容併入提問。
 - **對話前文**：每次提問從資料庫帶入最近 `CONVERSATION_HISTORY_MESSAGES` 則訊息，後端重啟不會遺失上下文。
 
 ### 可追溯的答案
@@ -124,17 +124,19 @@ flowchart LR
 ### 外部工具與 MCP
 
 - **自訂 API 工具**：以表單建立，或貼上 OpenAPI / Swagger 規格（OAS 2.0、3.0、3.1）批次匯入，支援 Bearer、API Key（Header / Query）與 Basic 認證，可即時測試。
-- **MCP 用戶端**：支援 `stdio` 與 HTTP 傳輸，自動探索工具並以 `mcp_<伺服器>_<工具>` 名稱加入 Agent 工具集；內建時間、檔案系統與網頁擷取三個範本。
+- **MCP 用戶端**：支援 `stdio` 與 HTTP 傳輸，自動探索工具並以 `mcp_<伺服器>_<工具>` 名稱加入 Agent 工具集；內建時間與檔案系統兩個範本（檔案系統範本只開放專屬沙箱目錄 `backend/mcp_filesystem_sandbox`）。
 - **動態載入**：啟用中的工具在每次組裝工具定義時從資料庫載入，變更後不需重啟。
-- **只限管理員**：工具由所有使用者的 Agent 共用，`/api/api-tools`、`/api/mcp` 與「AI 工具」頁只開放管理員；`stdio` 子行程只繼承 `PATH` 等系統變數，拿不到後端的金鑰（[ADR-0004](docs/adr/0004-tool-admin-permissions-and-subprocess-isolation.md)）。
+- **呼叫前核准**：標記為「需要核准」的工具（新建的 MCP 伺服器，以及 GET／HEAD／OPTIONS 以外的 API 工具）被 Agent 呼叫時，聊天畫面會顯示工具與參數，由發問的使用者按下核准或拒絕；5 分鐘未回應視為拒絕（[ADR-0006](docs/adr/0006-tool-call-approval.md)）。
+- **只限管理員**：工具由所有使用者的 Agent 共用，`/api/api-tools`、`/api/mcp` 與「AI 工具」頁只開放管理員；`stdio` 子行程只繼承 `PATH` 等系統變數，拿不到後端的金鑰，關閉時連同整個子行程樹一起終止（[ADR-0004](docs/adr/0004-tool-admin-permissions-and-subprocess-isolation.md)）。
 
 ### 安全設計
 
-- **認證**：RSA-2048 簽署的 JWT 存取權杖，重新整理權杖存於 HttpOnly Cookie；登出時兩者寫入撤銷名單；密碼以 Argon2 雜湊（舊的 bcrypt 雜湊在登入時自動升級）。
-- **出站請求**：OpenAPI 規格網址、`web_fetch`、自訂 API 工具與 MCP HTTP 傳輸都經 `ssrf_protection.py` 驗證，每一次轉址都重新檢查，阻擋內網、雲端中繼資料端點與危險連接埠。
+- **認證**：RSA-2048 簽署的 JWT 存取權杖（RSA 金鑰無法載入時拒絕啟動），每次請求都以資料庫中的帳號狀態與權限為準；重新整理權杖存於 HttpOnly Cookie 且只能使用一次；登出時兩者寫入撤銷名單；密碼以 Argon2 雜湊（舊的 bcrypt 雜湊在登入時自動升級）。
+- **出站請求**：OpenAPI 規格網址、`web_fetch`、自訂 API 工具與 MCP HTTP 傳輸都經 `ssrf_protection.py` 驗證，每一次轉址都重新檢查並把連線固定在驗證過的 IP，阻擋內網、雲端中繼資料端點與危險連接埠。
+- **資源上限**：請求本文、訊息長度、附件數量與大小、工具結果、同時串流數與附件儲存量都有上限，詳見 [資源上限](docs/configuration.md#資源上限)。
 - **錯誤代碼**：未預期例外只對外回傳隨機錯誤代碼，完整堆疊只寫入伺服器日誌（CWE-209 / CWE-497）。
 - **日誌脫敏**：物件遞迴與正規表示式雙層遮罩，密碼、權杖與 Authorization 標頭一律呈現為 `[REDACTED]`。
-- **其他**：安全回應標頭、依來源 IP 的速率限制、CORS 白名單、檔名與路徑遍歷檢查。
+- **其他**：安全回應標頭、依來源 IP 的速率限制（預設不採信 `X-Forwarded-For`，信任的反向代理以 `FORWARDED_ALLOW_IPS` 指定）、CORS 白名單、檔名與路徑遍歷檢查、前端反點擊劫持。
 
 ### 前端體驗
 
@@ -142,6 +144,7 @@ flowchart LR
 - 淺色、深色與跟隨系統三種外觀，第一次繪製前套用，不會閃白。
 - 鍵盤與讀螢幕軟體可完整操作，文字對比達 WCAG AA；手機版面單列頂欄、聊天頁固定一個視窗高度。
 - 刪除前一律確認，網路離線與恢復時提示，非管理員進入管理頁時顯示「沒有權限」頁面。
+- 回答中的 Markdown 圖片顯示為點擊後才在新分頁開啟的連結，不會自動向外部主機載入。
 
 ## 畫面預覽
 
@@ -246,6 +249,12 @@ sequenceDiagram
         AG->>LLM: 對話與工具定義
         LLM-->>AG: 工具呼叫
         API-->>FE: event: step_start
+        opt 工具需要核准
+            API-->>FE: event: approval_required
+            U->>FE: 核准或拒絕
+            FE->>API: POST /api/chat/approvals/…
+            API-->>FE: event: approval_resolved
+        end
         AG->>T: 執行工具（先檢查網址來源與聯網限制）
         T-->>AG: 結果（配上引用編號、包進不可信資料標記）
         API-->>FE: event: step_end
@@ -297,7 +306,7 @@ cp .env.example .env
 啟動前先編輯 `backend/.env`：
 
 1. **資料庫**：範本的 `DATABASE_URL` 指向 PostgreSQL；零依賴啟動請改為 `DATABASE_URL=sqlite:///./chatbot.db`。
-2. **金鑰**：把 `JWT_SECRET_KEY` 與 `ADMIN_API_KEY` 換成隨機字串，可用 `python -c "import secrets; print(secrets.token_urlsafe(32))"` 產生。
+2. **金鑰**：把 `ADMIN_API_KEY` 換成隨機字串，可用 `python -c "import secrets; print(secrets.token_urlsafe(32))"` 產生。JWT 一律以 `backend/keys/` 的 RSA 金鑰簽署，不需要另設簽署密鑰。
 3. **模型**：使用本機 Ollama 時保持 `LLM_API_BASE=http://localhost:11434`；使用雲端模型時填入對應的 API 金鑰，使用 Claude 另需 `ANTHROPIC_MAX_TOKENS`。
 
 範本已包含其餘必填設定，保持範本值即可啟動。接著啟動後端：
@@ -306,7 +315,7 @@ cp .env.example .env
 python main.py
 ```
 
-首次啟動會自動建立資料表、產生 JWT 用的 RSA 金鑰（`backend/keys/`），並下載嵌入與重排模型。啟動完成後：
+首次啟動會自動建立資料表、產生 JWT 用的 RSA 金鑰（`backend/keys/`，後端帳號需能寫入；金鑰無法載入時後端拒絕啟動），並下載嵌入與重排模型。啟動完成後：
 
 - API：`http://localhost:8001`
 - 互動式 API 文件（Swagger UI）：`http://localhost:8001/docs`
@@ -325,6 +334,9 @@ bun run dev
 ```
 
 以瀏覽器開啟 `http://localhost:3000`。沒有 `frontend/.env` 時，前端呼叫相對路徑 `/api`，由 Vite 開發伺服器代理到 `http://127.0.0.1:8001`，不需要設定 CORS。若複製了 `frontend/.env.example`（`PORT=3001`、直接呼叫後端），改開 `http://localhost:3001`。
+
+> [!NOTE]
+> Vite 開發與預覽伺服器只監聽 `localhost`，區網內的其他裝置連不上。需要讓其他裝置使用時，請以 `bun run build` 建置，再由正式的網頁伺服器提供 `frontend/build/` 並反向代理 `/api`。
 
 ### 4. 建立第一位管理員
 
@@ -348,27 +360,29 @@ bun run dev
 
 ### 使用 PostgreSQL（選用）
 
-`backend/docker-compose.yml` 提供 PostgreSQL 17，初始化時會套用 `init.sql`：
+`backend/docker-compose.yml` 提供 PostgreSQL 17，初始化時會套用 `init.sql`。先在 `backend/.env` 設定資料庫超級使用者的密碼（必填，未設定時 compose 拒絕啟動），並讓 `DATABASE_URL` 使用同一組密碼：
+
+```dotenv
+POSTGRES_PASSWORD=<隨機字串>
+DATABASE_URL=postgresql+psycopg2://postgres:<同一組隨機字串>@localhost:7690/chatbot
+```
+
+接著啟動容器：
 
 ```bash
 cd backend
 docker compose up -d
 ```
 
-容器對外埠號為 **7690**，`.env` 請設為：
-
-```dotenv
-DATABASE_URL=postgresql+psycopg2://postgres:postgres@localhost:7690/chatbot
-```
+容器只在本機回送位址 `127.0.0.1:7690` 開放，區網與公網都連不到。密碼含 `@`、`:`、`/` 等字元時，`DATABASE_URL` 中需改寫成百分比編碼。
 
 ## 設定
 
-後端設定集中在 `backend/.env`，以下 11 項沒有預設值，缺少任一項後端就無法啟動（範本已提供建議值）：
+後端設定集中在 `backend/.env`，以下 10 項沒有預設值，缺少任一項後端就無法啟動（範本已提供建議值）：
 
 | 變數 | 範本值 | 說明 |
 |---|---|---|
 | `DATABASE_URL` | PostgreSQL 範例 | 資料庫連線字串；SQLite 用 `sqlite:///./chatbot.db` |
-| `JWT_SECRET_KEY` | 佔位字串 | RSA 金鑰無法使用時的 HS256 簽署金鑰 |
 | `ADMIN_API_KEY` | 佔位字串 | 管理用 API 金鑰（目前沒有路由使用，但設定驗證要求此值） |
 | `ENABLE_WEB_SEARCH` | `true` | 是否提供 `web_search` 與 `web_fetch` |
 | `AGENT_MAX_TURNS` | `5` | 單次提問的工具呼叫輪數上限（≥ 1） |
@@ -390,8 +404,9 @@ DATABASE_URL=postgresql+psycopg2://postgres:postgres@localhost:7690/chatbot
 | `CHUNK_SIZE`、`CHUNK_OVERLAP` | 切塊長度與重疊（範本 300 / 100） |
 | `HF_HOME`、`HF_HUB_OFFLINE` | 模型快取位置與離線模式 |
 | `ALLOWED_ORIGINS` | CORS 允許來源（前端直接呼叫後端時需要） |
+| `FORWARDED_ALLOW_IPS` | 會覆寫 `X-Forwarded-For` 的反向代理位址；未設定時速率限制以實際連線對端計算 |
 
-所有設定（含預設值、範本值、供應商路由規則與前端環境變數）請見 **[設定參考](docs/configuration.md)**。
+所有設定（含預設值、範本值、供應商路由規則、資源上限與前端環境變數）請見 **[設定參考](docs/configuration.md)**。
 
 ## 專案結構
 
@@ -407,7 +422,9 @@ AskMiao/
 │   │   │   ├── lifespan.py           # 啟動流程：建表、初始化 RAG、上傳檔監看
 │   │   │   ├── llm_client.py         # 五家供應商的統一呼叫層（工具呼叫、串流）
 │   │   │   ├── jwt_auth.py           # RSA JWT、Argon2 密碼雜湊、撤銷名單檢查
-│   │   │   ├── ssrf_protection.py    # 出站網址驗證與逐跳 SSRF 檢查
+│   │   │   ├── limits.py             # 資源上限常數（請求本文、附件、工具結果、日誌等）
+│   │   │   ├── body_limit.py         # 請求本文大小上限中介層
+│   │   │   ├── ssrf_protection.py    # 出站網址驗證、逐跳 SSRF 檢查與連線 IP 固定
 │   │   │   ├── error_response.py     # 對外錯誤代碼
 │   │   │   ├── security_logging.py   # 日誌雙層脫敏
 │   │   │   └── domain_profile.py     # 領域設定檔載入與驗證
@@ -417,6 +434,7 @@ AskMiao/
 │   │   │   ├── agent.py              # ResearchAgent：ReAct 工具迴圈與串流事件
 │   │   │   ├── research_session.py   # 單次提問的引用編號、網址來源限制與不可信資料包裝
 │   │   │   ├── tools.py              # 內建工具與自訂 API / MCP 工具的註冊與執行
+│   │   │   ├── tool_approval.py      # 有副作用工具的對話內核准
 │   │   │   ├── pipeline.py           # 切塊與 Agent 串流管線
 │   │   │   ├── tokenizers.py         # jieba 斷詞與斷詞簽章
 │   │   │   ├── evaluator.py          # 檢索評估（hit@k、MRR、反例拒絕率）
@@ -428,7 +446,7 @@ AskMiao/
 │   ├── eval/                         # 檢索評估問答集
 │   ├── scripts/                      # 維運腳本
 │   ├── tests/                        # pytest 測試
-│   ├── docker-compose.yml            # 選用的 PostgreSQL 17（對外埠 7690）
+│   ├── docker-compose.yml            # 選用的 PostgreSQL 17（本機 127.0.0.1:7690，需設 POSTGRES_PASSWORD）
 │   ├── init.sql                      # PostgreSQL 初始化結構
 │   ├── init_db.py                    # 舊版 PostgreSQL 資料庫的相容補丁
 │   ├── requirements.txt
@@ -504,6 +522,13 @@ bun run build        # 產出 build/
 </details>
 
 <details>
+<summary><b>後端啟動失敗，錯誤與 RSA 金鑰或 <code>backend/keys</code> 有關</b></summary>
+
+JWT 一律以 RSA 金鑰簽署，金鑰無法載入或產生時後端拒絕啟動，不再退回共用密鑰。請確認 `backend/keys/` 內的 `jwt_private.pem`、`jwt_public.pem` 完整可讀；首次啟動時該目錄需要能讓後端帳號寫入。
+
+</details>
+
+<details>
 <summary><b>後端啟動失敗，訊息為「無法載入重排模型」</b></summary>
 
 重排模型是必要元件。首次啟動需要連上 Hugging Face 下載模型，請確認網路可用且 `HF_HUB_OFFLINE` 不是 `true`；已下載過模型時，確認 `HF_HOME` 指向原本的快取目錄。
@@ -540,6 +565,13 @@ bun run build        # 產出 build/
 </details>
 
 <details>
+<summary><b>區網內的其他裝置連不上 <code>bun run dev</code> 的前端</b></summary>
+
+Vite 開發與預覽伺服器只監聽 `localhost`，這是刻意的限制（開發伺服器的 `/__open-in-editor` 等端點不應對外開放）。請以 `bun run build` 建置，再由 nginx 等正式網頁伺服器提供 `frontend/build/` 並把 `/api` 反向代理到後端。
+
+</details>
+
+<details>
 <summary><b>Windows 上 <code>bun install</code> 出現 EPERM，或在 frontend 內產生名為 <code>~</code> 的資料夾</b></summary>
 
 `frontend/bunfig.toml` 的快取路徑 `~/.bun/install/cache` 在 Windows 上不會展開。請改為指定快取目錄：`bun install --cache-dir <快取路徑>`。
@@ -549,7 +581,8 @@ bun run build        # 產出 build/
 <details>
 <summary><b>API 回傳 <code>429 Too Many Requests</code></b></summary>
 
-速率限制依來源 IP 計算，預設每 60 秒 60 次。經由 Vite 開發代理或反向代理時所有使用者共用同一個 IP，可視需要調高 `RATE_LIMIT_PER_MINUTE`。
+- 速率限制依實際連線的來源 IP 計算，預設每 60 秒 60 次。經由 Vite 開發代理或反向代理時所有使用者共用同一個 IP，可視需要調高 `RATE_LIMIT_PER_MINUTE`；前方的反向代理會覆寫 `X-Forwarded-For` 時，可把代理位址設為 `FORWARDED_ALLOW_IPS`，改以真實用戶端 IP 計算。
+- `POST /api/chat/send` 回傳 429 時，是同一位使用者已有 2 個回答正在串流，等其中一個完成即可。
 
 </details>
 
@@ -560,7 +593,7 @@ bun run build        # 產出 build/
 | [API 參考](docs/api.md) | 所有端點的權限、請求與回應格式、SSE 事件規格與錯誤代碼 |
 | [系統架構與設計](docs/architecture.md) | 分層架構、資料模型、檢索管線、Agent 迴圈、認證與安全設計 |
 | [設定參考](docs/configuration.md) | 每個環境變數的預設值與作用、供應商路由、門檻校準、前端設定 |
-| [升級指南](docs/upgrading.md) | 從 2.x 升級到 3.0.0 的步驟、回退方式與常見問題 |
+| [升級指南](docs/upgrading.md) | 從 2.x 升級到 3.0.0、從 3.0.0 升級到 4.0.0 的步驟、回退方式與常見問題 |
 | [架構決策紀錄（ADR）](docs/adr/README.md) | 重大設計的背景、取捨與後續修訂 |
 | [llms.txt](llms.txt) | 給 AI Agent 讀的檔案地圖、系統約束與驗證方式 |
 | [版本變更紀錄](CHANGELOG.md) | 每個版本的新增、變更、移除與修正 |
@@ -568,7 +601,7 @@ bun run build        # 產出 build/
 
 ## 版本資訊
 
-- **目前版本**：3.0.0（2026-09-25），變更內容見 [CHANGELOG](CHANGELOG.md)。
+- **目前版本**：4.0.0（2026-09-27），變更內容見 [CHANGELOG](CHANGELOG.md)。
 - **版本規則**：遵循 [語意化版本](https://semver.org/lang/zh-TW/)。不相容的變更（例如新增必填設定、改變 API 權限或索引格式）升主版號。
 - **版本號位置**：後端 `backend/app/__init__.py` 的 `__version__`（OpenAPI 文件與 MCP 交握皆引用）、前端 `frontend/package.json`，發行時與 `CHANGELOG.md` 一併更新。
 

@@ -71,7 +71,8 @@ class RAGPipeline:
         conversation_history: List[Dict[str, str]],
         model_name: Optional[str] = None,
         reasoning_effort: Optional[str] = "medium",
-        attachments: Optional[List[Any]] = None
+        attachments: Optional[List[Any]] = None,
+        approval_user_id: Optional[int] = None
     ) -> AsyncGenerator[Dict[str, Any], None]:
         """非同步生成器：向 API 層提供研究步驟與回答文字串流"""
         async for event_item in self.agent.stream_research(
@@ -80,6 +81,7 @@ class RAGPipeline:
             conversation_history=conversation_history,
             reasoning_effort=reasoning_effort,
             attachments=attachments,
-            max_turns=settings.AGENT_MAX_TURNS
+            max_turns=settings.AGENT_MAX_TURNS,
+            approval_user_id=approval_user_id
         ):
             yield event_item

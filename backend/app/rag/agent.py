@@ -1,10 +1,16 @@
+import asyncio
+import base64
 import json
 import logging
+import os
+import tempfile
 import time
 from typing import Any, Dict, List, Optional, AsyncGenerator
+from app.core.limits import MAX_ATTACHMENT_TEXT_CHARS, MAX_PDF_OCR_PAGES
 from app.core.llm_client import chat_completion, stream_completion
 from app.rag.tools import ResearchToolRegistry
 from app.rag.research_session import ResearchSession, strip_citations
+from app.rag.tool_approval import approval_broker
 from app.core.error_response import log_and_get_error_id
 
 logger = logging.getLogger(__name__)
@@ -37,6 +43,23 @@ SYSTEM_PROMPT = """你是一個具備自主研究能力的智慧助理「AskMiao
 """
 
 
+def _extract_attachment_text(fname: str, ftype: str, data_url: str) -> Optional[str]:
+    """解碼附件並抽出文字（同步、CPU 與 I/O 密集，須在執行緒中呼叫）"""
+    from app.services.document_processor import DocumentProcessor
+
+    _, b64_data = data_url.split(",", 1)
+    file_bytes = base64.b64decode(b64_data)
+    suffix = os.path.splitext(fname)[1] or ".txt"
+    with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
+        tmp.write(file_bytes)
+        tmp_path = tmp.name
+    try:
+        return DocumentProcessor.extract_text_from_file(tmp_path, ftype, max_ocr_pages=MAX_PDF_OCR_PAGES)
+    finally:
+        if os.path.exists(tmp_path):
+            os.remove(tmp_path)
+
+
 class ResearchAgent:
     """多輪自主研究 Agent 控制器 (支援 SSE 串流與即時步驟推播)"""
 
@@ -51,10 +74,12 @@ class ResearchAgent:
         reasoning_effort: Optional[str] = "medium",
         attachments: Optional[List[Any]] = None,
         *,
-        max_turns: int
+        max_turns: int,
+        approval_user_id: Optional[int] = None
     ) -> AsyncGenerator[Dict[str, Any], None]:
         """非同步生成器：即時產生研究步驟事件與回答。模型不再呼叫工具時，該次內容即為最終答案；
-        只有工具輪數（max_turns）用完或模型回了空內容時，才以串流再生成一次答案"""
+        只有工具輪數（max_turns）用完或模型回了空內容時，才以串流再生成一次答案。
+        approval_user_id：可以在對話內核准有副作用工具的使用者；None 時這類工具一律不執行"""
         start_time = time.time()
         tools_def = self.tools.get_tool_definitions()
 
@@ -73,43 +98,33 @@ class ResearchAgent:
         image_data_urls = []
 
         if attachments:
-            import base64
-            import tempfile
-            import os
-            from app.services.document_processor import DocumentProcessor
-
             for att in attachments:
                 fname = getattr(att, "filename", None) or (att.get("filename") if isinstance(att, dict) else "未知檔案")
                 ftype = getattr(att, "file_type", None) or (att.get("file_type") if isinstance(att, dict) else "")
                 data_url = getattr(att, "data_url", None) or (att.get("data_url") if isinstance(att, dict) else None)
                 content = getattr(att, "content", None) or (att.get("content") if isinstance(att, dict) else None)
 
+                # 附件只接受內嵌的 data: URL，遠端網址不交給模型供應商
+                if data_url and not data_url.startswith("data:"):
+                    logger.warning(f"略過非 data: URL 的附件 {fname}")
+                    data_url = None
                 if ftype.startswith("image/"):
                     if data_url:
                         image_data_urls.append(data_url)
                 else:
                     extracted_text = content
-                    if not extracted_text and data_url:
+                    if not extracted_text and data_url and "," in data_url:
                         try:
-                            if "," in data_url:
-                                _, b64_data = data_url.split(",", 1)
-                            else:
-                                b64_data = data_url
-                            file_bytes = base64.b64decode(b64_data)
-                            suffix = os.path.splitext(fname)[1] or ".txt"
-                            with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
-                                tmp.write(file_bytes)
-                                tmp_path = tmp.name
-                            try:
-                                extracted_text = DocumentProcessor.extract_text_from_file(tmp_path, ftype)
-                            finally:
-                                if os.path.exists(tmp_path):
-                                    os.remove(tmp_path)
+                            # 解碼與解析會長時間占用 CPU，移到執行緒以免阻塞其他使用者的請求
+                            extracted_text = await asyncio.to_thread(_extract_attachment_text, fname, ftype, data_url)
                         except Exception as e:
                             logger.warning(f"即時解析附件 {fname} 失敗: {e}")
 
                     if extracted_text and extracted_text.strip():
-                        doc_contexts.append(f"【附加檔案: {fname}】\n{extracted_text.strip()}")
+                        text = extracted_text.strip()
+                        if len(text) > MAX_ATTACHMENT_TEXT_CHARS:
+                            text = text[:MAX_ATTACHMENT_TEXT_CHARS] + "\n[附件內容過長，以下已截斷]"
+                        doc_contexts.append(f"【附加檔案: {fname}】\n{text}")
 
         effective_query = query
         if doc_contexts:
@@ -189,6 +204,27 @@ class ResearchAgent:
 
                 tool_start = time.time()
                 tool_output = session.refuse_tool_call(fn_name, args)
+                if tool_output is None:
+                    approval = await asyncio.to_thread(self.tools.approval_requirement, fn_name)
+                    if approval is not None:
+                        if approval_user_id is None:
+                            tool_output = {"error": "此工具需要使用者在對話中核准後才能執行，本次無法取得核准，請改以已取得的資料回答"}
+                        else:
+                            approval_id, decision = approval_broker.create(approval_user_id)
+                            yield {
+                                "event": "approval_required",
+                                "data": {
+                                    "approval_id": approval_id,
+                                    "step": step_num,
+                                    "tool": fn_name,
+                                    "tool_display_name": approval["display_name"],
+                                    "arguments": args,
+                                },
+                            }
+                            approved = await approval_broker.wait(approval_id, decision)
+                            yield {"event": "approval_resolved", "data": {"approval_id": approval_id, "approved": approved}}
+                            if not approved:
+                                tool_output = {"error": "使用者未核准執行此工具，請改以已取得的資料回答，不要再次呼叫同一工具"}
                 if tool_output is None:
                     tool_output = await self.tools.execute_tool(fn_name, args)
                     session.record_tool_output(fn_name, tool_output)

@@ -46,6 +46,7 @@ paths:
         parameters_schema=json.dumps(endpoint["parameters_schema"]),
         param_locations=json.dumps(endpoint["param_locations"]),
         is_enabled=True,
+        requires_approval=False,
         spec_version=endpoint["spec_version"]
     )
     db.add(new_tool)

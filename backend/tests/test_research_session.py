@@ -53,3 +53,38 @@ def test_error_outputs_get_no_citations():
 
 def test_strip_citations_removes_markers_only():
     assert strip_citations("依年資計算 [1][2]，另見 [3, 4]。第 [a] 項") == "依年資計算 ，另見 。第 [a] 項"
+
+
+def fetch_allowed(session, url):
+    arguments = {"url": url}
+    return session.refuse_tool_call("web_fetch", arguments) is None, arguments["url"]
+
+
+def test_web_fetch_url_must_match_a_whole_url_that_appeared():
+    session = ResearchSession(["請摘要 https://news.example.com/labor-law?id=42。謝謝"])
+
+    assert fetch_allowed(session, "https://news.example.com/labor-law?id=42") == (True, "https://news.example.com/labor-law?id=42")
+    # 截斷、延伸與改寫編碼都不是出現過的網址
+    for crafted in (
+        "https://news.example.com/labor",
+        "https://news.example.com/labor-law?id=4",
+        "https://news.example.com/labor-law?id=42&leak=secret",
+        "https://news.example.com/labor-law?id=%34%32",
+        "https://news.example.com/labor-law%3Fid=42",
+    ):
+        assert fetch_allowed(session, crafted)[0] is False, crafted
+
+
+def test_web_fetch_does_not_match_decoded_substrings():
+    session = ResearchSession(["參考 https://a.example/r?to=https%3A%2F%2Fattacker.example%2Fleak"])
+
+    assert fetch_allowed(session, "https://attacker.example/leak")[0] is False
+    assert fetch_allowed(session, "https://a.example/r?to=https%3A%2F%2Fattacker.example%2Fleak")[0] is True
+
+
+def test_web_fetch_accepts_the_same_url_with_non_ascii_encoded():
+    session = ResearchSession(["看這篇 https://wiki.example.org/wiki/特休 說明"])
+
+    allowed, sent = fetch_allowed(session, "https://wiki.example.org/wiki/%E7%89%B9%E4%BC%91")
+    assert allowed is True
+    assert sent == "https://wiki.example.org/wiki/%E7%89%B9%E4%BC%91"

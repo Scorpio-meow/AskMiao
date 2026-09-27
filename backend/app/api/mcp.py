@@ -57,6 +57,7 @@ def _serialize_mcp_server(server: McpServer) -> Dict[str, Any]:
         "url": server.url,
         "headers": headers,
         "is_enabled": bool(server.is_enabled),
+        "requires_approval": bool(server.requires_approval),
         "status": server.status,
         "last_error": server.last_error,
         "discovered_tools": discovered_tools,
@@ -115,6 +116,7 @@ async def create_server(
         url=server_data.url,
         headers=json.dumps(server_data.headers, ensure_ascii=False) if server_data.headers else None,
         is_enabled=server_data.is_enabled if server_data.is_enabled is not None else True,
+        requires_approval=server_data.requires_approval if server_data.requires_approval is not None else True,
         timeout=server_data.timeout or 30,
         status="disconnected",
         created_by=current_user.get("id") if isinstance(current_user, dict) else getattr(current_user, "id", None)
@@ -190,6 +192,8 @@ async def update_server(
         server.headers = json.dumps(server_data.headers, ensure_ascii=False)
     if server_data.is_enabled is not None:
         server.is_enabled = server_data.is_enabled
+    if server_data.requires_approval is not None:
+        server.requires_approval = server_data.requires_approval
     if server_data.timeout is not None:
         server.timeout = server_data.timeout
     db.commit()

@@ -5,6 +5,7 @@ SSRF (Server-Side Request Forgery) 防護模組
 
 import asyncio
 import ipaddress
+from concurrent.futures import ThreadPoolExecutor
 import logging
 import re
 import socket
@@ -92,6 +93,13 @@ BLOCKED_DANGEROUS_PORTS: Set[int] = {
 }
 
 
+# DNS 解析使用專屬的有界執行緒池並設定逾時：getaddrinfo 無法取消，
+# 慢速或惡意的權威伺服器只會占住這個池，不會拖垮事件迴圈共用的預設執行緒池
+DNS_RESOLVE_TIMEOUT_SECONDS = 5.0
+DNS_RESOLVER_MAX_WORKERS = 4
+_dns_executor = ThreadPoolExecutor(max_workers=DNS_RESOLVER_MAX_WORKERS, thread_name_prefix="ssrf-dns")
+
+
 class SSRFProtectionError(ValueError):
     """SSRF 安全防護觸發異常"""
     pass
@@ -162,8 +170,19 @@ def _resolve_hostname_sync(hostname: str, port: int) -> List[Union[ipaddress.IPv
 
 
 async def resolve_hostname(hostname: str, port: int = 80) -> List[Union[ipaddress.IPv4Address, ipaddress.IPv6Address]]:
-    """非阻塞非同步 DNS 解析主機名稱"""
-    return await asyncio.to_thread(_resolve_hostname_sync, hostname, port)
+    """非阻塞非同步 DNS 解析主機名稱；逾時視為無法解析"""
+    loop = asyncio.get_running_loop()
+    try:
+        return await asyncio.wait_for(
+            loop.run_in_executor(_dns_executor, _resolve_hostname_sync, hostname, port),
+            timeout=DNS_RESOLVE_TIMEOUT_SECONDS,
+        )
+    except asyncio.TimeoutError:
+        logger.warning(f"DNS 解析主機逾時 ({hostname})")
+        return []
+
+
+IPAddress = Union[ipaddress.IPv4Address, ipaddress.IPv6Address]
 
 
 async def validate_url_ssrf(
@@ -171,6 +190,21 @@ async def validate_url_ssrf(
     allowed_schemes: Tuple[str, ...] = ("http", "https"),
     allow_private_ips: bool = False
 ) -> Tuple[bool, str, Optional[ParseResult]]:
+    """全方位 SSRF URL 驗證器，回傳 (is_valid, error_reason, parsed_result)。
+
+    注意：error_reason 可能含伺服器端 DNS 解析結果，只能寫入日誌，不可回傳給使用者。
+    驗證通過後若自行發出連線，請改用 SSRFSafeTransport，否則連線時的第二次 DNS 解析
+    可能被 DNS rebinding 導向內網。
+    """
+    is_valid, reason, parsed, _ = await _check_url(url, allowed_schemes, allow_private_ips)
+    return is_valid, reason, parsed
+
+
+async def _check_url(
+    url: str,
+    allowed_schemes: Tuple[str, ...] = ("http", "https"),
+    allow_private_ips: bool = False
+) -> Tuple[bool, str, Optional[ParseResult], List[IPAddress]]:
     """
     全方位 SSRF URL 驗證器。
     
@@ -183,32 +217,33 @@ async def validate_url_ssrf(
     6. 執行 DNS 解析並驗證所有關聯 IP 是否為公開合法 IP（非私有/迴路/雲端 metadata）
     
     回傳：
-        (is_valid, error_reason, parsed_result)
+        (is_valid, error_reason, parsed_result, approved_ips)
+        approved_ips 為驗證時核可的 IP；直接以 IP 表示的主機或 allow_private_ips 時為空
     """
     if not url or not isinstance(url, str):
-        return False, "URL 不能為空值", None
+        return False, "URL 不能為空值", None, []
 
     clean_url = url.strip()
     try:
         parsed = urlparse(clean_url)
     except Exception as e:
-        return False, f"URL 解析失敗: {str(e)}", None
+        return False, f"URL 解析失敗: {str(e)}", None, []
 
     # 1. 協議驗證
     scheme = (parsed.scheme or "").lower()
     if scheme not in allowed_schemes:
-        return False, f"不允許的 URL 協定 '{scheme}'，僅支援: {', '.join(allowed_schemes)}", None
+        return False, f"不允許的 URL 協定 '{scheme}'，僅支援: {', '.join(allowed_schemes)}", None, []
 
     # 2. 主機名稱檢查
     hostname = parsed.hostname
     if not hostname:
-        return False, "URL 中缺少有效的主機名稱 (Host)", None
+        return False, "URL 中缺少有效的主機名稱 (Host)", None, []
 
     hostname_lower = hostname.lower().strip("[]")
 
     # 禁止包含認證資訊在 URL 中 (防止使用者名稱偽造攻擊)
     if parsed.username or parsed.password:
-        return False, "URL 禁止包含帳號密碼資訊 (Userinfo)", None
+        return False, "URL 禁止包含帳號密碼資訊 (Userinfo)", None, []
 
     # 3. 檢查連接埠
     port = parsed.port
@@ -216,41 +251,82 @@ async def validate_url_ssrf(
         port = 443 if scheme == "https" else 80
     else:
         if port <= 0 or port > 65535:
-            return False, f"無效的連接埠號碼: {port}", None
+            return False, f"無效的連接埠號碼: {port}", None, []
         if not allow_private_ips and port in BLOCKED_DANGEROUS_PORTS:
-            return False, f"禁止存取受保護的內部服務連接埠: {port}", None
+            return False, f"禁止存取受保護的內部服務連接埠: {port}", None, []
+
+    approved_ips: List[IPAddress] = []
 
     # 4. 檢查主機名稱關鍵字與特殊域名後綴
     if not allow_private_ips:
         if hostname_lower in DISALLOWED_HOSTNAMES:
-            return False, f"禁止存取保留/內部主機名稱: {hostname_lower}", None
+            return False, f"禁止存取保留/內部主機名稱: {hostname_lower}", None, []
 
         for suffix in DISALLOWED_HOSTNAME_SUFFIXES:
             if hostname_lower.endswith(suffix):
-                return False, f"禁止存取內部專屬網域: {hostname_lower}", None
+                return False, f"禁止存取內部專屬網域: {hostname_lower}", None, []
 
         # 檢查是否為直接輸入的 IP 位址字串
         try:
             direct_ip = ipaddress.ip_address(hostname_lower)
-            is_disallowed, reason = is_ip_disallowed(direct_ip)
-            if is_disallowed:
-                return False, f"目標 IP 位址不被允許: {reason}", None
         except ValueError:
             # 不是直接的 IP 位址，為標準網域名稱
-            pass
+            direct_ip = None
+        if direct_ip is not None:
+            is_disallowed, reason = is_ip_disallowed(direct_ip)
+            if is_disallowed:
+                return False, f"目標 IP 位址不被允許: {reason}", None, []
+            return True, "", parsed, approved_ips
 
         # 5. DNS 解析並驗證所有解析出的 IP
         resolved_ips = await resolve_hostname(hostname_lower, port)
         if not resolved_ips:
-            return False, f"無法解析主機名稱之 IP 位址: {hostname}", None
+            return False, f"無法解析主機名稱之 IP 位址: {hostname}", None, []
 
         for ip_addr in resolved_ips:
             is_disallowed, reason = is_ip_disallowed(ip_addr)
             if is_disallowed:
                 logger.warning(f"SSRF 防護阻止存取 {url}: 解析出禁止 IP {ip_addr} ({reason})")
-                return False, f"主機解析至受保護或私有 IP 位址 ({ip_addr}): {reason}", None
+                return False, f"主機解析至受保護或私有 IP 位址 ({ip_addr}): {reason}", None, []
+        approved_ips = resolved_ips
 
-    return True, "", parsed
+    return True, "", parsed, approved_ips
+
+
+class SSRFSafeTransport(httpx.AsyncBaseTransport):
+    """每一跳（含自動轉址）送出前都做 SSRF 檢查，並把連線固定到檢查時核可的 IP。
+
+    只在事件掛鉤中檢查網址時，驗證與實際連線各做一次 DNS 解析，攻擊者可讓第二次解析
+    指向內網（DNS rebinding）。這裡改以核可的 IP 建立連線，Host 標頭與 TLS SNI／憑證
+    驗證仍使用原本的主機名稱。
+
+    用法：httpx.AsyncClient(transport=SSRFSafeTransport(), ...)
+    """
+
+    def __init__(self, allow_private_ips: bool = False) -> None:
+        self._allow_private_ips = allow_private_ips
+        self._transport = httpx.AsyncHTTPTransport()
+
+    async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+        is_safe, error_msg, _, approved_ips = await _check_url(
+            str(request.url), allow_private_ips=self._allow_private_ips
+        )
+        if not is_safe:
+            raise SSRFProtectionError(f"SSRF 防護拒絕連線: {error_msg}")
+        if not approved_ips:
+            return await self._transport.handle_async_request(request)
+        hostname = request.url.host
+        pinned_request = httpx.Request(
+            method=request.method,
+            url=request.url.copy_with(host=str(approved_ips[0])),
+            headers=request.headers,
+            stream=request.stream,
+            extensions={**request.extensions, "sni_hostname": hostname},
+        )
+        return await self._transport.handle_async_request(pinned_request)
+
+    async def aclose(self) -> None:
+        await self._transport.aclose()
 
 
 async def reject_unsafe_request(request: httpx.Request) -> None:
@@ -319,10 +395,11 @@ async def safe_fetch_text(
 
         visited_urls.add(current_url)
 
-        # 2. 建立安全客戶端 (停用自動轉址，由我們手動逐一驗證轉址目標)
+        # 2. 建立安全客戶端 (停用自動轉址，由我們手動逐一驗證轉址目標；連線固定到驗證時核可的 IP)
         client_kwargs = {
             "timeout": timeout,
             "follow_redirects": False,
+            "transport": SSRFSafeTransport(allow_private_ips=allow_private_ips),
         }
 
         try:

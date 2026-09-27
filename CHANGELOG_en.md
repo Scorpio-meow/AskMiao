@@ -6,6 +6,7 @@ All notable changes to AskMiao are documented in this file. The format is based 
 
 | Version | Release date | Highlights |
 |---|---|---|
+| [4.0.0](#400---2026-09-27) | 2026-09-27 | Security audit fixes: tokens bound to database accounts, user approval for tool calls, IP-pinned outbound connections, resource limits |
 | [3.0.0](#300---2026-09-25) | 2026-09-25 | chunk_id index, RRF with a relevance threshold, answer citations, tool trust boundary and admin-only tool management, frontend UI/UX overhaul |
 | [2.2.1](#221---2026-09-19) | 2026-09-19 | Error responses use error codes |
 | [2.2.0](#220---2026-09-01) | 2026-09-01 | Centralized SSRF protection |
@@ -15,16 +16,98 @@ All notable changes to AskMiao are documented in this file. The format is based 
 | [1.0.0](#100---2026-08-01) | 2026-08-01 | Hybrid RAG and security foundations |
 
 > [!TIP]
-> Upgrading from 2.x to 3.0.0? Read the [upgrade guide](docs/upgrading_en.md) first: you need to complete your `.env` and rebuild the knowledge-base index once.
+> Upgrading from 3.0.0 to 4.0.0? Read the [upgrade guide](docs/upgrading_en.md#upgrading-from-300-to-400) first: RSA keys are now mandatory, compose needs `POSTGRES_PASSWORD`, and the dev server only accepts local connections. Coming from 2.x, first follow [upgrading to 3.0.0](docs/upgrading_en.md#upgrading-from-2x-to-300).
 
 ---
 
 ## [Unreleased]
 
+---
+
+## [4.0.0] - 2026-09-27
+
+This release addresses the 52 leads from a security audit: tokens are mapped to the database account on every request, tool calls with side effects need the user's approval, outbound connections are pinned to the SSRF-validated IP, and request bodies, attachments, tool results, concurrent streams, and other resources are capped.
+
+> [!WARNING]
+> **This release needs manual steps**; go through the [upgrade guide](docs/upgrading_en.md#upgrading-from-300-to-400) before upgrading:
+>
+> - `JWT_SECRET_KEY` and `JWT_ALGORITHM` are gone; the RSA keys in `backend/keys/` are required in every environment, and the backend refuses to start if they cannot be loaded or generated.
+> - `backend/docker-compose.yml` requires `POSTGRES_PASSWORD` and binds `127.0.0.1:7690` only; the password of an existing data volume must be changed separately.
+> - The Vite dev and preview servers listen on `localhost` only; LAN devices need a production build behind a real web server.
+> - `/api/chat` message responses no longer include the raw `context_used` (always `null`); `GET /api/chat/tools` requires sign-in; `model_name` must be in the available model list.
+> - Custom API tools and MCP servers gain `requires_approval` (added and backfilled at startup), so calls to existing MCP servers' tools now ask the user for approval first.
+
 ### Security
 
+#### Authentication
+
+- **HS256 fallback removed**: development setups no longer sign tokens with the shared secret from `.env` when the RSA keys cannot load; the keys must be usable in every environment, or the backend refuses to start (CWE-1188).
+- **Tokens bound to the database account**: every request loads the account by `sub`; it must exist and be active, `is_admin` and the role come from the database rather than the token, and tokens issued before the account was created (a deleted account's id reused) are rejected, so deactivation, deletion, and demotion apply immediately (CWE-613, CWE-285). New SQLite databases create `users` and `documents` with `AUTOINCREMENT`, so ids are never reused.
+- **Single-use refresh tokens**: the old token is revoked as soon as a new pair is issued (CWE-294).
+- Passwords are capped at 256 characters and login identifiers at 254; Argon2 hashing and verification run in worker threads, at most 4 at once; the revocation list holds at most 100,000 entries (CWE-400).
+
+#### Deployment
+
+- **No built-in PostgreSQL password**: `POSTGRES_PASSWORD` is required, and the port binds `127.0.0.1:7690` only (CWE-798, CWE-1327).
+- **Client-supplied `X-Forwarded-For` is not trusted**: `python main.py` turns uvicorn's `proxy_headers` off by default, so rate limiting and the block list use the direct peer; only reverse proxies named in the new `FORWARDED_ALLOW_IPS` setting are trusted (CWE-348).
+- **Vite dev server for this machine only**: the dev and preview servers listen on `localhost` only, and `/__open-in-editor` answers loopback clients only (CWE-1327); both send `X-Frame-Options: DENY` and `Content-Security-Policy: frame-ancestors 'none'; img-src 'self' data: blob:`, and `index.html` adds an anti-framing style guard (CWE-1021).
+
+#### Tools and outbound requests
+
+- **Approval before calls**: custom API and MCP tools with side effects run only after the asking user approves in the chat; see Added below (CWE-862).
+- **SSRF validation pins the connection IP**: custom API tools, the MCP HTTP transport, and `safe_fetch_text` pin every hop to the approved IP after validation, so DNS rebinding cannot change the target between validation and connection; DNS lookups run in a dedicated 4-thread pool with a 5-second timeout (CWE-918, CWE-367).
+- **Custom API tools**: path parameters are percent-encoded and the host after substitution must match the configured one; cross-origin redirects drop the admin-configured headers and auth header; credential values in results and URLs are masked as `[已遮蔽]`; response bodies are capped at 1 MiB (CWE-918, CWE-522, CWE-200, CWE-400).
+- **SSRF rejections return only an error code**: custom API tools, `web_fetch`, and `POST /api/api-tools/parse-spec` no longer return reasons that may contain intranet IPs; MCP HTTP errors no longer include the peer's response body, and one response is capped at 4 MiB (CWE-209, CWE-400).
+- **Stricter `web_fetch` URL provenance**: only URLs that appeared as a whole URL count, both sides are normalized by httpx and compared exactly, and the matched URL is what gets fetched (CWE-918).
+- **MCP presets**: `mcp_fetch`, which bypassed `web_fetch`'s outbound protections, is removed; `mcp_filesystem` is rooted at the dedicated `backend/mcp_filesystem_sandbox` (instead of `./data`, which holds pickled index metadata) and pins `@modelcontextprotocol/server-filesystem@2026.8.31` (CWE-918, CWE-552, CWE-829).
+- **MCP subprocesses**: each runs in its own process group, closing it terminates the whole tree, and at most 4 run at once (CWE-404, CWE-400).
+- **Chat attachments accept base64 `data:` URLs only**, so remote URLs are no longer handed to model providers to fetch (CWE-918); Markdown images in answers become links that open only when clicked instead of loading from external hosts automatically (CWE-201).
+- The `httpx` and `httpcore` loggers are pinned to `WARNING`, so full URLs with query-string keys are no longer logged (CWE-532).
+
+#### Resource limits
+
+- New `RequestBodyLimitMiddleware`: request bodies are capped at 1 MiB, raised for chat sends and document uploads only with a valid access token; larger bodies get `413` (CWE-770).
+- Chat messages are capped at 20,000 characters and 5 attachments (15 MiB each, 20 MiB in total), and attachment text and tool results are truncated before reaching the model; each user may store 200 MiB of attachments (`413`) and run 2 answer streams at once (`429`); PDF chat attachments are OCR'd for at most 20 pages at no more than 25 MP per page; waiting for the LLM connection pool is capped at 15 seconds (CWE-400, CWE-770).
+- OOXML files have their uncompressed size and compression ratio checked before parsing (CWE-409); HTML extraction, SVG stripping, JSON declaration extraction, Q&A splitting, and table-of-contents cleanup run in linear time, and `filter_and_count_records` limits its date range and result count (CWE-1333).
+- The conversation list returns at most 200 conversations with 5 preview messages each and no attachment bodies; one conversation returns at most its latest 500 messages; the remote model list is cached for 30 seconds and queried in a worker thread (CWE-400).
+- Security log fields are capped at 200 characters, `app.log` and `security.log` rotate at 10 MiB × 5 files, and security events are no longer duplicated into `app.log`; the intrusion detector bounds its events and tracked addresses (CWE-779, CWE-400).
+
+#### Other
+
+- **`send` only accepts listed models**, so nobody can call an unlisted model with the operator's keys (CWE-770); `GET /api/chat/tools` now requires sign-in (CWE-200).
+- The jieba dictionary cache moved to `DATA_DIR/jieba_cache` (mode `0700`) instead of a predictable file name in the system temp directory (CWE-377).
 - **MCP SSRF rejections no longer echo resolution results**: when the SSRF guard rejects the URL while creating or discovering an MCP server, `last_error` and the 400 response now say it was rejected and carry an error code; the full reason, which can include private IPs from server-side DNS resolution or redirect targets, goes only to the server log (CWE-209).
 - **Intro page RRF demo escapes chunk IDs**: `site/main.js` now passes chunk IDs and reranker probabilities from the embedded JSON through `escapeHtml` before inserting them into HTML, so quotes or angle brackets in the data are no longer parsed as markup (CWE-79).
+
+### Added
+
+- **Tool call approval**: custom API tools and MCP servers gain `requires_approval` (API tools default by HTTP method, `true` for anything other than `GET`, `HEAD`, and `OPTIONS`; MCP servers default to `true`). When the agent calls such a tool it sends the SSE event `approval_required` and pauses; once the user answers through `POST /api/chat/approvals/{approval_id}`, it sends `approval_resolved`. Only the asking user can answer, and nothing runs after a 300-second timeout or without an approver. The frontend shows a confirmation card in the answer, and the AI tools page forms gain a matching checkbox. See [ADR-0006](docs/adr/0006-tool-call-approval_en.md).
+- `FORWARDED_ALLOW_IPS` setting: names reverse proxies that overwrite `X-Forwarded-For`, so rate limiting counts real client IPs.
+- `backend/app/core/limits.py` defines the resource limits in one place, documented in a new "Resource limits" section of the [configuration reference](docs/configuration_en.md#resource-limits).
+- `upgrade_schema()`: adds new columns to existing tables and backfills them at startup (and in `init_db.py`).
+- When sending a message fails with a `422` validation error, the frontend shows each reason (for example an oversized attachment).
+- New [ADR-0006](docs/adr/0006-tool-call-approval_en.md) and follow-up amendments to ADR-0004; the [upgrade guide](docs/upgrading_en.md#upgrading-from-300-to-400) covers this release.
+- New backend tests `test_auth_token_binding.py`, `test_outbound_tool_security.py`, `test_process_hardening.py`, `test_resource_limits.py`, and `test_tool_approval.py`.
+
+### Changed
+
+- `/api/chat` message responses no longer include the raw `context_used` (always `null`); the parsed `sources`, `sources_detail`, `research_trace`, and `attachments` carry the data, and attachments in the conversation list have no `data_url`.
+- During a chat stream the database connection goes back to the pool, and database access plus attachment decoding and parsing run in worker threads; conversation read routes are now sync functions run in the thread pool.
+- Custom API tools, the MCP HTTP transport, and `web_fetch`'s direct fetches no longer use the `HTTP_PROXY` and `HTTPS_PROXY` environment variables.
+- PDF OCR rasterizes pages one at a time on the document's thread, with only the vision calls in parallel; XLSX files are opened read-only.
+- Deleting a document removes its database record before its index chunks, and index writes skip chunks whose document was deleted after taking the lock.
+- `backend/.env.example`: `JWT_SECRET_KEY` and `JWT_ALGORITHM` removed; `POSTGRES_PASSWORD` and `FORWARDED_ALLOW_IPS` examples added.
+
+### Removed
+
+- The `JWT_SECRET_KEY` and `JWT_ALGORITHM` settings and the HS256 signing path (ignored if left in `.env`).
+- The `mcp_fetch` MCP preset (`uvx mcp-server-fetch`).
+
+### Fixed
+
+- `POST /api/auth/refresh` read a `user_id` claim that does not exist, so every exchange failed; it now maps the account by `sub`.
+- A document deletion racing an index write could write the deleted document's chunks back into the knowledge base (CWE-362).
+- SQLite reused the ids of deleted users and documents, so old tokens or chunks could map to new rows.
 
 ---
 

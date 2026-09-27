@@ -2,7 +2,7 @@
 
 [繁體中文](configuration.md) | [English](configuration_en.md)
 
-> 本文件逐一說明後端 `backend/.env` 與前端 `frontend/.env` 的每個設定、預設值與實際作用，適用於 **3.0.0**。設定以 `backend/app/core/config.py` 的 `Settings` 為準，範本見 [`backend/.env.example`](../backend/.env.example)。
+> 本文件逐一說明後端 `backend/.env` 與前端 `frontend/.env` 的每個設定、預設值與實際作用，適用於 **4.0.0**。設定以 `backend/app/core/config.py` 的 `Settings` 為準，範本見 [`backend/.env.example`](../backend/.env.example)。
 
 - [讀取規則](#讀取規則)
 - [必填設定](#必填設定)
@@ -16,6 +16,7 @@
 - [認證與權杖](#認證與權杖)
 - [網路存取控制](#網路存取控制)
 - [伺服器與執行環境](#伺服器與執行環境)
+- [資源上限](#資源上限)
 - [保留設定](#保留設定)
 - [已移除的設定](#已移除的設定)
 - [領域設定檔](#領域設定檔)
@@ -37,8 +38,7 @@
 
 | 變數 | 範本值 | 說明 |
 |---|---|---|
-| `DATABASE_URL` | `postgresql+psycopg2://postgres:postgres@localhost:5432/chatbot` | 資料庫連線字串，詳見 [資料庫](#資料庫) |
-| `JWT_SECRET_KEY` | `your_jwt_secret_key_here` | RSA 金鑰無法使用時的 HS256 簽署金鑰，請換成隨機字串 |
+| `DATABASE_URL` | `postgresql+psycopg2://postgres:your_postgres_password_here@localhost:5432/chatbot` | 資料庫連線字串，詳見 [資料庫](#資料庫) |
 | `ADMIN_API_KEY` | `your_admin_api_key_here` | 管理用 API 金鑰（設定驗證要求此值，目前沒有路由使用），請換成隨機字串 |
 | `ENABLE_WEB_SEARCH` | `true` | 是否提供聯網工具 |
 | `AGENT_MAX_TURNS` | `5` | 單次提問的工具呼叫輪數上限 |
@@ -56,7 +56,7 @@
 | 變數 | 程式預設值 | 範本值 | 說明 |
 |---|---|---|---|
 | `LLM_API_BASE` | `http://localhost:5000` | `http://localhost:11434` | Ollama 服務位址：呼叫 Ollama 模型（`/api/chat`）與查詢遠端模型清單（`/api/tags`）時使用 |
-| `LLM_TIMEOUT` | `120` | `120` | LLM 呼叫逾時秒數，也用於 PDF OCR 的視覺模型呼叫 |
+| `LLM_TIMEOUT` | `120` | `120` | LLM 呼叫逾時秒數，也用於 PDF OCR 的視覺模型呼叫；等待連線池名額另有固定的 15 秒上限（見 [資源上限](#資源上限)） |
 | `MODEL_NAME` | 空 | — | 預設模型；未設定時依下方「預設模型」規則決定 |
 | `AVAILABLE_MODELS` | 空 | 註解範例 | 前端可選的模型清單（逗號分隔）；設定後完全取代自動產生的清單 |
 | `OLLAMA_TEMPERATURE` | 空 | `0.3` | Ollama 的 `temperature`，未設定時使用模型預設值 |
@@ -83,9 +83,11 @@
 
 1. 設定了 `AVAILABLE_MODELS`：直接使用這份清單。
 2. 否則依序合併：Azure 部署（未設定部署時為 `gpt-6-sol`）、有 `OPENAI_API_KEY` 時的 OpenAI 內建清單、有 `ANTHROPIC_API_KEY` 時的 Claude 內建清單、有 `GEMINI_API_KEY` 時的 Gemini 內建清單。
-3. 以上皆為空：向 `EXTERNAL_TAGS_URL`（或 `{LLM_API_BASE}/api/tags`）查詢遠端清單，例如本機 Ollama 已下載的模型。
+3. 以上皆為空：向 `EXTERNAL_TAGS_URL`（或 `{LLM_API_BASE}/api/tags`）查詢遠端清單，例如本機 Ollama 已下載的模型。遠端查詢在執行緒中進行，結果（含失敗）快取 30 秒，同一時間只有一個查詢在進行。
 
-| 供應商 | 內建清單（3.0.0） |
+`POST /api/chat/send` 指定的 `model_name` 必須在這份清單內（或等於 `MODEL_NAME`），否則回傳 `400`，避免以操作者的金鑰呼叫清單外的模型。
+
+| 供應商 | 內建清單（4.0.0） |
 |---|---|
 | OpenAI | `gpt-6-sol`、`gpt-6-luna`、`gpt-6-astra`、`gpt-5.6-sol`、`gpt-5.6-luna`、`gpt-5.6-terra`、`gpt-5.4`、`gpt-5.4-mini` |
 | Anthropic | `claude-opus-5-5`、`claude-fable-5-1`、`claude-sonnet-5`、`claude-opus-5`、`claude-fable-5`、`claude-opus-4-8`、`claude-haiku-4-5` |
@@ -127,7 +129,7 @@
 
 - 不可為空；不限制時請明確寫 `*`，且 `*` 不能與其他網域並列。
 - 只填網域（小寫英數、連字號與點），不含 `https://` 與路徑，例如 `gov.tw,example.com`。
-- 無論白名單為何，`web_fetch` 都只能讀取使用者訊息或本次工具結果中原樣出現過的網址，並一律經過 SSRF 驗證。
+- 無論白名單為何，`web_fetch` 都只能讀取使用者訊息或本次工具結果中以完整網址出現過的網址（兩邊都正規化成 httpx 的形式後逐字比對），並一律經過 SSRF 驗證。
 
 ## 檢索、重排與切塊
 
@@ -180,12 +182,12 @@
 
 | 變數 | 程式預設值 | 範本值 | 說明 |
 |---|---|---|---|
-| `DATA_DIR` | `data` | `data` | 索引與執行資料的根目錄 |
+| `DATA_DIR` | `data` | `data` | 索引與執行資料的根目錄；jieba 的詞典快取也放在其下的 `jieba_cache/`（不再使用系統暫存目錄） |
 | `UPLOAD_DIR` | `data/uploads` | `data/uploads` | 上傳原始檔；重建索引時會優先從這裡重新擷取文字 |
 | `FAISS_INDEX_PATH` | `data/faiss_index.bin` | 同左 | FAISS 向量索引（`IndexIDMap2`，以 chunk_id 為 id） |
 | `BM25_INDEX_DIR` | `data/bm25_index` | 同左 | Whoosh BM25 索引目錄（含 `tokenizer_signature.json`） |
 | `METADATA_PATH` | `data/index_metadata.pkl` | 同左 | 索引中繼資料，例如最後重建時間 |
-| `MAX_FILE_SIZE_MB` | `50` | `10` | 知識庫單一上傳檔大小上限（MB） |
+| `MAX_FILE_SIZE_MB` | `50` | `10` | 知識庫單一上傳檔大小上限（MB）；也決定上傳請求的本文上限，見 [資源上限](#資源上限) |
 | `UPLOADS_WATCHER_INTERVAL` | `30` | `30` | 背景檢查上傳檔是否遺失的間隔秒數；檔案遺失只記一次警告，不會刪除任何資料 |
 
 ## 資料庫
@@ -204,24 +206,26 @@
 | 情境 | 連線字串 |
 |---|---|
 | SQLite（零依賴） | `sqlite:///./chatbot.db`（相對路徑依啟動目錄而定，在 `backend/` 啟動即為 `backend/chatbot.db`） |
-| `backend/docker-compose.yml` 啟動的 PostgreSQL 17 | `postgresql+psycopg2://postgres:postgres@localhost:7690/chatbot`（容器對外埠號為 7690） |
+| `backend/docker-compose.yml` 啟動的 PostgreSQL 17 | `postgresql+psycopg2://postgres:<POSTGRES_PASSWORD>@localhost:7690/chatbot`（容器只綁定 `127.0.0.1:7690`） |
 | 自行架設的 PostgreSQL | `postgresql+psycopg2://<使用者>:<密碼>@<主機>:5432/<資料庫>` |
 
-資料表在後端啟動時自動建立。`init_db.py` 是為舊版 PostgreSQL 資料庫補欄位與索引的相容腳本，SQLite 不需要執行（其中的 `ADD COLUMN IF NOT EXISTS` 語法 SQLite 不支援）。
+`backend/docker-compose.yml` 不再內建密碼：啟動前必須在 `backend/.env` 或殼層環境設定 `POSTGRES_PASSWORD`（未設定時 `docker compose` 拒絕啟動），並在 `DATABASE_URL` 使用同一組密碼（`@`、`:`、`/` 等字元需百分比編碼）。容器埠只對本機回送位址開放，區網與公網都連不到。`POSTGRES_PASSWORD` 只供 compose 使用，後端不讀取。
+
+資料表在後端啟動時自動建立，缺少的新欄位（例如 `custom_api_tools.requires_approval`、`mcp_servers.requires_approval`）也會在啟動時自動補上並回填。新建立的 SQLite 資料庫中，`users` 與 `documents` 以 `AUTOINCREMENT` 建立，刪除後的 id 不會被重用；既有 SQLite 資料表不會被改寫。`init_db.py` 是為舊版 PostgreSQL 資料庫補欄位與索引的相容腳本，SQLite 不需要執行（其中的 `ADD COLUMN IF NOT EXISTS` 語法 SQLite 不支援）。
 
 ## 認證與權杖
 
 | 變數 | 程式預設值 | 範本值 | 說明 |
 |---|---|---|---|
-| `JWT_SECRET_KEY` | —（必填） | 佔位字串 | 平常以 RSA 金鑰簽署 RS256；RSA 金鑰無法載入時（僅限非 `production`）改用此金鑰簽署 HS256 |
-| `JWT_ALGORITHM` | `RS256` | `RS256` | 目前未被程式採用：RSA 金鑰可用時固定為 RS256，否則退回 HS256 |
-| `ADMIN_API_KEY` | —（必填） | 佔位字串 | 設定驗證要求此值；目前沒有路由使用 `X-API-Key` 驗證，管理端點一律依存取權杖中的 `is_admin` 判斷 |
+| `ADMIN_API_KEY` | —（必填） | 佔位字串 | 設定驗證要求此值；目前沒有路由使用 `X-API-Key` 驗證，管理端點一律依資料庫中該帳號的 `is_admin` 判斷 |
 | `ACCESS_TOKEN_EXPIRE_MINUTES` | `30` | `30` | 存取權杖有效分鐘數 |
 | `REFRESH_TOKEN_EXPIRE_DAYS` | `7` | `7` | 重新整理權杖有效天數，也是 Cookie 的 `max-age` |
 | `COOKIE_SECURE` | 空（`ENVIRONMENT=production` 時為 `true`） | — | 重新整理權杖 Cookie 的 `Secure` 屬性 |
 | `COOKIE_SAMESITE` | `lax` | — | 重新整理權杖 Cookie 的 `SameSite` 屬性 |
 
-RSA 金鑰對存放於 `backend/keys/jwt_private.pem` 與 `jwt_public.pem`，首次啟動時若不存在會自動產生（2048 位元，已列入 `.gitignore`）。多台後端共用同一組使用者時，請讓它們使用同一組金鑰。
+存取與重新整理權杖一律以 RS256 簽署，沒有其他演算法可選。RSA 金鑰對存放於 `backend/keys/jwt_private.pem` 與 `jwt_public.pem`，首次啟動時若不存在會自動產生（2048 位元，已列入 `.gitignore`），因此後端帳號需能寫入 `backend/keys/`；金鑰無法載入或產生時，後端在任何 `ENVIRONMENT` 下都拒絕啟動。多台後端共用同一組使用者時，請讓它們使用同一組金鑰。
+
+每次請求都會把存取權杖對應回資料庫中的帳號：帳號必須存在且啟用，`is_admin` 與角色取自資料庫而非權杖內容，簽發時間早於帳號建立時間的權杖（例如帳號刪除後 id 被重用）一律無效。重新整理權杖只能使用一次，換發新權杖時舊的立即撤銷。
 
 ## 網路存取控制
 
@@ -231,24 +235,89 @@ RSA 金鑰對存放於 `backend/keys/jwt_private.pem` 與 `jwt_public.pem`，首
 | `DEVTUNNEL_URL` | 空 | 空 | 額外加入 CORS 白名單的一個來源，例如 Dev Tunnels 網址 |
 | `RATE_LIMIT_ENABLED` | `true` | `true` | 是否啟用速率限制 |
 | `RATE_LIMIT_PER_MINUTE` | `60` | `60` | 每個來源 IP 在 60 秒內的請求上限，超過回傳 `429` 與 `Retry-After` |
+| `FORWARDED_ALLOW_IPS` | 空 | 註解範例 `127.0.0.1` | 信任其 `X-Forwarded-For` 的反向代理位址（交給 uvicorn 的 `forwarded_allow_ips`）；未設定時 uvicorn 不處理代理標頭 |
 
 > [!NOTE]
-> 速率限制依連線的來源 IP 計算。經由 Vite 開發代理或反向代理連線時，所有使用者的來源 IP 相同，會共用同一個額度。
+> 速率限制依連線的來源 IP 計算。未設定 `FORWARDED_ALLOW_IPS` 時，用戶端自帶的 `X-Forwarded-For` 一律不採信，經由 Vite 開發代理或反向代理連線的所有使用者來源 IP 相同，會共用同一個額度。
+>
+> 只有在後端前方的反向代理會「覆寫」`X-Forwarded-For`（例如 nginx 的 `proxy_set_header X-Forwarded-For $remote_addr;`）時，才把該代理的位址設為 `FORWARDED_ALLOW_IPS`，速率限制才會以真實用戶端 IP 計算。Vite 開發代理會原樣轉送用戶端自帶的標頭，**不可**為它設定此值，否則任何人都能偽造來源 IP 繞過速率限制與封鎖。此設定只在以 `python main.py` 啟動時生效。
 
 ## 伺服器與執行環境
 
 | 變數 | 程式預設值 | 範本值 | 說明 |
 |---|---|---|---|
-| `ENVIRONMENT` | `development` | `development` | 設為 `production` 時：Cookie 預設加上 `Secure`，RSA 金鑰無法載入時拒絕啟動 |
+| `ENVIRONMENT` | `development` | `development` | 設為 `production` 時 Cookie 預設加上 `Secure`（RSA 金鑰無法載入時，任何環境都拒絕啟動） |
 | `HOST` | `0.0.0.0` | `0.0.0.0` | `python main.py` 的預設監聽位址（可用 `--host` 覆寫） |
 | `PORT` | `8001` | `8001` | 預設埠號（可用 `--port` 覆寫） |
 | `RELOAD` | `true` | `true` | 程式變更時自動重新載入（可用 `--no-reload` 關閉） |
-| `LOG_LEVEL` | `INFO` | `INFO` | 日誌層級；應用程式日誌寫入 `backend/logs/app.log` |
+| `LOG_LEVEL` | `INFO` | `INFO` | 日誌層級；應用程式日誌寫入 `backend/logs/app.log`，安全事件只寫入 `backend/logs/security.log`（兩者都依大小輪替）。`httpx` 與 `httpcore` 固定為 `WARNING`，完整請求網址（可能含查詢字串型 API 金鑰）不會寫進日誌 |
 | `BASE_URL` | `http://backend:8001` | `http://localhost:8001` | 只有 `healthcheck.py` 使用，而且它讀的是行程環境變數，不會讀取 `.env` |
+
+`python main.py` 啟動的 uvicorn 只在設定 `FORWARDED_ALLOW_IPS` 時處理代理標頭（`proxy_headers`），見 [網路存取控制](#網路存取控制)。
+
+## 資源上限
+
+下列上限是保護單一後端行程可用性與操作者付費用量的程式常數，**不是** `.env` 設定；集中定義於 [`backend/app/core/limits.py`](../backend/app/core/limits.py)（少數與單一模組綁定的常數定義在該模組中，表中註明）。調整時請修改原始碼並同步更新本節。
+
+**請求與聊天**
+
+| 常數 | 值 | 說明 |
+|---|---|---|
+| `MAX_REQUEST_BODY_BYTES` | 1 MiB | 一般 API 請求與所有未帶有效存取權杖的請求本文上限，超過回傳 `413`；`Content-Length` 超過時直接拒絕，分塊傳輸邊讀邊計數 |
+| `MAX_CHAT_REQUEST_BODY_BYTES` | 約 27.7 MiB | `POST /api/chat/send` 的本文上限（附件總量 20 MiB 經 base64 膨脹 4/3 後再加 1 MiB）；只有帶著簽章有效的存取權杖時才放寬，否則仍為 1 MiB |
+| 文件上傳本文上限 | `MAX_FILES_PER_UPLOAD` × `MAX_FILE_SIZE_MB` MiB + 1 MiB | `POST /api/documents/upload` 的本文上限（範本值 `MAX_FILE_SIZE_MB=10` 時為 101 MiB）；同樣只對有效存取權杖放寬 |
+| `MAX_FILES_PER_UPLOAD` | 10 | 單次上傳的檔案數 |
+| `MAX_CHAT_MESSAGE_CHARS` | 20,000 字元 | 單則聊天訊息長度，超過回傳 `422` |
+| `MAX_CHAT_ATTACHMENTS` | 5 | 單則訊息的附件數 |
+| `MAX_CHAT_ATTACHMENT_BYTES` | 15 MiB | 單一附件解碼後的大小；附件的 `data_url` 必須是 base64 編碼的 `data:` URL，遠端網址會被拒絕 |
+| `MAX_CHAT_ATTACHMENTS_TOTAL_BYTES` | 20 MiB | 單則訊息所有附件解碼後的合計大小 |
+| `MAX_ATTACHMENT_TEXT_CHARS` | 50,000 字元 | 每個附件放進模型脈絡的文字上限（超過的部分截斷），也是請求中附件 `content` 欄位的長度上限 |
+| `MAX_USER_ATTACHMENT_STORAGE_BYTES` | 200 MiB | 每位使用者存在資料庫的附件總量，超過時送出訊息回傳 `413`；系統不會自動清除舊附件，刪除含附件的對話即可釋放 |
+| `MAX_CONCURRENT_CHAT_STREAMS_PER_USER` | 2 | 每位使用者同時進行中的回答串流數，超過回傳 `429` |
+| `MAX_LISTED_CONVERSATIONS`（`services/chat_service.py`） | 200 | `GET /api/chat/conversations` 只列最近更新的 200 段對話 |
+| `LIST_PREVIEW_MESSAGES`（`services/chat_service.py`） | 5 | 對話清單中每段對話附帶的最近訊息數（不含附件本文） |
+| `MAX_CONVERSATION_MESSAGES`（`services/chat_service.py`） | 500 | 讀取單段對話時最多回傳的最新訊息數 |
+
+**工具與出站請求**
+
+| 常數 | 值 | 說明 |
+|---|---|---|
+| `MAX_TOOL_RESULT_CHARS` | 20,000 字元 | 每次工具呼叫的結果放進模型脈絡前的上限，超過的部分截斷 |
+| `MAX_TEXT_CLEANUP_CHARS` | 2,000,000 字元 | `web_fetch` 抽取文字前先截斷 HTML 的長度 |
+| `MAX_DATE_RANGE_CHARS`、`MAX_TARGET_DATES`、`MAX_FILTER_RECORDS`（`rag/tools.py`） | 200 字元、93 天、50 筆 | `filter_and_count_records` 的 `date_range` 長度、展開後的日期數與回傳筆數（`limit` 超過時夾到 50） |
+| `MAX_API_TOOL_RESPONSE_BYTES`（`api/api_tools.py`） | 1 MiB | 自訂 API 工具的回應本文上限，超過即中止讀取並回傳 `502` |
+| `MAX_MCP_HTTP_RESPONSE_BYTES`（`services/mcp_service.py`） | 4 MiB | HTTP 傳輸 MCP 伺服器的單次回應上限 |
+| `MAX_CONCURRENT_STDIO_PROCESSES`（`services/mcp_service.py`） | 4 | 同時存在的 `stdio` MCP 子行程數 |
+| `APPROVAL_TIMEOUT_SECONDS`（`rag/tool_approval.py`） | 300 秒 | 等待使用者核准工具呼叫的時間，逾時視為拒絕 |
+| `DNS_RESOLVE_TIMEOUT_SECONDS`、`DNS_RESOLVER_MAX_WORKERS`（`core/ssrf_protection.py`） | 5 秒、4 條執行緒 | SSRF 驗證的 DNS 查詢在專用執行緒池中進行，逾時視為無法解析 |
+| `LLM_POOL_ACQUIRE_TIMEOUT_SECONDS`（`core/llm_client.py`） | 15 秒 | 等待 LLM 連線池名額的上限，與 `LLM_TIMEOUT` 分開，池被占滿時很快失敗 |
+| `REMOTE_MODELS_CACHE_SECONDS`（`api/tags.py`） | 30 秒 | 遠端模型清單的快取時間（含失敗結果） |
+
+**文件解析**
+
+| 常數 | 值 | 說明 |
+|---|---|---|
+| `MAX_PDF_OCR_PAGES` | 20 頁 | 聊天附件 PDF 最多 OCR 的頁數；管理員上傳的知識庫文件不受此限制 |
+| `MAX_OCR_PIXELS` | 25,000,000 像素 | OCR 時單頁點陣化的像素上限，超過時降低解析度 |
+| `MAX_OOXML_UNCOMPRESSED_BYTES` | 200 MiB | `.docx`、`.pptx`、`.xlsx` 解壓後的總大小上限，超過即拒絕解析 |
+| `MAX_OOXML_COMPRESSION_RATIO` | 100 | 解壓後超過 10 MiB 的 OOXML 成員，壓縮比不可超過此值 |
+
+**帳號、日誌與偵測**
+
+| 常數 | 值 | 說明 |
+|---|---|---|
+| `MAX_PASSWORD_CHARS` | 256 字元 | 註冊、登入與修改密碼時的密碼長度上限（Argon2 成本隨長度成長） |
+| `MAX_LOGIN_IDENTIFIER_CHARS` | 254 字元 | 登入時使用者名稱或電子郵件的長度上限 |
+| `MAX_CONCURRENT_PASSWORD_HASHES` | 4 | 同時進行的 Argon2 雜湊與驗證數，在執行緒中執行 |
+| `MAX_REVOKED_TOKENS` | 100,000 | 行程內權杖撤銷名單的條目上限，滿了以後先淘汰最早到期的條目 |
+| `MAX_LOG_FIELD_CHARS` | 200 字元 | 安全日誌中單一字串欄位（例如帳號名稱、User-Agent）的長度上限 |
+| `LOG_FILE_MAX_BYTES`、`LOG_FILE_BACKUP_COUNT` | 10 MiB、5 份 | `app.log` 與 `security.log` 的輪替大小與保留份數 |
+| `MAX_EVENTS_PER_ADDRESS` | 200 | 入侵偵測對未列入規則的事件類型，每個位址保留的事件數 |
+| `MAX_TRACKED_ADDRESSES` | 10,000 | 入侵偵測同時追蹤的位址數，最久未活動的先淘汰 |
 
 ## 保留設定
 
-下列設定可以寫進 `.env`，但 3.0.0 沒有任何程式路徑使用：
+下列設定可以寫進 `.env`，但 4.0.0 沒有任何程式路徑使用：
 
 | 變數 | 程式預設值 | 說明 |
 |---|---|---|
@@ -261,6 +330,7 @@ RSA 金鑰對存放於 `backend/keys/jwt_private.pem` 與 `jwt_public.pem`，首
 
 | 變數 | 移除版本 | 替代方式 |
 |---|---|---|
+| `JWT_SECRET_KEY`、`JWT_ALGORITHM` | 4.0.0 | 權杖一律以 `backend/keys/` 的 RSA 金鑰簽署 RS256，不再有 HS256 退路 |
 | `HYBRID_ALPHA`、`NORMALIZATION` | 3.0.0 | 改用 `RRF_K` 的標準 RRF 融合 |
 | `FINAL_THRESHOLD` | 3.0.0 | 改用 `RERANK_RELEVANCE_THRESHOLD` |
 | `DOCUMENTS_PATH` | 3.0.0 | 片段改存資料庫 `rag_chunks` 表 |
@@ -326,3 +396,5 @@ RSA 金鑰對存放於 `backend/keys/jwt_private.pem` 與 `jwt_public.pem`，首
 | `GENERATE_SOURCEMAP` | 輸出 | 建置時是否輸出 source map，設為 `false` 才關閉 |
 
 `frontend/.env.example` 採用「直接呼叫」模式：`VITE_API_BASE=http://localhost:8001` 搭配 `PORT=3001`，這個來源正好在後端 `ALLOWED_ORIGINS` 的預設清單中。
+
+Vite 開發與預覽伺服器固定只監聽 `localhost`（`frontend/vite.config.js`，不是環境變數），並送出 `X-Frame-Options: DENY` 與 `Content-Security-Policy: frame-ancestors 'none'; img-src 'self' data: blob:`；`/__open-in-editor` 只回應本機回送位址。區網裝置需要使用時，請以 `bun run build` 建置後由正式的網頁伺服器提供，並在該伺服器送出相同的反框架標頭。

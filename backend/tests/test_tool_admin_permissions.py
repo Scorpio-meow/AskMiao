@@ -184,7 +184,7 @@ async def test_api_tool_redirect_to_metadata_ip_is_blocked(monkeypatch):
     sent = []
 
     async def redirect_to_metadata(self, request):
-        sent.append(str(request.url))
+        sent.append((str(request.url), request.headers["host"], request.extensions.get("sni_hostname")))
         return httpx.Response(302, headers={"Location": "http://169.254.169.254/latest/meta-data/"}, request=request)
 
     monkeypatch.setattr(httpx.AsyncHTTPTransport, "handle_async_request", redirect_to_metadata)
@@ -197,7 +197,9 @@ async def test_api_tool_redirect_to_metadata_ip_is_blocked(monkeypatch):
     assert result["status_code"] == 403
     assert result["is_success"] is False
     assert "SSRF" in result["error"]
-    assert sent == ["https://api.example.com/status"]
+    assert "169.254.169.254" not in result["error"]
+    # 連線固定到驗證時核可的 IP，Host 與 SNI 仍是原本的主機名稱
+    assert sent == [("https://93.184.216.34/status", "api.example.com", "api.example.com")]
 
 
 @pytest.mark.anyio

@@ -44,6 +44,15 @@ export interface Message {
   error?: string;
   /** 僅前端使用：使用者手動停止產生 */
   stopped?: boolean;
+  /** 僅前端使用：Agent 暫停等待使用者核准的工具呼叫 */
+  pending_approval?: PendingToolApproval | null;
+}
+export interface PendingToolApproval {
+  approval_id: string;
+  step: number;
+  tool: string;
+  tool_display_name: string;
+  arguments?: Record<string, any>;
 }
 export interface Conversation {
   id: number;
@@ -199,7 +208,7 @@ api.interceptors.response.use(
   }
 );
 export interface StreamEvent {
-  event: 'start' | 'step_start' | 'step_end' | 'token' | 'think' | 'sources' | 'done' | 'error';
+  event: 'start' | 'step_start' | 'step_end' | 'approval_required' | 'approval_resolved' | 'token' | 'think' | 'sources' | 'done' | 'error';
   data: any;
 }
 export const chatService = {
@@ -243,7 +252,10 @@ export const chatService = {
       let detail = errText;
       try {
         const parsed = JSON.parse(errText);
-        detail = parsed.detail || errText;
+        // 欄位驗證失敗（例如附件過大或數量過多）時 detail 是錯誤清單，取出每一項的說明
+        detail = Array.isArray(parsed.detail)
+          ? parsed.detail.map((item: { msg?: string }) => (item.msg || '').replace(/^Value error, /, '')).filter(Boolean).join('；')
+          : parsed.detail || errText;
       } catch (e) {
       }
       throw new Error(detail || `HTTP Error ${response.status}`);
@@ -307,6 +319,13 @@ export const chatService = {
   },
   async getTools(): Promise<{ status: string; tools: any[] }> {
     const response = await api.get<{ status: string; tools: any[] }>('/chat/tools');
+    return response.data;
+  },
+  async resolveApproval(approvalId: string, approved: boolean): Promise<{ approval_id: string; approved: boolean }> {
+    const response = await api.post<{ approval_id: string; approved: boolean }>(
+      `/chat/approvals/${encodeURIComponent(approvalId)}`,
+      { approved }
+    );
     return response.data;
   }
 };
@@ -376,6 +395,7 @@ export interface CustomApiToolItem {
   param_locations?: Record<string, string> | null;
   response_mapping?: string | null;
   is_enabled: boolean;
+  requires_approval: boolean;
   timeout: number;
   spec_version?: string | null;
   created_at: string;
@@ -452,6 +472,7 @@ export interface McpServerItem {
   url?: string | null;
   headers?: Record<string, string> | null;
   is_enabled: boolean;
+  requires_approval: boolean;
   status: string;
   last_error?: string | null;
   discovered_tools?: any[] | null;
