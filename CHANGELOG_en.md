@@ -22,6 +22,17 @@ All notable changes to AskMiao are documented in this file. The format is based 
 
 ## [Unreleased]
 
+### Added
+
+- **"Tool approval" section on the website**: an interactive approval card (approve, deny, simulate a timeout) that shows the resulting SSE events such as `approval_required` and `approval_resolved`, plus a switch between HTTP methods that shows a custom API tool's default approval rule, matching `tool_approval.py`.
+- The website gains a 4.0.0 release pill and stats row, a "Every entry point has a limit" resource-limit table in the security section, and ADR-0006 in the documentation list.
+- The README gains "What's new in 4.0.0", "Tool call approval", "Threat coverage", and "Key resource limits" sections, and two troubleshooting entries on approval timeouts and read-only tools asking for approval.
+
+### Fixed
+
+- The website's web_fetch inspector now matches URL provenance on the full normalized URL, as `research_session.py` does; it used to match a decoded substring, which counted fragments of a URL as having appeared.
+- The website no longer mentions the removed `JWT_SECRET_KEY` (quick start, required settings, and the subprocess environment table) and explains RSA keys, `POSTGRES_PASSWORD`, and the local-only dev server instead; the security notes now cover IP pinning and tokens resolved to database accounts.
+
 ---
 
 ## [4.0.0] - 2026-09-27

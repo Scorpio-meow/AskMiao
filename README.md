@@ -36,6 +36,7 @@
 ## 目錄
 
 - [特色一覽](#特色一覽)
+- [4.0.0 重點](#400-重點)
 - [功能特色](#功能特色)
 - [畫面預覽](#畫面預覽)
 - [系統架構](#系統架構)
@@ -62,6 +63,21 @@
 | 5 | **五家模型供應商** | Ollama、OpenAI、Azure OpenAI、Anthropic Claude、Google Gemini 都能呼叫工具與串流 |
 | 6 | **外部工具與 MCP** | 貼上 OpenAPI 規格即可匯入 API 工具，也能接入 MCP 伺服器；只限管理員管理，有副作用的呼叫先經使用者核准 |
 | 7 | **防護完整** | RSA JWT、Argon2 密碼雜湊、逐跳 SSRF 驗證並固定連線 IP、工具輸出信任邊界、資源上限、對外只回錯誤代碼 |
+
+## 4.0.0 重點
+
+4.0.0 以安全稽核為主軸，處理了 52 項線索。對日常使用影響最大的是「有副作用的工具要先核准」，對部署影響最大的是 RSA 金鑰與 `POSTGRES_PASSWORD` 改為必要。
+
+| 面向 | 改變 | 升級時要做的事 |
+|---|---|---|
+| 工具呼叫 | 有副作用的自訂 API 工具與 MCP 工具，Agent 呼叫前暫停，由發問者在對話中核准；300 秒未回應視為拒絕 | 到「AI 工具」頁檢查每個工具的「需要核准」設定 |
+| 認證 | 權杖每次請求對應資料庫帳號，停用、刪除或降權立即生效；重新整理權杖只能用一次；移除 HS256 退路 | 從 `.env` 刪除 `JWT_SECRET_KEY`、`JWT_ALGORITHM`，確認 `backend/keys/` 可讀寫 |
+| 出站請求 | 驗證後把連線固定在核可的 IP，擋下 DNS rebinding；`web_fetch` 改以正規化後的完整網址比對來源 | 不需處理 |
+| 資源用量 | 請求本文、訊息、附件、工具結果、同時串流數與附件儲存量都有上限 | 用戶端需處理 `413`、`422`、`429` |
+| 部署 | compose 的 PostgreSQL 需要 `POSTGRES_PASSWORD` 且只綁定本機；Vite 開發伺服器只監聽 `localhost`；預設不採信 `X-Forwarded-For` | 設定 `POSTGRES_PASSWORD`；在反向代理後方時設定 `FORWARDED_ALLOW_IPS` |
+| API | 訊息的 `context_used` 一律為 `null`；`GET /api/chat/tools` 需要登入；`model_name` 必須在可用清單內 | 依 [API 參考](docs/api.md) 調整用戶端 |
+
+完整變更見 [CHANGELOG 4.0.0](CHANGELOG.md#400---2026-09-27)，逐步操作見 [升級指南](docs/upgrading.md#從-300-升級到-400)。
 
 ## 功能特色
 
@@ -126,8 +142,28 @@ flowchart LR
 - **自訂 API 工具**：以表單建立，或貼上 OpenAPI / Swagger 規格（OAS 2.0、3.0、3.1）批次匯入，支援 Bearer、API Key（Header / Query）與 Basic 認證，可即時測試。
 - **MCP 用戶端**：支援 `stdio` 與 HTTP 傳輸，自動探索工具並以 `mcp_<伺服器>_<工具>` 名稱加入 Agent 工具集；內建時間與檔案系統兩個範本（檔案系統範本只開放專屬沙箱目錄 `backend/mcp_filesystem_sandbox`）。
 - **動態載入**：啟用中的工具在每次組裝工具定義時從資料庫載入，變更後不需重啟。
-- **呼叫前核准**：標記為「需要核准」的工具（新建的 MCP 伺服器，以及 GET／HEAD／OPTIONS 以外的 API 工具）被 Agent 呼叫時，聊天畫面會顯示工具與參數，由發問的使用者按下核准或拒絕；5 分鐘未回應視為拒絕（[ADR-0006](docs/adr/0006-tool-call-approval.md)）。
+- **呼叫前核准**：有副作用的工具由發問者在對話中核准後才執行，見下方 [工具呼叫核准](#工具呼叫核准)。
 - **只限管理員**：工具由所有使用者的 Agent 共用，`/api/api-tools`、`/api/mcp` 與「AI 工具」頁只開放管理員；`stdio` 子行程只繼承 `PATH` 等系統變數，拿不到後端的金鑰，關閉時連同整個子行程樹一起終止（[ADR-0004](docs/adr/0004-tool-admin-permissions-and-subprocess-isolation.md)）。
+
+### 工具呼叫核准
+
+Agent 可以自己查資料，但不會自己替你送出申請、刪除紀錄或呼叫會寫入的 API。標記為「需要核准」的工具被呼叫時：
+
+1. 串流送出 `approval_required`（含 `approval_id`、工具顯示名稱與參數），Agent 暫停。
+2. 回答中出現確認卡片，原樣列出工具與參數。
+3. 發問者按下「核准執行」或「拒絕」，前端呼叫 `POST /api/chat/approvals/{approval_id}`，串流接著送出 `approval_resolved`。
+4. 核准才執行；拒絕或 300 秒未回應時，模型收到「使用者未核准」，並被要求不要再次呼叫同一工具。
+
+| 工具類型 | 預設 | 說明 |
+|---|---|---|
+| 內建工具（`search_knowledge_base` 等 4 個） | 不需要 | 只讀取資料，由網址來源與 SSRF 規則把關 |
+| 自訂 API 工具，方法為 `GET`、`HEAD`、`OPTIONS` | 不需要 | 管理員仍可為個別工具勾選「需要核准」 |
+| 自訂 API 工具，其他方法 | 需要 | 升級到 4.0.0 時，既有工具依 HTTP 方法自動回填 |
+| MCP 伺服器 | 需要 | 以伺服器為單位設定，卡片顯示「伺服器 → 工具」 |
+
+- 待核准項目綁定發問者，其他帳號以同一個 `approval_id` 回覆會得到 `404`。
+- 不是由使用者在對話中發起的 Agent 呼叫沒有人能核准，這類工具一律不執行。
+- 設計背景與取捨見 [ADR-0006](docs/adr/0006-tool-call-approval.md)；[介紹網站](https://scorpio-meow.github.io/AskMiao/#approval) 有可操作的示範。
 
 ### 安全設計
 
@@ -137,6 +173,32 @@ flowchart LR
 - **錯誤代碼**：未預期例外只對外回傳隨機錯誤代碼，完整堆疊只寫入伺服器日誌（CWE-209 / CWE-497）。
 - **日誌脫敏**：物件遞迴與正規表示式雙層遮罩，密碼、權杖與 Authorization 標頭一律呈現為 `[REDACTED]`。
 - **其他**：安全回應標頭、依來源 IP 的速率限制（預設不採信 `X-Forwarded-For`，信任的反向代理以 `FORWARDED_ALLOW_IPS` 指定）、CORS 白名單、檔名與路徑遍歷檢查、前端反點擊劫持。
+
+#### 防護對照
+
+| 威脅 | 防護 | 位置 |
+|---|---|---|
+| 文件或網頁夾帶提示注入 | 工具結果包在每次提問 id 不同的 `<untrusted_tool_result>` 標記內；`web_fetch` 只能讀使用者訊息或本次工具結果中出現過的完整網址 | `rag/research_session.py` |
+| SSRF 與 DNS rebinding | 協定、連接埠、主機名稱、IP 與 DNS 結果逐跳驗證，連線固定在核可的 IP | `core/ssrf_protection.py` |
+| Agent 擅自改動外部系統 | 有副作用的工具呼叫前由發問者核准 | `rag/tool_approval.py` |
+| 工具設定被濫用 | 工具管理只限管理員；`stdio` 子行程不繼承後端金鑰 | `api/api_tools.py`、`api/mcp.py`、`services/mcp_service.py` |
+| 帳號停用後權杖仍有效 | 每次請求依 `sub` 讀取帳號狀態與角色，重新整理權杖只能使用一次 | `core/jwt_auth.py`、`api/auth.py` |
+| 資源耗盡 | 請求本文、附件、工具結果、串流數與密碼雜湊數都有上限 | `core/limits.py`、`core/body_limit.py` |
+| 內部資訊外洩 | 對外只回錯誤代碼，日誌雙層脫敏並限制欄位長度 | `core/error_response.py`、`core/security_logging.py` |
+
+#### 主要資源上限
+
+| 項目 | 上限 | 超過時 |
+|---|---|---|
+| 一般請求本文 | 1 MiB（帶有效權杖的聊天送出與文件上傳另計） | `413` |
+| 單則聊天訊息 | 20,000 字 | `422` |
+| 每則訊息的附件 | 5 個，單檔 15 MiB、合計 20 MiB | `422` |
+| 每位使用者的附件儲存量 | 200 MiB | `413` |
+| 每位使用者同時進行的回答串流 | 2 個 | `429` |
+| 單次工具結果放進模型 | 20,000 字 | 截斷 |
+| 待核准的工具呼叫 | 300 秒 | 視為拒絕 |
+
+完整清單見 [資源上限](docs/configuration.md#資源上限)。
 
 ### 前端體驗
 
@@ -579,6 +641,20 @@ Vite 開發與預覽伺服器只監聽 `localhost`，這是刻意的限制（開
 </details>
 
 <details>
+<summary><b>核准卡片按下後顯示「無法送出決定，可能已逾時」</b></summary>
+
+待核准項目只保留 300 秒，逾時後 Agent 已視為拒絕並繼續回答，同一項目也只能回覆一次；以發問者以外的帳號回覆同樣會失敗。請重新提問，並在 5 分鐘內按下核准。
+
+</details>
+
+<details>
+<summary><b>只會讀取資料的工具，每次都要求核准</b></summary>
+
+MCP 伺服器預設需要核准，自訂 API 工具則依 HTTP 方法決定。確認工具不會改動外部系統後，管理員可在「AI 工具」頁編輯該工具或 MCP 伺服器，取消勾選「需要核准」。
+
+</details>
+
+<details>
 <summary><b>API 回傳 <code>429 Too Many Requests</code></b></summary>
 
 - 速率限制依實際連線的來源 IP 計算，預設每 60 秒 60 次。經由 Vite 開發代理或反向代理時所有使用者共用同一個 IP，可視需要調高 `RATE_LIMIT_PER_MINUTE`；前方的反向代理會覆寫 `X-Forwarded-For` 時，可把代理位址設為 `FORWARDED_ALLOW_IPS`，改以真實用戶端 IP 計算。
@@ -597,7 +673,7 @@ Vite 開發與預覽伺服器只監聽 `localhost`，這是刻意的限制（開
 | [架構決策紀錄（ADR）](docs/adr/README.md) | 重大設計的背景、取捨與後續修訂 |
 | [llms.txt](llms.txt) | 給 AI Agent 讀的檔案地圖、系統約束與驗證方式 |
 | [版本變更紀錄](CHANGELOG.md) | 每個版本的新增、變更、移除與修正 |
-| [介紹網站](https://scorpio-meow.github.io/AskMiao/) | 以互動示範說明引用、檢索門檻與安全機制 |
+| [介紹網站](https://scorpio-meow.github.io/AskMiao/) | 以互動示範說明引用、檢索門檻、工具呼叫核准與出站防護 |
 
 ## 版本資訊
 
@@ -619,6 +695,8 @@ Vite 開發與預覽伺服器只監聽 `localhost`，這是刻意的限制（開
    - `rag/tools.py`、`core/config.py`：`WEB_FETCH_ALLOWED_DOMAINS`
    - `core/ssrf_protection.py`：SSRF 檢查順序與封鎖清單
    - `services/mcp_service.py`：`INHERITED_ENV_VARS`
+   - `rag/tool_approval.py`、`rag/agent.py`：預設需要核准的 HTTP 方法、核准逾時秒數與 SSE 事件
+   - `core/limits.py`：介紹頁「每個入口都有上限」的數值
 6. 開啟 Pull Request，說明變更內容與驗證方式。
 
 ## 授權條款

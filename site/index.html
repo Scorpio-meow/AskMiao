@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>AskMiao：企業級 Agentic RAG 智慧知識庫對話系統</title>
-  <meta name="description" content="AskMiao 是開源的企業級知識庫對話系統：向量與 BM25 以 RRF 融合、Cross-Encoder 重排門檻、ReAct 自主研究 Agent，答案逐句以 [n] 標註出處；工具輸出設有信任邊界，出站請求逐跳 SSRF 驗證，工具管理只限管理員。">
+  <meta name="description" content="AskMiao 是開源的企業級知識庫對話系統：向量與 BM25 以 RRF 融合、Cross-Encoder 重排門檻、ReAct 自主研究 Agent，答案逐句以 [n] 標註出處；有副作用的工具呼叫先經使用者核准，出站請求逐跳 SSRF 驗證並固定連線 IP，權杖每次請求對應資料庫帳號。">
   <meta name="color-scheme" content="light dark">
   <meta name="theme-color" media="(prefers-color-scheme: light)" content="#f6f8fb">
   <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#0a0f1a">
@@ -16,7 +16,7 @@
   <meta property="og:type" content="website">
   <meta property="og:site_name" content="AskMiao">
   <meta property="og:title" content="AskMiao：自主研究，答案有出處">
-  <meta property="og:description" content="開源的企業級 Agentic RAG 知識庫對話系統。Agent 自主查證內部文件與網路資料，每句結論都以 [n] 標註、對得回原文。">
+  <meta property="og:description" content="開源的企業級 Agentic RAG 知識庫對話系統。Agent 自主查證內部文件與網路資料，每句結論都以 [n] 標註、對得回原文；會改動外部系統的工具，執行前先問過你。">
   <meta property="og:url" content="https://scorpio-meow.github.io/AskMiao/">
   <meta property="og:image" content="https://scorpio-meow.github.io/AskMiao/assets/og-image.png">
   <meta property="og:image:width" content="1200">
@@ -35,7 +35,9 @@
     "codeRepository": "https://github.com/Scorpio-meow/AskMiao",
     "license": "https://opensource.org/licenses/MIT",
     "programmingLanguage": ["Python", "TypeScript"],
-    "runtimePlatform": ["FastAPI", "React"]
+    "runtimePlatform": ["FastAPI", "React"],
+    "version": "4.0.0",
+    "dateModified": "2026-09-27"
   }
   </script>
 
@@ -74,6 +76,7 @@
       <a href="#features">功能</a>
       <a href="#how">運作方式</a>
       <a href="#retrieval">檢索</a>
+      <a href="#approval">工具核准</a>
       <a href="#security">安全</a>
       <a href="#architecture">架構</a>
       <a href="#quickstart">快速開始</a>
@@ -96,6 +99,7 @@
     <a href="#features">功能</a>
     <a href="#how">運作方式</a>
     <a href="#retrieval">檢索</a>
+    <a href="#approval">工具核准</a>
     <a href="#security">安全</a>
     <a href="#architecture">架構</a>
     <a href="#experience">介面細節</a>
@@ -110,6 +114,11 @@
     <div class="hero__backdrop" aria-hidden="true"></div>
     <div class="container hero__grid">
       <div class="hero__copy">
+        <a class="release-pill" href="#changelog" data-anim style="--i:0">
+          <span class="release-pill__ver">4.0.0</span>
+          <span class="release-pill__text">工具呼叫先經核准、權杖綁定資料庫帳號</span>
+          <svg class="icon" aria-hidden="true"><use href="#i-arrow-right"></use></svg>
+        </a>
         <p class="eyebrow" data-anim style="--i:0">開源 Agentic RAG 知識庫</p>
         <h1 data-anim style="--i:1"><span class="nowrap">自主研究，</span><span class="nowrap">答案有出處<a class="cite-mark" href="#citations" aria-describedby="hero-cite-tip">[1]</a></span></h1>
         <span class="sr-only" id="hero-cite-tip">前往引用出處示範</span>
@@ -124,6 +133,12 @@
             <svg class="icon" aria-hidden="true"><use href="#i-arrow-right"></use></svg>
           </a>
         </div>
+        <dl class="hero__stats" data-anim style="--i:4">
+          <div><dt>模型供應商</dt><dd>5<small>家</small></dd></div>
+          <div><dt>可上傳格式</dt><dd>27<small>種</small></dd></div>
+          <div><dt>出站檢查</dt><dd>9<small>道</small></dd></div>
+          <div><dt>架構決策紀錄</dt><dd>6<small>份</small></dd></div>
+        </dl>
       </div>
       <div class="hero__art" data-anim style="--i:2">
         <div class="shot shot--hero">
@@ -370,7 +385,8 @@ AZURE_OPENAI_DEPLOYMENT=gpt-6-sol,gpt-6-luna</pre>
         <article class="cell cell--tools reveal">
           <div class="cell__icon"><svg class="icon" aria-hidden="true"><use href="#i-plugs-connected"></use></svg></div>
           <h3>自訂 API 工具與 MCP 生態</h3>
-          <p>貼上 OpenAPI 或 Swagger 規格即可批次匯入端點成為 AI 工具，MCP 支援 stdio 與 HTTP 傳輸，啟用後不必重啟後端。工具由所有人的 Agent 共用，所以只有管理員能新增與修改。</p>
+          <p>貼上 OpenAPI 或 Swagger 規格即可批次匯入端點成為 AI 工具，MCP 支援 stdio 與 HTTP 傳輸，啟用後不必重啟後端。工具由所有人的 Agent 共用，所以只有管理員能新增與修改；會改動外部系統的工具，每次執行前都由發問者核准。</p>
+          <a class="link-more" href="#approval">看核准怎麼運作<svg class="icon" aria-hidden="true"><use href="#i-arrow-right"></use></svg></a>
           <div class="cell__media">
             <picture data-theme-pic>
               <source media="(prefers-color-scheme: dark)" srcset="assets/screens/feature-tools-dark.webp">
@@ -422,7 +438,7 @@ AZURE_OPENAI_DEPLOYMENT=gpt-6-sol,gpt-6-luna</pre>
           </article>
           <article class="step reveal" data-step="1">
             <h3>Agent 自主決策</h3>
-            <p>ResearchAgent 以 ReAct 模式決定下一步要用哪個工具，工具結果包進 &lt;untrusted_tool_result&gt; 後才回饋給模型，最多 AGENT_MAX_TURNS 輪。模型不再呼叫工具時，那一次的內容就是最終答案，不會再重新生成一次。</p>
+            <p>ResearchAgent 以 ReAct 模式決定下一步要用哪個工具，工具結果包進 &lt;untrusted_tool_result&gt; 後才回饋給模型，最多 AGENT_MAX_TURNS 輪。標記為需要核准的工具會先暫停，等發問者按下核准才執行。模型不再呼叫工具時，那一次的內容就是最終答案，不會再重新生成一次。</p>
             <div class="chips" aria-label="可用工具">
               <span class="chip">search_knowledge_base</span>
               <span class="chip">filter_and_count_records</span>
@@ -462,6 +478,9 @@ AZURE_OPENAI_DEPLOYMENT=gpt-6-sol,gpt-6-luna</pre>
             <pre class="code" aria-label="SSE 事件序列"><span class="k">event: start</span>       <span class="c">{"conversation_id": 42, "user_message_id": 107}</span>
 <span class="k">event: step_start</span>  <span class="c">{"step": 1, "tool": "web_search", "arguments": {...}}</span>
 <span class="k">event: step_end</span>    <span class="c">{"step": 1, "duration_seconds": 1.86, "status": "success", ...}</span>
+<span class="c">                   ⋯ 需要核准的工具會在 step_start 之後插入 ⋯</span>
+<span class="k">event: approval_required</span> <span class="c">{"approval_id": "…", "step": 3, "tool_display_name": "…", ...}</span>
+<span class="k">event: approval_resolved</span> <span class="c">{"approval_id": "…", "approved": true}</span>
 <span class="k">event: token</span>       <span class="c">{"content": "NIST SP 800-63B-4 已不要求定期更換密碼...[1]"}</span>
 <span class="k">event: sources</span>     <span class="c">{"sources": [...], "sources_detail": [{"citation": 1, ...}]}</span>
 <span class="k">event: done</span>        <span class="c">{"message_id": 108, "answer": "...", "research_trace": [...]}</span></pre>
@@ -593,12 +612,133 @@ AZURE_OPENAI_DEPLOYMENT=gpt-6-sol,gpt-6-luna</pre>
     </div>
   </section>
 
+  <!-- 工具呼叫核准 -->
+  <section class="section section--tint" id="approval">
+    <div class="container">
+      <div class="section__head reveal">
+        <h2>會改動外部系統的工具，先問過你</h2>
+        <p>Agent 可以自己查資料，但不能自己替你送出申請、刪除紀錄或呼叫會寫入的 API。標記為需要核准的工具被呼叫時，回答會暫停，把工具與參數原樣攤給發問者看，按下核准才執行。</p>
+      </div>
+
+      <div class="approval reveal" data-approval>
+        <div class="approval__chat">
+          <div class="chat chat--flush">
+            <p class="chat__user">幫我替王小明（E1042）送出 10/2 到 10/3 的特休申請，原因寫家庭旅遊。</p>
+            <div class="chat__answer">
+              <ol class="trace" aria-label="研究歷程">
+                <li class="trace__step" data-state="done">
+                  <span class="trace__num">1</span>
+                  <span class="trace__body"><b>search_knowledge_base</b><span>「特休 申請 規定」，找到 2 段</span></span>
+                  <span class="trace__time">0.84 秒</span>
+                </li>
+                <li class="trace__step" data-state="wait" data-approval-step>
+                  <span class="trace__num">2</span>
+                  <span class="trace__body"><b>create_leave_request</b><span data-approval-step-msg>等待核准</span></span>
+                  <span class="trace__time" data-approval-step-time>暫停中</span>
+                </li>
+              </ol>
+
+              <div class="approval-card" role="group" aria-label="工具執行確認" data-approval-card>
+                <div class="approval-card__head">
+                  <svg class="icon" aria-hidden="true"><use href="#i-warning-circle"></use></svg>
+                  <span>AI 想執行外部工具，需要你確認</span>
+                  <span class="approval-card__timer" data-approval-timer aria-hidden="true">5:00</span>
+                </div>
+                <div class="approval-card__tool">建立請假單</div>
+                <pre class="approval-card__args">{
+  "employee_id": "E1042",
+  "leave_type": "annual",
+  "start_date": "2026-10-02",
+  "end_date": "2026-10-03",
+  "reason": "家庭旅遊"
+}</pre>
+                <p class="approval-card__hint">此工具可能會修改外部系統的資料。請確認參數無誤再核准；未回應會在 5 分鐘後視為拒絕。</p>
+                <div class="approval-card__actions">
+                  <button class="approval-card__skip" type="button" data-approval-decide="timeout">模擬等待逾時</button>
+                  <button class="btn btn--ghost btn--sm" type="button" data-approval-decide="deny">拒絕</button>
+                  <button class="btn btn--primary btn--sm" type="button" data-approval-decide="approve">核准執行</button>
+                </div>
+              </div>
+
+              <div class="approval__result" data-approval-result aria-live="polite" hidden></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="approval__log">
+          <div class="approval__log-head">
+            <h3>SSE 事件串流</h3>
+            <button class="copy copy--static" type="button" data-approval-reset><svg class="icon" aria-hidden="true"><use href="#i-arrows-clockwise"></use></svg><span>重新播放</span></button>
+          </div>
+          <ol class="events" data-approval-events aria-live="polite">
+            <li><span class="events__name">start</span><span class="events__data">{"conversation_id": 42, "user_message_id": 311}</span></li>
+            <li><span class="events__name">step_start</span><span class="events__data">{"step": 1, "tool": "search_knowledge_base", ...}</span></li>
+            <li><span class="events__name">step_end</span><span class="events__data">{"step": 1, "status": "success", ...}</span></li>
+            <li><span class="events__name">step_start</span><span class="events__data">{"step": 2, "tool": "create_leave_request", ...}</span></li>
+            <li class="is-accent"><span class="events__name">approval_required</span><span class="events__data">{"approval_id": "q3VxT0bL8mYc…", "step": 2, "tool": "create_leave_request", "tool_display_name": "建立請假單", "arguments": {...}}</span></li>
+          </ol>
+          <p class="approval__wait" data-approval-wait><span class="pulse" aria-hidden="true"></span><span>Agent 暫停中，等待 <span class="mono">POST /api/chat/approvals/{approval_id}</span> 的回覆</span></p>
+        </div>
+      </div>
+      <p class="demo-note reveal">示範內容：工具、員工與參數皆為虛構。</p>
+
+      <div class="approval-rules reveal" data-method-rules>
+        <div class="approval-rules__intro">
+          <h3>哪些工具預設需要核准？</h3>
+          <p>管理員建立工具時可以改動「需要核准」核取方塊；下面是沒有特別設定時的預設值。</p>
+          <div class="seg seg--methods" role="group" aria-label="自訂 API 工具的 HTTP 方法">
+            <button type="button" aria-pressed="false" data-method="GET">GET</button>
+            <button type="button" aria-pressed="false" data-method="HEAD">HEAD</button>
+            <button type="button" aria-pressed="false" data-method="OPTIONS">OPTIONS</button>
+            <button type="button" aria-pressed="true" data-method="POST">POST</button>
+            <button type="button" aria-pressed="false" data-method="PUT">PUT</button>
+            <button type="button" aria-pressed="false" data-method="PATCH">PATCH</button>
+            <button type="button" aria-pressed="false" data-method="DELETE">DELETE</button>
+          </div>
+          <p class="method-verdict" data-method-verdict aria-live="polite"></p>
+        </div>
+        <ul class="rule-list">
+          <li>
+            <span class="rule-list__kind">內建工具</span>
+            <span class="rule-list__value rule-list__value--no">不需要</span>
+            <span class="rule-list__why">search_knowledge_base、filter_and_count_records、web_search、web_fetch 只讀取資料，由網址來源與 SSRF 規則把關。</span>
+          </li>
+          <li>
+            <span class="rule-list__kind">自訂 API 工具</span>
+            <span class="rule-list__value" data-method-value>依 HTTP 方法</span>
+            <span class="rule-list__why">GET、HEAD、OPTIONS 以外的方法預設需要核准；升級到 4.0.0 時，既有工具依方法自動回填。</span>
+          </li>
+          <li>
+            <span class="rule-list__kind">MCP 伺服器</span>
+            <span class="rule-list__value rule-list__value--yes">需要</span>
+            <span class="rule-list__why">以伺服器為單位設定，整台伺服器的工具一起套用；卡片上的名稱顯示為「伺服器 → 工具」。</span>
+          </li>
+        </ul>
+      </div>
+
+      <div class="notes reveal">
+        <div class="note-item">
+          <h3>只有發問者能核准</h3>
+          <p>每個待核准項目綁定建立它的使用者。別人拿到 approval_id 也無法代為核准，端點一律回傳 404。</p>
+        </div>
+        <div class="note-item">
+          <h3>300 秒沒回應就是拒絕</h3>
+          <p>逾時送出 approval_resolved（approved 為 false），模型收到「使用者未核准」，並被要求不要再呼叫同一工具。</p>
+        </div>
+        <div class="note-item">
+          <h3>沒有人能核准，就不執行</h3>
+          <p>不是由使用者在對話中發起的 Agent 呼叫，這類工具一律回傳錯誤，改以已取得的資料回答。設計背景見 ADR-0006。</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
   <!-- 安全設計 -->
-  <section class="section section--tint" id="security">
+  <section class="section" id="security">
     <div class="container">
       <div class="section__head reveal">
         <h2>安全不是附加功能，而是預設路徑</h2>
-        <p>工具結果、出站請求、工具管理、認證與日誌，每條路徑都有對應的防護模組與測試。</p>
+        <p>工具結果、出站請求、工具管理、認證、資源用量與日誌，每條路徑都有對應的防護模組與測試。4.0.0 處理了安全稽核提出的 52 項線索。</p>
       </div>
 
       <div class="inspector reveal" data-inspector>
@@ -641,7 +781,7 @@ AZURE_OPENAI_DEPLOYMENT=gpt-6-sol,gpt-6-luna</pre>
           <div class="field">
             <label for="fetch-url">模型要讀取的網址</label>
             <input id="fetch-url" type="url" data-url-input placeholder="https://pages.nist.gov/800-63-4/sp800-63b.html" autocomplete="off" spellcheck="false" aria-describedby="fetch-help">
-            <span class="field__help" id="fetch-help">協定、連接埠、主機與 IP 的檢查同樣套用在 OpenAPI 規格網址、自訂 API 工具與 MCP HTTP 傳輸。</span>
+            <span class="field__help" id="fetch-help">網址來源以正規化後的完整網址逐字比對；協定、連接埠、主機與 IP 的檢查同樣套用在 OpenAPI 規格網址、自訂 API 工具與 MCP HTTP 傳輸。</span>
           </div>
           <div class="examples" aria-label="範例網址">
             <button class="chip" type="button" data-url-example="https://pages.nist.gov/800-63-4/sp800-63b.html" data-kb="false" data-block="true">使用者給的網址</button>
@@ -660,7 +800,7 @@ AZURE_OPENAI_DEPLOYMENT=gpt-6-sol,gpt-6-luna</pre>
             <li class="check" data-check="port" data-state="idle"><svg class="icon" aria-hidden="true"><use href="#i-check-circle"></use></svg><div><b>連接埠</b><span class="check__msg">等待輸入</span></div></li>
             <li class="check" data-check="host" data-state="idle"><svg class="icon" aria-hidden="true"><use href="#i-check-circle"></use></svg><div><b>主機名稱</b><span class="check__msg">等待輸入</span></div></li>
             <li class="check" data-check="ip" data-state="idle"><svg class="icon" aria-hidden="true"><use href="#i-check-circle"></use></svg><div><b>IP 位址</b><span class="check__msg">等待輸入</span></div></li>
-            <li class="check" data-check="dns" data-state="idle"><svg class="icon" aria-hidden="true"><use href="#i-check-circle"></use></svg><div><b>DNS 解析後的 IP</b><span class="check__msg">等待輸入</span></div></li>
+            <li class="check" data-check="dns" data-state="idle"><svg class="icon" aria-hidden="true"><use href="#i-check-circle"></use></svg><div><b>DNS 解析並固定 IP</b><span class="check__msg">等待輸入</span></div></li>
             <li class="check" data-check="redirect" data-state="idle"><svg class="icon" aria-hidden="true"><use href="#i-check-circle"></use></svg><div><b>每次轉址重新驗證</b><span class="check__msg">等待輸入</span></div></li>
           </ol>
           <div class="verdict verdict--pending" data-verdict>輸入一個網址，或點選上方範例。</div>
@@ -698,7 +838,7 @@ AZURE_OPENAI_DEPLOYMENT=gpt-6-sol,gpt-6-luna</pre>
             </thead>
             <tbody>
               <tr><th scope="row" data-inherited aria-live="polite">APPDATA、PATH、SYSTEMROOT、TEMP、USERPROFILE 等 12 個</th><td><span class="yes">有</span></td><td><span class="yes">繼承</span></td></tr>
-              <tr><th scope="row">JWT_SECRET_KEY、ADMIN_API_KEY</th><td><span class="yes">有</span></td><td><span class="no">不傳入</span></td></tr>
+              <tr><th scope="row">ADMIN_API_KEY</th><td><span class="yes">有</span></td><td><span class="no">不傳入</span></td></tr>
               <tr><th scope="row">DATABASE_URL</th><td><span class="yes">有</span></td><td><span class="no">不傳入</span></td></tr>
               <tr><th scope="row">OPENAI_API_KEY 等模型金鑰</th><td><span class="yes">有</span></td><td><span class="no">不傳入</span></td></tr>
               <tr><th scope="row">HTTPS_PROXY 等代理設定</th><td><span class="yes">有</span></td><td><span class="no">需寫進 env_vars</span></td></tr>
@@ -711,18 +851,18 @@ AZURE_OPENAI_DEPLOYMENT=gpt-6-sol,gpt-6-luna</pre>
       <div class="tiles reveal">
         <div class="tile">
           <svg class="icon" aria-hidden="true"><use href="#i-arrows-clockwise"></use></svg>
-          <h3>每一跳都重新驗證</h3>
-          <p>自訂 API 工具與 MCP HTTP 傳輸掛上 reject_unsafe_request，第一個請求與每次轉址前都重跑 SSRF 檢查，外部 API 無法用轉址導向內網。</p>
+          <h3>每一跳驗證，連線固定 IP</h3>
+          <p>自訂 API 工具、MCP HTTP 傳輸與 web_fetch 每一跳都重跑 SSRF 檢查，並直接連到驗證時核可的 IP；DNS rebinding 無法在驗證與連線之間換掉目標，TLS 仍以原主機名稱驗證憑證。</p>
         </div>
         <div class="tile">
           <svg class="icon" aria-hidden="true"><use href="#i-key"></use></svg>
-          <h3>RSA-2048 雙 Token</h3>
-          <p>Access Token 有效 30 分鐘，Refresh Token 7 天並存於 HttpOnly Cookie；登出即寫入撤銷名單。</p>
+          <h3>權杖對應資料庫帳號</h3>
+          <p>RSA-2048 簽署，缺金鑰就拒絕啟動。每次請求依 sub 讀取帳號，停用、刪除或降權立即生效；Refresh Token 存於 HttpOnly Cookie，換發一次就撤銷。</p>
         </div>
         <div class="tile">
           <svg class="icon" aria-hidden="true"><use href="#i-eye-slash"></use></svg>
           <h3>雙層日誌脫敏</h3>
-          <p>物件層遞迴遮罩 password、token、authorization 等欄位，序列化前再以正則二次遮罩，只會看到 [REDACTED]。</p>
+          <p>物件層遞迴遮罩 password、token、authorization 等欄位，序列化前再以正則二次遮罩；單一欄位最多 200 字元，日誌以 10 MiB × 5 份輪替。</p>
         </div>
         <div class="tile">
           <svg class="icon" aria-hidden="true"><use href="#i-shield-warning"></use></svg>
@@ -730,11 +870,34 @@ AZURE_OPENAI_DEPLOYMENT=gpt-6-sol,gpt-6-luna</pre>
           <p>未預期例外只回傳 12 碼 error_id，完整堆疊留在伺服器日誌，SSE 串流同樣不夾帶例外文字（CWE-209、CWE-497）。</p>
         </div>
       </div>
+      <div class="limits reveal">
+        <div class="limits__head">
+          <div class="cell__icon"><svg class="icon" aria-hidden="true"><use href="#i-gauge"></use></svg></div>
+          <div>
+            <h3>每個入口都有上限</h3>
+            <p>一個使用者、一份檔案或一次工具回應，都不該拖垮整個後端或燒掉操作者的模型額度。上限集中定義在 <span class="mono">backend/app/core/limits.py</span>，超過時回傳明確的狀態碼。</p>
+          </div>
+        </div>
+        <dl class="limits__grid">
+          <div class="limit"><dt>一般請求本文</dt><dd>1<small>MiB</small></dd><dd class="limit__code">413</dd></div>
+          <div class="limit"><dt>單則聊天訊息</dt><dd>20,000<small>字</small></dd><dd class="limit__code">422</dd></div>
+          <div class="limit"><dt>每則附件</dt><dd>5<small>個</small></dd><dd class="limit__note">單檔 15 MiB，合計 20 MiB</dd></div>
+          <div class="limit"><dt>每人附件儲存量</dt><dd>200<small>MiB</small></dd><dd class="limit__code">413</dd></div>
+          <div class="limit"><dt>每人同時串流</dt><dd>2<small>個回答</small></dd><dd class="limit__code">429</dd></div>
+          <div class="limit"><dt>工具結果進入模型</dt><dd>20,000<small>字</small></dd><dd class="limit__note">超過即截斷</dd></div>
+          <div class="limit"><dt>附件 PDF OCR</dt><dd>20<small>頁</small></dd><dd class="limit__note">每頁點陣化最多 25 MP</dd></div>
+          <div class="limit"><dt>同時 Argon2 雜湊</dt><dd>4<small>個</small></dd><dd class="limit__note">密碼最多 256 字元</dd></div>
+        </dl>
+        <a class="link-more" href="https://github.com/Scorpio-meow/AskMiao/blob/HEAD/docs/configuration.md#資源上限" target="_blank" rel="noopener">
+          完整的資源上限清單
+          <svg class="icon" aria-hidden="true"><use href="#i-arrow-square-out"></use></svg>
+        </a>
+      </div>
     </div>
   </section>
 
   <!-- 系統架構 -->
-  <section class="section" id="architecture">
+  <section class="section section--tint" id="architecture">
     <div class="container">
       <div class="section__head reveal">
         <h2>前後端分離、模組化的分層架構</h2>
@@ -757,10 +920,11 @@ AZURE_OPENAI_DEPLOYMENT=gpt-6-sol,gpt-6-luna</pre>
           <div class="layer__name">API 閘道與中介層<small>FastAPI middleware</small></div>
           <div class="layer__items">
             <span class="chip">安全回應標頭</span>
-            <span class="chip">速率限制</span>
+            <span class="chip">請求本文上限</span>
+            <span class="chip">速率限制（不採信 X-Forwarded-For）</span>
             <span class="chip">CORS 白名單</span>
             <span class="chip">日誌雙層脫敏</span>
-            <span class="chip">RSA-2048 JWT 認證</span>
+            <span class="chip">RSA-2048 JWT，逐次對應帳號</span>
             <span class="chip">管理員權限檢查</span>
           </div>
         </div>
@@ -770,6 +934,7 @@ AZURE_OPENAI_DEPLOYMENT=gpt-6-sol,gpt-6-luna</pre>
             <span class="chip chip--accent">ResearchAgent</span>
             <span class="chip chip--accent">ResearchSession（引用編號、網址來源、不可信包裝）</span>
             <span class="chip chip--accent">ResearchToolRegistry</span>
+            <span class="chip chip--accent">ToolApprovalBroker（呼叫前核准）</span>
             <span class="chip chip--accent">HybridRetriever（RRF + Cross-Encoder）</span>
             <span class="chip chip--accent">統一 LLM 客戶端</span>
             <span class="chip chip--accent">領域設定檔</span>
@@ -787,7 +952,7 @@ AZURE_OPENAI_DEPLOYMENT=gpt-6-sol,gpt-6-luna</pre>
             <span class="chip">data/uploads 文件目錄</span>
           </div>
         </div>
-        <div class="arch__link"><svg class="icon" aria-hidden="true"><use href="#i-shield-check"></use></svg>出站請求逐跳通過 SSRF 防護閘門</div>
+        <div class="arch__link"><svg class="icon" aria-hidden="true"><use href="#i-shield-check"></use></svg>出站請求逐跳通過 SSRF 防護閘門，連線固定在核可的 IP</div>
         <div class="layer layer--ext">
           <div class="layer__name">外部系統<small>由 Agent 工具觸發</small></div>
           <div class="layer__items">
@@ -807,7 +972,7 @@ AZURE_OPENAI_DEPLOYMENT=gpt-6-sol,gpt-6-luna</pre>
   </section>
 
   <!-- 介面細節 -->
-  <section class="section section--tint" id="experience">
+  <section class="section" id="experience">
     <div class="container">
       <div class="section__head section__head--center reveal">
         <h2>每天都要用的介面，細節要到位</h2>
@@ -870,7 +1035,7 @@ AZURE_OPENAI_DEPLOYMENT=gpt-6-sol,gpt-6-luna</pre>
   </section>
 
   <!-- 快速開始 -->
-  <section class="section" id="quickstart">
+  <section class="section section--tint" id="quickstart">
     <div class="container">
       <div class="section__head reveal">
         <h2>三個步驟，本機跑起來</h2>
@@ -894,7 +1059,7 @@ AZURE_OPENAI_DEPLOYMENT=gpt-6-sol,gpt-6-luna</pre>
             <p>建立虛擬環境、安裝依賴後啟動 FastAPI（8001 埠），資料表會在第一次啟動時自動建立。第一次啟動也會下載嵌入與重排模型（約 1.2 GB）；重排模型是必要元件，載入失敗時後端不會啟動。</p>
             <div class="note">
               <svg class="icon" aria-hidden="true"><use href="#i-warning-circle"></use></svg>
-              <span><b>先改 .env：</b><span class="mono">.env.example</span> 的 DATABASE_URL 預設指向 PostgreSQL，零依賴啟動請改成 <span class="mono">sqlite:///./chatbot.db</span>，並替換 JWT_SECRET_KEY 與 ADMIN_API_KEY。LLM 提供商金鑰擇一設定即可。</span>
+              <span><b>先改 .env：</b><span class="mono">.env.example</span> 的 DATABASE_URL 預設指向 PostgreSQL，零依賴啟動請改成 <span class="mono">sqlite:///./chatbot.db</span>，並把 ADMIN_API_KEY 換成隨機字串。LLM 提供商金鑰擇一設定即可。JWT 一律以 <span class="mono">backend/keys/</span> 的 RSA 金鑰簽署，第一次啟動自動產生，該目錄須可寫入。</span>
             </div>
           </div>
           <div class="codebox">
@@ -916,6 +1081,10 @@ AZURE_OPENAI_DEPLOYMENT=gpt-6-sol,gpt-6-luna</pre>
               <svg class="icon" aria-hidden="true"><use href="#i-info"></use></svg>
               <span><b>第一位管理員：</b>系統不會預先建立管理員。先在註冊頁建立帳號，再依 <a href="https://github.com/Scorpio-meow/AskMiao#4-建立第一位管理員" target="_blank" rel="noopener">README 的指令</a>把它設為管理員，才看得到知識庫與 AI 工具。</span>
             </div>
+            <div class="note note--info">
+              <svg class="icon" aria-hidden="true"><use href="#i-device-mobile"></use></svg>
+              <span><b>只接受本機連線：</b>Vite 開發與預覽伺服器只監聽 localhost。要讓區網裝置使用，請以 <span class="mono">bun run build</span> 建置，再由正式的網頁伺服器提供 <span class="mono">frontend/build/</span> 並反向代理 <span class="mono">/api</span>。</span>
+            </div>
           </div>
           <div class="codebox">
             <pre class="code" id="code-frontend"><span data-cmd>cd ../frontend</span>
@@ -935,7 +1104,6 @@ AZURE_OPENAI_DEPLOYMENT=gpt-6-sol,gpt-6-luna</pre>
           <div class="codebox">
           <pre class="code" id="code-env"><span class="c"># 資料庫與安全</span>
 <span data-cmd>DATABASE_URL=sqlite:///./chatbot.db</span>
-<span data-cmd>JWT_SECRET_KEY=請換成隨機字串</span>
 <span data-cmd>ADMIN_API_KEY=請換成隨機字串</span>
 <span class="c"># Agent 與聯網</span>
 <span data-cmd>ENABLE_WEB_SEARCH=true</span>
@@ -949,7 +1117,7 @@ AZURE_OPENAI_DEPLOYMENT=gpt-6-sol,gpt-6-luna</pre>
 <span data-cmd>DOMAIN_PROFILE_PATH=config/domain_profile.json</span></pre>
             <button class="copy" type="button" data-copy="code-env" data-copied="false"><svg class="icon" aria-hidden="true"><use href="#i-copy"></use></svg><span>複製</span></button>
           </div>
-          <p class="envref__note">其餘設定都有預設值，逐項說明見 <a href="https://github.com/Scorpio-meow/AskMiao/blob/HEAD/docs/configuration.md" target="_blank" rel="noopener">設定參考</a>。<span class="mono">HYBRID_ALPHA</span>、<span class="mono">NORMALIZATION</span>、<span class="mono">FINAL_THRESHOLD</span> 已移除，留在 .env 中會被忽略；從 2.x 升級需要重建一次索引，步驟見 <a href="https://github.com/Scorpio-meow/AskMiao/blob/HEAD/docs/upgrading.md" target="_blank" rel="noopener">升級指南</a>。</p>
+          <p class="envref__note">其餘設定都有預設值，逐項說明見 <a href="https://github.com/Scorpio-meow/AskMiao/blob/HEAD/docs/configuration.md" target="_blank" rel="noopener">設定參考</a>。4.0.0 移除了 <span class="mono">JWT_SECRET_KEY</span> 與 <span class="mono">JWT_ALGORITHM</span>，留在 .env 中會被忽略；使用 <span class="mono">docker-compose.yml</span> 的 PostgreSQL 時必須另設 <span class="mono">POSTGRES_PASSWORD</span>。從舊版升級的步驟見 <a href="https://github.com/Scorpio-meow/AskMiao/blob/HEAD/docs/upgrading.md" target="_blank" rel="noopener">升級指南</a>。</p>
         </div>
       </details>
 
@@ -961,7 +1129,7 @@ AZURE_OPENAI_DEPLOYMENT=gpt-6-sol,gpt-6-luna</pre>
   </section>
 
   <!-- 版本演進 -->
-  <section class="section section--tint" id="changelog">
+  <section class="section" id="changelog">
     <div class="container">
       <div class="section__head reveal">
         <h2>版本演進</h2>
@@ -1020,7 +1188,7 @@ AZURE_OPENAI_DEPLOYMENT=gpt-6-sol,gpt-6-luna</pre>
   </section>
 
   <!-- 文件導覽 -->
-  <section class="section" id="docs">
+  <section class="section section--tint" id="docs">
     <div class="container">
       <div class="section__head reveal">
         <h2>文件導覽</h2>
@@ -1072,6 +1240,7 @@ AZURE_OPENAI_DEPLOYMENT=gpt-6-sol,gpt-6-luna</pre>
             <li><a href="https://github.com/Scorpio-meow/AskMiao/blob/HEAD/docs/adr/0003-rrf-relevance-citations-and-tool-trust.md" target="_blank" rel="noopener"><span class="adr__num">0003</span><span class="adr__text">RRF 融合、相關性門檻、引用對應與工具輸出信任邊界<small>2026-09-24</small></span></a></li>
             <li><a href="https://github.com/Scorpio-meow/AskMiao/blob/HEAD/docs/adr/0004-tool-admin-permissions-and-subprocess-isolation.md" target="_blank" rel="noopener"><span class="adr__num">0004</span><span class="adr__text">工具管理權限、MCP 子行程隔離與逐跳 SSRF 驗證<small>2026-09-25</small></span></a></li>
             <li><a href="https://github.com/Scorpio-meow/AskMiao/blob/HEAD/docs/adr/0005-chunk-id-index-and-database-source-of-truth.md" target="_blank" rel="noopener"><span class="adr__num">0005</span><span class="adr__text">以資料庫 chunk_id 為準的片段索引<small>2026-09-24</small></span></a></li>
+            <li><a href="https://github.com/Scorpio-meow/AskMiao/blob/HEAD/docs/adr/0006-tool-call-approval.md" target="_blank" rel="noopener"><span class="adr__num">0006</span><span class="adr__text">有副作用工具的對話內核准<small>2026-09-27</small></span></a></li>
           </ol>
         </div>
       </div>
