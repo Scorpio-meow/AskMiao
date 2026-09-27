@@ -36,6 +36,7 @@ AskMiao answers with hybrid retrieval (FAISS + BM25 + Cross-Encoder) and agentic
 ## Contents
 
 - [Highlights](#highlights)
+- [What's new in 4.0.0](#whats-new-in-400)
 - [Features](#features)
 - [Screenshots](#screenshots)
 - [Architecture](#architecture)
@@ -62,6 +63,21 @@ AskMiao answers with hybrid retrieval (FAISS + BM25 + Cross-Encoder) and agentic
 | 5 | **Five LLM providers** | Ollama, OpenAI, Azure OpenAI, Anthropic Claude, and Google Gemini all support tool calling and streaming |
 | 6 | **External tools and MCP** | Paste an OpenAPI spec to import API tools or connect MCP servers; managed by admins only, and calls with side effects need the user's approval first |
 | 7 | **Defense in depth** | RSA JWT, Argon2 password hashing, per-hop SSRF validation with the connection pinned to the checked IP, a trust boundary for tool output, resource limits, and error codes instead of stack traces |
+
+## What's new in 4.0.0
+
+4.0.0 is a security-audit release that addresses 52 findings. The change you will notice day to day is that tools with side effects now need approval; the change that affects deployment is that RSA keys and `POSTGRES_PASSWORD` are now required.
+
+| Area | Change | What to do when upgrading |
+|---|---|---|
+| Tool calls | The agent pauses before calling a custom API or MCP tool with side effects until the asking user approves it in the chat; no answer within 300 seconds counts as a denial | Review each tool's "requires approval" setting on the AI tools page |
+| Authentication | Tokens are resolved to the database account on every request, so disabling, deleting, or demoting an account takes effect immediately; refresh tokens are single-use; the HS256 fallback is gone | Remove `JWT_SECRET_KEY` and `JWT_ALGORITHM` from `.env`, and make sure `backend/keys/` is readable and writable |
+| Outbound requests | After validation, connections are pinned to the approved IP, which stops DNS rebinding; `web_fetch` matches URL provenance on the full normalized URL | Nothing |
+| Resource usage | Request bodies, messages, attachments, tool results, concurrent streams, and attachment storage are capped | Clients must handle `413`, `422`, and `429` |
+| Deployment | The compose PostgreSQL needs `POSTGRES_PASSWORD` and binds to localhost only; the Vite dev server listens on `localhost` only; `X-Forwarded-For` is ignored by default | Set `POSTGRES_PASSWORD`; set `FORWARDED_ALLOW_IPS` behind a reverse proxy |
+| API | `context_used` on messages is always `null`; `GET /api/chat/tools` requires login; `model_name` must be in the available model list | Adjust clients per the [API reference](docs/api_en.md) |
+
+See the [4.0.0 changelog](CHANGELOG_en.md#400---2026-09-27) for everything that changed and the [upgrade guide](docs/upgrading_en.md#upgrading-from-300-to-400) for the steps.
 
 ## Features
 
@@ -126,8 +142,28 @@ flowchart LR
 - **Custom API tools**: create them with a form or bulk-import from an OpenAPI / Swagger spec (OAS 2.0, 3.0, 3.1), with Bearer, API key (header / query), and Basic auth, plus a live test.
 - **MCP client**: `stdio` and HTTP transports, automatic tool discovery, and tools added to the agent as `mcp_<server>_<tool>`; presets for time and filesystem servers are built in (the filesystem preset exposes only the dedicated sandbox directory `backend/mcp_filesystem_sandbox`).
 - **Loaded dynamically**: enabled tools are read from the database whenever tool definitions are assembled, so changes need no restart.
-- **Approval before calls**: when the agent calls a tool marked "requires approval" (new MCP servers, and API tools using a method other than GET, HEAD, or OPTIONS), the chat shows the tool and its arguments and the asking user approves or denies it; no answer within 5 minutes counts as a denial ([ADR-0006](docs/adr/0006-tool-call-approval_en.md)).
+- **Approval before calls**: tools with side effects run only after the asking user approves them in the chat; see [tool call approval](#tool-call-approval) below.
 - **Admins only**: tools are shared by every user's agent, so `/api/api-tools`, `/api/mcp`, and the AI tools page are admin-only; `stdio` subprocesses inherit only system variables such as `PATH`, never see the backend's keys, and are terminated together with their whole process tree on close ([ADR-0004](docs/adr/0004-tool-admin-permissions-and-subprocess-isolation_en.md)).
+
+### Tool call approval
+
+The agent can look things up on its own, but it will not submit a request, delete a record, or call a write API on your behalf by itself. When it calls a tool marked "requires approval":
+
+1. The stream sends `approval_required` (with the `approval_id`, the tool's display name, and its arguments) and the agent pauses.
+2. A confirmation card appears in the answer, showing the tool and its arguments verbatim.
+3. The asking user clicks 核准執行 (approve) or 拒絕 (deny); the frontend calls `POST /api/chat/approvals/{approval_id}` and the stream then sends `approval_resolved`.
+4. The tool runs only if approved. On a denial or no answer within 300 seconds, the model is told the user did not approve and is asked not to call the same tool again.
+
+| Tool type | Default | Notes |
+|---|---|---|
+| Built-in tools (`search_knowledge_base` and 3 others) | Not required | Read-only; guarded by URL provenance and SSRF rules |
+| Custom API tools using `GET`, `HEAD`, or `OPTIONS` | Not required | Admins can still tick "requires approval" per tool |
+| Custom API tools using any other method | Required | Existing tools are backfilled from their HTTP method when upgrading to 4.0.0 |
+| MCP servers | Required | Set per server; the card shows "server → tool" |
+
+- A pending approval is bound to the asking user; any other account replying with the same `approval_id` gets `404`.
+- Agent runs not started by a user in a chat have nobody to approve, so these tools never run there.
+- See [ADR-0006](docs/adr/0006-tool-call-approval_en.md) for the rationale and trade-offs; the [website](https://scorpio-meow.github.io/AskMiao/#approval) has an interactive demo.
 
 ### Security
 
@@ -137,6 +173,32 @@ flowchart LR
 - **Error codes**: unexpected exceptions reach clients only as a random error code, while full stack traces stay in the server log (CWE-209 / CWE-497).
 - **Log redaction**: recursive object masking plus regex masking render passwords, tokens, and Authorization headers as `[REDACTED]`.
 - **More**: security response headers, per-IP rate limiting (`X-Forwarded-For` is ignored unless a trusted reverse proxy is named in `FORWARDED_ALLOW_IPS`), a CORS allowlist, filename and path traversal checks, and clickjacking protection in the frontend.
+
+#### Threat coverage
+
+| Threat | Protection | Where |
+|---|---|---|
+| Prompt injection hidden in documents or web pages | Tool results are wrapped in `<untrusted_tool_result>` tags with a per-question id; `web_fetch` can only read full URLs that appeared in the user's message or this question's tool results | `rag/research_session.py` |
+| SSRF and DNS rebinding | Scheme, port, hostname, IP, and DNS results are validated on every hop, and connections are pinned to the approved IP | `core/ssrf_protection.py` |
+| The agent changing external systems on its own | Tool calls with side effects need the asking user's approval | `rag/tool_approval.py` |
+| Abuse of tool configuration | Only admins manage tools; `stdio` subprocesses never inherit backend secrets | `api/api_tools.py`, `api/mcp.py`, `services/mcp_service.py` |
+| Tokens outliving a disabled account | Account status and role are read by `sub` on every request, and refresh tokens are single-use | `core/jwt_auth.py`, `api/auth.py` |
+| Resource exhaustion | Request bodies, attachments, tool results, streams, and concurrent password hashes are capped | `core/limits.py`, `core/body_limit.py` |
+| Leaking internals | Clients only get error codes; logs are redacted in two layers with field lengths capped | `core/error_response.py`, `core/security_logging.py` |
+
+#### Key resource limits
+
+| Item | Limit | When exceeded |
+|---|---|---|
+| General request body | 1 MiB (chat sends and document uploads with a valid access token are allowed more) | `413` |
+| One chat message | 20,000 characters | `422` |
+| Attachments per message | 5, up to 15 MiB each and 20 MiB in total | `422` |
+| Attachment storage per user | 200 MiB | `413` |
+| Concurrent answer streams per user | 2 | `429` |
+| One tool result passed to the model | 20,000 characters | Truncated |
+| Pending tool approval | 300 seconds | Counts as a denial |
+
+See [resource limits](docs/configuration_en.md#resource-limits) for the full list.
 
 ### Frontend experience
 
@@ -579,6 +641,20 @@ The cache path `~/.bun/install/cache` in `frontend/bunfig.toml` is not expanded 
 </details>
 
 <details>
+<summary><b>Clicking the approval card shows 「無法送出決定，可能已逾時」 (could not send the decision, it may have timed out)</b></summary>
+
+A pending approval lasts only 300 seconds; after that the agent treats it as a denial and carries on, and each approval can be answered only once. Replies from any account other than the asking user fail the same way. Ask again and approve within 5 minutes.
+
+</details>
+
+<details>
+<summary><b>A read-only tool asks for approval every time</b></summary>
+
+MCP servers require approval by default, and custom API tools follow their HTTP method. Once you are sure the tool does not change external systems, an admin can edit the tool or MCP server on the AI tools page and untick "requires approval".
+
+</details>
+
+<details>
 <summary><b>The API returns <code>429 Too Many Requests</code></b></summary>
 
 - Rate limiting counts requests per connecting IP, 60 per 60 seconds by default. Behind the Vite dev proxy or a reverse proxy every user shares one IP, so raise `RATE_LIMIT_PER_MINUTE` if needed; if the reverse proxy in front overwrites `X-Forwarded-For`, set its address as `FORWARDED_ALLOW_IPS` to count real client IPs instead.
@@ -597,7 +673,7 @@ The cache path `~/.bun/install/cache` in `frontend/bunfig.toml` is not expanded 
 | [Architecture Decision Records](docs/adr/README_en.md) | Context, trade-offs, and amendments of major design decisions |
 | [llms_en.txt](llms_en.txt) | File map, system constraints, and verification steps for AI agents |
 | [Changelog](CHANGELOG_en.md) | What was added, changed, removed, and fixed in each release |
-| [Website](https://scorpio-meow.github.io/AskMiao/) | Interactive demos of citations, the retrieval threshold, and the security mechanisms |
+| [Website](https://scorpio-meow.github.io/AskMiao/) | Interactive demos of citations, the retrieval threshold, tool call approval, and outbound protection |
 
 ## Versioning
 
@@ -619,6 +695,8 @@ Issues and pull requests are welcome:
    - `rag/tools.py`, `core/config.py`: `WEB_FETCH_ALLOWED_DOMAINS`
    - `core/ssrf_protection.py`: SSRF check order and block lists
    - `services/mcp_service.py`: `INHERITED_ENV_VARS`
+   - `rag/tool_approval.py`, `rag/agent.py`: HTTP methods that need no approval by default, the approval timeout, and the SSE events
+   - `core/limits.py`: the numbers in the site's resource-limit table
 6. Open a pull request describing the change and how you verified it.
 
 ## License

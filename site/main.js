@@ -1,5 +1,5 @@
 /* AskMiao 介紹頁互動：主題切換、導覽、運作方式軌道、推理檔位、分頁、引用示範、RRF 檢索示範、
-   web_fetch 出站檢查器、子行程環境變數比較、複製指令。示範的判斷規則對應後端原始碼，註解標出出處。 */
+   工具呼叫核准、web_fetch 出站檢查器、子行程環境變數比較、複製指令。示範的判斷規則對應後端原始碼，註解標出出處。 */
 (() => {
   const root = document.documentElement;
   const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
@@ -315,10 +315,37 @@
     if (/^2001:db8:/.test(host)) return { isIp: true, blocked: true, reason: `禁止存取 IPv6 文件測試網段 ${host}` };
     return { isIp: true, blocked: false };
   };
-  /* 與 Python 的 urllib.parse.unquote 相同：解開 %XX，無法解碼的序列保留原樣 */
-  const unquote = (text) => text.replace(/(?:%[0-9A-Fa-f]{2})+/g, (sequence) => {
-    try { return decodeURIComponent(sequence); } catch { return sequence; }
-  });
+  /* 網址來源比對與 research_session.py 相同：兩邊都取正規化後的完整網址逐字比對，不做 unquote 之類的解碼。
+     後端以 httpx.URL 正規化，這裡以瀏覽器的 URL 近似（同樣小寫主機、百分比編碼非 ASCII 字元） */
+  const URL_TOKEN_PATTERN = /https?:\/\/[^\s<>"'`]+/gi;
+  const URL_TRAILING_PUNCTUATION = '.,;:!?)]}\'"，。、；：！？）」』】';
+  const canonicalUrl = (text) => {
+    try {
+      const url = new URL(text.trim());
+      return (url.protocol === 'http:' || url.protocol === 'https:') && url.hostname ? url.href : null;
+    } catch { return null; }
+  };
+  /* extract_url_tokens：完整記號、截在第一個非 ASCII 字元前的形式，以及逐一去掉結尾標點的形式 */
+  const extractUrlTokens = (text) => {
+    const tokens = new Set();
+    for (const match of text.matchAll(URL_TOKEN_PATTERN)) {
+      const candidates = new Set([match[0]]);
+      const asciiPrefix = match[0].match(/^[!-~]+/);
+      if (asciiPrefix) candidates.add(asciiPrefix[0]);
+      Array.from(candidates).forEach((candidate) => {
+        let trimmed = candidate;
+        while (trimmed && URL_TRAILING_PUNCTUATION.includes(trimmed.at(-1))) {
+          trimmed = trimmed.slice(0, -1);
+          candidates.add(trimmed);
+        }
+      });
+      candidates.forEach((candidate) => {
+        const normalized = canonicalUrl(candidate);
+        if (normalized) tokens.add(normalized);
+      });
+    }
+    return tokens;
+  };
   /* 與 config.py 的 _validate_web_fetch_domains 相同：不可為空、* 不可與其他網域並列、只接受網域名稱 */
   const parseAllowlist = (raw) => {
     const domains = raw.split(',').map((d) => d.trim().toLowerCase()).filter(Boolean);
@@ -362,7 +389,7 @@
 
     const run = () => {
       sources.forEach((el) => el.classList.remove('is-match'));
-      const target = unquote(urlInput.value.trim());
+      const target = urlInput.value.trim();
       if (!target) {
         ORDER.forEach((name) => setCheck(name, 'idle', '等待輸入'));
         setVerdict('pending', '輸入一個網址，或點選上方範例。');
@@ -377,15 +404,18 @@
       }
       setCheck('kb', 'pass', kbToggle.checked ? 'BLOCK_WEB_TOOLS_AFTER_KB 已關閉' : '這次提問還沒讀到知識庫內容');
 
-      /* 2. 網址須原樣出現在使用者訊息或本次工具結果的資料欄位 */
-      const matches = sources.filter((el) => !el.closest('[hidden]') && unquote(el.textContent).includes(target));
+      /* 2. 網址須以完整網址出現在使用者訊息或本次工具結果的資料欄位；實際送出的就是比對到的正規化網址 */
+      const canonicalTarget = canonicalUrl(target);
+      const matches = canonicalTarget
+        ? sources.filter((el) => !el.closest('[hidden]') && extractUrlTokens(el.textContent).has(canonicalTarget))
+        : [];
       if (!matches.length) {
         block('origin', '只能讀取使用者訊息或本次工具結果中原樣出現過的網址',
-          '拒絕呼叫工具', '模型自己組的、改寫過的網址（例如補上結尾斜線）都不算出現過，資料無法藉此外送。');
+          '拒絕呼叫工具', '兩邊都取正規化後的完整網址逐字比對：模型自己組的、改寫過的網址（例如補上結尾斜線、只取網址的一段）都不算出現過，資料無法藉此外送。');
         return;
       }
       matches.forEach((el) => el.classList.add('is-match'));
-      setCheck('origin', 'pass', `原樣出現在${matches[0].dataset.source}`);
+      setCheck('origin', 'pass', `以完整網址出現在${matches[0].dataset.source}`);
 
       /* 3. WEB_FETCH_ALLOWED_DOMAINS：主機須為清單中的網域或其子網域 */
       const allow = parseAllowlist(allowInput.value);
@@ -455,12 +485,12 @@
         }
         setCheck('ip', 'pass', `${host} 為公開 IP 位址`);
         setCheck('dns', 'skip', '直接輸入 IP，不需解析');
-        setVerdict('allow', '允許送出請求', '以 safe_fetch_text 抓取：轉址逐跳重驗，回應超過 5 MB 即中斷。');
+        setVerdict('allow', '允許送出請求', '以 safe_fetch_text 抓取：轉址逐跳重驗、連線固定在驗證過的 IP，回應超過 5 MiB 即中斷。');
         return;
       }
       setCheck('ip', 'skip', '不是 IP，交由 DNS 解析後檢查');
-      setCheck('dns', 'server', '伺服器解析主機的所有 IP，逐一比對私有與保留網段');
-      setVerdict('pending', '瀏覽器能重現的檢查都通過了', '最後兩關在伺服器：DNS 解析出的每個 IP 都必須是公開位址，轉址也要逐跳重驗，才會真的送出請求。');
+      setCheck('dns', 'server', '伺服器以專用執行緒池解析（5 秒逾時），所有 IP 都須是公開位址，連線再固定到核可的 IP');
+      setVerdict('pending', '瀏覽器能重現的檢查都通過了', '最後兩關在伺服器：DNS 解析出的每個 IP 都必須是公開位址，連線直接打到核可的 IP，轉址也要逐跳重驗，才會真的送出請求。');
     };
 
     urlInput.addEventListener('input', run);
@@ -479,6 +509,153 @@
     }));
     kbContext.hidden = !kbToggle.checked;
     run();
+  }
+
+  /* ---------- 工具呼叫核准：事件與逾時與 backend/app/rag/agent.py、tool_approval.py 相同 ---------- */
+  const APPROVAL_TIMEOUT_SECONDS = 300;
+  const approval = document.querySelector('[data-approval]');
+  if (approval) {
+    const card = approval.querySelector('[data-approval-card]');
+    const timerElement = approval.querySelector('[data-approval-timer]');
+    const result = approval.querySelector('[data-approval-result]');
+    const events = approval.querySelector('[data-approval-events]');
+    const waitNote = approval.querySelector('[data-approval-wait]');
+    const step = approval.querySelector('[data-approval-step]');
+    const stepMessage = approval.querySelector('[data-approval-step-msg]');
+    const stepTime = approval.querySelector('[data-approval-step-time]');
+    const decideButtons = Array.from(approval.querySelectorAll('[data-approval-decide]'));
+    const initialEvents = events.innerHTML;
+    const OUTCOMES = {
+      approve: {
+        approved: true,
+        stepState: 'done', stepMessage: '已核准，回傳單號 LR-20261002-0418', stepTime: '1.27 秒',
+        stepEnd: '{"step": 2, "duration_seconds": 1.27, "status": "success", ...}',
+        status: '你核准了這次呼叫，工具已執行',
+        detail: '工具結果同樣包在不可信資料標記裡交給模型。',
+        answer: '已替王小明（E1042）送出 10/2 至 10/3 的特休申請，單號 LR-20261002-0418，接下來由直屬主管簽核。依規定，特休須在假期開始前三個工作天提出',
+      },
+      deny: {
+        approved: false,
+        stepState: 'fail', stepMessage: '使用者未核准執行此工具', stepTime: '未執行',
+        stepEnd: '{"step": 2, "status": "error", "output_preview": "{\\"error\\": \\"使用者未核准執行此工具…\\"}"}',
+        status: '你拒絕了這次呼叫，工具沒有執行',
+        detail: '模型收到「使用者未核准」，並被要求不要再次呼叫同一工具。',
+        answer: '你沒有核准建立請假單，所以我沒有送出申請。依規定，特休也可以在人資系統的「請假申請」頁面自行填寫',
+      },
+      timeout: {
+        approved: false,
+        stepState: 'fail', stepMessage: '300 秒內沒有回應，視為拒絕', stepTime: '未執行',
+        stepEnd: '{"step": 2, "status": "error", "output_preview": "{\\"error\\": \\"使用者未核准執行此工具…\\"}"}',
+        status: `${APPROVAL_TIMEOUT_SECONDS} 秒內沒有回應，視為拒絕`,
+        detail: '逾時與拒絕的處理相同：approval_resolved 的 approved 為 false，工具不會執行。',
+        answer: '這次沒有收到你的確認，所以我沒有送出請假申請。依規定，特休也可以在人資系統的「請假申請」頁面自行填寫',
+      },
+    };
+
+    let remaining = APPROVAL_TIMEOUT_SECONDS;
+    let ticker = null;
+    let decided = false;
+    const formatTime = (seconds) => `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`;
+    const stopTimer = () => { clearInterval(ticker); ticker = null; };
+    const startTimer = () => {
+      stopTimer();
+      ticker = setInterval(() => {
+        remaining -= 1;
+        timerElement.textContent = formatTime(remaining);
+        if (remaining <= 0) decide('timeout');
+      }, 1000);
+    };
+    const addEvent = (name, data, tone) => {
+      const item = document.createElement('li');
+      item.className = `is-new${tone ? ` is-${tone}` : ''}`;
+      const nameElement = document.createElement('span');
+      nameElement.className = 'events__name';
+      nameElement.textContent = name;
+      const dataElement = document.createElement('span');
+      dataElement.className = 'events__data';
+      dataElement.textContent = data;
+      item.append(nameElement, dataElement);
+      events.append(item);
+    };
+
+    function decide(kind) {
+      if (decided) return;
+      decided = true;
+      stopTimer();
+      const outcome = OUTCOMES[kind];
+      card.hidden = true;
+      waitNote.hidden = true;
+      step.dataset.state = outcome.stepState;
+      stepMessage.textContent = outcome.stepMessage;
+      stepTime.textContent = outcome.stepTime;
+
+      addEvent('approval_resolved', `{"approval_id": "q3VxT0bL8mYc…", "approved": ${outcome.approved}}`, outcome.approved ? 'ok' : 'bad');
+      addEvent('step_end', outcome.stepEnd, outcome.approved ? 'ok' : 'bad');
+      addEvent('token', `{"content": "${outcome.answer.slice(0, 18)}…[1]"}`);
+      addEvent('sources', '{"sources_detail": [{"citation": 1, "source": "員工請假辦法.pdf", ...}]}');
+      addEvent('done', '{"message_id": 312, "research_trace": [...]}');
+
+      const status = document.createElement('p');
+      status.className = 'approval__status';
+      status.dataset.kind = kind;
+      status.innerHTML = `<svg class="icon" aria-hidden="true"><use href="${outcome.approved ? '#i-check-circle' : '#i-x-circle'}"></use></svg><span>${escapeHtml(outcome.status)}<small>${escapeHtml(outcome.detail)}</small></span>`;
+      const answer = document.createElement('p');
+      answer.append(outcome.answer);
+      const cite = document.createElement('span');
+      cite.className = 'cite';
+      cite.textContent = '[1]';
+      answer.append(cite, '。');
+      result.replaceChildren(status, answer);
+      result.hidden = false;
+    }
+
+    const reset = () => {
+      decided = false;
+      remaining = APPROVAL_TIMEOUT_SECONDS;
+      timerElement.textContent = formatTime(remaining);
+      events.innerHTML = initialEvents;
+      card.hidden = false;
+      waitNote.hidden = false;
+      result.hidden = true;
+      result.replaceChildren();
+      step.dataset.state = 'wait';
+      stepMessage.textContent = '等待核准';
+      stepTime.textContent = '暫停中';
+      startTimer();
+    };
+
+    decideButtons.forEach((button) => button.addEventListener('click', () => decide(button.dataset.approvalDecide)));
+    approval.querySelector('[data-approval-reset]').addEventListener('click', reset);
+    /* 倒數在示範捲進畫面時才開始，離開畫面時暫停 */
+    if ('IntersectionObserver' in window) {
+      new IntersectionObserver((entries) => entries.forEach((entry) => {
+        if (entry.isIntersecting && !decided && !ticker) startTimer();
+        else if (!entry.isIntersecting) stopTimer();
+      }), { threshold: 0.25 }).observe(approval);
+    }
+  }
+
+  /* ---------- 自訂 API 工具的預設核准：與 tool_approval.default_requires_approval 相同 ---------- */
+  const SAFE_HTTP_METHODS = ['GET', 'HEAD', 'OPTIONS'];
+  const methodRules = document.querySelector('[data-method-rules]');
+  if (methodRules) {
+    const methodButtons = Array.from(methodRules.querySelectorAll('[data-method]'));
+    const verdict = methodRules.querySelector('[data-method-verdict]');
+    const value = methodRules.querySelector('[data-method-value]');
+    const showMethod = (method) => {
+      const needsApproval = !SAFE_HTTP_METHODS.includes(method);
+      methodButtons.forEach((button) => button.setAttribute('aria-pressed', String(button.dataset.method === method)));
+      const label = document.createElement('b');
+      label.dataset.kind = needsApproval ? 'yes' : 'no';
+      label.textContent = needsApproval ? `${method}：預設需要核准` : `${method}：預設不需要核准`;
+      verdict.replaceChildren(label, document.createElement('br'), needsApproval
+        ? '這個方法可能建立、修改或刪除外部系統的資料，Agent 呼叫前會先暫停，等發問者確認。'
+        : '這個方法只讀取資料，Agent 可以直接呼叫；管理員仍可為個別工具勾選「需要核准」。');
+      value.textContent = needsApproval ? '需要' : '不需要';
+      value.className = `rule-list__value rule-list__value--${needsApproval ? 'yes' : 'no'}`;
+    };
+    methodButtons.forEach((button) => button.addEventListener('click', () => showMethod(button.dataset.method)));
+    showMethod('POST');
   }
 
   /* ---------- stdio 子行程環境變數：依作業系統切換繼承清單（backend/app/services/mcp_service.py） ---------- */
