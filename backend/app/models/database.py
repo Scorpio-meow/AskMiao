@@ -45,6 +45,11 @@ COLUMN_UPGRADES = (
     # 既有帳號沿用原本「權杖不得早於帳號建立時間」的規則
     ("users", "tokens_valid_after", "TIMESTAMP", "UPDATE users SET tokens_valid_after = created_at"),
 )
+# 每次啟動都執行的補值：回退到舊版期間建立的帳號沒有 tokens_valid_after（舊版不寫入此欄位），
+# 再升級時欄位已存在、不會重跑上面的補值，而值為 NULL 的帳號所有權杖都會被拒絕
+ROW_BACKFILLS = (
+    ("users", "UPDATE users SET tokens_valid_after = created_at WHERE tokens_valid_after IS NULL"),
+)
 # 含憑證的欄位：寫入時以 TOOL_SECRETS_KEY 加密（見 app/core/tool_secrets.py）
 ENCRYPTED_TOOL_SECRET_COLUMNS = (
     ("custom_api_tools", ("headers", "auth_config")),
@@ -84,6 +89,9 @@ def upgrade_schema(target_engine=None) -> None:
                 continue
             conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {column} {column_type}"))
             conn.execute(text(backfill))
+        for table, backfill in ROW_BACKFILLS:
+            if table in tables:
+                conn.execute(text(backfill))
         encrypt_stored_tool_secrets(conn, inspector, tables)
 async def create_tables():
     Base.metadata.create_all(bind=engine)

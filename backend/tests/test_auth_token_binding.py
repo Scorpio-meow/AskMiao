@@ -5,7 +5,8 @@
 2. 身分與管理員權限取自資料庫，不信任權杖內的 is_admin 等聲明
 3. 帳號刪除、停用，或權杖簽發早於帳號建立（id 被重用）時權杖立即失效
 4. SQLite 的 users 表以 AUTOINCREMENT 建立，刪除後的 id 不會配給新帳號
-5. 變更密碼後，先前簽發的存取與重新整理權杖一律失效（同一秒內稍早簽發的也是）；既有資料庫補上 tokens_valid_after
+5. 變更密碼後，先前簽發的存取與重新整理權杖一律失效（同一秒內稍早簽發的也是）；既有資料庫補上 tokens_valid_after，
+   回退到舊版期間建立、此欄位為 NULL 的帳號在每次啟動時補值
 """
 from datetime import datetime, timedelta
 
@@ -202,6 +203,22 @@ def test_existing_users_table_gets_tokens_valid_after_backfill(tmp_path):
     upgrade_schema(old)
     with old.connect() as conn:
         assert conn.execute(text("SELECT tokens_valid_after FROM users")).scalar() == "2026-01-02 03:04:05"
+    old.dispose()
+
+
+def test_accounts_created_without_tokens_valid_after_are_backfilled_on_every_start(tmp_path):
+    # 升級後回退到舊版再升級：欄位已存在，舊版建立的帳號此欄位為 NULL，所有權杖都會被拒絕
+    old = create_engine(f"sqlite:///{tmp_path / 'old.db'}")
+    with old.begin() as conn:
+        conn.execute(text("CREATE TABLE users (id INTEGER PRIMARY KEY, username VARCHAR, created_at DATETIME, "
+                          "tokens_valid_after DATETIME)"))
+        conn.execute(text("INSERT INTO users (username, created_at, tokens_valid_after) VALUES "
+                          "('upgraded', '2026-01-02 03:04:05', '2026-05-06 07:08:09'), "
+                          "('created-by-old-version', '2026-03-04 05:06:07', NULL)"))
+    upgrade_schema(old)
+    with old.connect() as conn:
+        rows = dict(conn.execute(text("SELECT username, tokens_valid_after FROM users")).all())
+    assert rows == {"upgraded": "2026-05-06 07:08:09", "created-by-old-version": "2026-03-04 05:06:07"}
     old.dispose()
 
 
