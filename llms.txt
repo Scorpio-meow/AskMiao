@@ -53,7 +53,7 @@
 - [frontend/src/hooks/useChat.ts](frontend/src/hooks/useChat.ts): 送出訊息、串流、停止與重新傳送
 - [frontend/src/services/sse.ts](frontend/src/services/sse.ts): SSE 解析器（附 Vitest 測試）
 - [frontend/src/services/api.ts](frontend/src/services/api.ts): Axios、權杖換發與各模組 API
-- [frontend/src/pages/Chat/](frontend/src/pages/Chat/): 聊天頁、研究歷程（`ResearchTraceBlock`）、引用來源（`SourceBadges`）與工具核准卡片（`ToolApprovalCard`）
+- [frontend/src/pages/Chat/](frontend/src/pages/Chat/): 聊天頁、研究歷程（`ResearchTraceBlock`）、引用來源（`SourceBadges`）、工具核准卡片（`ToolApprovalCard`）與 `remarkGfmSafe`（自動連結轉換有掃描量上限的 remark-gfm）
 - [frontend/vite.config.js](frontend/vite.config.js): 開發與預覽伺服器只監聽 `localhost`、反框架標頭、`/__open-in-editor` 只限本機；`bun run build` 時把 CSP `<meta>` 寫入 `index.html`（內嵌腳本以雜湊列入，`connect-src` 依 `VITE_API_BASE`／`VITE_API_URL`）
 - [frontend/bun.lock](frontend/bun.lock): 鎖定的前端相依套件；`frontend/bunfig.toml` 設定 `frozenLockfile = true`
 - [frontend/src/pages/AiTools.jsx](frontend/src/pages/AiTools.jsx): 自訂 API 工具、OpenAPI 匯入與 MCP 伺服器管理
@@ -85,6 +85,7 @@
 18. **工具憑證一律加密存放**：`custom_api_tools.headers`、`auth_config` 與 `mcp_servers.env_vars`、`headers` 以 `tool_secrets.encrypt_json()` 寫入、`decrypt_json()` 讀出；管理 API 的回應經 `mask()` 遮蔽，更新經 `merge_masked()` 沿用遮蔽欄位的原值。新增含憑證的欄位時，一併加進 `database.py` 的 `ENCRYPTED_TOOL_SECRET_COLUMNS`。
 19. **權杖有效性看 `users.tokens_valid_after`**：變更密碼一律經 `crud_user.update_user_password()`（把此欄位更新為當下，先前簽發的權杖全部失效）；建立帳號一律經 `crud_user.create_user()`，它把此欄位設為建立時間；`upgrade_schema()` 每次啟動時替此欄位為 NULL 的帳號補值。
 20. **相依套件鎖定**：後端新增或升級套件時修改 `backend/requirements.in`，再於 `backend/` 執行 `uv pip compile requirements.in --universal --python-version 3.10 --generate-hashes -o requirements.txt`，不要手改 `requirements.txt`；前端的 `package.json` 與 `bun.lock` 一起更新並提交（`frozenLockfile = true`）。
+21. **Markdown 一律經 `remarkGfmSafe`**：渲染模型回答等 Markdown 時使用 `frontend/src/pages/Chat/remarkGfmSafe.ts`，不要直接使用 `remark-gfm`；後者的自動連結轉換在一長串「.」「-」「_」或重複的「www.」上耗時隨長度平方成長。升級 remark-gfm 後執行 `remarkGfmSafe.test.tsx`，它比對一般內容的輸出並檢查病態輸入的耗時。
 
 ## 驗證
 

@@ -77,6 +77,7 @@
 - **外部連結標示實際網站**：以解析後的網址判斷是否為外部連結，在新分頁開啟並標示實際主機；Markdown 中的 `title` 不能取代網址提示，外部連結也不套用站內動作按鈕的樣式（CWE-451）。
 - 請求失敗時主控台只記錄狀態碼與錯誤訊息，不再記錄帶有密碼、API 金鑰與存取權杖的 axios 錯誤物件（CWE-532）。
 - 登出請求失敗時在登入頁提示：伺服器沒有撤銷重新整理權杖，存放它的 httpOnly Cookie 在到期前仍可換發存取權杖（CWE-613）。
+- **Markdown 自動連結不再讓聊天頁凍結**：remark-gfm 的自動連結轉換（mdast-util-gfm-autolink-literal 2.0.1，目前的最新版）在一長串「.」「-」「_」「+」或重複的「www.」上耗時隨長度平方成長，5 萬字元約 2.6 秒，期間聊天頁停止回應，每次開啟該對話都會重來。改用 `remarkGfmSafe`：沿用 remark-gfm，但轉換前以線性時間估算每個文字節點的掃描量，超過上限的節點不產生自動連結，其餘內容的結果與 remark-gfm 相同；同樣的輸入約 0.03 秒（CWE-1333）。
 - 研究軌跡的參數與輸出預覽一律轉成文字顯示：模型給出物件時不再讓對話頁面崩潰（軌跡存在資料庫中，原本之後每次開啟該對話都會崩潰）；貼文作者欄位不再使用在一長串「.」上回溯成二次方時間的正規式（CWE-1333）。
 
 ### 新增 (Added)
@@ -87,7 +88,7 @@
 - `backend/init-app-role.sh`（PostgreSQL 應用程式帳號，可重複執行）與 `backend/requirements.in`、`frontend/bun.lock`。
 - 管理 API 的工具與 MCP 伺服器回應新增 `credentials_unreadable`：無法以目前的金鑰解密時讓管理員重新輸入，而不是整頁失敗；此時工具測試與 MCP 探索端點回傳 `400` 說明需要重新輸入，「AI 工具」頁的卡片與編輯視窗也顯示提示。
 - README 與介紹頁的快速開始改為產生 `TOOL_SECRETS_KEY`、以 `scripts/create_user.py` 建立第一位管理員，並列出 20 項必填設定；[升級指南](docs/upgrading.md#從-400-升級到未發行版本) 新增本版的升級步驟。
-- 新增後端測試 `test_admin_user_api.py`、`test_login_throttle.py`、`test_registration.py`、`test_tool_secrets.py`。
+- 新增後端測試 `test_admin_user_api.py`、`test_login_throttle.py`、`test_registration.py`、`test_tool_secrets.py`，以及前端測試 `remarkGfmSafe.test.tsx`。
 - **介紹頁「工具核准」區段**：可操作的核准卡片示範（核准、拒絕、模擬逾時），同步顯示 `approval_required`、`approval_resolved` 等 SSE 事件；另依 HTTP 方法切換自訂 API 工具的預設核准規則，規則與 `tool_approval.py` 相同。
 - 介紹頁新增 4.0.0 版本標籤與數據列、安全區段的「每個入口都有上限」資源上限表，文件導覽補上 ADR-0006。
 - README 新增「4.0.0 重點」、「工具呼叫核准」、「防護對照」與「主要資源上限」各節，疑難排解新增核准逾時與唯讀工具要求核准兩項。

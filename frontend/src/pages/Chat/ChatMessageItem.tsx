@@ -1,12 +1,12 @@
 import React, { useMemo, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import ReactMarkdown from 'react-markdown';
-import remarkGfm from 'remark-gfm';
 import { ChatMessageItemProps } from './types';
 import ThinkBlock from './ThinkBlock';
 import SourceBadges from './SourceBadges';
 import ResearchTraceBlock from './ResearchTraceBlock';
 import ToolApprovalCard from './ToolApprovalCard';
+import remarkGfmSafe from './remarkGfmSafe';
 import { Avatar, Tooltip, IconButton, Spinner, Icon, Button, useModalDialog } from '../../components/ui';
 import styles from './ChatMessageItem.module.css';
 const SOCIAL_PLATFORM_DOMAINS = ['threads.com', 'threads.net', 'instagram.com', 'twitter.com', 'x.com'];
@@ -322,7 +322,7 @@ export const ChatMessageItem: React.FC<ChatMessageItemProps> = ({
           ) : hasText ? (
             <div className={styles.markdownBody}>
               <ReactMarkdown
-                remarkPlugins={[remarkGfm]}
+                remarkPlugins={[remarkGfmSafe]}
                 components={{
                   // 回答可能受外部資料影響，連結文字可以與實際網址不同；外部連結一律標示實際前往的網站，
                   // 不套用站內動作按鈕的樣式，Markdown 中的 title 也不能取代實際網址的提示

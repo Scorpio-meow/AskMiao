@@ -53,7 +53,7 @@ This file is for AI agents: read "System constraints" before changing code, and 
 - [frontend/src/hooks/useChat.ts](frontend/src/hooks/useChat.ts): sending messages, streaming, stop, and retry
 - [frontend/src/services/sse.ts](frontend/src/services/sse.ts): the SSE parser (with Vitest tests)
 - [frontend/src/services/api.ts](frontend/src/services/api.ts): Axios, token refresh, and the per-module APIs
-- [frontend/src/pages/Chat/](frontend/src/pages/Chat/): the chat page, research trace (`ResearchTraceBlock`), citations (`SourceBadges`), and the tool approval card (`ToolApprovalCard`)
+- [frontend/src/pages/Chat/](frontend/src/pages/Chat/): the chat page, research trace (`ResearchTraceBlock`), citations (`SourceBadges`), the tool approval card (`ToolApprovalCard`), and `remarkGfmSafe` (remark-gfm with a scan-cost limit on the autolink transform)
 - [frontend/vite.config.js](frontend/vite.config.js): dev and preview servers on `localhost` only, anti-framing headers, `/__open-in-editor` for loopback only; `bun run build` writes a CSP `<meta>` into `index.html` (inline scripts listed by hash, `connect-src` from `VITE_API_BASE`/`VITE_API_URL`)
 - [frontend/bun.lock](frontend/bun.lock): the pinned frontend dependencies; `frontend/bunfig.toml` sets `frozenLockfile = true`
 - [frontend/src/pages/AiTools.jsx](frontend/src/pages/AiTools.jsx): custom API tools, OpenAPI import, and MCP server management
@@ -85,6 +85,7 @@ This file is for AI agents: read "System constraints" before changing code, and 
 18. **Tool credentials are always encrypted at rest**: `custom_api_tools.headers` and `auth_config` and `mcp_servers.env_vars` and `headers` are written with `tool_secrets.encrypt_json()` and read with `decrypt_json()`; admin API responses go through `mask()`, and updates go through `merge_masked()` so masked fields keep their stored value. When adding a column that holds credentials, add it to `ENCRYPTED_TOOL_SECRET_COLUMNS` in `database.py` as well.
 19. **Token validity follows `users.tokens_valid_after`**: always change passwords through `crud_user.update_user_password()`, which sets the column to the current time so every earlier token becomes invalid, and always create accounts through `crud_user.create_user()`, which sets it to the creation time; `upgrade_schema()` backfills accounts whose value is NULL on every start.
 20. **Pinned dependencies**: to add or upgrade a backend package, edit `backend/requirements.in` and run `uv pip compile requirements.in --universal --python-version 3.10 --generate-hashes -o requirements.txt` in `backend/`; never edit `requirements.txt` by hand. Update and commit the frontend's `package.json` and `bun.lock` together (`frozenLockfile = true`).
+21. **Markdown always goes through `remarkGfmSafe`**: render Markdown such as model answers with `frontend/src/pages/Chat/remarkGfmSafe.ts`, never with `remark-gfm` directly; the latter's autolink transform takes time quadratic in length on a long run of dots, hyphens, or underscores, or on repeated `www.`. After upgrading remark-gfm, run `remarkGfmSafe.test.tsx`, which compares the output for ordinary content and checks the time taken on adversarial input.
 
 ## Verification
 

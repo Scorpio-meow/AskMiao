@@ -606,7 +606,7 @@ flowchart LR
 | CORS | 只允許 `ALLOWED_ORIGINS`（可加上 `DEVTUNNEL_URL`），允許攜帶 Cookie |
 | 上傳檢查 | 檔名長度與危險字元、副檔名白名單、檔頭特徵、大小上限、OOXML 壓縮炸彈檢查；聊天附件另有解析預算（第 4 節） |
 | 資源上限 | 訊息長度、附件數量與大小、聊天附件的解析預算、工具結果長度、每位使用者的同時串流數與附件儲存量等，集中定義於 `app/core/limits.py`，完整清單見 [設定參考：資源上限](configuration.md#資源上限) |
-| 前端渲染 | 回答以 react-markdown 渲染，不渲染原始 HTML；Markdown 圖片改為點擊才開啟的連結，不自動向外部主機載入；外部連結以解析後的網址判斷，在新分頁開啟並標示實際主機；研究軌跡的參數與輸出預覽一律轉成文字顯示 |
+| 前端渲染 | 回答以 react-markdown 渲染，不渲染原始 HTML；GFM 語法由 `remarkGfmSafe` 轉換，它沿用 remark-gfm，但自動連結轉換前先以線性時間估算每個文字節點的掃描量，超過上限（一長串「.」「-」「_」或重複的「www.」會讓原本的轉換耗時隨長度平方成長）的節點不產生自動連結；Markdown 圖片改為點擊才開啟的連結，不自動向外部主機載入；外部連結以解析後的網址判斷，在新分頁開啟並標示實際主機；研究軌跡的參數與輸出預覽一律轉成文字顯示 |
 | 建置產物的 CSP | `bun run build` 由 `frontend/vite.config.js` 的外掛把 CSP `<meta>` 寫入 `index.html`：`default-src 'self'`；`script-src`、`style-src` 只允許同源與 `index.html` 內嵌內容的 SHA-256 雜湊；`img-src 'self' data: blob:`；`connect-src` 另加入 `VITE_API_BASE`／`VITE_API_URL` 的來源；`object-src 'none'`、`base-uri 'none'`、`form-action 'self'`。網頁伺服器沒有設定 CSP 時，被注入的 HTML 也無法執行腳本。只在建置時套用，開發伺服器需要內嵌的 HMR 腳本 |
 | 反點擊劫持 | Vite 開發與預覽伺服器送出 `X-Frame-Options: DENY` 與 `Content-Security-Policy: frame-ancestors 'none'; img-src 'self' data: blob:`；`index.html` 另有內嵌樣式守衛，頁面被嵌入 iframe 時保持隱藏。`<meta>` 形式的 CSP 不支援 `frame-ancestors`，正式環境的反框架標頭須由網頁伺服器送出 |
 
