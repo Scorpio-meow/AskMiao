@@ -2,7 +2,7 @@
 
 [繁體中文](configuration.md) | [English](configuration_en.md)
 
-> 本文件逐一說明後端 `backend/.env` 與前端 `frontend/.env` 的每個設定、預設值與實際作用，適用於 **4.0.0**。設定以 `backend/app/core/config.py` 的 `Settings` 為準，範本見 [`backend/.env.example`](../backend/.env.example)。
+> 本文件逐一說明後端 `backend/.env` 與前端 `frontend/.env` 的每個設定、預設值與實際作用，適用於 4.0.0 之後的**未發行版本**（從 4.0.0 升級見 [升級指南](upgrading.md#從-400-升級到未發行版本)）。設定以 `backend/app/core/config.py` 的 `Settings` 為準，範本見 [`backend/.env.example`](../backend/.env.example)。
 
 - [讀取規則](#讀取規則)
 - [必填設定](#必填設定)
@@ -14,6 +14,7 @@
 - [儲存路徑與上傳](#儲存路徑與上傳)
 - [資料庫](#資料庫)
 - [認證與權杖](#認證與權杖)
+- [工具憑證加密](#工具憑證加密)
 - [網路存取控制](#網路存取控制)
 - [伺服器與執行環境](#伺服器與執行環境)
 - [資源上限](#資源上限)
@@ -29,17 +30,29 @@
 
 - **來源**：後端從 `backend/.env` 讀取設定（與啟動目錄無關），行程環境變數優先於 `.env`。不認得的鍵會被忽略，所以已移除的舊設定留在 `.env` 中不會出錯。
 - **必填設定沒有預設值**：缺少任一項時，後端在啟動時就以 `Field required` 錯誤結束，並列出缺少的欄位。
-- **數值範圍**：`AGENT_MAX_TURNS ≥ 1`、`CONVERSATION_HISTORY_MESSAGES ≥ 0`、`RRF_K ≥ 1`、`0 ≤ RERANK_RELEVANCE_THRESHOLD ≤ 1`、`ANTHROPIC_MAX_TOKENS ≥ 1`，超出範圍同樣無法啟動。
+- **數值範圍與格式**：`AGENT_MAX_TURNS ≥ 1`、`CONVERSATION_HISTORY_MESSAGES ≥ 0`、`RRF_K ≥ 1`、`0 ≤ RERANK_RELEVANCE_THRESHOLD ≤ 1`、`ANTHROPIC_MAX_TOKENS ≥ 1`，`LOGIN_MAX_FAILURES_PER_ACCOUNT`、`LOGIN_MAX_FAILURES_PER_ADDRESS`、`LOGIN_FAILURE_WINDOW_SECONDS`、`LOGIN_LOCKOUT_SECONDS` 皆須 ≥ 1，`TOOL_SECRETS_KEY` 必須是有效的 Fernet 金鑰；超出範圍或格式不符同樣無法啟動。
 - **布林值**：`true` / `false`、`1` / `0`、`yes` / `no` 皆可。
 - **相對路徑**：`DATA_DIR`、`UPLOAD_DIR`、`FAISS_INDEX_PATH`、`BM25_INDEX_DIR`、`METADATA_PATH`、`HF_HOME`、`HF_HUB_CACHE`、`SENTENCE_TRANSFORMERS_HOME`、`DOMAIN_PROFILE_PATH`、`JIEBA_DICTIONARY` 的相對路徑一律以 `backend/` 為基準。`DATABASE_URL` 不在此列，SQLite 的相對路徑依啟動目錄而定。
 - **程式預設值與範本值**：下表的「程式預設值」是 `.env` 未設定時的值；「範本值」是 `backend/.env.example` 建議的值，兩者不同時以你的 `.env` 為準。
 
 ## 必填設定
 
+下列 20 個設定沒有預設值，缺少任一項後端就無法啟動。
+
 | 變數 | 範本值 | 說明 |
 |---|---|---|
-| `DATABASE_URL` | `postgresql+psycopg2://postgres:your_postgres_password_here@localhost:5432/chatbot` | 資料庫連線字串，詳見 [資料庫](#資料庫) |
+| `DATABASE_URL` | `postgresql+psycopg2://askmiao_app:your_app_db_password_here@localhost:5432/chatbot` | 資料庫連線字串，詳見 [資料庫](#資料庫) |
 | `ADMIN_API_KEY` | `your_admin_api_key_here` | 管理用 API 金鑰（設定驗證要求此值，目前沒有路由使用），請換成隨機字串 |
+| `TOOL_SECRETS_KEY` | `your_tool_secrets_key_here` | 加密工具憑證的 Fernet 金鑰，啟動時驗證格式；範本值不是有效的金鑰，必須換成自行產生的金鑰（指令見下方），詳見 [工具憑證加密](#工具憑證加密) |
+| `ALLOW_REGISTRATION` | `false` | 是否開放自行註冊，詳見 [註冊與建立帳號](#註冊與建立帳號) |
+| `LOGIN_MAX_FAILURES_PER_ACCOUNT` | `5` | 同一登入識別的登入失敗門檻（≥ 1），詳見 [登入失敗節流](#登入失敗節流) |
+| `LOGIN_MAX_FAILURES_PER_ADDRESS` | `20` | 同一來源位址的登入失敗門檻（≥ 1） |
+| `LOGIN_FAILURE_WINDOW_SECONDS` | `900` | 計算登入失敗次數的視窗秒數（≥ 1） |
+| `LOGIN_LOCKOUT_SECONDS` | `900` | 達到門檻後暫停登入的秒數（≥ 1） |
+| `COOKIE_SECURE` | `false` | 重新整理權杖 Cookie 是否帶 `Secure` 屬性；以 HTTPS 提供服務時必須為 `true` |
+| `HOST` | `127.0.0.1` | `python main.py` 的監聽位址，詳見 [伺服器與執行環境](#伺服器與執行環境) |
+| `RELOAD` | `false` | 程式碼變更時自動重新載入，只在開發時設為 `true` |
+| `ENABLE_API_DOCS` | `false` | 是否提供 `/docs`、`/redoc` 與 `/openapi.json` 互動式文件 |
 | `ENABLE_WEB_SEARCH` | `true` | 是否提供聯網工具 |
 | `AGENT_MAX_TURNS` | `5` | 單次提問的工具呼叫輪數上限 |
 | `CONVERSATION_HISTORY_MESSAGES` | `6` | 帶入的前文訊息數 |
@@ -48,6 +61,12 @@
 | `RRF_K` | `60` | RRF 融合常數 |
 | `RERANK_RELEVANCE_THRESHOLD` | `0.2` | 重排機率門檻 |
 | `DOMAIN_PROFILE_PATH` | `config/domain_profile.json` | 領域設定檔路徑 |
+
+`TOOL_SECRETS_KEY` 由每個部署自行產生，例如在已安裝後端相依套件的環境執行：
+
+```bash
+python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+```
 
 使用 Claude 模型時，`ANTHROPIC_MAX_TOKENS` 也是必填（未設定時呼叫 Claude 會失敗，但不影響啟動）。
 
@@ -206,26 +225,100 @@
 | 情境 | 連線字串 |
 |---|---|
 | SQLite（零依賴） | `sqlite:///./chatbot.db`（相對路徑依啟動目錄而定，在 `backend/` 啟動即為 `backend/chatbot.db`） |
-| `backend/docker-compose.yml` 啟動的 PostgreSQL 17 | `postgresql+psycopg2://postgres:<POSTGRES_PASSWORD>@localhost:7690/chatbot`（容器只綁定 `127.0.0.1:7690`） |
-| 自行架設的 PostgreSQL | `postgresql+psycopg2://<使用者>:<密碼>@<主機>:5432/<資料庫>` |
+| `backend/docker-compose.yml` 啟動的 PostgreSQL 17 | `postgresql+psycopg2://<POSTGRES_APP_USER>:<POSTGRES_APP_PASSWORD>@localhost:7690/chatbot`（容器只綁定 `127.0.0.1:7690`） |
+| 自行架設的 PostgreSQL | `postgresql+psycopg2://<使用者>:<密碼>@<主機>:5432/<資料庫>`（建議使用非超級使用者，見下節） |
 
-`backend/docker-compose.yml` 不再內建密碼：啟動前必須在 `backend/.env` 或殼層環境設定 `POSTGRES_PASSWORD`（未設定時 `docker compose` 拒絕啟動），並在 `DATABASE_URL` 使用同一組密碼（`@`、`:`、`/` 等字元需百分比編碼）。容器埠只對本機回送位址開放，區網與公網都連不到。`POSTGRES_PASSWORD` 只供 compose 使用，後端不讀取。
+資料表在後端啟動時自動建立，缺少的新欄位（例如 `custom_api_tools.requires_approval`、`mcp_servers.requires_approval`、`users.tokens_valid_after`）也會在啟動時自動補上並回填，以明文存放的舊工具憑證也在啟動時改為加密（見 [工具憑證加密](#工具憑證加密)）。新建立的 SQLite 資料庫中，`users` 與 `documents` 以 `AUTOINCREMENT` 建立，刪除後的 id 不會被重用；既有 SQLite 資料表不會被改寫。`init_db.py` 是為舊版 PostgreSQL 資料庫補欄位與索引的相容腳本，SQLite 不需要執行（其中的 `ADD COLUMN IF NOT EXISTS` 語法 SQLite 不支援）。
 
-資料表在後端啟動時自動建立，缺少的新欄位（例如 `custom_api_tools.requires_approval`、`mcp_servers.requires_approval`）也會在啟動時自動補上並回填。新建立的 SQLite 資料庫中，`users` 與 `documents` 以 `AUTOINCREMENT` 建立，刪除後的 id 不會被重用；既有 SQLite 資料表不會被改寫。`init_db.py` 是為舊版 PostgreSQL 資料庫補欄位與索引的相容腳本，SQLite 不需要執行（其中的 `ADD COLUMN IF NOT EXISTS` 語法 SQLite 不支援）。
+### PostgreSQL 非超級使用者帳號
+
+`backend/docker-compose.yml` 不內建任何密碼，啟動前必須在 `backend/.env` 或殼層環境設定下列三項，缺少任一項時 `docker compose` 拒絕啟動。這些變數只供 compose 使用，後端不讀取。
+
+| 變數 | 範本值 | 說明 |
+|---|---|---|
+| `POSTGRES_PASSWORD` | 註解範例 | 超級使用者 `postgres` 的密碼，只供管理用途，後端不以此帳號連線 |
+| `POSTGRES_APP_USER` | 註解範例 `askmiao_app` | 後端連線用的非超級使用者帳號 |
+| `POSTGRES_APP_PASSWORD` | 註解範例 | 該帳號的密碼，請與 `POSTGRES_PASSWORD` 使用不同的隨機字串 |
+
+`DATABASE_URL` 使用 `POSTGRES_APP_USER` 與 `POSTGRES_APP_PASSWORD`（`@`、`:`、`/` 等字元需百分比編碼）。容器埠只對本機回送位址開放，區網與公網都連不到。
+
+建立新的資料卷時，容器依檔名順序執行 `10-init.sql`（`backend/init.sql`，建立資料表）與 `20-app-role.sh`（`backend/init-app-role.sh`）。後者建立 `POSTGRES_APP_USER`（`NOSUPERUSER`、`NOCREATEDB`、`NOCREATEROLE`）並設定密碼，授予資料庫的 `CONNECT` 與 `public` schema 的 `USAGE`、`CREATE`，再把 `public` 中的資料表交給它擁有。後端啟動時自行建立與修改資料表，這些權限就足夠；以非超級使用者連線時，SQL 注入無法以 `COPY ... TO PROGRAM` 執行系統指令或讀取伺服器檔案。
+
+初始化腳本只在資料卷第一次建立時執行。使用既有資料卷時，以新的 `docker-compose.yml` 啟動容器後，在 `backend/` 執行一次下列指令，再把 `DATABASE_URL` 改為這組帳號。腳本可以重複執行，每次都會把該帳號的密碼設為容器中的 `POSTGRES_APP_PASSWORD`。
+
+```bash
+docker compose exec postgres bash /docker-entrypoint-initdb.d/20-app-role.sh
+```
+
+自行架設的 PostgreSQL 也建議比照 `backend/init-app-role.sh`，讓後端以只有上述權限的非超級使用者連線。
 
 ## 認證與權杖
 
 | 變數 | 程式預設值 | 範本值 | 說明 |
 |---|---|---|---|
 | `ADMIN_API_KEY` | —（必填） | 佔位字串 | 設定驗證要求此值；目前沒有路由使用 `X-API-Key` 驗證，管理端點一律依資料庫中該帳號的 `is_admin` 判斷 |
+| `ALLOW_REGISTRATION` | —（必填） | `false` | 是否開放以 `POST /api/auth/register` 自行註冊；`false` 時註冊回傳 `403`，帳號改以 `scripts/create_user.py` 建立，見 [註冊與建立帳號](#註冊與建立帳號) |
 | `ACCESS_TOKEN_EXPIRE_MINUTES` | `30` | `30` | 存取權杖有效分鐘數 |
 | `REFRESH_TOKEN_EXPIRE_DAYS` | `7` | `7` | 重新整理權杖有效天數，也是 Cookie 的 `max-age` |
-| `COOKIE_SECURE` | 空（`ENVIRONMENT=production` 時為 `true`） | — | 重新整理權杖 Cookie 的 `Secure` 屬性 |
+| `LOGIN_MAX_FAILURES_PER_ACCOUNT` | —（必填，≥ 1） | `5` | 同一登入識別在視窗內失敗達此次數後，暫停該識別的登入，見 [登入失敗節流](#登入失敗節流) |
+| `LOGIN_MAX_FAILURES_PER_ADDRESS` | —（必填，≥ 1） | `20` | 同一來源位址在視窗內失敗達此次數後（不論嘗試哪些帳號），暫停該位址的登入 |
+| `LOGIN_FAILURE_WINDOW_SECONDS` | —（必填，≥ 1） | `900` | 計算失敗次數的滑動視窗秒數 |
+| `LOGIN_LOCKOUT_SECONDS` | —（必填，≥ 1） | `900` | 暫停登入的秒數，到期自動解除 |
+| `COOKIE_SECURE` | —（必填） | `false` | 重新整理權杖 Cookie 的 `Secure` 屬性，`true` 時瀏覽器只經 HTTPS 送出此 Cookie。以 HTTPS 提供服務時必須設為 `true`，本機以 `http://localhost` 開發時可設為 `false`；不再依 `ENVIRONMENT` 推導 |
 | `COOKIE_SAMESITE` | `lax` | — | 重新整理權杖 Cookie 的 `SameSite` 屬性 |
 
-存取與重新整理權杖一律以 RS256 簽署，沒有其他演算法可選。RSA 金鑰對存放於 `backend/keys/jwt_private.pem` 與 `jwt_public.pem`，首次啟動時若不存在會自動產生（2048 位元，已列入 `.gitignore`），因此後端帳號需能寫入 `backend/keys/`；金鑰無法載入或產生時，後端在任何 `ENVIRONMENT` 下都拒絕啟動。多台後端共用同一組使用者時，請讓它們使用同一組金鑰。
+存取與重新整理權杖一律以 RS256 簽署，沒有其他演算法可選。RSA 金鑰對存放於 `backend/keys/jwt_private.pem` 與 `jwt_public.pem`，首次啟動時若不存在會自動產生（2048 位元，已列入 `.gitignore`；私鑰建立當下即為 `0600`，新建立的 `backend/keys/` 為 `0700`），因此後端帳號需能寫入 `backend/keys/`；金鑰無法載入或產生時，後端在任何 `ENVIRONMENT` 下都拒絕啟動。多台後端共用同一組使用者時，請讓它們使用同一組金鑰。
 
-每次請求都會把存取權杖對應回資料庫中的帳號：帳號必須存在且啟用，`is_admin` 與角色取自資料庫而非權杖內容，簽發時間早於帳號建立時間的權杖（例如帳號刪除後 id 被重用）一律無效。重新整理權杖只能使用一次，換發新權杖時舊的立即撤銷。
+每次請求都會把存取權杖對應回資料庫中的帳號：帳號必須存在且啟用，`is_admin` 與角色取自資料庫而非權杖內容，簽發時間早於帳號 `tokens_valid_after` 的權杖一律無效（見 [變更密碼與權杖撤銷](#變更密碼與權杖撤銷)）。重新整理權杖只能使用一次，換發新權杖時舊的立即撤銷。
+
+### 登入失敗節流
+
+`POST /api/auth/login` 的每次失敗同時計入兩個計數：
+
+- **登入識別**：登入時輸入的使用者名稱或電子郵件，不分大小寫、忽略前後空白；同一帳號以名稱與以電子郵件登入時各自計數。不存在的帳號同樣計數，回應與存在的帳號相同。
+- **來源位址**：連線的來源 IP；設定 `FORWARDED_ALLOW_IPS` 時為反向代理轉送的用戶端 IP，見 [網路存取控制](#網路存取控制)。
+
+在 `LOGIN_FAILURE_WINDOW_SECONDS` 秒內，同一識別失敗達 `LOGIN_MAX_FAILURES_PER_ACCOUNT` 次，或同一位址失敗達 `LOGIN_MAX_FAILURES_PER_ADDRESS` 次，該識別或位址的登入就暫停 `LOGIN_LOCKOUT_SECONDS` 秒。暫停期間的登入請求不檢查密碼，直接回傳 `429` 與 `Retry-After`（剩餘秒數），正確的密碼也不接受，並以 `LOGIN_THROTTLED` 寫入安全日誌；到期後自動解除並重新計數。登入成功只清除該識別的失敗紀錄，同一位址對其他帳號的失敗照常計數。暫停只影響登入，已簽發的權杖不受影響。
+
+經由反向代理或 Vite 開發代理連線、又沒有設定 `FORWARDED_ALLOW_IPS` 時，所有使用者共用代理的位址，因此依位址的門檻要設得比依帳號的寬（範本為 `20` 與 `5`）。
+
+計數保存在每個後端行程的記憶體中：後端重新啟動後歸零，多個後端行程之間也不共用，各自計數。追蹤的識別數與位址數有上限（見 [資源上限](#資源上限)），超過時最久沒有新失敗的先淘汰，其失敗紀錄與暫停一併清除。
+
+### 註冊與建立帳號
+
+所有帳號共用整個知識庫與已啟用的工具，部署在可公開連線的環境時請保持 `ALLOW_REGISTRATION=false`。
+
+- `true`：任何能連到 API 的人都能以 `POST /api/auth/register` 建立一般使用者帳號。
+- `false`：`POST /api/auth/register` 回傳 `403`，並以 `REGISTER_REJECTED` 寫入安全日誌。前端依 `GET /api/auth/registration`（不需登入，回傳 `{"enabled": false}`）隱藏登入頁的註冊入口，註冊頁改為顯示說明。
+
+帳號（含第一位管理員）由管理員在 `backend/` 執行 `scripts/create_user.py` 建立：
+
+```bash
+python scripts/create_user.py --username alice --email alice@example.com
+python scripts/create_user.py --username root --email root@example.com --admin
+```
+
+密碼以互動方式輸入兩次，不經命令列參數，因此不會留在殼層歷史與行程清單中；使用者名稱、電子郵件與密碼套用與自行註冊相同的規則，`--admin` 建立管理員。腳本以同一份 `backend/.env` 連線資料庫，資料表不存在時會先建立。
+
+### 變更密碼與權杖撤銷
+
+簽發時間早於帳號 `users.tokens_valid_after` 的存取與重新整理權杖一律無效。這個欄位在建立帳號時等於建立時間（帳號刪除後 id 被重用時，舊權杖不能沿用），變更密碼時更新為當下：`POST /api/auth/change-password` 或帶新密碼的 `PUT /api/auth/me` 成功後，該帳號先前簽發的所有權杖（含目前這一個與其他裝置上的）立即失效，被盜的重新整理權杖也無法再換發；回應會清除重新整理權杖 Cookie，所有工作階段都要以新密碼重新登入。既有資料庫在後端啟動時自動補上此欄位，並以 `created_at` 回填。
+
+## 工具憑證加密
+
+| 變數 | 程式預設值 | 範本值 | 說明 |
+|---|---|---|---|
+| `TOOL_SECRETS_KEY` | —（必填） | 佔位字串（不是有效的金鑰） | 加密自訂 API 工具與 MCP 伺服器憑證的 Fernet 金鑰，每個部署各自產生 |
+
+啟動時驗證金鑰格式：必須是 Fernet 金鑰（以 URL-safe base64 編碼的 32 位元組，共 44 個字元）。範本的佔位字串無法通過驗證，沒換掉時後端拒絕啟動。產生金鑰：
+
+```bash
+python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+```
+
+- **加密範圍**：自訂 API 工具的 `headers`、`auth_config` 與 MCP 伺服器的 `env_vars`、`headers` 寫入資料庫前以此金鑰加密（存成 `fernet:` 開頭的內容），資料庫或備份外流時不會直接暴露憑證。舊版以明文存放的值在後端啟動時自動改為加密，不是 JSON 物件的舊值會被清空，需要重新輸入。
+- **管理 API 的遮蔽**：工具與 MCP 伺服器的回應以 `••••••••` 取代秘密值，憑證寫入後不會再從 API 讀出。秘密值包括 `Accept`、`Accept-Encoding`、`Accept-Language`、`Cache-Control`、`Content-Type`、`User-Agent` 以外的標頭，`auth_config` 中的 `token`、`key_value`、`password`，以及 MCP 伺服器的所有環境變數；`key_name`、`key_in`、`username` 等設定照常顯示。更新時送出的內容取代整個欄位，其中仍為 `••••••••` 的項目沿用已儲存的值；沒有已儲存的值可沿用時回傳 `400`。
+- **更換或遺失金鑰**：已儲存的憑證無法以其他金鑰解密。管理 API 對這些工具與 MCP 伺服器回傳 `credentials_unreadable: true`，無法解密的欄位為 `null`，請重新輸入憑證；在此之前，Agent 呼叫這些工具會失敗。請把 `TOOL_SECRETS_KEY` 與資料庫備份一起妥善保存：只還原資料庫而沒有原本的金鑰時，所有工具憑證都要重新輸入。
 
 ## 網路存取控制
 
@@ -238,22 +331,25 @@
 | `FORWARDED_ALLOW_IPS` | 空 | 註解範例 `127.0.0.1` | 信任其 `X-Forwarded-For` 的反向代理位址（交給 uvicorn 的 `forwarded_allow_ips`）；未設定時 uvicorn 不處理代理標頭 |
 
 > [!NOTE]
-> 速率限制依連線的來源 IP 計算。未設定 `FORWARDED_ALLOW_IPS` 時，用戶端自帶的 `X-Forwarded-For` 一律不採信，經由 Vite 開發代理或反向代理連線的所有使用者來源 IP 相同，會共用同一個額度。
+> 速率限制與 [登入失敗節流](#登入失敗節流) 的依位址計數都以連線的來源 IP 計算。未設定 `FORWARDED_ALLOW_IPS` 時，用戶端自帶的 `X-Forwarded-For` 一律不採信，經由 Vite 開發代理或反向代理連線的所有使用者來源 IP 相同，會共用同一個額度與同一個登入失敗計數。
 >
-> 只有在後端前方的反向代理會「覆寫」`X-Forwarded-For`（例如 nginx 的 `proxy_set_header X-Forwarded-For $remote_addr;`）時，才把該代理的位址設為 `FORWARDED_ALLOW_IPS`，速率限制才會以真實用戶端 IP 計算。Vite 開發代理會原樣轉送用戶端自帶的標頭，**不可**為它設定此值，否則任何人都能偽造來源 IP 繞過速率限制與封鎖。此設定只在以 `python main.py` 啟動時生效。
+> 只有在後端前方的反向代理會「覆寫」`X-Forwarded-For`（例如 nginx 的 `proxy_set_header X-Forwarded-For $remote_addr;`）時，才把該代理的位址設為 `FORWARDED_ALLOW_IPS`，速率限制與登入失敗節流才會以真實用戶端 IP 計算。Vite 開發代理會原樣轉送用戶端自帶的標頭，**不可**為它設定此值，否則任何人都能偽造來源 IP 繞過速率限制與依位址的登入失敗節流。此設定只在以 `python main.py` 啟動時生效。
+
+速率限制在每個後端行程的記憶體中計數，追蹤的位址數有上限（見 [資源上限](#資源上限)）。入侵偵測只寫入警報、不封鎖任何位址，速率限制超過時一律回傳 `429`，不會以 `403` 拒絕位址（舊版從未被填入的 IP 封鎖名單已移除）。
 
 ## 伺服器與執行環境
 
 | 變數 | 程式預設值 | 範本值 | 說明 |
 |---|---|---|---|
-| `ENVIRONMENT` | `development` | `development` | 設為 `production` 時 Cookie 預設加上 `Secure`（RSA 金鑰無法載入時，任何環境都拒絕啟動） |
-| `HOST` | `0.0.0.0` | `0.0.0.0` | `python main.py` 的預設監聽位址（可用 `--host` 覆寫） |
+| `ENVIRONMENT` | `development` | `development` | 目前只改變啟動日誌中 CORS 模式的說明文字；Cookie 的 `Secure` 不再依此推導，改由必填的 `COOKIE_SECURE` 設定（RSA 金鑰無法載入時，任何環境都拒絕啟動） |
+| `HOST` | —（必填） | `127.0.0.1` | `python main.py` 的監聽位址（可用 `--host` 覆寫）。只有本機或同一台主機上的反向代理連入時保持 `127.0.0.1`；容器或其他主機上的反向代理需要連入時才改為 `0.0.0.0` |
 | `PORT` | `8001` | `8001` | 預設埠號（可用 `--port` 覆寫） |
-| `RELOAD` | `true` | `true` | 程式變更時自動重新載入（可用 `--no-reload` 關閉） |
+| `RELOAD` | —（必填） | `false` | 程式碼變更時自動重新載入，只在開發時設為 `true`（可用 `--reload` 或 `--no-reload` 覆寫） |
+| `ENABLE_API_DOCS` | —（必填） | `false` | 是否提供 `/docs`、`/redoc` 與 `/openapi.json` 互動式文件；這些頁面列出所有端點與參數，對外服務時請保持 `false`，此時三個路徑都不提供 |
 | `LOG_LEVEL` | `INFO` | `INFO` | 日誌層級；應用程式日誌寫入 `backend/logs/app.log`，安全事件只寫入 `backend/logs/security.log`（兩者都依大小輪替）。`httpx` 與 `httpcore` 固定為 `WARNING`，完整請求網址（可能含查詢字串型 API 金鑰）不會寫進日誌 |
 | `BASE_URL` | `http://backend:8001` | `http://localhost:8001` | 只有 `healthcheck.py` 使用，而且它讀的是行程環境變數，不會讀取 `.env` |
 
-`python main.py` 啟動的 uvicorn 只在設定 `FORWARDED_ALLOW_IPS` 時處理代理標頭（`proxy_headers`），見 [網路存取控制](#網路存取控制)。
+`HOST`、`PORT`、`RELOAD` 與 `FORWARDED_ALLOW_IPS` 只在以 `python main.py` 啟動時套用；以其他方式啟動（例如直接執行 `uvicorn main:app`）時不會套用，但 `HOST` 與 `RELOAD` 仍是必填。`python main.py` 啟動的 uvicorn 只在設定 `FORWARDED_ALLOW_IPS` 時處理代理標頭（`proxy_headers`），見 [網路存取控制](#網路存取控制)。
 
 ## 資源上限
 
@@ -265,7 +361,7 @@
 |---|---|---|
 | `MAX_REQUEST_BODY_BYTES` | 1 MiB | 一般 API 請求與所有未帶有效存取權杖的請求本文上限，超過回傳 `413`；`Content-Length` 超過時直接拒絕，分塊傳輸邊讀邊計數 |
 | `MAX_CHAT_REQUEST_BODY_BYTES` | 約 27.7 MiB | `POST /api/chat/send` 的本文上限（附件總量 20 MiB 經 base64 膨脹 4/3 後再加 1 MiB）；只有帶著簽章有效的存取權杖時才放寬，否則仍為 1 MiB |
-| 文件上傳本文上限 | `MAX_FILES_PER_UPLOAD` × `MAX_FILE_SIZE_MB` MiB + 1 MiB | `POST /api/documents/upload` 的本文上限（範本值 `MAX_FILE_SIZE_MB=10` 時為 101 MiB）；同樣只對有效存取權杖放寬 |
+| 文件上傳本文上限 | `MAX_FILES_PER_UPLOAD` × `MAX_FILE_SIZE_MB` MiB + 1 MiB | `POST /api/documents/upload` 的本文上限（範本值 `MAX_FILE_SIZE_MB=10` 時為 101 MiB）；只有存取權杖簽章有效且其 `is_admin` 聲明為 `true` 時才放寬，其他請求仍為 1 MiB |
 | `MAX_FILES_PER_UPLOAD` | 10 | 單次上傳的檔案數 |
 | `MAX_CHAT_MESSAGE_CHARS` | 20,000 字元 | 單則聊天訊息長度，超過回傳 `422` |
 | `MAX_CHAT_ATTACHMENTS` | 5 | 單則訊息的附件數 |
@@ -286,21 +382,35 @@
 | `MAX_TEXT_CLEANUP_CHARS` | 2,000,000 字元 | `web_fetch` 抽取文字前先截斷 HTML 的長度 |
 | `MAX_DATE_RANGE_CHARS`、`MAX_TARGET_DATES`、`MAX_FILTER_RECORDS`（`rag/tools.py`） | 200 字元、93 天、50 筆 | `filter_and_count_records` 的 `date_range` 長度、展開後的日期數與回傳筆數（`limit` 超過時夾到 50） |
 | `MAX_API_TOOL_RESPONSE_BYTES`（`api/api_tools.py`） | 1 MiB | 自訂 API 工具的回應本文上限，超過即中止讀取並回傳 `502` |
+| `MAX_API_TOOL_REDIRECTS`（`api/api_tools.py`）、`MAX_MCP_HTTP_REDIRECTS`（`services/mcp_service.py`） | 5 次、5 次 | 自訂 API 工具與 HTTP MCP 手動跟隨轉址的次數上限：轉址回應的本文不讀取，每一跳都重新做 SSRF 檢查；HTTP MCP 只跟隨同一來源的轉址，自訂 API 工具轉址到其他來源時不轉送憑證標頭。整個呼叫（含轉址）另以該工具或伺服器的 `timeout` 設定為總時限，自訂 API 工具逾時回傳 `504` |
 | `MAX_MCP_HTTP_RESPONSE_BYTES`（`services/mcp_service.py`） | 4 MiB | HTTP 傳輸 MCP 伺服器的單次回應上限 |
-| `MAX_CONCURRENT_STDIO_PROCESSES`（`services/mcp_service.py`） | 4 | 同時存在的 `stdio` MCP 子行程數 |
+| `MAX_MCP_STDIO_LINE_BYTES`（`services/mcp_service.py`） | 4 MiB | `stdio` MCP 子行程單行 JSON-RPC 訊息的上限，與 HTTP 回應上限相同 |
+| `MCP_STDERR_TAIL_BYTES`（`services/mcp_service.py`） | 2,048 位元組 | `stdio` 子行程的 stderr 持續讀出（避免管線寫滿而卡住），只保留最後這麼多位元組，子行程異常結束時寫入伺服器日誌 |
+| `MAX_CONCURRENT_STDIO_PROCESSES`（`services/mcp_service.py`） | 4 | 同時存在的 `stdio` MCP 子行程數；等待空位最多到該伺服器的 `timeout` 設定，逾時即失敗 |
 | `APPROVAL_TIMEOUT_SECONDS`（`rag/tool_approval.py`） | 300 秒 | 等待使用者核准工具呼叫的時間，逾時視為拒絕 |
-| `DNS_RESOLVE_TIMEOUT_SECONDS`、`DNS_RESOLVER_MAX_WORKERS`（`core/ssrf_protection.py`） | 5 秒、4 條執行緒 | SSRF 驗證的 DNS 查詢在專用執行緒池中進行，逾時視為無法解析 |
+| `DNS_RESOLVE_TIMEOUT_SECONDS`、`DNS_RESOLVER_MAX_WORKERS`（`core/ssrf_protection.py`） | 5 秒；8 條與 4 條執行緒 | SSRF 驗證的 DNS 查詢在兩個專用執行緒池中進行：`web_fetch` 的使用者網址用 8 條（`DnsPool.USER_URL`），自訂 API 工具、HTTP MCP 與 OpenAPI 規格網址用 4 條（`DnsPool.CONFIGURED_ENDPOINT`），慢速網域占滿前者時不影響後者；逾時視為無法解析 |
 | `LLM_POOL_ACQUIRE_TIMEOUT_SECONDS`（`core/llm_client.py`） | 15 秒 | 等待 LLM 連線池名額的上限，與 `LLM_TIMEOUT` 分開，池被占滿時很快失敗 |
 | `REMOTE_MODELS_CACHE_SECONDS`（`api/tags.py`） | 30 秒 | 遠端模型清單的快取時間（含失敗結果） |
 
 **文件解析**
 
+管理員上傳的知識庫文件與聊天附件各用一組 `ExtractionLimits`（`ADMIN_UPLOAD_EXTRACTION_LIMITS`、`CHAT_ATTACHMENT_EXTRACTION_LIMITS`）。任何登入的使用者都能送出附件，而附件文字最後只取 `MAX_ATTACHMENT_TEXT_CHARS` 字，因此附件的預算小得多：
+
+| 項目 | 管理員上傳 | 聊天附件 |
+|---|---|---|
+| 送 Vision OCR 的 PDF 頁數（`MAX_PDF_OCR_PAGES`） | 不限 | 20 頁 |
+| `.docx`、`.pptx`、`.xlsx` 解壓後的總大小 | 200 MiB（`MAX_OOXML_UNCOMPRESSED_BYTES`） | 64 MiB（`MAX_ATTACHMENT_OOXML_UNCOMPRESSED_BYTES`） |
+| OOXML 的成員數（`MAX_OOXML_MEMBERS`） | 10,000 | 10,000 |
+| `.docx`、`.pptx` 會被建成 DOM 的 XML 總量 | 200 MiB（同解壓總大小） | 8 MiB（`MAX_ATTACHMENT_OOXML_XML_BYTES`） |
+| 交給 `json.loads` 做結構化降噪的 JSON 與程式碼長度 | 不限 | 2,000,000 字元（`MAX_ATTACHMENT_STRUCTURED_PARSE_CHARS`） |
+
 | 常數 | 值 | 說明 |
 |---|---|---|
-| `MAX_PDF_OCR_PAGES` | 20 頁 | 聊天附件 PDF 最多 OCR 的頁數；管理員上傳的知識庫文件不受此限制 |
 | `MAX_OCR_PIXELS` | 25,000,000 像素 | OCR 時單頁點陣化的像素上限，超過時降低解析度 |
-| `MAX_OOXML_UNCOMPRESSED_BYTES` | 200 MiB | `.docx`、`.pptx`、`.xlsx` 解壓後的總大小上限，超過即拒絕解析 |
-| `MAX_OOXML_COMPRESSION_RATIO` | 100 | 解壓後超過 10 MiB 的 OOXML 成員，壓縮比不可超過此值 |
+| `MAX_OOXML_COMPRESSION_RATIO` | 100 | 解壓後超過 10 MiB（`OOXML_RATIO_CHECK_MIN_BYTES`）的單一成員或整個檔案，壓縮比不可超過此值；兩組預算相同 |
+| `MAX_CONCURRENT_ATTACHMENT_EXTRACTIONS` | 2 | 整個行程同時解析的聊天附件數；與單檔預算相乘即為附件解析的記憶體上界 |
+
+OOXML 的檢查在解析前進行，依 ZIP 成員宣告的大小計算。python-docx 與 python-pptx 會把 XML 部件整份建成 DOM（記憶體約為 XML 大小的 15 至 30 倍），哪些成員算進 XML 總量依 `[Content_Types].xml` 判定（另含 `.rels` 與該檔本身），改副檔名無法繞過；`.xlsx` 以串流讀取，不套用此項。超過任一項 OOXML 預算時，管理員上傳的該檔案上傳失敗；聊天附件則不解析，改告知模型附件超過解析上限、未讀取內容。超過長度的 JSON 與程式碼附件不做結構化降噪，只做線性的雜訊清除。
 
 **帳號、日誌與偵測**
 
@@ -309,15 +419,16 @@
 | `MAX_PASSWORD_CHARS` | 256 字元 | 註冊、登入與修改密碼時的密碼長度上限（Argon2 成本隨長度成長） |
 | `MAX_LOGIN_IDENTIFIER_CHARS` | 254 字元 | 登入時使用者名稱或電子郵件的長度上限 |
 | `MAX_CONCURRENT_PASSWORD_HASHES` | 4 | 同時進行的 Argon2 雜湊與驗證數，在執行緒中執行 |
+| `MAX_TRACKED_LOGIN_ACCOUNTS` | 10,000 | [登入失敗節流](#登入失敗節流) 同時追蹤的登入識別數，最久沒有新失敗的先淘汰 |
 | `MAX_REVOKED_TOKENS` | 100,000 | 行程內權杖撤銷名單的條目上限，滿了以後先淘汰最早到期的條目 |
 | `MAX_LOG_FIELD_CHARS` | 200 字元 | 安全日誌中單一字串欄位（例如帳號名稱、User-Agent）的長度上限 |
 | `LOG_FILE_MAX_BYTES`、`LOG_FILE_BACKUP_COUNT` | 10 MiB、5 份 | `app.log` 與 `security.log` 的輪替大小與保留份數 |
 | `MAX_EVENTS_PER_ADDRESS` | 200 | 入侵偵測對未列入規則的事件類型，每個位址保留的事件數 |
-| `MAX_TRACKED_ADDRESSES` | 10,000 | 入侵偵測同時追蹤的位址數，最久未活動的先淘汰 |
+| `MAX_TRACKED_ADDRESSES` | 10,000 | 入侵偵測、速率限制與登入失敗節流各自同時追蹤的位址數，最久未活動的先淘汰 |
 
 ## 保留設定
 
-下列設定可以寫進 `.env`，但 4.0.0 沒有任何程式路徑使用：
+下列設定可以寫進 `.env`，但目前沒有任何程式路徑使用：
 
 | 變數 | 程式預設值 | 說明 |
 |---|---|---|
@@ -390,11 +501,17 @@
 
 | 變數 | 未設定時 | 說明 |
 |---|---|---|
-| `VITE_API_BASE` | `/api` | API 位址。設為絕對網址（例如 `http://localhost:8001`）時，瀏覽器直接呼叫後端，後端的 `ALLOWED_ORIGINS` 必須包含前端來源；此值同時是 Vite `/api` 代理的目標。路徑結尾會自動補上 `/api` |
-| `VITE_API_URL` | — | `VITE_API_BASE` 未設定時才使用，格式相同 |
+| `VITE_API_BASE` | `/api` | API 位址。設為絕對網址（例如 `http://localhost:8001`）時，瀏覽器直接呼叫後端，後端的 `ALLOWED_ORIGINS` 必須包含前端來源；此值同時是 Vite `/api` 代理的目標。路徑結尾會自動補上 `/api`。建置時其來源會寫入 CSP 的 `connect-src`，變更後需要重新建置 |
+| `VITE_API_URL` | — | `VITE_API_BASE` 未設定時才使用，格式相同；為絕對網址時，其來源同樣在建置時寫入 `connect-src` |
 | `PORT` | `3000` | Vite 開發伺服器埠號（`bun run preview` 固定為 3000） |
 | `GENERATE_SOURCEMAP` | 輸出 | 建置時是否輸出 source map，設為 `false` 才關閉 |
 
 `frontend/.env.example` 採用「直接呼叫」模式：`VITE_API_BASE=http://localhost:8001` 搭配 `PORT=3001`，這個來源正好在後端 `ALLOWED_ORIGINS` 的預設清單中。
 
 Vite 開發與預覽伺服器固定只監聽 `localhost`（`frontend/vite.config.js`，不是環境變數），並送出 `X-Frame-Options: DENY` 與 `Content-Security-Policy: frame-ancestors 'none'; img-src 'self' data: blob:`；`/__open-in-editor` 只回應本機回送位址。區網裝置需要使用時，請以 `bun run build` 建置後由正式的網頁伺服器提供，並在該伺服器送出相同的反框架標頭。
+
+### 建置時的 CSP
+
+`bun run build` 把 CSP 以 `<meta http-equiv="Content-Security-Policy">` 寫入 `index.html`（`frontend/vite.config.js`；開發伺服器需要內嵌的 HMR 腳本，因此只在建置時套用）：`default-src 'self'`；腳本與樣式只允許同源檔案，以及 `index.html` 內嵌腳本與樣式（反框架守衛、主題初始化）的 SHA-256 雜湊；圖片只允許 `'self'`、`data:` 與 `blob:`；`connect-src` 為 `'self'` 加上 `VITE_API_BASE`、`VITE_API_URL` 中絕對網址的來源；另有 `object-src 'none'`、`base-uri 'none'` 與 `form-action 'self'`。網頁伺服器沒有設定 CSP 時，被注入的 HTML 也無法執行腳本。
+
+`<meta>` 無法設定 `frame-ancestors`，因此提供建置產物的網頁伺服器仍要送出反框架標頭（`X-Frame-Options: DENY` 或 `Content-Security-Policy: frame-ancestors 'none'`）。
