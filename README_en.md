@@ -32,6 +32,8 @@ AskMiao answers with hybrid retrieval (FAISS + BM25 + Cross-Encoder) and agentic
 
 > [!IMPORTANT]
 > **4.0.0 contains breaking changes**: `JWT_SECRET_KEY` and `JWT_ALGORITHM` are removed, RSA keys are mandatory, compose needs `POSTGRES_PASSWORD`, the dev server only accepts local connections, and tool calls with side effects need user approval. Read the [upgrade guide](docs/upgrading_en.md) before upgrading.
+>
+> **The unreleased changes since 4.0.0 also need manual steps**: `.env` has 10 new required settings (including `TOOL_SECRETS_KEY`, which each deployment generates itself), the compose PostgreSQL is accessed as a non-superuser, and every session must sign in again after a password change. See the [changelog's `[Unreleased]` section](CHANGELOG_en.md#unreleased) and the [upgrade guide](docs/upgrading_en.md#upgrading-from-400-to-the-unreleased-version).
 
 ## Contents
 
@@ -62,7 +64,7 @@ AskMiao answers with hybrid retrieval (FAISS + BM25 + Cross-Encoder) and agentic
 | 4 | **Hybrid retrieval** | Vector search and BM25 always both run, fused by rank with RRF and reranked by a Cross-Encoder; chunks are keyed by a database chunk_id |
 | 5 | **Five LLM providers** | Ollama, OpenAI, Azure OpenAI, Anthropic Claude, and Google Gemini all support tool calling and streaming |
 | 6 | **External tools and MCP** | Paste an OpenAPI spec to import API tools or connect MCP servers; managed by admins only, and calls with side effects need the user's approval first |
-| 7 | **Defense in depth** | RSA JWT, Argon2 password hashing, per-hop SSRF validation with the connection pinned to the checked IP, a trust boundary for tool output, resource limits, and error codes instead of stack traces |
+| 7 | **Defense in depth** | RSA JWT, Argon2 password hashing with login failure throttling, per-hop SSRF validation with the connection pinned to the checked IP, tool credentials encrypted at rest, a trust boundary for tool output, resource limits, and error codes instead of stack traces |
 
 ## What's new in 4.0.0
 
@@ -139,18 +141,19 @@ flowchart LR
 
 ### External tools and MCP
 
-- **Custom API tools**: create them with a form or bulk-import from an OpenAPI / Swagger spec (OAS 2.0, 3.0, 3.1), with Bearer, API key (header / query), and Basic auth, plus a live test.
+- **Custom API tools**: create them with a form or bulk-import from an OpenAPI / Swagger spec (OAS 2.0, 3.0, 3.1), with Bearer, API key (header / query), and Basic auth, plus a live test. Calls accept only the parameters declared in `parameters_schema`, and query parameters fixed in the tool URL cannot be overridden.
 - **MCP client**: `stdio` and HTTP transports, automatic tool discovery, and tools added to the agent as `mcp_<server>_<tool>`; presets for time and filesystem servers are built in (the filesystem preset exposes only the dedicated sandbox directory `backend/mcp_filesystem_sandbox`).
 - **Loaded dynamically**: enabled tools are read from the database whenever tool definitions are assembled, so changes need no restart.
 - **Approval before calls**: tools with side effects run only after the asking user approves them in the chat; see [tool call approval](#tool-call-approval) below.
-- **Admins only**: tools are shared by every user's agent, so `/api/api-tools`, `/api/mcp`, and the AI tools page are admin-only; `stdio` subprocesses inherit only system variables such as `PATH`, never see the backend's keys, and are terminated together with their whole process tree on close ([ADR-0004](docs/adr/0004-tool-admin-permissions-and-subprocess-isolation_en.md)).
+- **Admins only**: tools are shared by every user's agent, so `/api/api-tools`, `/api/mcp`, and the AI tools page are admin-only; `stdio` subprocesses inherit only system variables such as `PATH`, never see the backend's keys, run in a fresh empty temporary directory, and are terminated together with their whole process tree on close ([ADR-0004](docs/adr/0004-tool-admin-permissions-and-subprocess-isolation_en.md)).
+- **Credentials encrypted at rest**: custom API tools' headers and auth settings and MCP servers' environment variables and headers are encrypted with `TOOL_SECRETS_KEY` before they reach the database; the admin API returns only `••••••••`, and leaving the mask unchanged when editing keeps the stored value.
 
 ### Tool call approval
 
 The agent can look things up on its own, but it will not submit a request, delete a record, or call a write API on your behalf by itself. When it calls a tool marked "requires approval":
 
-1. The stream sends `approval_required` (with the `approval_id`, the tool's display name, and its arguments) and the agent pauses.
-2. A confirmation card appears in the answer, showing the tool and its arguments verbatim.
+1. The stream sends `approval_required` (with the `approval_id`, the tool's display name, the `target` where the request is actually sent, and its arguments) and the agent pauses.
+2. A confirmation card appears in the answer, listing the tool, where the request goes, and every argument; control and format characters (such as bidirectional controls and zero-width characters) are marked as `⟦U+…⟧`.
 3. The asking user clicks 核准執行 (approve) or 拒絕 (deny); the frontend calls `POST /api/chat/approvals/{approval_id}` and the stream then sends `approval_resolved`.
 4. The tool runs only if approved. On a denial or no answer within 300 seconds, the model is told the user did not approve and is asked not to call the same tool again.
 
@@ -167,12 +170,16 @@ The agent can look things up on its own, but it will not submit a request, delet
 
 ### Security
 
-- **Authentication**: RSA-2048 signed JWT access tokens (the backend refuses to start without usable RSA keys), with the account's status and permissions read from the database on every request; the refresh token lives in an HttpOnly cookie and is single-use; logout revokes both; passwords are hashed with Argon2 (legacy bcrypt hashes are upgraded at login).
-- **Outbound requests**: OpenAPI spec URLs, `web_fetch`, custom API tools, and the MCP HTTP transport go through `ssrf_protection.py`, which re-checks every redirect, pins the connection to the validated IP, and blocks private networks, cloud metadata endpoints, and dangerous ports.
-- **Resource limits**: request bodies, message length, attachment count and size, tool results, concurrent streams, and attachment storage are all capped; see [resource limits](docs/configuration_en.md#resource-limits).
+- **Authentication**: RSA-2048 signed JWT access tokens (the backend refuses to start without usable RSA keys), with the account's status and permissions read from the database on every request; the refresh token lives in an HttpOnly cookie and is single-use; logout revokes both; a password change invalidates every token the account was issued before; passwords are hashed with Argon2 (legacy bcrypt hashes are upgraded at login).
+- **Sign-in and registration**: once one login identifier or one source address reaches its failure threshold within the time window, logins pause and return `429` with `Retry-After` (thresholds set by the `LOGIN_*` settings); with `ALLOW_REGISTRATION=false`, self-registration is closed and an admin creates accounts with `scripts/create_user.py`.
+- **Outbound requests**: OpenAPI spec URLs, `web_fetch`, custom API tools, and the MCP HTTP transport go through `ssrf_protection.py`, which re-checks every redirect, pins the connection to the validated IP, and blocks private networks, cloud metadata endpoints, and dangerous ports; user-supplied URLs and admin-configured endpoints each use their own DNS thread pool.
+- **Tool credentials and parameters**: tool credentials are encrypted at rest with `TOOL_SECRETS_KEY` (Fernet) and can no longer be read through the admin API; custom API tools accept only the parameters declared in `parameters_schema` and answer anything else with `400`.
+- **Resource limits**: request bodies, message length, attachment count and size, chat attachment parsing, tool results, concurrent streams, and attachment storage are all capped; see [resource limits](docs/configuration_en.md#resource-limits).
 - **Error codes**: unexpected exceptions reach clients only as a random error code, while full stack traces stay in the server log (CWE-209 / CWE-497).
 - **Log redaction**: recursive object masking plus regex masking render passwords, tokens, and Authorization headers as `[REDACTED]`.
-- **More**: security response headers, per-IP rate limiting (`X-Forwarded-For` is ignored unless a trusted reverse proxy is named in `FORWARDED_ALLOW_IPS`), a CORS allowlist, filename and path traversal checks, and clickjacking protection in the frontend.
+- **Dependencies**: the backend's `requirements.txt` pins every package version by hash, and the hashes are verified on install; the frontend commits `bun.lock` and sets `frozenLockfile = true`.
+- **Deployment**: the compose PostgreSQL is accessed as a non-superuser; `HOST`, `RELOAD`, and `COOKIE_SECURE` must be set explicitly; the interactive API docs are served only with `ENABLE_API_DOCS=true`.
+- **More**: security response headers, per-IP rate limiting (`X-Forwarded-For` is ignored unless a trusted reverse proxy is named in `FORWARDED_ALLOW_IPS`), a CORS allowlist, filename and path traversal checks, clickjacking protection in the frontend, and a CSP written into `index.html` at build time.
 
 #### Threat coverage
 
@@ -181,22 +188,33 @@ The agent can look things up on its own, but it will not submit a request, delet
 | Prompt injection hidden in documents or web pages | Tool results are wrapped in `<untrusted_tool_result>` tags with a per-question id; `web_fetch` can only read full URLs that appeared in the user's message or this question's tool results | `rag/research_session.py` |
 | SSRF and DNS rebinding | Scheme, port, hostname, IP, and DNS results are validated on every hop, and connections are pinned to the approved IP | `core/ssrf_protection.py` |
 | The agent changing external systems on its own | Tool calls with side effects need the asking user's approval | `rag/tool_approval.py` |
-| Abuse of tool configuration | Only admins manage tools; `stdio` subprocesses never inherit backend secrets | `api/api_tools.py`, `api/mcp.py`, `services/mcp_service.py` |
+| Abuse of tool configuration | Only admins manage tools; `stdio` subprocesses never inherit backend secrets and run in an empty temporary directory | `api/api_tools.py`, `api/mcp.py`, `services/mcp_service.py` |
+| The model slipping in parameters a tool does not offer | Custom API tools accept only the parameters declared in `parameters_schema`; query parameters fixed in the tool URL cannot be overridden | `api/api_tools.py` |
+| Tool credentials leaking with a database or backup | Custom API tools' headers and auth settings and MCP servers' environment variables and headers are encrypted with `TOOL_SECRETS_KEY`, and the admin API returns only a mask | `core/tool_secrets.py` |
 | Tokens outliving a disabled account | Account status and role are read by `sub` on every request, and refresh tokens are single-use | `core/jwt_auth.py`, `api/auth.py` |
-| Resource exhaustion | Request bodies, attachments, tool results, streams, and concurrent password hashes are capped | `core/limits.py`, `core/body_limit.py` |
+| A stolen token renewing indefinitely | A password change updates `users.tokens_valid_after`, invalidating every access and refresh token issued before it | `core/jwt_auth.py`, `crud/crud_user.py` |
+| Password guessing | Failures are counted per login identifier and per source address, and logins pause with `429` once a threshold is reached | `core/login_throttle.py` |
+| Anyone registering and using the knowledge base and tools | With `ALLOW_REGISTRATION=false`, registration returns `403` and admins create the accounts | `api/auth.py`, `backend/scripts/create_user.py` |
+| Resource exhaustion | Request bodies, attachments and attachment parsing, tool results, streams, and concurrent password hashes are capped | `core/limits.py`, `core/body_limit.py` |
 | Leaking internals | Clients only get error codes; logs are redacted in two layers with field lengths capped | `core/error_response.py`, `core/security_logging.py` |
+| SQL injection escalating to system commands | The compose PostgreSQL is accessed as a non-superuser, which cannot run commands with `COPY ... TO PROGRAM` or read server files | `backend/init-app-role.sh` |
+| Injected HTML running scripts | The build writes a CSP into `index.html` that allows only the built scripts and the hashes of inline scripts | `frontend/vite.config.js` |
+| Installing tampered or unreviewed package versions | The backend installs `requirements.txt` by hash, and the frontend installs from the frozen `bun.lock` | `backend/requirements.in`, `frontend/bun.lock` |
 
 #### Key resource limits
 
 | Item | Limit | When exceeded |
 |---|---|---|
-| General request body | 1 MiB (chat sends and document uploads with a valid access token are allowed more) | `413` |
+| General request body | 1 MiB (chat sends with a valid access token and document uploads whose token carries `is_admin` are allowed more) | `413` |
 | One chat message | 20,000 characters | `422` |
 | Attachments per message | 5, up to 15 MiB each and 20 MiB in total | `422` |
+| Chat attachment parsing | 8 MiB of docx / pptx XML built into a DOM, 64 MiB uncompressed in total, 10,000 members | The attachment is not read, and the model is told so |
+| Chat attachments parsed at once | 2 per backend process | Queued |
 | Attachment storage per user | 200 MiB | `413` |
 | Concurrent answer streams per user | 2 | `429` |
 | One tool result passed to the model | 20,000 characters | Truncated |
 | Pending tool approval | 300 seconds | Counts as a denial |
+| Failed logins | `LOGIN_MAX_FAILURES_PER_ACCOUNT` per login identifier and `LOGIN_MAX_FAILURES_PER_ADDRESS` per source address (within `LOGIN_FAILURE_WINDOW_SECONDS` seconds) | `429`; logins pause for `LOGIN_LOCKOUT_SECONDS` seconds |
 
 See [resource limits](docs/configuration_en.md#resource-limits) for the full list.
 
@@ -206,7 +224,7 @@ See [resource limits](docs/configuration_en.md#resource-limits) for the full lis
 - Light, dark, and follow-system appearance, applied before first paint with no white flash.
 - Fully usable with a keyboard and screen readers, with WCAG AA contrast; phones get a single-row top bar and a chat page that fits one viewport.
 - Deletions ask for confirmation, offline and back-online states are announced, and non-admins see a "no permission" page on admin routes.
-- Markdown images in answers appear as links that open in a new tab only when clicked, so nothing is loaded from external hosts automatically.
+- Markdown images in answers appear as links that open in a new tab only when clicked, so nothing is loaded from external hosts automatically; external links open in a new tab and name the actual host.
 
 ## Screenshots
 
@@ -361,6 +379,7 @@ python -m venv .venv
 # Linux / macOS
 source .venv/bin/activate
 
+# requirements.txt pins every package version with hashes, verified on install
 pip install -r requirements.txt
 cp .env.example .env
 ```
@@ -368,10 +387,16 @@ cp .env.example .env
 Edit `backend/.env` before starting:
 
 1. **Database**: the template's `DATABASE_URL` points to PostgreSQL; for a zero-dependency start use `DATABASE_URL=sqlite:///./chatbot.db`.
-2. **Keys**: replace `ADMIN_API_KEY` with a random string, for example from `python -c "import secrets; print(secrets.token_urlsafe(32))"`. JWTs are always signed with the RSA keys in `backend/keys/`, so no separate signing secret is needed.
+2. **Keys**: replace `ADMIN_API_KEY` with a random string, for example from `python -c "import secrets; print(secrets.token_urlsafe(32))"`. Replace `TOOL_SECRETS_KEY` with a Fernet key generated for this deployment (the template value is not a valid key, and the backend refuses to start until it is replaced):
+
+   ```bash
+   python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+   ```
+
+   JWTs are always signed with the RSA keys in `backend/keys/`, so no separate signing secret is needed.
 3. **Models**: for a local Ollama keep `LLM_API_BASE=http://localhost:11434`; for cloud models fill in the matching API key, and add `ANTHROPIC_MAX_TOKENS` for Claude.
 
-The template already contains the other required settings, so the template values are enough to start. Then run the backend:
+The template provides the other required settings, and their template values suit local development: `HOST=127.0.0.1` accepts local connections only, `RELOAD=false`, `COOKIE_SECURE=false` (must be `true` when serving over HTTPS), `ENABLE_API_DOCS=false`, `ALLOW_REGISTRATION=false` (see step 4 for the first admin), and the four login failure throttling thresholds; see [Configuration](#configuration) for each. Then run the backend:
 
 ```bash
 python main.py
@@ -380,7 +405,7 @@ python main.py
 The first start creates the database tables, generates the RSA keys for JWT (`backend/keys/`, which the backend account must be able to write; the backend refuses to start if the keys cannot be loaded), and downloads the embedding and reranker models. When it is up:
 
 - API: `http://localhost:8001`
-- Interactive API docs (Swagger UI): `http://localhost:8001/docs`
+- Interactive API docs (Swagger UI): `http://localhost:8001/docs`, served only with `ENABLE_API_DOCS=true` (the template has `false`; keep it off for public deployments)
 
 > [!NOTE]
 > `init_db.py` is a compatibility script that adds columns and indexes to older PostgreSQL databases; fresh installs do not need it, and SQLite does not support its `ADD COLUMN IF NOT EXISTS` statement.
@@ -395,6 +420,8 @@ bun install
 bun run dev
 ```
 
+`bun install` installs only what the committed `bun.lock` records (`frontend/bunfig.toml` sets `frozenLockfile = true`) and fails when `bun.lock` and `package.json` disagree.
+
 Open `http://localhost:3000`. Without `frontend/.env`, the frontend calls the relative path `/api`, which the Vite dev server proxies to `http://127.0.0.1:8001`, so no CORS setup is needed. If you copied `frontend/.env.example` (`PORT=3001`, calling the backend directly), open `http://localhost:3001` instead.
 
 > [!NOTE]
@@ -402,18 +429,23 @@ Open `http://localhost:3000`. Without `frontend/.env`, the frontend calls the re
 
 ### 4. Create the first admin
 
-The knowledge base, AI tools, and admin dashboard pages are admin-only, and no admin account exists out of the box:
+The knowledge base, AI tools, and admin dashboard pages are admin-only, and no admin account exists out of the box. The template's `ALLOW_REGISTRATION=false` keeps self-registration closed (the login page shows no sign-up link and `POST /api/auth/register` returns `403`), so an admin creates accounts with `scripts/create_user.py`:
 
-1. Create an account on the frontend's register page. Passwords need at least 8 characters with an uppercase letter, a lowercase letter, and a digit.
-2. In `backend/` (with the virtual environment active), run the command below, replacing `your_username` with the name you just registered:
+1. In `backend/` (with the virtual environment active), run the command below and enter the password twice when prompted. User names are 3 to 50 characters of letters, digits, underscores, and hyphens; passwords need at least 8 characters with an uppercase letter, a lowercase letter, and a digit.
 
    ```bash
-   python -c "from sqlalchemy import text; from app.models.database import engine; conn = engine.connect(); conn.execute(text('UPDATE users SET is_admin = :flag WHERE username = :name'), {'flag': True, 'name': 'your_username'}); conn.commit()"
+   python scripts/create_user.py --username admin --email admin@example.com --admin
    ```
 
-3. Sign out and sign back in to see the admin pages. From then on, admins can promote other users in the admin dashboard.
+2. Sign in to the frontend with that account to see the admin pages. Create other accounts with the same script (without `--admin` for a regular user), or promote existing users in the admin dashboard.
 
-The command goes through the backend's own database settings, so it works for both SQLite and PostgreSQL.
+The password is entered interactively, so it never lands in the shell history or the process list. The script applies the same rules as registration and goes through the backend's own settings and database connection, so it works for both SQLite and PostgreSQL; run it from `backend/` so that a relative path such as `sqlite:///./chatbot.db` points to the database the backend uses.
+
+With `ALLOW_REGISTRATION=true` you can instead create an account on the frontend's register page, then run the command below in `backend/` to make it an admin (replace `your_username` with the name you just registered) and sign out and back in:
+
+```bash
+python -c "from sqlalchemy import text; from app.models.database import engine; conn = engine.connect(); conn.execute(text('UPDATE users SET is_admin = :flag WHERE username = :name'), {'flag': True, 'name': 'your_username'}); conn.commit()"
+```
 
 ### 5. Upload documents and ask
 
@@ -422,11 +454,13 @@ The command goes through the backend's own database settings, so it works for bo
 
 ### Using PostgreSQL (optional)
 
-`backend/docker-compose.yml` provides PostgreSQL 17 and applies `init.sql` on first start. First set the database superuser password in `backend/.env` (required; compose refuses to start without it) and use the same password in `DATABASE_URL`:
+`backend/docker-compose.yml` provides PostgreSQL 17. When the data volume is first initialized, it runs `init.sql` (creates the tables) and then `init-app-role.sh` (creates the non-superuser account the backend connects with and hands it ownership of the tables). First set these three in `backend/.env` (compose refuses to start if any is missing), using two different random passwords, and point `DATABASE_URL` at the application account:
 
 ```dotenv
-POSTGRES_PASSWORD=<random string>
-DATABASE_URL=postgresql+psycopg2://postgres:<the same random string>@localhost:7690/chatbot
+POSTGRES_PASSWORD=<password of the postgres superuser>
+POSTGRES_APP_USER=askmiao_app
+POSTGRES_APP_PASSWORD=<password of the application account>
+DATABASE_URL=postgresql+psycopg2://askmiao_app:<password of the application account>@localhost:7690/chatbot
 ```
 
 Then start the container:
@@ -436,16 +470,28 @@ cd backend
 docker compose up -d
 ```
 
-The container is published on the loopback address `127.0.0.1:7690` only, so neither the LAN nor the internet can reach it. If the password contains characters such as `@`, `:`, or `/`, percent-encode them in `DATABASE_URL`.
+The container is published on the loopback address `127.0.0.1:7690` only, so neither the LAN nor the internet can reach it. `POSTGRES_PASSWORD` is only for compose and database administration, and the backend never reads it; the backend connects as a non-superuser, so even a SQL injection cannot run system commands or read server files. If a password contains characters such as `@`, `:`, or `/`, percent-encode them in `DATABASE_URL`.
+
+A data volume initialized by an older compose file does not get the application account automatically: after setting the variables above and recreating the container with `docker compose up -d --wait` so that it is ready, run `docker compose exec postgres bash /docker-entrypoint-initdb.d/20-app-role.sh` once; see the [upgrade guide](docs/upgrading_en.md#upgrading-from-400-to-the-unreleased-version).
 
 ## Configuration
 
-Backend settings live in `backend/.env`. These 10 have no defaults, and the backend refuses to start if any is missing (the template provides recommended values):
+Backend settings live in `backend/.env`. These 20 have no defaults, and the backend refuses to start if any is missing (the template provides recommended values; `TOOL_SECRETS_KEY` must be generated):
 
 | Variable | Template | Description |
 |---|---|---|
 | `DATABASE_URL` | PostgreSQL example | Connection string; use `sqlite:///./chatbot.db` for SQLite |
 | `ADMIN_API_KEY` | placeholder | Admin API key (unused by routes today, but required by settings validation) |
+| `TOOL_SECRETS_KEY` | placeholder (not a valid key) | Fernet key that encrypts tool credentials, validated at startup; after changing it, stored tool credentials must be entered again |
+| `ALLOW_REGISTRATION` | `false` | Whether self-registration is open; when closed, accounts are created with `scripts/create_user.py` |
+| `LOGIN_MAX_FAILURES_PER_ACCOUNT` | `5` | Failures of one login identifier (case-insensitive) within the window that pause its logins (≥ 1) |
+| `LOGIN_MAX_FAILURES_PER_ADDRESS` | `20` | Failures from one source address within the window that pause its logins (≥ 1); users behind a proxy share one address |
+| `LOGIN_FAILURE_WINDOW_SECONDS` | `900` | Window in seconds for counting login failures (≥ 1) |
+| `LOGIN_LOCKOUT_SECONDS` | `900` | Seconds logins stay paused (≥ 1), answered with `429` and `Retry-After` |
+| `HOST` | `127.0.0.1` | Listen address of `python main.py`; change to `0.0.0.0` only when a container or a reverse proxy on another host must connect |
+| `RELOAD` | `false` | Reload on code changes; set to `true` only for development |
+| `COOKIE_SECURE` | `false` | Whether the refresh token cookie is sent over HTTPS only; must be `true` when serving over HTTPS |
+| `ENABLE_API_DOCS` | `false` | Serve `/docs`, `/redoc`, and `/openapi.json`; keep `false` for public deployments |
 | `ENABLE_WEB_SEARCH` | `true` | Offer `web_search` and `web_fetch` |
 | `AGENT_MAX_TURNS` | `5` | Tool-calling turn limit per question (≥ 1) |
 | `CONVERSATION_HISTORY_MESSAGES` | `6` | Prior messages loaded as context (0 disables) |
@@ -466,7 +512,7 @@ Common optional settings:
 | `CHUNK_SIZE`, `CHUNK_OVERLAP` | Chunk length and overlap (template 300 / 100) |
 | `HF_HOME`, `HF_HUB_OFFLINE` | Model cache location and offline mode |
 | `ALLOWED_ORIGINS` | CORS origins (needed when the frontend calls the backend directly) |
-| `FORWARDED_ALLOW_IPS` | Address of a reverse proxy that overwrites `X-Forwarded-For`; when unset, rate limiting uses the direct peer |
+| `FORWARDED_ALLOW_IPS` | Address of a reverse proxy that overwrites `X-Forwarded-For`; when unset, rate limiting and per-address login throttling use the direct peer |
 
 Every setting, with defaults, template values, provider routing rules, resource limits, and frontend variables, is in the **[configuration reference](docs/configuration_en.md)**.
 
@@ -484,6 +530,8 @@ AskMiao/
 │   │   │   ├── lifespan.py           # Startup: create tables, initialize RAG, watch uploads
 │   │   │   ├── llm_client.py         # One calling layer for five providers (tool calls, streaming)
 │   │   │   ├── jwt_auth.py           # RSA JWT, Argon2 password hashing, revocation checks
+│   │   │   ├── login_throttle.py     # Login failure throttling (per login identifier and source address)
+│   │   │   ├── tool_secrets.py       # Tool credential encryption and admin API masking
 │   │   │   ├── limits.py             # Resource limit constants (request bodies, attachments, tool results, logs, ...)
 │   │   │   ├── body_limit.py         # Request body size limit middleware
 │   │   │   ├── ssrf_protection.py    # Outbound URL validation, per-hop SSRF checks, and IP pinning
@@ -506,12 +554,14 @@ AskMiao/
 │   │   └── tasks/uploads_watcher.py  # Missing-upload watcher (warnings only)
 │   ├── config/domain_profile.json    # Domain profile
 │   ├── eval/                         # Retrieval evaluation golden sets
-│   ├── scripts/                      # Maintenance scripts
+│   ├── scripts/                      # Maintenance scripts (including create_user.py for accounts)
 │   ├── tests/                        # pytest suite
-│   ├── docker-compose.yml            # Optional PostgreSQL 17 (local 127.0.0.1:7690, needs POSTGRES_PASSWORD)
+│   ├── docker-compose.yml            # Optional PostgreSQL 17 (local 127.0.0.1:7690, needs POSTGRES_PASSWORD and POSTGRES_APP_*)
 │   ├── init.sql                      # PostgreSQL schema bootstrap
+│   ├── init-app-role.sh              # PostgreSQL account the backend connects with (non-superuser)
 │   ├── init_db.py                    # Compatibility patch for older PostgreSQL databases
-│   ├── requirements.txt
+│   ├── requirements.in               # Direct dependencies; edit this file to add or upgrade packages
+│   ├── requirements.txt              # Generated from requirements.in, with pinned versions and hashes
 │   └── .env.example                  # Backend settings template
 ├── frontend/                         # React 19 + TypeScript + Vite 8
 │   ├── src/
@@ -522,6 +572,7 @@ AskMiao/
 │   │   ├── contexts/ThemeContext.tsx # Light / dark / follow system
 │   │   └── styles/                   # Design tokens and reset
 │   ├── package.json                  # Frontend version and scripts
+│   ├── bun.lock                      # Pinned frontend dependencies (never rewritten by bun install)
 │   └── .env.example
 ├── site/                             # GitHub Pages intro site (static)
 ├── docs/
@@ -561,12 +612,25 @@ bun x tsc --noEmit   # TypeScript type check
 bun run build        # Build into build/
 ```
 
+`bun run build` writes a CSP `<meta>` tag into `build/index.html`: scripts are limited to the built files and the hashes of the inline scripts in `index.html`, and `connect-src` adds the API origin from `VITE_API_BASE`/`VITE_API_URL`, so changing either setting requires a rebuild. The dev server does not apply this CSP.
+
+### Dependencies
+
+- **Backend**: `requirements.in` lists only direct dependencies; `requirements.txt` is generated from it and pins every package (transitive ones included) by version and hash, and `pip install -r requirements.txt` verifies each one. To add or upgrade a package, edit `requirements.in`, regenerate `requirements.txt` with uv in `backend/`, and commit both files:
+
+  ```bash
+  uv pip compile requirements.in --universal --python-version 3.10 --generate-hashes -o requirements.txt
+  ```
+
+- **Frontend**: `bun.lock` is committed and `frontend/bunfig.toml` sets `frozenLockfile = true`: `bun install` installs only what `bun.lock` records and fails when it disagrees with `package.json`, and `bun add` cannot rewrite `bun.lock` either. To add or upgrade a package, temporarily set `frozenLockfile` to `false` to update `bun.lock`, set it back to `true`, and commit `package.json` and `bun.lock` together.
+
 ### Maintenance scripts
 
 Run them from `backend/` with `python scripts/<script>`:
 
 | Script | Purpose |
 |---|---|
+| `create_user.py` | Create an account (including the first admin): `--username` and `--email` are required, `--admin` creates an admin, and the password is entered interactively; see [Create the first admin](#4-create-the-first-admin) |
 | `evaluate_retrieval.py` | Evaluate retrieval quality with a golden set and compare relevance thresholds (read-only, safe to run alongside the backend); see [calibrating the relevance threshold](docs/configuration_en.md#calibrating-the-relevance-threshold) |
 | `reprocess_existing_docs.py` | Offline rebuild: re-extract text, regenerate summaries, re-chunk, and re-index. Stop the backend first |
 | `reset_faiss.py` | Delete the FAISS and BM25 index files in `backend/data`, then recompute them from `rag_chunks` (asks for confirmation first) |
@@ -579,7 +643,14 @@ Run them from `backend/` with `python scripts/<script>`:
 <details>
 <summary><b>The backend fails to start with <code>Field required</code></b></summary>
 
-A required setting is missing from `.env`; the error names the fields. Add them as listed under [Configuration](#configuration), or follow the [upgrade guide](docs/upgrading_en.md) when coming from 2.x.
+A required setting is missing from `.env`; the error names the fields. Add them as listed under [Configuration](#configuration). `ALLOW_REGISTRATION`, `TOOL_SECRETS_KEY`, `HOST`, `RELOAD`, `COOKIE_SECURE`, `ENABLE_API_DOCS`, and the four `LOGIN_*` settings were added after 4.0.0; when coming from an older release, follow the [upgrade guide](docs/upgrading_en.md).
+
+</details>
+
+<details>
+<summary><b>The backend fails to start with <code>TOOL_SECRETS_KEY 必須是 Fernet 金鑰</code> (TOOL_SECRETS_KEY must be a Fernet key)</b></summary>
+
+`TOOL_SECRETS_KEY` is still the template placeholder or is not a valid Fernet key. Generate one with `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"` and put it in `backend/.env`. Keep this key safe: after switching to a new key, the stored credentials of custom API tools and MCP servers can no longer be decrypted and must be entered again on the AI tools page.
 
 </details>
 
@@ -623,6 +694,7 @@ Make sure documents were uploaded and that `total_vectors` in `GET /api/admin/ve
 
 - Without `frontend/.env`, the frontend reaches `http://127.0.0.1:8001` through the Vite proxy, so make sure the backend is running on that port.
 - With an absolute `VITE_API_BASE`, the browser calls the backend directly, and the backend's `ALLOWED_ORIGINS` must include the frontend origin (for example `http://localhost:3001`).
+- With a `bun run build` output, the CSP's `connect-src` allows only the `VITE_API_BASE`/`VITE_API_URL` origin from build time; rebuild after changing the API address.
 
 </details>
 
@@ -634,9 +706,9 @@ The Vite dev and preview servers listen on `localhost` only, on purpose (dev-ser
 </details>
 
 <details>
-<summary><b><code>bun install</code> on Windows fails with EPERM or creates a folder named <code>~</code> inside frontend</b></summary>
+<summary><b><code>bun install</code> fails with <code>lockfile had changes, but lockfile is frozen</code></b></summary>
 
-The cache path `~/.bun/install/cache` in `frontend/bunfig.toml` is not expanded on Windows. Pass a cache directory explicitly: `bun install --cache-dir <cache path>`.
+`frontend/bunfig.toml` sets `frozenLockfile = true`, so the install fails whenever `package.json` and `bun.lock` disagree instead of rewriting the pinned versions. Make sure both files come from the same revision; to add or upgrade a package on purpose, update `bun.lock` as described under [Dependencies](#dependencies) and commit both.
 
 </details>
 
@@ -655,6 +727,16 @@ MCP servers require approval by default, and custom API tools follow their HTTP 
 </details>
 
 <details>
+<summary><b>Signing in returns <code>429</code> with 「登入失敗次數過多，請稍後再試」 (too many failed logins, try again later)</b></summary>
+
+Once one login identifier (user name or email, case-insensitive) fails `LOGIN_MAX_FAILURES_PER_ACCOUNT` times, or one source address fails `LOGIN_MAX_FAILURES_PER_ADDRESS` times, within `LOGIN_FAILURE_WINDOW_SECONDS` seconds, logins for that identifier or address pause for `LOGIN_LOCKOUT_SECONDS` seconds, and even the right password is refused meanwhile; the `Retry-After` header gives the seconds left.
+
+- The pause lifts on its own. The counts live only in the backend process's memory, so restarting the backend also clears them.
+- Behind the Vite dev proxy or a reverse proxy, every user's failures add up on the same source address, and reaching `LOGIN_MAX_FAILURES_PER_ADDRESS` pauses logins for everyone. Keep the per-address threshold looser than the per-account one; if the reverse proxy in front overwrites `X-Forwarded-For`, set `FORWARDED_ALLOW_IPS` to count real client addresses instead.
+
+</details>
+
+<details>
 <summary><b>The API returns <code>429 Too Many Requests</code></b></summary>
 
 - Rate limiting counts requests per connecting IP, 60 per 60 seconds by default. Behind the Vite dev proxy or a reverse proxy every user shares one IP, so raise `RATE_LIMIT_PER_MINUTE` if needed; if the reverse proxy in front overwrites `X-Forwarded-For`, set its address as `FORWARDED_ALLOW_IPS` to count real client IPs instead.
@@ -669,7 +751,7 @@ MCP servers require approval by default, and custom API tools follow their HTTP 
 | [API Reference](docs/api_en.md) | Every endpoint's permission, request and response format, the SSE event contract, and error codes |
 | [Architecture & Design](docs/architecture_en.md) | Layers, data model, retrieval pipeline, agent loop, authentication, and security design |
 | [Configuration Reference](docs/configuration_en.md) | Defaults and effects of every environment variable, provider routing, threshold calibration, frontend settings |
-| [Upgrade Guide](docs/upgrading_en.md) | Steps from 2.x to 3.0.0 and from 3.0.0 to 4.0.0, rollback, and troubleshooting |
+| [Upgrade Guide](docs/upgrading_en.md) | Steps from 2.x to 3.0.0, from 3.0.0 to 4.0.0, and from 4.0.0 to the unreleased version, rollback, and troubleshooting |
 | [Architecture Decision Records](docs/adr/README_en.md) | Context, trade-offs, and amendments of major design decisions |
 | [llms_en.txt](llms_en.txt) | File map, system constraints, and verification steps for AI agents |
 | [Changelog](CHANGELOG_en.md) | What was added, changed, removed, and fixed in each release |

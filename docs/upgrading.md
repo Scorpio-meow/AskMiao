@@ -4,6 +4,11 @@
 
 > 本文件說明如何把既有部署升級到新版本，並附上回退步驟與常見問題。每個版本的完整變更見 [CHANGELOG](../CHANGELOG.md)。
 
+- [從 4.0.0 升級到未發行版本](#從-400-升級到未發行版本)
+  - [未發行版本的變更與需要的動作](#未發行版本的變更與需要的動作)
+  - [升級到未發行版本的步驟](#升級到未發行版本的步驟)
+  - [回退到 4.0.0](#回退到-400)
+  - [升級到未發行版本後的常見狀況](#升級到未發行版本後的常見狀況)
 - [從 3.0.0 升級到 4.0.0](#從-300-升級到-400)
   - [變更與需要的動作](#變更與需要的動作)
   - [升級步驟](#升級步驟)
@@ -19,6 +24,232 @@
   - [步驟 5：驗證升級結果](#步驟-5驗證升級結果)
   - [回退到 2.2.x](#回退到-22x)
   - [常見問題](#常見問題)
+
+---
+
+## 從 4.0.0 升級到未發行版本
+
+適用於從 4.0.0 升級到尚未定版號的下一版，完整變更見 [CHANGELOG](../CHANGELOG.md#unreleased)。這一版處理第二輪安全稽核的發現，不需要重建索引，新欄位與工具憑證的加密都會在啟動時自動完成；需要動手的主要是 `.env` 的 10 個新必填設定、相依套件的安裝方式、PostgreSQL 的連線帳號、帳號的建立方式與自訂 API 工具的參數宣告。
+
+### 未發行版本的變更與需要的動作
+
+| 項目 | 4.0.0 | 未發行版本 | 需要的動作 |
+|---|---|---|---|
+| 必填設定 | 10 項 | 20 項 | 補上 10 項 |
+| `HOST`、`RELOAD`、`COOKIE_SECURE` | `HOST`、`RELOAD` 預設 `0.0.0.0`、`true`；`COOKIE_SECURE` 未設定時依 `ENVIRONMENT` 推導 | 必填，沒有預設值 | 依部署方式明確設定 |
+| 互動式 API 文件 | 一律提供 `/docs`、`/redoc`、`/openapi.json` | 只在必填的 `ENABLE_API_DOCS` 為 `true` 時提供 | 對外服務時設為 `false` |
+| 自行註冊 | 任何能連到 API 的人都能註冊 | `ALLOW_REGISTRATION=false` 時註冊回傳 `403`，帳號以 `scripts/create_user.py` 建立 | 決定是否開放註冊 |
+| 登入失敗 | 不限次數 | 同一登入識別或來源位址失敗達門檻後暫停登入，回傳 `429` 與 `Retry-After` | 設定四個 `LOGIN_*` 門檻 |
+| 變更密碼 | 既有的權杖繼續有效 | 簽發時間早於 `users.tokens_valid_after` 的權杖一律無效，包含目前的工作階段 | 無；欄位在啟動時自動加入並回填 |
+| 工具憑證 | 明文存放，管理 API 原樣回傳 | 以 `TOOL_SECRETS_KEY` 加密存放，管理 API 以 `••••••••` 取代秘密值 | 產生金鑰，並與資料庫備份一起保存 |
+| 自訂 API 工具參數 | 模型給的任何參數都會送出 | 只接受 `parameters_schema` 宣告的參數，工具網址中固定的查詢參數不可覆寫 | 檢查每個工具的參數宣告 |
+| MCP stdio 子行程 | 在後端行程的工作目錄執行 | 每次在新建的空暫存目錄執行 | 指令與參數中的相對路徑改為絕對路徑 |
+| PostgreSQL 容器 | 後端以超級使用者 `postgres` 連線 | 後端以非超級使用者 `POSTGRES_APP_USER` 連線 | 設定帳號、執行一次 `20-app-role.sh`、更新 `DATABASE_URL` |
+| 相依套件 | 未鎖定版本，每次安裝取得當下最新版 | `requirements.txt` 鎖定版本與雜湊；`bun.lock` 納入版本控制且安裝時不可變更 | 建議建立新的虛擬環境；新增後端套件改為修改 `requirements.in` |
+| 前端建置 | `index.html` 沒有 CSP | 建置時寫入 CSP `<meta>` | 重新建置；API 位於其他來源時在建置時設定 `VITE_API_BASE` |
+| API 端點與回應 | 含 `GET /api/external-tags` 與 WebSocket `/api/chat/ws/{user_id}`；管理員使用者 API 回傳 `hashed_password` | 兩個端點移除；回應不再含密碼雜湊與工具憑證，登入可能回傳 `429` | 自行串接的客戶端依 [升級步驟](#升級到未發行版本的步驟) 第 9 點調整 |
+| 聊天附件解析 | 與管理員上傳共用同一套解析上限 | 另有較小的記憶體預算，超過時告知模型附件未被讀取 | 無；需要時參考 [資源上限](configuration.md#資源上限) |
+
+### 升級到未發行版本的步驟
+
+1. **停機並備份**：停止後端，備份資料庫（SQLite 直接複製 `.db` 檔，PostgreSQL 以 `pg_dump` 匯出）、`backend/data/`、`backend/keys/` 與 `backend/.env`。新版啟動後會把工具憑證改為加密存放，要回退到 4.0.0 就需要這份資料庫備份。
+2. **更新程式碼與相依套件**：
+   - 4.0.0 沒有把 `frontend/bun.lock` 納入版本控制。以 git 更新時，先前 `bun install` 產生的這個檔案會讓 `git pull` 以「untracked working tree files would be overwritten by merge」中止，請先刪除它。
+   - 後端的 `requirements.txt` 改為鎖定版本並附上雜湊，pip 會自動進入雜湊檢查模式，任何套件與鎖定的雜湊不符就停止安裝。`pip install` 不會移除新版不再使用的套件（FlagEmbedding、waitress、docxtpl、XlsxWriter、PyJWT、langchain、langchain-community），建議建立新的虛擬環境再安裝，舊的保留到確定不需回退為止。
+   - 使用 NVIDIA GPU 時，先依 PyTorch 官網在新的虛擬環境安裝與 `requirements.txt` 中 `torch` 同版本的 CUDA 版，再安裝其餘套件；已安裝的同版本 torch 會被視為符合鎖定版本。
+   - `frontend/bunfig.toml` 改為 `frozenLockfile = true`：`bun install` 只依 `bun.lock` 安裝，`bun.lock` 與 `package.json` 不一致時直接失敗。
+
+   ```bash
+   # 在新的虛擬環境中
+   cd backend
+   pip install -r requirements.txt
+
+   cd ../frontend
+   bun install
+   ```
+
+   之後新增或升級後端套件時，不要手動編輯 `requirements.txt`：修改 `backend/requirements.in`（只列直接依賴），再於 `backend/` 重新產生：
+
+   ```bash
+   uv pip compile requirements.in --universal --python-version 3.10 --generate-hashes -o requirements.txt
+   ```
+
+   前端則先把 `frontend/bunfig.toml` 的 `frozenLockfile` 暫時改為 `false`，以 `bun add` 或 `bun remove` 更新後改回 `true`，並一併提交 `package.json` 與 `bun.lock`。
+3. **更新 `.env`**：補上以下 10 項必填設定。它們沒有預設值，缺少任一項後端都無法啟動；建議值與 `backend/.env.example` 相同：
+
+   | 設定 | 建議值 | 說明 |
+   |---|---|---|
+   | `ALLOW_REGISTRATION` | `false` | 是否開放自行註冊。所有帳號共用整個知識庫與已啟用的工具，可公開連線的部署請保持 `false`，改以 `scripts/create_user.py` 建立帳號 |
+   | `LOGIN_MAX_FAILURES_PER_ACCOUNT` | `5` | 同一登入識別（不分大小寫）在時間視窗內的失敗次數門檻（≥ 1） |
+   | `LOGIN_MAX_FAILURES_PER_ADDRESS` | `20` | 同一來源位址的失敗次數門檻（≥ 1）。經由代理連線時所有使用者共用同一個位址，請設得比依帳號的寬 |
+   | `LOGIN_FAILURE_WINDOW_SECONDS` | `900` | 計算失敗次數的時間視窗秒數（≥ 1） |
+   | `LOGIN_LOCKOUT_SECONDS` | `900` | 達到門檻後暫停登入的秒數（≥ 1） |
+   | `TOOL_SECRETS_KEY` | 每個部署自行產生 | 加密工具憑證的 Fernet 金鑰；範本值不是有效的金鑰，沒換掉時後端拒絕啟動 |
+   | `HOST` | `127.0.0.1` | `python main.py` 的監聽位址。只有本機或同一台主機上的反向代理連入時保持 `127.0.0.1`；容器中或其他主機上的反向代理、或其他裝置需要直接連到後端時才改為 `0.0.0.0` |
+   | `RELOAD` | `false` | 程式碼變更時自動重新載入，只在開發時設為 `true` |
+   | `COOKIE_SECURE` | `false`（以 HTTPS 提供服務時為 `true`） | 重新整理權杖 Cookie 是否只經 HTTPS 傳送。以 HTTPS 提供服務時必須為 `true`，本機以 `http://localhost` 開發時可為 `false`。4.0.0 在 `ENVIRONMENT=production` 時自動加上 Secure，現在必須明確設定 |
+   | `ENABLE_API_DOCS` | `false` | 是否提供 `/docs`、`/redoc` 與 `/openapi.json`（列出所有端點與參數），對外服務時請保持 `false` |
+
+   可直接貼進 `.env`，再換上自行產生的 `TOOL_SECRETS_KEY`，並依部署方式調整 `HOST` 與 `COOKIE_SECURE`：
+
+   ```dotenv
+   ALLOW_REGISTRATION=false
+   LOGIN_MAX_FAILURES_PER_ACCOUNT=5
+   LOGIN_MAX_FAILURES_PER_ADDRESS=20
+   LOGIN_FAILURE_WINDOW_SECONDS=900
+   LOGIN_LOCKOUT_SECONDS=900
+   TOOL_SECRETS_KEY=<自行產生的 Fernet 金鑰>
+   HOST=127.0.0.1
+   RELOAD=false
+   COOKIE_SECURE=false
+   ENABLE_API_DOCS=false
+   ```
+
+   在 `backend/`（已啟用虛擬環境）產生 `TOOL_SECRETS_KEY`：
+
+   ```bash
+   python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+   ```
+
+   **`TOOL_SECRETS_KEY` 要與資料庫備份一起保存**：金鑰遺失或更換後，已儲存的工具憑證都無法解密（管理 API 的回應以 `credentials_unreadable` 標示），只能逐一重新輸入。
+4. **PostgreSQL**：
+   - **使用 `backend/docker-compose.yml` 時**，在 `backend/.env` 加上 `POSTGRES_APP_USER`（例如 `askmiao_app`）與 `POSTGRES_APP_PASSWORD`（與 `POSTGRES_PASSWORD` 不同的隨機字串），新的 compose 檔缺少這兩項時會拒絕啟動。既有的資料卷不會再執行初始化腳本，所以先以新設定重新建立容器（資料卷會保留），讓容器取得這兩個環境變數與 `20-app-role.sh` 的掛載，再手動執行一次腳本：
+
+     ```bash
+     cd backend
+     docker compose up -d --wait
+     docker compose exec postgres bash /docker-entrypoint-initdb.d/20-app-role.sh
+     ```
+
+     腳本以容器中的 `POSTGRES_USER`（`postgres`）連到 `POSTGRES_DB`（`chatbot`），建立 `POSTGRES_APP_USER` 帳號（`NOSUPERUSER NOCREATEDB NOCREATEROLE`）並把密碼設為 `POSTGRES_APP_PASSWORD`，授予資料庫的 `CONNECT` 與 `public` schema 的 `USAGE`、`CREATE`，再把 `public` 中所有資料表的擁有者改為這個帳號。腳本可重複執行。
+   - **自行架設的 PostgreSQL**：以超級使用者建立同樣權限的帳號並移交資料表。有 `bash` 與 `psql` 時可以直接執行同一支腳本，以環境變數提供上述四個值，連線位置以 `PGHOST`、`PGPORT` 指定：
+
+     ```bash
+     cd backend
+     POSTGRES_USER=<超級使用者> POSTGRES_DB=<資料庫> POSTGRES_APP_USER=askmiao_app POSTGRES_APP_PASSWORD=<密碼> \
+       PGHOST=<主機> PGPORT=<埠號> bash init-app-role.sh
+     ```
+
+     沒有 `bash` 時，請以超級使用者執行腳本中的 SQL。
+   - 最後把 `DATABASE_URL` 改用這個帳號，compose 的資料庫為 `postgresql+psycopg2://askmiao_app:<POSTGRES_APP_PASSWORD>@localhost:7690/chatbot`（特殊字元需百分比編碼）。`POSTGRES_PASSWORD` 只留給管理用途。
+5. **啟動後端**：`python main.py`。啟動時 `upgrade_schema()` 會：
+   - 替 `users` 加上 `tokens_valid_after` 欄位並以 `created_at` 回填，既有的權杖與工作階段繼續有效；之後變更密碼時會更新為當下，簽發時間更早的權杖一律無效。
+   - 以 `TOOL_SECRETS_KEY` 加密 `custom_api_tools` 的 `headers`、`auth_config` 與 `mcp_servers` 的 `env_vars`、`headers` 中既有的明文，已加密的不變。內容不是有效 JSON 的值會被清空，日誌會提示重新輸入。
+6. **建立帳號**：`ALLOW_REGISTRATION=false` 時，`POST /api/auth/register` 回傳 `403`，登入頁也不顯示註冊入口；既有帳號不受影響。新帳號（含管理員）由管理員在 `backend/`（已啟用虛擬環境）建立，密碼以互動方式輸入兩次，套用與註冊相同的規則：
+
+   ```bash
+   python scripts/create_user.py --username <使用者名稱> --email <電子郵件>
+   python scripts/create_user.py --username <使用者名稱> --email <電子郵件> --admin   # 建立管理員
+   ```
+7. **檢查工具設定**：以管理員進入「AI 工具」：
+   - 自訂 API 工具只接受 `parameters_schema` 的 `properties` 中宣告的參數（包含路徑、查詢、標頭與本文參數，以及 `request_body`），沒有宣告任何參數的工具不再接受參數。`request_body_schema` 有 `properties` 時，`request_body` 的欄位也必須列在其中，除非設定 `"additionalProperties": true`。
+   - 工具網址中寫死的查詢參數由管理員固定，呼叫時提供同名參數會被拒絕；`parameters_schema` 宣告了與網址查詢參數同名的參數時，請擇一移除。
+   - 對每個自訂 API 工具執行「即時線上測試」：結果的 `status_code` 為 `400`、錯誤以「工具參數無效」開頭時，依訊息補上宣告或移除衝突的參數。以 OpenAPI 匯入的工具通常已宣告規格中的參數，主要需要檢查手動建立的工具。
+   - stdio MCP 伺服器改在每次新建的空暫存目錄中執行，不再以後端的啟動目錄為工作目錄：`command`、`args` 中的相對路徑請改為絕對路徑，原本從工作目錄的 `.env` 讀取設定的伺服器請把變數寫進 `env_vars`。HTTP MCP 伺服器只跟隨同一來源的轉址，網址會轉址到其他網域時請改填最終網址。修改後按「重新探索」；名稱不符合 `[A-Za-z0-9_.-]{1,128}` 的工具會被略過。
+8. **重新建置前端**：在 `frontend/` 執行 `bun run build`。CSP 的 `<meta>` 只在建置時寫入 `build/index.html`，開發伺服器不套用：
+   - 前端與 API 不同來源時，`VITE_API_BASE`（或 `VITE_API_URL`）必須在建置時設定（`frontend/.env` 或建置時的環境變數），這個來源會加入 `connect-src`；之後更換 API 位址需要重新建置。
+   - `<meta>` 無法設定 `frame-ancestors`，網頁伺服器仍要送出 `X-Frame-Options: DENY` 或 `Content-Security-Policy: frame-ancestors 'none'`。
+   - 腳本與樣式只允許同源與 `index.html` 內嵌內容的雜湊，圖片只允許同源與 `data:`、`blob:`；自行在 `index.html` 加入其他網站資源的部署，這些資源會被擋下。
+9. **自行串接 API 的客戶端**：
+   - `GET /api/external-tags` 與 WebSocket `/api/chat/ws/{user_id}` 已移除。
+   - `POST /api/api-tools/parse-spec` 的回應不再包含 `raw_spec`；使用 YAML 別名的規格回傳 `400`。
+   - `GET /api/admin/users` 與 `PUT /api/admin/users/{user_id}` 中的使用者只含 `id`、`username`、`email`、`role`、`is_active`、`is_admin`、`created_at`、`last_login`，不再有 `hashed_password`；`PUT` 回傳 `{message, user}`。
+   - 自訂 API 工具與 MCP 伺服器的管理 API 回應以 `••••••••` 取代秘密值，並新增 `credentials_unreadable`。更新時整個欄位以送出的內容取代，值為 `••••••••` 的鍵沿用原值，該鍵沒有已儲存的值時回傳 `400`。
+   - `approval_required` 事件新增 `target`，標出實際送出的位置。
+   - `POST /api/auth/login` 可能回傳 `429` 與 `Retry-After`；關閉註冊時 `POST /api/auth/register` 回傳 `403`，可先以 `GET /api/auth/registration`（回傳 `{"enabled": bool}`）查詢。
+   - `POST /api/auth/change-password` 或帶 `new_password` 的 `PUT /api/auth/me` 成功後，包含目前這一個在內的所有權杖都失效，需以新密碼重新登入。
+   - `/docs`、`/redoc` 與 `/openapi.json` 只在 `ENABLE_API_DOCS=true` 時提供。
+10. **驗證**：
+    - [ ] `GET http://localhost:8001/health` 回傳 `{"status": "healthy"}`；`ENABLE_API_DOCS=false` 時 `/docs` 回傳 `404`。
+    - [ ] 以 `create_user.py` 建立的帳號可以登入；`ALLOW_REGISTRATION=false` 時登入頁沒有註冊入口。
+    - [ ] 測試帳號連續輸入錯誤密碼達 `LOGIN_MAX_FAILURES_PER_ACCOUNT` 次後，下一次登入回傳 `429`（重新啟動後端即可解除）。
+    - [ ] 在一個瀏覽器變更測試帳號的密碼後，目前與其他瀏覽器的工作階段都要以新密碼重新登入。
+    - [ ] 「AI 工具」中的金鑰以 `••••••••` 顯示，「即時線上測試」仍能呼叫需要認證的 API；資料庫中這些憑證欄位的值以 `fernet:` 開頭。
+    - [ ] 使用 PostgreSQL 時，在 `psql` 執行 `\dt` 列出的資料表擁有者是應用程式帳號（compose：`docker compose exec postgres psql -U postgres -d chatbot -c '\dt'`）。
+    - [ ] `frontend/build/index.html` 含有 `<meta http-equiv="Content-Security-Policy"`，使用時瀏覽器主控台沒有 CSP 違規訊息。
+
+### 回退到 4.0.0
+
+1. 停止後端，把程式碼切回 4.0.0。後端改回升級前保留的虛擬環境，或在新的虛擬環境依 4.0.0 的 `requirements.txt`（沒有鎖定版本與雜湊）安裝；前端的 `package.json` 沒有變更，以 4.0.0 的程式碼重新執行 `bun run build` 即可。
+2. 還原步驟 1 備份的 `.env`。4.0.0 會忽略不認得的設定，留下 `ALLOW_REGISTRATION`、`TOOL_SECRETS_KEY` 等新設定不會出錯，但 `DATABASE_URL` 必須與還原後的資料庫一致。
+3. 資料庫二擇一：
+   - **還原備份**（建議）：最乾淨，但會遺失升級後新增的對話、文件與帳號。工具憑證已改為加密存放，4.0.0 無法解讀，會當成沒有設定。
+   - **保留現有資料庫**：在 4.0.0 重新輸入每個自訂 API 工具與 MCP 伺服器的憑證。4.0.0 會忽略 `users.tokens_valid_after` 欄位；但由新版建立的全新資料庫中，這個欄位是 `NOT NULL` 且沒有預設值，4.0.0 建立帳號時會失敗，請先移除此欄位或給定預設值。日後再次升級時，回退期間建立的帳號此欄位為空值，新版每次啟動都會以 `created_at` 補上，不需要手動處理。
+4. PostgreSQL 容器：4.0.0 的 `backend/docker-compose.yml` 不需要 `POSTGRES_APP_USER`、`POSTGRES_APP_PASSWORD`，以 `docker compose up -d` 重新建立容器即可，留在資料卷中的應用程式帳號不影響 4.0.0。以 `postgres` 還原 `pg_dump` 備份後資料表屬於 `postgres`，請沿用備份 `.env` 中以 `postgres` 連線的 `DATABASE_URL`；保留現有資料庫時資料表屬於應用程式帳號，4.0.0 可以繼續用它連線。
+
+### 升級到未發行版本後的常見狀況
+
+<details>
+<summary><b>後端啟動失敗，錯誤訊息出現 <code>Field required</code></b></summary>
+
+`.env` 缺少新的必填設定。錯誤訊息會列出每個缺少的欄位，依 [升級步驟](#升級到未發行版本的步驟) 第 3 點補上，建議值見 `backend/.env.example`。
+
+</details>
+
+<details>
+<summary><b>後端啟動失敗，訊息為「TOOL_SECRETS_KEY 必須是 Fernet 金鑰」</b></summary>
+
+`TOOL_SECRETS_KEY` 仍是範本值或不是有效的 Fernet 金鑰，請以 `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"` 產生。若已經用某把金鑰加密過憑證，請改回那把金鑰，新的金鑰無法解密既有的憑證。
+
+</details>
+
+<details>
+<summary><b>登入回傳 <code>429</code></b></summary>
+
+同一登入識別或同一來源位址在 `LOGIN_FAILURE_WINDOW_SECONDS` 秒內失敗達到門檻，登入會暫停 `LOGIN_LOCKOUT_SECONDS` 秒，期間即使密碼正確也不接受。等 `Retry-After` 標頭指出的秒數過後再試；失敗紀錄只存在後端行程的記憶體中，重新啟動後端也會立即解除。
+
+經由反向代理連線而沒有設定 `FORWARDED_ALLOW_IPS` 時，所有使用者的來源位址都是代理本身，依位址的門檻由所有人共用。代理會覆寫 `X-Forwarded-For` 時請設定 `FORWARDED_ALLOW_IPS`，否則調高 `LOGIN_MAX_FAILURES_PER_ADDRESS`。
+
+</details>
+
+<details>
+<summary><b>工具憑證無法解密（<code>credentials_unreadable</code>）</b></summary>
+
+管理 API 的回應中 `credentials_unreadable` 為 `true`、憑證欄位為 `null`；對這些工具執行線上測試或「重新探索」時回傳 `400`，訊息為「無法以目前的 TOOL_SECRETS_KEY 解密工具憑證，請重新輸入」，Agent 呼叫時則失敗並只回報錯誤代碼。這表示目前的 `TOOL_SECRETS_KEY` 不是加密時使用的金鑰：找得回原本的金鑰就改回並重新啟動後端；找不回時，在「AI 工具」重新輸入這些自訂 API 工具與 MCP 伺服器的憑證並儲存。送回遮蔽字樣 `••••••••` 的欄位因為沒有可沿用的值，會回傳 `400`。
+
+</details>
+
+<details>
+<summary><b>自訂 API 工具回傳 <code>status_code</code> <code>400</code>：「工具參數無效」</b></summary>
+
+- 「未宣告的參數 …」：參數沒有列在 `parameters_schema` 的 `properties`；以 `request_body.` 開頭的名稱表示本文欄位沒有列在 `request_body_schema` 的 `properties`。請補上宣告；本文欄位不固定時，可在 `request_body_schema` 設定 `"additionalProperties": true`。
+- 「不可覆寫工具網址中固定的查詢參數 …」：呼叫提供了與工具網址中查詢參數同名的參數，請從網址或 `parameters_schema` 擇一移除。
+
+</details>
+
+<details>
+<summary><b>註冊回傳 <code>403</code></b></summary>
+
+這是 `ALLOW_REGISTRATION=false` 時的預期行為，回應訊息為「目前不開放註冊，請聯繫管理員建立帳號」。請由管理員以 `scripts/create_user.py` 建立帳號，見 [升級步驟](#升級到未發行版本的步驟) 第 6 點；確定要開放註冊時，才把 `ALLOW_REGISTRATION` 設為 `true` 並重新啟動後端。
+
+</details>
+
+<details>
+<summary><b>PostgreSQL 回報 <code>must be owner of table</code> 或 <code>permission denied for table</code></b></summary>
+
+後端已改以應用程式帳號連線，但資料表仍屬於 `postgres`，代表 `20-app-role.sh` 還沒執行。腳本可重複執行，執行一次就會把 `public` 中的所有資料表交給應用程式帳號，見 [升級步驟](#升級到未發行版本的步驟) 第 4 點。
+
+- 執行腳本時出現 `No such file or directory`：容器仍是以舊的 compose 設定建立，沒有掛載腳本，請先執行 `docker compose up -d --wait` 重新建立。
+- 連線時出現 `password authentication failed`：應用程式帳號尚未建立，或 `DATABASE_URL` 中的帳號密碼與 `POSTGRES_APP_USER`、`POSTGRES_APP_PASSWORD` 不一致。腳本每次執行都會把密碼重設為目前的 `POSTGRES_APP_PASSWORD`。
+
+</details>
+
+<details>
+<summary><b><code>bun install</code> 失敗：<code>lockfile had changes, but lockfile is frozen</code></b></summary>
+
+`package.json` 與 `bun.lock` 不一致。沒有打算變更前端套件時，把這兩個檔案還原成版本庫中的內容再安裝。要變更套件時，訊息建議的「不加 `--frozen-lockfile` 重新執行」並不適用，因為這個設定來自 `frontend/bunfig.toml`：先把其中的 `frozenLockfile` 暫時改為 `false`，以 `bun add` 或 `bun remove` 更新後改回 `true`，並一併提交 `package.json` 與 `bun.lock`。
+
+</details>
+
+<details>
+<summary><b><code>pip install -r requirements.txt</code> 回報雜湊錯誤</b></summary>
+
+`requirements.txt` 的每個套件都附上雜湊，pip 會以雜湊檢查模式安裝：
+
+- `THESE PACKAGES DO NOT MATCH THE HASHES FROM THE REQUIREMENTS FILE`：下載到的檔案與鎖定時的不同。手動改過 `requirements.txt` 的版本時，請改從 `requirements.in` 重新產生；使用 PyPI 以外的套件來源（例如私有鏡像）時，確認它提供的是與 PyPI 相同的檔案。都不是時檔案可能遭到竄改，不要略過檢查。
+- `Hashes are required in --require-hashes mode` 或 `all requirements must have their versions pinned with ==`：`requirements.txt` 中有沒有雜湊或沒有固定版本的套件，多半是手動加入的。請改為修改 `requirements.in`，再以 `uv pip compile` 重新產生。
+
+</details>
 
 ---
 

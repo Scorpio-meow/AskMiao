@@ -3,7 +3,8 @@
 # 後端啟動時會建立與修改自己的資料表（create_all、upgrade_schema），只需要 public schema 的 CREATE 權限，
 # 不需要超級使用者：即使出現 SQL 注入，也無法讀取伺服器檔案或執行系統指令。
 # 由 docker-compose.yml 掛載到 /docker-entrypoint-initdb.d/，在 init.sql 之後執行；
-# 既有資料卷升級時以 docker compose exec postgres bash /docker-entrypoint-initdb.d/20-app-role.sh 手動執行一次。
+# 既有資料卷升級時，先以新的設定重建容器（docker compose up -d，讓容器取得 POSTGRES_APP_* 與本腳本的掛載），
+# 再以 docker compose exec postgres bash /docker-entrypoint-initdb.d/20-app-role.sh 手動執行一次。
 set -euo pipefail
 
 psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" \

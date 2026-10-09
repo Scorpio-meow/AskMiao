@@ -4,6 +4,11 @@
 
 > How to upgrade an existing deployment to a new release, with rollback steps and troubleshooting. See the [CHANGELOG](../CHANGELOG_en.md) for the full list of changes in each version.
 
+- [Upgrading from 4.0.0 to the unreleased version](#upgrading-from-400-to-the-unreleased-version)
+  - [Unreleased changes and required actions](#unreleased-changes-and-required-actions)
+  - [Upgrade steps for the unreleased version](#upgrade-steps-for-the-unreleased-version)
+  - [Rolling back to 4.0.0](#rolling-back-to-400)
+  - [After upgrading to the unreleased version](#after-upgrading-to-the-unreleased-version)
 - [Upgrading from 3.0.0 to 4.0.0](#upgrading-from-300-to-400)
   - [Changes and required actions](#changes-and-required-actions)
   - [Upgrade steps](#upgrade-steps)
@@ -19,6 +24,232 @@
   - [Step 5: verify the upgrade](#step-5-verify-the-upgrade)
   - [Rolling back to 2.2.x](#rolling-back-to-22x)
   - [Troubleshooting](#troubleshooting)
+
+---
+
+## Upgrading from 4.0.0 to the unreleased version
+
+For upgrading from 4.0.0 to the next release, which has no version number yet; see the [CHANGELOG](../CHANGELOG_en.md#unreleased) for every change. This release addresses the findings of a second security audit. No index rebuild is needed, and the new column and the encryption of tool credentials are handled automatically at startup. The hands-on work is mostly the 10 new required settings in `.env`, how dependencies are installed, the PostgreSQL account the backend connects as, how accounts are created, and the parameter declarations of custom API tools.
+
+### Unreleased changes and required actions
+
+| Item | 4.0.0 | Unreleased | Action |
+|---|---|---|---|
+| Required settings | 10 | 20 | Add 10 |
+| `HOST`, `RELOAD`, `COOKIE_SECURE` | `HOST` and `RELOAD` defaulted to `0.0.0.0` and `true`; `COOKIE_SECURE` was derived from `ENVIRONMENT` when unset | Required, with no default | Set them explicitly for your deployment |
+| Interactive API docs | `/docs`, `/redoc`, and `/openapi.json` were always served | Served only when the required `ENABLE_API_DOCS` is `true` | Set it to `false` for public deployments |
+| Self-registration | Anyone who could reach the API could register | With `ALLOW_REGISTRATION=false`, registration returns `403` and accounts are created with `scripts/create_user.py` | Decide whether to allow registration |
+| Failed logins | Unlimited | Once a login identifier or source address reaches its failure threshold, logins pause with `429` and `Retry-After` | Set the four `LOGIN_*` thresholds |
+| Password changes | Existing tokens stayed valid | Tokens issued before `users.tokens_valid_after` are rejected, including the current session's | None; the column is added and backfilled at startup |
+| Tool credentials | Stored in plaintext and returned as is by the admin API | Encrypted with `TOOL_SECRETS_KEY`; the admin API shows `••••••••` in place of secret values | Generate a key and keep it with your database backups |
+| Custom API tool parameters | Every parameter from the model was sent | Only parameters declared in `parameters_schema` are accepted, and fixed query parameters in the tool URL cannot be overridden | Review each tool's parameter declarations |
+| MCP stdio subprocesses | Ran in the backend process's working directory | Run in a fresh empty temporary directory each time | Make relative paths in commands and arguments absolute |
+| PostgreSQL container | The backend connected as the superuser `postgres` | The backend connects as the non-superuser `POSTGRES_APP_USER` | Set up the account, run `20-app-role.sh` once, and update `DATABASE_URL` |
+| Dependencies | Unpinned; every install took the newest releases available | `requirements.txt` pins versions with hashes; `bun.lock` is committed and cannot change during install | Prefer a fresh virtualenv; add backend packages through `requirements.in` |
+| Frontend build | No CSP in `index.html` | The build writes a CSP `<meta>` tag | Rebuild; set `VITE_API_BASE` at build time when the API is on another origin |
+| API endpoints and responses | Included `GET /api/external-tags` and the WebSocket `/api/chat/ws/{user_id}`; the admin user API returned `hashed_password` | Both endpoints are removed; responses no longer contain password hashes or tool credentials, and login can return `429` | Update API clients as described in step 9 of the [upgrade steps](#upgrade-steps-for-the-unreleased-version) |
+| Chat attachment parsing | Shared the parsing limits of admin uploads | Has its own smaller memory budget; an attachment over budget is reported to the model as unread | None; see [resource limits](configuration_en.md#resource-limits) when needed |
+
+### Upgrade steps for the unreleased version
+
+1. **Stop and back up**: stop the backend and back up the database (copy the `.db` file for SQLite; use `pg_dump` for PostgreSQL), `backend/data/`, `backend/keys/`, and `backend/.env`. Once the new release starts, tool credentials are stored encrypted, so rolling back to 4.0.0 needs this database backup.
+2. **Update code and dependencies**:
+   - 4.0.0 did not track `frontend/bun.lock`. When you update with git, the copy an earlier `bun install` created makes `git pull` abort with "untracked working tree files would be overwritten by merge"; delete it first.
+   - The backend `requirements.txt` now pins every version with hashes, so pip switches to hash-checking mode and stops if any package does not match its hash. `pip install` does not remove packages the new release no longer uses (FlagEmbedding, waitress, docxtpl, XlsxWriter, PyJWT, langchain, and langchain-community), so installing into a fresh virtualenv is recommended; keep the old one until you are sure you will not roll back.
+   - With an NVIDIA GPU, first install the CUDA build of the same `torch` version as in `requirements.txt` into the new virtualenv, following the PyTorch website, and then install the rest; an installed torch of the same version counts as matching the pin.
+   - `frontend/bunfig.toml` now sets `frozenLockfile = true`: `bun install` installs exactly what `bun.lock` lists and fails when `bun.lock` and `package.json` disagree.
+
+   ```bash
+   # inside the new virtualenv
+   cd backend
+   pip install -r requirements.txt
+
+   cd ../frontend
+   bun install
+   ```
+
+   From now on, do not edit `requirements.txt` by hand to add or upgrade a backend package: edit `backend/requirements.in` (direct dependencies only) and regenerate it in `backend/`:
+
+   ```bash
+   uv pip compile requirements.in --universal --python-version 3.10 --generate-hashes -o requirements.txt
+   ```
+
+   For the frontend, temporarily set `frozenLockfile` in `frontend/bunfig.toml` to `false`, run `bun add` or `bun remove`, set it back to `true`, and commit `package.json` and `bun.lock` together.
+3. **Update `.env`**: add the 10 new required settings below. They have no defaults, and the backend refuses to start if any is missing; the recommended values match `backend/.env.example`:
+
+   | Setting | Recommended | Description |
+   |---|---|---|
+   | `ALLOW_REGISTRATION` | `false` | Whether self-registration is open. Every account shares the whole knowledge base and the enabled tools, so keep it `false` on deployments others can reach and create accounts with `scripts/create_user.py` |
+   | `LOGIN_MAX_FAILURES_PER_ACCOUNT` | `5` | Failure threshold per login identifier (case-insensitive) within the window (≥ 1) |
+   | `LOGIN_MAX_FAILURES_PER_ADDRESS` | `20` | Failure threshold per source address (≥ 1). Users behind a proxy share one address, so keep it looser than the per-account threshold |
+   | `LOGIN_FAILURE_WINDOW_SECONDS` | `900` | Window in seconds in which failures are counted (≥ 1) |
+   | `LOGIN_LOCKOUT_SECONDS` | `900` | Seconds logins stay paused once a threshold is reached (≥ 1) |
+   | `TOOL_SECRETS_KEY` | Generate one per deployment | Fernet key that encrypts tool credentials; the template value is not a valid key, so the backend refuses to start until it is replaced |
+   | `HOST` | `127.0.0.1` | Listen address of `python main.py`. Keep `127.0.0.1` when only local clients or a reverse proxy on the same host connect; use `0.0.0.0` only when a reverse proxy in a container or on another host, or other devices, must reach the backend directly |
+   | `RELOAD` | `false` | Reload automatically when code changes; set it to `true` only for development |
+   | `COOKIE_SECURE` | `false` (`true` when served over HTTPS) | Whether the refresh token cookie is sent over HTTPS only. It must be `true` when the site is served over HTTPS, and `false` is fine for local development on `http://localhost`. 4.0.0 added Secure automatically with `ENVIRONMENT=production`; now it must be set explicitly |
+   | `ENABLE_API_DOCS` | `false` | Serve `/docs`, `/redoc`, and `/openapi.json`, which list every endpoint and parameter; keep it `false` for public deployments |
+
+   Ready to paste into `.env`; then put in a `TOOL_SECRETS_KEY` you generate, and adjust `HOST` and `COOKIE_SECURE` for your deployment:
+
+   ```dotenv
+   ALLOW_REGISTRATION=false
+   LOGIN_MAX_FAILURES_PER_ACCOUNT=5
+   LOGIN_MAX_FAILURES_PER_ADDRESS=20
+   LOGIN_FAILURE_WINDOW_SECONDS=900
+   LOGIN_LOCKOUT_SECONDS=900
+   TOOL_SECRETS_KEY=<your generated Fernet key>
+   HOST=127.0.0.1
+   RELOAD=false
+   COOKIE_SECURE=false
+   ENABLE_API_DOCS=false
+   ```
+
+   Generate `TOOL_SECRETS_KEY` in `backend/` with the virtualenv active:
+
+   ```bash
+   python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+   ```
+
+   **Keep `TOOL_SECRETS_KEY` with your database backups**: if the key is lost or changed, stored tool credentials can no longer be decrypted (admin API responses flag them with `credentials_unreadable`) and must be entered again one by one.
+4. **PostgreSQL**:
+   - **With `backend/docker-compose.yml`**, add `POSTGRES_APP_USER` (for example `askmiao_app`) and `POSTGRES_APP_PASSWORD` (a random string different from `POSTGRES_PASSWORD`) to `backend/.env`; the new compose file refuses to start without them. Init scripts do not run again on an existing data volume, so first recreate the container with the new setup (the volume is kept) to give it the two variables and the `20-app-role.sh` mount, and then run the script once by hand:
+
+     ```bash
+     cd backend
+     docker compose up -d --wait
+     docker compose exec postgres bash /docker-entrypoint-initdb.d/20-app-role.sh
+     ```
+
+     The script connects to `POSTGRES_DB` (`chatbot`) as the container's `POSTGRES_USER` (`postgres`), creates the `POSTGRES_APP_USER` account (`NOSUPERUSER NOCREATEDB NOCREATEROLE`) with the password `POSTGRES_APP_PASSWORD`, grants `CONNECT` on the database and `USAGE` and `CREATE` on the `public` schema, and makes the account the owner of every table in `public`. It is safe to rerun.
+   - **Self-managed PostgreSQL**: as a superuser, create an account with the same privileges and hand it the tables. With `bash` and `psql` available you can run the same script, passing the four values as environment variables and the server location in `PGHOST` and `PGPORT`:
+
+     ```bash
+     cd backend
+     POSTGRES_USER=<superuser> POSTGRES_DB=<database> POSTGRES_APP_USER=askmiao_app POSTGRES_APP_PASSWORD=<password> \
+       PGHOST=<host> PGPORT=<port> bash init-app-role.sh
+     ```
+
+     Without `bash`, run the SQL in the script as a superuser.
+   - Finally, point `DATABASE_URL` at that account; for the compose database it is `postgresql+psycopg2://askmiao_app:<POSTGRES_APP_PASSWORD>@localhost:7690/chatbot` (percent-encode special characters). `POSTGRES_PASSWORD` is now for administration only.
+5. **Start the backend**: `python main.py`. At startup `upgrade_schema()`:
+   - Adds `tokens_valid_after` to `users` and backfills it with `created_at`, so existing tokens and sessions stay valid; from then on a password change sets it to the current time, and every token issued earlier is rejected.
+   - Encrypts the existing plaintext in `headers` and `auth_config` of `custom_api_tools` and in `env_vars` and `headers` of `mcp_servers` with `TOOL_SECRETS_KEY`, leaving values that are already encrypted alone. Values that are not valid JSON are cleared, and the log asks you to enter them again.
+6. **Create accounts**: with `ALLOW_REGISTRATION=false`, `POST /api/auth/register` returns `403` and the login page hides the sign-up link; existing accounts are not affected. An admin creates new accounts, admins included, in `backend/` with the virtualenv active; the password is entered interactively twice and follows the same rules as registration:
+
+   ```bash
+   python scripts/create_user.py --username <username> --email <email>
+   python scripts/create_user.py --username <username> --email <email> --admin   # create an admin
+   ```
+7. **Review the tools**: as an admin, open the AI tools page:
+   - Custom API tools accept only parameters declared in the `properties` of `parameters_schema` (path, query, header, and body parameters, and `request_body`); a tool that declares no parameters no longer accepts any. When `request_body_schema` has `properties`, the fields of `request_body` must be listed there too, unless it sets `"additionalProperties": true`.
+   - Query parameters written into the tool URL are fixed by the admin, and a call that supplies a parameter with the same name is rejected; if `parameters_schema` declares a parameter with the same name as a URL query parameter, remove one of them.
+   - Run the live test (即時線上測試) of each custom API tool: when the result has `status_code` `400` and an invalid-parameter error (工具參數無效), add the declaration or remove the conflicting parameter as the message says. Tools imported from OpenAPI usually declare the parameters of their spec already, so tools created by hand need the closest look.
+   - stdio MCP servers now run in a fresh empty temporary directory instead of the backend's startup directory: make relative paths in `command` and `args` absolute, and put the variables of servers that read a `.env` from their working directory into `env_vars`. HTTP MCP servers follow only same-origin redirects; if the URL redirects to another domain, enter the final URL. Run discovery again afterwards; tools whose names do not match `[A-Za-z0-9_.-]{1,128}` are skipped.
+8. **Rebuild the frontend**: run `bun run build` in `frontend/`. The CSP `<meta>` tag is written into `build/index.html` only at build time; the dev server does not use it:
+   - When the frontend and the API are on different origins, `VITE_API_BASE` (or `VITE_API_URL`) must be set at build time (in `frontend/.env` or the build environment); its origin is added to `connect-src`, and changing the API address later requires a rebuild.
+   - A `<meta>` tag cannot set `frame-ancestors`, so the web server must still send `X-Frame-Options: DENY` or `Content-Security-Policy: frame-ancestors 'none'`.
+   - Scripts and styles are allowed only from the same origin and by the hashes of the inline content in `index.html`, and images only from the same origin, `data:`, and `blob:`; resources from other sites that a deployment added to `index.html` are blocked.
+9. **API clients**:
+   - `GET /api/external-tags` and the WebSocket `/api/chat/ws/{user_id}` are removed.
+   - The `POST /api/api-tools/parse-spec` response no longer includes `raw_spec`, and specs that use YAML aliases return `400`.
+   - Users in `GET /api/admin/users` and `PUT /api/admin/users/{user_id}` contain only `id`, `username`, `email`, `role`, `is_active`, `is_admin`, `created_at`, and `last_login`, without `hashed_password`; `PUT` returns `{message, user}`.
+   - Admin API responses for custom API tools and MCP servers show `••••••••` in place of secret values and gain `credentials_unreadable`. An update replaces the whole field with what you send; keys whose value is `••••••••` keep their stored value, and such a key with no stored value returns `400`.
+   - The `approval_required` event gains `target`, which names where the request is actually sent.
+   - `POST /api/auth/login` can return `429` with `Retry-After`; with registration closed, `POST /api/auth/register` returns `403`, and `GET /api/auth/registration` (which returns `{"enabled": bool}`) tells you beforehand.
+   - After a successful `POST /api/auth/change-password`, or a `PUT /api/auth/me` with `new_password`, every token, the current one included, is invalid; sign in again with the new password.
+   - `/docs`, `/redoc`, and `/openapi.json` are served only with `ENABLE_API_DOCS=true`.
+10. **Verify**:
+    - [ ] `GET http://localhost:8001/health` returns `{"status": "healthy"}`, and with `ENABLE_API_DOCS=false` `/docs` returns `404`.
+    - [ ] An account created with `create_user.py` can sign in, and with `ALLOW_REGISTRATION=false` the login page shows no sign-up link.
+    - [ ] After a test account enters a wrong password `LOGIN_MAX_FAILURES_PER_ACCOUNT` times in a row, the next login returns `429` (restarting the backend clears it).
+    - [ ] After a test account's password is changed in one browser, both the current session and the sessions in other browsers must sign in again with the new password.
+    - [ ] Keys on the AI tools page show as `••••••••`, the live test can still call APIs that need authentication, and the stored credential columns in the database start with `fernet:`.
+    - [ ] With PostgreSQL, `\dt` in `psql` lists the application account as the owner of the tables (compose: `docker compose exec postgres psql -U postgres -d chatbot -c '\dt'`).
+    - [ ] `frontend/build/index.html` contains `<meta http-equiv="Content-Security-Policy"`, and the browser console shows no CSP violations while you use the app.
+
+### Rolling back to 4.0.0
+
+1. Stop the backend and check out the 4.0.0 code. Switch back to the virtualenv you kept from before the upgrade, or install 4.0.0's `requirements.txt` (no pinned versions or hashes) into a new one. The frontend's `package.json` did not change, so running `bun run build` again with the 4.0.0 code is enough.
+2. Restore `.env` from the step 1 backup. 4.0.0 ignores settings it does not know, so leftover settings such as `ALLOW_REGISTRATION` and `TOOL_SECRETS_KEY` are harmless, but `DATABASE_URL` must match the database you restore.
+3. For the database, pick one:
+   - **Restore the backup** (recommended): the cleanest option, but conversations, documents, and accounts added after the upgrade are lost. Tool credentials are now encrypted, and 4.0.0 cannot read them; it treats them as not set.
+   - **Keep the current database**: re-enter the credentials of every custom API tool and MCP server in 4.0.0. 4.0.0 ignores the `users.tokens_valid_after` column; however, in a brand-new database created by the new release this column is `NOT NULL` without a default, so 4.0.0 fails to create accounts until you drop the column or give it a default. If you upgrade again later, accounts created during the rollback have no value in this column; the new release fills it with `created_at` on every start, so no manual step is needed.
+4. PostgreSQL container: the 4.0.0 `backend/docker-compose.yml` does not need `POSTGRES_APP_USER` or `POSTGRES_APP_PASSWORD`; recreate the container with `docker compose up -d`, and the application account left in the volume does not affect 4.0.0. A `pg_dump` backup restored as `postgres` leaves the tables owned by `postgres`, so keep the `DATABASE_URL` from the backed-up `.env`, which connects as `postgres`; if you keep the current database, the application account owns the tables and 4.0.0 can keep connecting with it.
+
+### After upgrading to the unreleased version
+
+<details>
+<summary><b>Startup fails with <code>Field required</code></b></summary>
+
+`.env` is missing new required settings. The error names each missing field; add them as described in step 3 of the [upgrade steps](#upgrade-steps-for-the-unreleased-version), with the recommended values from `backend/.env.example`.
+
+</details>
+
+<details>
+<summary><b>Startup fails because <code>TOOL_SECRETS_KEY</code> is not a Fernet key</b></summary>
+
+The error is logged in Chinese as TOOL_SECRETS_KEY 必須是 Fernet 金鑰. `TOOL_SECRETS_KEY` still holds the template value or is not a valid Fernet key; generate one with `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"`. If credentials were already encrypted with a key, put that key back instead, because a new key cannot decrypt them.
+
+</details>
+
+<details>
+<summary><b>Logins return <code>429</code></b></summary>
+
+One login identifier or one source address reached its failure threshold within `LOGIN_FAILURE_WINDOW_SECONDS`, so logins pause for `LOGIN_LOCKOUT_SECONDS`, and even the right password is refused meanwhile. Try again after the number of seconds in the `Retry-After` header; the failure records live only in the backend process's memory, so restarting the backend also clears them at once.
+
+Behind a reverse proxy without `FORWARDED_ALLOW_IPS`, every user's source address is the proxy, so all users share the per-address threshold. If the proxy overwrites `X-Forwarded-For`, set `FORWARDED_ALLOW_IPS`; otherwise raise `LOGIN_MAX_FAILURES_PER_ADDRESS`.
+
+</details>
+
+<details>
+<summary><b>Tool credentials cannot be decrypted (<code>credentials_unreadable</code>)</b></summary>
+
+Admin API responses show `credentials_unreadable` as `true` with the credential fields set to `null`; the live test and discovery of those tools return `400` saying the credentials cannot be decrypted with the current `TOOL_SECRETS_KEY` and must be entered again (無法以目前的 TOOL_SECRETS_KEY 解密工具憑證，請重新輸入), and calls from the agent fail with only an error code. The current `TOOL_SECRETS_KEY` is not the key the credentials were encrypted with: if you can recover the original key, put it back and restart the backend; otherwise re-enter the credentials of those custom API tools and MCP servers on the AI tools page and save. Fields sent back with the `••••••••` mask return `400`, because there is no stored value to keep.
+
+</details>
+
+<details>
+<summary><b>A custom API tool returns <code>status_code</code> <code>400</code> with an invalid-parameter error (工具參數無效)</b></summary>
+
+- Undeclared parameter (未宣告的參數 …): the parameter is not listed in the `properties` of `parameters_schema`; a name starting with `request_body.` means a body field is not listed in the `properties` of `request_body_schema`. Add the declaration; if the body fields vary, set `"additionalProperties": true` in `request_body_schema`.
+- Fixed query parameter (不可覆寫工具網址中固定的查詢參數 …): the call supplied a parameter with the same name as a query parameter in the tool URL. Remove it from either the URL or `parameters_schema`.
+
+</details>
+
+<details>
+<summary><b>Registration returns <code>403</code></b></summary>
+
+This is expected with `ALLOW_REGISTRATION=false`; the response says registration is closed and asks the user to contact an admin (目前不開放註冊，請聯繫管理員建立帳號). Have an admin create the account with `scripts/create_user.py`, as in step 6 of the [upgrade steps](#upgrade-steps-for-the-unreleased-version); set `ALLOW_REGISTRATION` to `true` and restart the backend only if you do want open registration.
+
+</details>
+
+<details>
+<summary><b>PostgreSQL reports <code>must be owner of table</code> or <code>permission denied for table</code></b></summary>
+
+The backend now connects as the application account, but the tables still belong to `postgres`, which means `20-app-role.sh` has not run yet. The script is safe to rerun, and one run hands every table in `public` to the application account; see step 4 of the [upgrade steps](#upgrade-steps-for-the-unreleased-version).
+
+- Running the script reports `No such file or directory`: the container was created from the old compose setup and has no mount for the script; recreate it with `docker compose up -d --wait` first.
+- Connecting reports `password authentication failed`: the application account does not exist yet, or the user name or password in `DATABASE_URL` differs from `POSTGRES_APP_USER` and `POSTGRES_APP_PASSWORD`. Every run of the script resets the password to the current `POSTGRES_APP_PASSWORD`.
+
+</details>
+
+<details>
+<summary><b><code>bun install</code> fails with <code>lockfile had changes, but lockfile is frozen</code></b></summary>
+
+`package.json` and `bun.lock` disagree. If you did not mean to change frontend packages, restore both files to the versions in the repository and install again. If you did, the message's suggestion to re-run without `--frozen-lockfile` does not apply, because the setting comes from `frontend/bunfig.toml`: temporarily set `frozenLockfile` there to `false`, run `bun add` or `bun remove`, set it back to `true`, and commit `package.json` and `bun.lock` together.
+
+</details>
+
+<details>
+<summary><b><code>pip install -r requirements.txt</code> reports a hash error</b></summary>
+
+Every package in `requirements.txt` carries hashes, so pip installs in hash-checking mode:
+
+- `THESE PACKAGES DO NOT MATCH THE HASHES FROM THE REQUIREMENTS FILE`: a downloaded file differs from the one that was locked. If you changed a version in `requirements.txt` by hand, regenerate the file from `requirements.in` instead; if you install from a source other than PyPI (such as a private mirror), make sure it serves the same files as PyPI. Otherwise the file may have been tampered with, so do not bypass the check.
+- `Hashes are required in --require-hashes mode` or `all requirements must have their versions pinned with ==`: `requirements.txt` contains a package without hashes or without a pinned version, usually one added by hand. Edit `requirements.in` instead and regenerate the file with `uv pip compile`.
+
+</details>
 
 ---
 

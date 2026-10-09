@@ -32,6 +32,8 @@
 
 > [!IMPORTANT]
 > **4.0.0 含破壞性變更**：移除 `JWT_SECRET_KEY` 與 `JWT_ALGORITHM`、RSA 金鑰改為必要、compose 需設定 `POSTGRES_PASSWORD`、開發伺服器只接受本機連線、有副作用的工具呼叫需使用者核准。升級前請先閱讀 [升級指南](docs/upgrading.md)。
+>
+> **4.0.0 之後尚未發行的變更同樣需要手動處理**：`.env` 新增 10 個必填設定（含每個部署自行產生的 `TOOL_SECRETS_KEY`），compose 的 PostgreSQL 改以非超級使用者連線，變更密碼後所有工作階段都要重新登入。詳見 [CHANGELOG 的 `[Unreleased]`](CHANGELOG.md#unreleased) 與 [升級指南](docs/upgrading.md#從-400-升級到未發行版本)。
 
 ## 目錄
 
@@ -62,7 +64,7 @@
 | 4 | **混合檢索** | 向量與 BM25 每次必跑，以 RRF 依名次融合，再由 Cross-Encoder 重排；片段以資料庫 chunk_id 為準 |
 | 5 | **五家模型供應商** | Ollama、OpenAI、Azure OpenAI、Anthropic Claude、Google Gemini 都能呼叫工具與串流 |
 | 6 | **外部工具與 MCP** | 貼上 OpenAPI 規格即可匯入 API 工具，也能接入 MCP 伺服器；只限管理員管理，有副作用的呼叫先經使用者核准 |
-| 7 | **防護完整** | RSA JWT、Argon2 密碼雜湊、逐跳 SSRF 驗證並固定連線 IP、工具輸出信任邊界、資源上限、對外只回錯誤代碼 |
+| 7 | **防護完整** | RSA JWT、Argon2 密碼雜湊與登入失敗節流、逐跳 SSRF 驗證並固定連線 IP、工具憑證加密存放、工具輸出信任邊界、資源上限、對外只回錯誤代碼 |
 
 ## 4.0.0 重點
 
@@ -139,18 +141,19 @@ flowchart LR
 
 ### 外部工具與 MCP
 
-- **自訂 API 工具**：以表單建立，或貼上 OpenAPI / Swagger 規格（OAS 2.0、3.0、3.1）批次匯入，支援 Bearer、API Key（Header / Query）與 Basic 認證，可即時測試。
+- **自訂 API 工具**：以表單建立，或貼上 OpenAPI / Swagger 規格（OAS 2.0、3.0、3.1）批次匯入，支援 Bearer、API Key（Header / Query）與 Basic 認證，可即時測試。呼叫時只接受 `parameters_schema` 宣告的參數，工具網址中固定的查詢參數不能被覆寫。
 - **MCP 用戶端**：支援 `stdio` 與 HTTP 傳輸，自動探索工具並以 `mcp_<伺服器>_<工具>` 名稱加入 Agent 工具集；內建時間與檔案系統兩個範本（檔案系統範本只開放專屬沙箱目錄 `backend/mcp_filesystem_sandbox`）。
 - **動態載入**：啟用中的工具在每次組裝工具定義時從資料庫載入，變更後不需重啟。
 - **呼叫前核准**：有副作用的工具由發問者在對話中核准後才執行，見下方 [工具呼叫核准](#工具呼叫核准)。
-- **只限管理員**：工具由所有使用者的 Agent 共用，`/api/api-tools`、`/api/mcp` 與「AI 工具」頁只開放管理員；`stdio` 子行程只繼承 `PATH` 等系統變數，拿不到後端的金鑰，關閉時連同整個子行程樹一起終止（[ADR-0004](docs/adr/0004-tool-admin-permissions-and-subprocess-isolation.md)）。
+- **只限管理員**：工具由所有使用者的 Agent 共用，`/api/api-tools`、`/api/mcp` 與「AI 工具」頁只開放管理員；`stdio` 子行程只繼承 `PATH` 等系統變數，拿不到後端的金鑰，在每次新建的空暫存目錄執行，關閉時連同整個子行程樹一起終止（[ADR-0004](docs/adr/0004-tool-admin-permissions-and-subprocess-isolation.md)）。
+- **憑證加密存放**：自訂 API 工具的標頭與認證設定、MCP 伺服器的環境變數與標頭以 `TOOL_SECRETS_KEY` 加密後寫入資料庫；管理 API 只回傳 `••••••••`，編輯時保持遮蔽字樣即沿用原值。
 
 ### 工具呼叫核准
 
 Agent 可以自己查資料，但不會自己替你送出申請、刪除紀錄或呼叫會寫入的 API。標記為「需要核准」的工具被呼叫時：
 
-1. 串流送出 `approval_required`（含 `approval_id`、工具顯示名稱與參數），Agent 暫停。
-2. 回答中出現確認卡片，原樣列出工具與參數。
+1. 串流送出 `approval_required`（含 `approval_id`、工具顯示名稱、實際送出的位置 `target` 與參數），Agent 暫停。
+2. 回答中出現確認卡片，列出工具、送出的位置與每一個參數；控制字元與格式字元（例如雙向文字控制、零寬字元）以 `⟦U+…⟧` 標示。
 3. 發問者按下「核准執行」或「拒絕」，前端呼叫 `POST /api/chat/approvals/{approval_id}`，串流接著送出 `approval_resolved`。
 4. 核准才執行；拒絕或 300 秒未回應時，模型收到「使用者未核准」，並被要求不要再次呼叫同一工具。
 
@@ -167,12 +170,16 @@ Agent 可以自己查資料，但不會自己替你送出申請、刪除紀錄�
 
 ### 安全設計
 
-- **認證**：RSA-2048 簽署的 JWT 存取權杖（RSA 金鑰無法載入時拒絕啟動），每次請求都以資料庫中的帳號狀態與權限為準；重新整理權杖存於 HttpOnly Cookie 且只能使用一次；登出時兩者寫入撤銷名單；密碼以 Argon2 雜湊（舊的 bcrypt 雜湊在登入時自動升級）。
-- **出站請求**：OpenAPI 規格網址、`web_fetch`、自訂 API 工具與 MCP HTTP 傳輸都經 `ssrf_protection.py` 驗證，每一次轉址都重新檢查並把連線固定在驗證過的 IP，阻擋內網、雲端中繼資料端點與危險連接埠。
-- **資源上限**：請求本文、訊息長度、附件數量與大小、工具結果、同時串流數與附件儲存量都有上限，詳見 [資源上限](docs/configuration.md#資源上限)。
+- **認證**：RSA-2048 簽署的 JWT 存取權杖（RSA 金鑰無法載入時拒絕啟動），每次請求都以資料庫中的帳號狀態與權限為準；重新整理權杖存於 HttpOnly Cookie 且只能使用一次；登出時兩者寫入撤銷名單；變更密碼後，該帳號先前簽發的所有權杖立即失效；密碼以 Argon2 雜湊（舊的 bcrypt 雜湊在登入時自動升級）。
+- **登入與註冊**：同一登入識別或同一來源位址在時間視窗內失敗達門檻後暫停登入，回傳 `429` 與 `Retry-After`（門檻由 `LOGIN_*` 設定）；`ALLOW_REGISTRATION=false` 時不開放自行註冊，帳號由管理員以 `scripts/create_user.py` 建立。
+- **出站請求**：OpenAPI 規格網址、`web_fetch`、自訂 API 工具與 MCP HTTP 傳輸都經 `ssrf_protection.py` 驗證，每一次轉址都重新檢查並把連線固定在驗證過的 IP，阻擋內網、雲端中繼資料端點與危險連接埠；使用者提供的網址與管理員設定的端點各用一個 DNS 執行緒池。
+- **工具憑證與參數**：工具憑證以 `TOOL_SECRETS_KEY`（Fernet）加密存放，管理 API 不再讀出；自訂 API 工具只接受 `parameters_schema` 宣告的參數，其他參數回傳 `400`。
+- **資源上限**：請求本文、訊息長度、附件數量與大小、聊天附件的解析量、工具結果、同時串流數與附件儲存量都有上限，詳見 [資源上限](docs/configuration.md#資源上限)。
 - **錯誤代碼**：未預期例外只對外回傳隨機錯誤代碼，完整堆疊只寫入伺服器日誌（CWE-209 / CWE-497）。
 - **日誌脫敏**：物件遞迴與正規表示式雙層遮罩，密碼、權杖與 Authorization 標頭一律呈現為 `[REDACTED]`。
-- **其他**：安全回應標頭、依來源 IP 的速率限制（預設不採信 `X-Forwarded-For`，信任的反向代理以 `FORWARDED_ALLOW_IPS` 指定）、CORS 白名單、檔名與路徑遍歷檢查、前端反點擊劫持。
+- **相依套件**：後端 `requirements.txt` 以雜湊鎖定所有套件的版本，安裝時驗證雜湊；前端提交 `bun.lock` 並設定 `frozenLockfile = true`。
+- **部署**：compose 的 PostgreSQL 以非超級使用者連線；`HOST`、`RELOAD`、`COOKIE_SECURE` 必須明確設定；互動式 API 文件只在 `ENABLE_API_DOCS=true` 時提供。
+- **其他**：安全回應標頭、依來源 IP 的速率限制（預設不採信 `X-Forwarded-For`，信任的反向代理以 `FORWARDED_ALLOW_IPS` 指定）、CORS 白名單、檔名與路徑遍歷檢查、前端反點擊劫持與建置時寫入 `index.html` 的 CSP。
 
 #### 防護對照
 
@@ -181,22 +188,33 @@ Agent 可以自己查資料，但不會自己替你送出申請、刪除紀錄�
 | 文件或網頁夾帶提示注入 | 工具結果包在每次提問 id 不同的 `<untrusted_tool_result>` 標記內；`web_fetch` 只能讀使用者訊息或本次工具結果中出現過的完整網址 | `rag/research_session.py` |
 | SSRF 與 DNS rebinding | 協定、連接埠、主機名稱、IP 與 DNS 結果逐跳驗證，連線固定在核可的 IP | `core/ssrf_protection.py` |
 | Agent 擅自改動外部系統 | 有副作用的工具呼叫前由發問者核准 | `rag/tool_approval.py` |
-| 工具設定被濫用 | 工具管理只限管理員；`stdio` 子行程不繼承後端金鑰 | `api/api_tools.py`、`api/mcp.py`、`services/mcp_service.py` |
+| 工具設定被濫用 | 工具管理只限管理員；`stdio` 子行程不繼承後端金鑰，在空的暫存目錄執行 | `api/api_tools.py`、`api/mcp.py`、`services/mcp_service.py` |
+| 模型夾帶工具沒有開放的參數 | 自訂 API 工具只接受 `parameters_schema` 宣告的參數；工具網址中固定的查詢參數不可覆寫 | `api/api_tools.py` |
+| 資料庫或備份外流時洩漏工具憑證 | 自訂 API 工具的標頭與認證設定、MCP 伺服器的環境變數與標頭以 `TOOL_SECRETS_KEY` 加密存放，管理 API 只回傳遮蔽字樣 | `core/tool_secrets.py` |
 | 帳號停用後權杖仍有效 | 每次請求依 `sub` 讀取帳號狀態與角色，重新整理權杖只能使用一次 | `core/jwt_auth.py`、`api/auth.py` |
-| 資源耗盡 | 請求本文、附件、工具結果、串流數與密碼雜湊數都有上限 | `core/limits.py`、`core/body_limit.py` |
+| 權杖外洩後持續換發 | 變更密碼時更新 `users.tokens_valid_after`，先前簽發的存取與重新整理權杖一律無效 | `core/jwt_auth.py`、`crud/crud_user.py` |
+| 密碼猜測 | 依登入識別與來源位址分別計數，達門檻後暫停登入並回傳 `429` | `core/login_throttle.py` |
+| 任何人都能註冊並使用知識庫與工具 | `ALLOW_REGISTRATION=false` 時註冊回傳 `403`，帳號由管理員建立 | `api/auth.py`、`backend/scripts/create_user.py` |
+| 資源耗盡 | 請求本文、附件與附件解析量、工具結果、串流數與密碼雜湊數都有上限 | `core/limits.py`、`core/body_limit.py` |
 | 內部資訊外洩 | 對外只回錯誤代碼，日誌雙層脫敏並限制欄位長度 | `core/error_response.py`、`core/security_logging.py` |
+| SQL 注入進一步執行系統指令 | compose 的 PostgreSQL 以非超級使用者連線，不能以 `COPY ... TO PROGRAM` 執行指令或讀取伺服器檔案 | `backend/init-app-role.sh` |
+| 注入的 HTML 執行腳本 | 建置時把 CSP 寫入 `index.html`，只允許建置產物與內嵌腳本雜湊 | `frontend/vite.config.js` |
+| 安裝到被竄改或未經審查的套件版本 | 後端依雜湊安裝 `requirements.txt`，前端依凍結的 `bun.lock` 安裝 | `backend/requirements.in`、`frontend/bun.lock` |
 
 #### 主要資源上限
 
 | 項目 | 上限 | 超過時 |
 |---|---|---|
-| 一般請求本文 | 1 MiB（帶有效權杖的聊天送出與文件上傳另計） | `413` |
+| 一般請求本文 | 1 MiB（帶有效權杖的聊天送出、權杖帶有 `is_admin` 的文件上傳另計） | `413` |
 | 單則聊天訊息 | 20,000 字 | `422` |
 | 每則訊息的附件 | 5 個，單檔 15 MiB、合計 20 MiB | `422` |
+| 聊天附件的解析量 | docx／pptx 建成 DOM 的 XML 合計 8 MiB，解壓合計 64 MiB，成員 10,000 個 | 不讀取該附件，並告知模型 |
+| 同時解析的聊天附件 | 每個後端行程 2 個 | 排隊等候 |
 | 每位使用者的附件儲存量 | 200 MiB | `413` |
 | 每位使用者同時進行的回答串流 | 2 個 | `429` |
 | 單次工具結果放進模型 | 20,000 字 | 截斷 |
 | 待核准的工具呼叫 | 300 秒 | 視為拒絕 |
+| 登入失敗 | 同一登入識別 `LOGIN_MAX_FAILURES_PER_ACCOUNT` 次、同一來源位址 `LOGIN_MAX_FAILURES_PER_ADDRESS` 次（`LOGIN_FAILURE_WINDOW_SECONDS` 秒內） | `429`，暫停登入 `LOGIN_LOCKOUT_SECONDS` 秒 |
 
 完整清單見 [資源上限](docs/configuration.md#資源上限)。
 
@@ -206,7 +224,7 @@ Agent 可以自己查資料，但不會自己替你送出申請、刪除紀錄�
 - 淺色、深色與跟隨系統三種外觀，第一次繪製前套用，不會閃白。
 - 鍵盤與讀螢幕軟體可完整操作，文字對比達 WCAG AA；手機版面單列頂欄、聊天頁固定一個視窗高度。
 - 刪除前一律確認，網路離線與恢復時提示，非管理員進入管理頁時顯示「沒有權限」頁面。
-- 回答中的 Markdown 圖片顯示為點擊後才在新分頁開啟的連結，不會自動向外部主機載入。
+- 回答中的 Markdown 圖片顯示為點擊後才在新分頁開啟的連結，不會自動向外部主機載入；外部連結在新分頁開啟並標示實際主機。
 
 ## 畫面預覽
 
@@ -361,6 +379,7 @@ python -m venv .venv
 # Linux / macOS
 source .venv/bin/activate
 
+# requirements.txt 鎖定所有套件的版本與雜湊，安裝時逐一驗證
 pip install -r requirements.txt
 cp .env.example .env
 ```
@@ -368,10 +387,16 @@ cp .env.example .env
 啟動前先編輯 `backend/.env`：
 
 1. **資料庫**：範本的 `DATABASE_URL` 指向 PostgreSQL；零依賴啟動請改為 `DATABASE_URL=sqlite:///./chatbot.db`。
-2. **金鑰**：把 `ADMIN_API_KEY` 換成隨機字串，可用 `python -c "import secrets; print(secrets.token_urlsafe(32))"` 產生。JWT 一律以 `backend/keys/` 的 RSA 金鑰簽署，不需要另設簽署密鑰。
+2. **金鑰**：把 `ADMIN_API_KEY` 換成隨機字串，可用 `python -c "import secrets; print(secrets.token_urlsafe(32))"` 產生。`TOOL_SECRETS_KEY` 要換成每個部署自行產生的 Fernet 金鑰（範本值不是有效的金鑰，沒換掉時後端拒絕啟動）：
+
+   ```bash
+   python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+   ```
+
+   JWT 一律以 `backend/keys/` 的 RSA 金鑰簽署，不需要另設簽署密鑰。
 3. **模型**：使用本機 Ollama 時保持 `LLM_API_BASE=http://localhost:11434`；使用雲端模型時填入對應的 API 金鑰，使用 Claude 另需 `ANTHROPIC_MAX_TOKENS`。
 
-範本已包含其餘必填設定，保持範本值即可啟動。接著啟動後端：
+其餘必填設定範本都已提供，在本機開發時可保持範本值：`HOST=127.0.0.1` 只接受本機連線、`RELOAD=false`、`COOKIE_SECURE=false`（以 HTTPS 提供服務時必須改為 `true`）、`ENABLE_API_DOCS=false`、`ALLOW_REGISTRATION=false`（第一位管理員見步驟 4），以及登入失敗節流的四個門檻，各項說明見 [設定](#設定)。接著啟動後端：
 
 ```bash
 python main.py
@@ -380,7 +405,7 @@ python main.py
 首次啟動會自動建立資料表、產生 JWT 用的 RSA 金鑰（`backend/keys/`，後端帳號需能寫入；金鑰無法載入時後端拒絕啟動），並下載嵌入與重排模型。啟動完成後：
 
 - API：`http://localhost:8001`
-- 互動式 API 文件（Swagger UI）：`http://localhost:8001/docs`
+- 互動式 API 文件（Swagger UI）：`http://localhost:8001/docs`，只在 `ENABLE_API_DOCS=true` 時提供（範本為 `false`，對外服務時請保持關閉）
 
 > [!NOTE]
 > `init_db.py` 是替舊版 PostgreSQL 資料庫補欄位與索引的相容腳本，全新安裝不需要執行；SQLite 也不支援其中的 `ADD COLUMN IF NOT EXISTS` 語法。
@@ -395,6 +420,8 @@ bun install
 bun run dev
 ```
 
+`bun install` 只依版本庫中的 `bun.lock` 安裝（`frontend/bunfig.toml` 設定 `frozenLockfile = true`），`bun.lock` 與 `package.json` 不一致時直接失敗。
+
 以瀏覽器開啟 `http://localhost:3000`。沒有 `frontend/.env` 時，前端呼叫相對路徑 `/api`，由 Vite 開發伺服器代理到 `http://127.0.0.1:8001`，不需要設定 CORS。若複製了 `frontend/.env.example`（`PORT=3001`、直接呼叫後端），改開 `http://localhost:3001`。
 
 > [!NOTE]
@@ -402,18 +429,23 @@ bun run dev
 
 ### 4. 建立第一位管理員
 
-「知識庫」、「AI 工具」與「管理後台」只限管理員，而系統不會預先建立管理員帳號：
+「知識庫」、「AI 工具」與「管理後台」只限管理員，而系統不會預先建立管理員帳號。範本的 `ALLOW_REGISTRATION=false` 不開放自行註冊（登入頁不顯示註冊入口，`POST /api/auth/register` 回傳 `403`），帳號由管理員以 `scripts/create_user.py` 建立：
 
-1. 在前端「註冊」頁建立帳號。密碼至少 8 個字元，需包含大寫字母、小寫字母與數字。
-2. 在 `backend/`（已啟用虛擬環境）執行下列指令，把 `your_username` 換成剛註冊的使用者名稱：
+1. 在 `backend/`（已啟用虛擬環境）執行下列指令，依提示輸入兩次密碼。使用者名稱 3 至 50 字，只能包含字母、數字、底線與連字號；密碼至少 8 個字元，需包含大寫字母、小寫字母與數字。
 
    ```bash
-   python -c "from sqlalchemy import text; from app.models.database import engine; conn = engine.connect(); conn.execute(text('UPDATE users SET is_admin = :flag WHERE username = :name'), {'flag': True, 'name': 'your_username'}); conn.commit()"
+   python scripts/create_user.py --username admin --email admin@example.com --admin
    ```
 
-3. 登出後重新登入，導覽列就會出現管理功能。之後可在「管理後台」直接把其他使用者設為管理員。
+2. 在前端以這組帳號登入，導覽列就會出現管理功能。其他帳號同樣以這個腳本建立（不加 `--admin` 即為一般使用者），也可以在「管理後台」把既有使用者設為管理員。
 
-這個指令透過後端的資料庫設定執行，SQLite 與 PostgreSQL 都適用。
+密碼以互動方式輸入，不會留在殼層歷史與行程清單中。腳本套用與註冊相同的規則，並透過後端的設定與資料庫連線執行，SQLite 與 PostgreSQL 都適用；請在 `backend/` 執行，`sqlite:///./chatbot.db` 這類相對路徑才會指向後端使用的資料庫。
+
+`ALLOW_REGISTRATION=true` 時，也可以先在前端「註冊」頁建立帳號，再在 `backend/` 執行下列指令把它設為管理員（把 `your_username` 換成剛註冊的使用者名稱），登出後重新登入：
+
+```bash
+python -c "from sqlalchemy import text; from app.models.database import engine; conn = engine.connect(); conn.execute(text('UPDATE users SET is_admin = :flag WHERE username = :name'), {'flag': True, 'name': 'your_username'}); conn.commit()"
+```
 
 ### 5. 上傳文件並開始提問
 
@@ -422,11 +454,13 @@ bun run dev
 
 ### 使用 PostgreSQL（選用）
 
-`backend/docker-compose.yml` 提供 PostgreSQL 17，初始化時會套用 `init.sql`。先在 `backend/.env` 設定資料庫超級使用者的密碼（必填，未設定時 compose 拒絕啟動），並讓 `DATABASE_URL` 使用同一組密碼：
+`backend/docker-compose.yml` 提供 PostgreSQL 17。資料卷第一次初始化時依序執行 `init.sql`（建立資料表）與 `init-app-role.sh`（建立後端連線用的非超級使用者，並把資料表交給它擁有）。先在 `backend/.env` 設定下列三項（缺少任一項時 compose 拒絕啟動），兩組密碼請用不同的隨機字串，並讓 `DATABASE_URL` 使用應用程式帳號：
 
 ```dotenv
-POSTGRES_PASSWORD=<隨機字串>
-DATABASE_URL=postgresql+psycopg2://postgres:<同一組隨機字串>@localhost:7690/chatbot
+POSTGRES_PASSWORD=<超級使用者 postgres 的密碼>
+POSTGRES_APP_USER=askmiao_app
+POSTGRES_APP_PASSWORD=<應用程式帳號的密碼>
+DATABASE_URL=postgresql+psycopg2://askmiao_app:<應用程式帳號的密碼>@localhost:7690/chatbot
 ```
 
 接著啟動容器：
@@ -436,16 +470,28 @@ cd backend
 docker compose up -d
 ```
 
-容器只在本機回送位址 `127.0.0.1:7690` 開放，區網與公網都連不到。密碼含 `@`、`:`、`/` 等字元時，`DATABASE_URL` 中需改寫成百分比編碼。
+容器只在本機回送位址 `127.0.0.1:7690` 開放，區網與公網都連不到。`POSTGRES_PASSWORD` 只供 compose 與資料庫管理使用，後端不讀取；後端以非超級使用者連線，即使出現 SQL 注入也無法執行系統指令或讀取伺服器檔案。密碼含 `@`、`:`、`/` 等字元時，`DATABASE_URL` 中需改寫成百分比編碼。
+
+以舊版 compose 初始化的資料卷不會自動建立應用程式帳號：設定上述變數並以 `docker compose up -d --wait` 重建容器、等它就緒後，執行一次 `docker compose exec postgres bash /docker-entrypoint-initdb.d/20-app-role.sh`，詳見 [升級指南](docs/upgrading.md#從-400-升級到未發行版本)。
 
 ## 設定
 
-後端設定集中在 `backend/.env`，以下 10 項沒有預設值，缺少任一項後端就無法啟動（範本已提供建議值）：
+後端設定集中在 `backend/.env`，以下 20 項沒有預設值，缺少任一項後端就無法啟動（範本已提供建議值，`TOOL_SECRETS_KEY` 須自行產生）：
 
 | 變數 | 範本值 | 說明 |
 |---|---|---|
 | `DATABASE_URL` | PostgreSQL 範例 | 資料庫連線字串；SQLite 用 `sqlite:///./chatbot.db` |
 | `ADMIN_API_KEY` | 佔位字串 | 管理用 API 金鑰（目前沒有路由使用，但設定驗證要求此值） |
+| `TOOL_SECRETS_KEY` | 佔位字串（不是有效的金鑰） | 加密工具憑證的 Fernet 金鑰，啟動時驗證格式；更換後已儲存的工具憑證需要重新輸入 |
+| `ALLOW_REGISTRATION` | `false` | 是否開放自行註冊；關閉時帳號以 `scripts/create_user.py` 建立 |
+| `LOGIN_MAX_FAILURES_PER_ACCOUNT` | `5` | 同一登入識別（不分大小寫）在視窗內失敗達此次數即暫停登入（≥ 1） |
+| `LOGIN_MAX_FAILURES_PER_ADDRESS` | `20` | 同一來源位址在視窗內失敗達此次數即暫停登入（≥ 1）；經由代理連線的使用者共用同一個位址 |
+| `LOGIN_FAILURE_WINDOW_SECONDS` | `900` | 計算登入失敗次數的視窗秒數（≥ 1） |
+| `LOGIN_LOCKOUT_SECONDS` | `900` | 暫停登入的秒數（≥ 1），期間回傳 `429` 與 `Retry-After` |
+| `HOST` | `127.0.0.1` | `python main.py` 的監聽位址；容器或其他主機上的反向代理需要連入時才改為 `0.0.0.0` |
+| `RELOAD` | `false` | 程式碼變更時自動重新載入，只在開發時設為 `true` |
+| `COOKIE_SECURE` | `false` | 重新整理權杖 Cookie 是否只經 HTTPS 傳送；以 HTTPS 提供服務時必須為 `true` |
+| `ENABLE_API_DOCS` | `false` | 是否提供 `/docs`、`/redoc` 與 `/openapi.json`；對外服務時請保持 `false` |
 | `ENABLE_WEB_SEARCH` | `true` | 是否提供 `web_search` 與 `web_fetch` |
 | `AGENT_MAX_TURNS` | `5` | 單次提問的工具呼叫輪數上限（≥ 1） |
 | `CONVERSATION_HISTORY_MESSAGES` | `6` | 帶入的前文訊息數（0 表示不帶） |
@@ -466,7 +512,7 @@ docker compose up -d
 | `CHUNK_SIZE`、`CHUNK_OVERLAP` | 切塊長度與重疊（範本 300 / 100） |
 | `HF_HOME`、`HF_HUB_OFFLINE` | 模型快取位置與離線模式 |
 | `ALLOWED_ORIGINS` | CORS 允許來源（前端直接呼叫後端時需要） |
-| `FORWARDED_ALLOW_IPS` | 會覆寫 `X-Forwarded-For` 的反向代理位址；未設定時速率限制以實際連線對端計算 |
+| `FORWARDED_ALLOW_IPS` | 會覆寫 `X-Forwarded-For` 的反向代理位址；未設定時速率限制與依位址的登入節流都以實際連線對端計算 |
 
 所有設定（含預設值、範本值、供應商路由規則、資源上限與前端環境變數）請見 **[設定參考](docs/configuration.md)**。
 
@@ -484,6 +530,8 @@ AskMiao/
 │   │   │   ├── lifespan.py           # 啟動流程：建表、初始化 RAG、上傳檔監看
 │   │   │   ├── llm_client.py         # 五家供應商的統一呼叫層（工具呼叫、串流）
 │   │   │   ├── jwt_auth.py           # RSA JWT、Argon2 密碼雜湊、撤銷名單檢查
+│   │   │   ├── login_throttle.py     # 登入失敗節流（依登入識別與來源位址）
+│   │   │   ├── tool_secrets.py       # 工具憑證加密與管理 API 遮蔽
 │   │   │   ├── limits.py             # 資源上限常數（請求本文、附件、工具結果、日誌等）
 │   │   │   ├── body_limit.py         # 請求本文大小上限中介層
 │   │   │   ├── ssrf_protection.py    # 出站網址驗證、逐跳 SSRF 檢查與連線 IP 固定
@@ -506,12 +554,14 @@ AskMiao/
 │   │   └── tasks/uploads_watcher.py  # 上傳檔遺失監看（只記警告）
 │   ├── config/domain_profile.json    # 領域設定檔
 │   ├── eval/                         # 檢索評估問答集
-│   ├── scripts/                      # 維運腳本
+│   ├── scripts/                      # 維運腳本（含建立帳號的 create_user.py）
 │   ├── tests/                        # pytest 測試
-│   ├── docker-compose.yml            # 選用的 PostgreSQL 17（本機 127.0.0.1:7690，需設 POSTGRES_PASSWORD）
+│   ├── docker-compose.yml            # 選用的 PostgreSQL 17（本機 127.0.0.1:7690，需設 POSTGRES_PASSWORD 與 POSTGRES_APP_*）
 │   ├── init.sql                      # PostgreSQL 初始化結構
+│   ├── init-app-role.sh              # PostgreSQL 後端連線帳號（非超級使用者）
 │   ├── init_db.py                    # 舊版 PostgreSQL 資料庫的相容補丁
-│   ├── requirements.txt
+│   ├── requirements.in               # 直接依賴；新增或升級套件時修改這個檔案
+│   ├── requirements.txt              # 由 requirements.in 產生，鎖定版本與雜湊
 │   └── .env.example                  # 後端設定範本
 ├── frontend/                         # React 19 + TypeScript + Vite 8
 │   ├── src/
@@ -522,6 +572,7 @@ AskMiao/
 │   │   ├── contexts/ThemeContext.tsx # 淺色／深色／跟隨系統
 │   │   └── styles/                   # 設計 token 與 reset
 │   ├── package.json                  # 前端版本號與指令
+│   ├── bun.lock                      # 鎖定的前端相依套件（bun install 不會改寫）
 │   └── .env.example
 ├── site/                             # GitHub Pages 介紹頁（純靜態）
 ├── docs/
@@ -561,12 +612,25 @@ bun x tsc --noEmit   # TypeScript 型別檢查
 bun run build        # 產出 build/
 ```
 
+`bun run build` 會把 CSP 以 `<meta>` 寫入 `build/index.html`：腳本只允許建置產物與 `index.html` 內嵌腳本的雜湊，`connect-src` 依 `VITE_API_BASE`／`VITE_API_URL` 加入 API 來源，因此變更這兩個設定後需要重新建置。開發伺服器不套用這份 CSP。
+
+### 相依套件
+
+- **後端**：`requirements.in` 只列直接依賴；`requirements.txt` 由它產生，鎖定每個套件（含間接依賴）的版本與雜湊，`pip install -r requirements.txt` 會逐一驗證。新增或升級套件時修改 `requirements.in`，在 `backend/` 以 uv 重新產生 `requirements.txt`，兩個檔案一起提交：
+
+  ```bash
+  uv pip compile requirements.in --universal --python-version 3.10 --generate-hashes -o requirements.txt
+  ```
+
+- **前端**：`bun.lock` 隨版本庫提交，`frontend/bunfig.toml` 設定 `frozenLockfile = true`：`bun install` 只依 `bun.lock` 安裝，與 `package.json` 不一致時直接失敗，`bun add` 也無法改寫 `bun.lock`。新增或升級套件時，暫時把 `frozenLockfile` 改為 `false` 更新 `bun.lock`，再改回 `true`，並把 `package.json` 與 `bun.lock` 一起提交。
+
 ### 維運腳本
 
 在 `backend/` 以 `python scripts/<腳本>` 執行：
 
 | 腳本 | 用途 |
 |---|---|
+| `create_user.py` | 建立帳號（含第一位管理員）：`--username`、`--email` 必填，`--admin` 建立管理員，密碼以互動方式輸入；見 [建立第一位管理員](#4-建立第一位管理員) |
 | `evaluate_retrieval.py` | 以問答集評估檢索品質並比較相關性門檻（唯讀，可與後端同時執行），見 [校準相關性門檻](docs/configuration.md#校準相關性門檻) |
 | `reprocess_existing_docs.py` | 離線重建：重新擷取文字、生成摘要、切塊並寫入索引。請先停止後端 |
 | `reset_faiss.py` | 刪除 `backend/data` 內的 FAISS 與 BM25 索引檔，再依 `rag_chunks` 重新計算（會先詢問確認） |
@@ -579,7 +643,14 @@ bun run build        # 產出 build/
 <details>
 <summary><b>後端啟動失敗，出現 <code>Field required</code></b></summary>
 
-`.env` 缺少必填設定，錯誤訊息會列出欄位名稱。對照 [設定](#設定) 補上即可；從 2.x 升級請參考 [升級指南](docs/upgrading.md)。
+`.env` 缺少必填設定，錯誤訊息會列出欄位名稱。對照 [設定](#設定) 補上即可；4.0.0 之後新增了 `ALLOW_REGISTRATION`、`TOOL_SECRETS_KEY`、`HOST`、`RELOAD`、`COOKIE_SECURE`、`ENABLE_API_DOCS` 與四個 `LOGIN_*` 設定，從舊版升級請參考 [升級指南](docs/upgrading.md)。
+
+</details>
+
+<details>
+<summary><b>後端啟動失敗，訊息為 <code>TOOL_SECRETS_KEY 必須是 Fernet 金鑰</code></b></summary>
+
+`TOOL_SECRETS_KEY` 仍是範本的佔位字串，或不是有效的 Fernet 金鑰。以 `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"` 產生一組填入 `backend/.env`。請妥善保存這把金鑰：換成新金鑰後，原本儲存的自訂 API 工具與 MCP 伺服器憑證無法解密，需要在「AI 工具」頁重新輸入。
 
 </details>
 
@@ -623,6 +694,7 @@ JWT 一律以 RSA 金鑰簽署，金鑰無法載入或產生時後端拒絕啟�
 
 - 沒有 `frontend/.env` 時，前端經 Vite 代理連到 `http://127.0.0.1:8001`，請確認後端已在該埠啟動。
 - 設定了 `VITE_API_BASE` 等絕對網址時，瀏覽器會直接呼叫後端，後端的 `ALLOWED_ORIGINS` 必須包含前端的來源（例如 `http://localhost:3001`）。
+- 使用 `bun run build` 的建置產物時，CSP 的 `connect-src` 只允許建置當時 `VITE_API_BASE`／`VITE_API_URL` 的來源；變更 API 位址後請重新建置。
 
 </details>
 
@@ -634,9 +706,9 @@ Vite 開發與預覽伺服器只監聽 `localhost`，這是刻意的限制（開
 </details>
 
 <details>
-<summary><b>Windows 上 <code>bun install</code> 出現 EPERM，或在 frontend 內產生名為 <code>~</code> 的資料夾</b></summary>
+<summary><b><code>bun install</code> 失敗，訊息為 <code>lockfile had changes, but lockfile is frozen</code></b></summary>
 
-`frontend/bunfig.toml` 的快取路徑 `~/.bun/install/cache` 在 Windows 上不會展開。請改為指定快取目錄：`bun install --cache-dir <快取路徑>`。
+`frontend/bunfig.toml` 設定 `frozenLockfile = true`，`package.json` 與 `bun.lock` 不一致時安裝直接失敗，不會改寫鎖定的版本。請確認兩個檔案來自同一個版本；有意新增或升級套件時，依 [相依套件](#相依套件) 更新 `bun.lock` 並一起提交。
 
 </details>
 
@@ -655,6 +727,16 @@ MCP 伺服器預設需要核准，自訂 API 工具則依 HTTP 方法決定。�
 </details>
 
 <details>
+<summary><b>登入時回傳 <code>429</code>，訊息為「登入失敗次數過多，請稍後再試」</b></summary>
+
+同一登入識別（使用者名稱或電子郵件，不分大小寫）在 `LOGIN_FAILURE_WINDOW_SECONDS` 秒內失敗 `LOGIN_MAX_FAILURES_PER_ACCOUNT` 次，或同一來源位址失敗 `LOGIN_MAX_FAILURES_PER_ADDRESS` 次後，該識別或位址的登入暫停 `LOGIN_LOCKOUT_SECONDS` 秒，期間即使密碼正確也不接受；回應的 `Retry-After` 標頭是剩餘秒數。
+
+- 到期後自動解除。計數只存在後端行程的記憶體中，重新啟動後端也會清除。
+- 經由 Vite 開發代理或反向代理連線時，所有使用者的失敗次數都累計在同一個來源位址上，達到 `LOGIN_MAX_FAILURES_PER_ADDRESS` 時所有人都暫停登入。請讓依位址的門檻比依帳號的寬；前方的反向代理會覆寫 `X-Forwarded-For` 時，可設定 `FORWARDED_ALLOW_IPS`，改以真實用戶端位址計數。
+
+</details>
+
+<details>
 <summary><b>API 回傳 <code>429 Too Many Requests</code></b></summary>
 
 - 速率限制依實際連線的來源 IP 計算，預設每 60 秒 60 次。經由 Vite 開發代理或反向代理時所有使用者共用同一個 IP，可視需要調高 `RATE_LIMIT_PER_MINUTE`；前方的反向代理會覆寫 `X-Forwarded-For` 時，可把代理位址設為 `FORWARDED_ALLOW_IPS`，改以真實用戶端 IP 計算。
@@ -669,7 +751,7 @@ MCP 伺服器預設需要核准，自訂 API 工具則依 HTTP 方法決定。�
 | [API 參考](docs/api.md) | 所有端點的權限、請求與回應格式、SSE 事件規格與錯誤代碼 |
 | [系統架構與設計](docs/architecture.md) | 分層架構、資料模型、檢索管線、Agent 迴圈、認證與安全設計 |
 | [設定參考](docs/configuration.md) | 每個環境變數的預設值與作用、供應商路由、門檻校準、前端設定 |
-| [升級指南](docs/upgrading.md) | 從 2.x 升級到 3.0.0、從 3.0.0 升級到 4.0.0 的步驟、回退方式與常見問題 |
+| [升級指南](docs/upgrading.md) | 從 2.x 升級到 3.0.0、從 3.0.0 升級到 4.0.0、從 4.0.0 升級到未發行版本的步驟、回退方式與常見問題 |
 | [架構決策紀錄（ADR）](docs/adr/README.md) | 重大設計的背景、取捨與後續修訂 |
 | [llms.txt](llms.txt) | 給 AI Agent 讀的檔案地圖、系統約束與驗證方式 |
 | [版本變更紀錄](CHANGELOG.md) | 每個版本的新增、變更、移除與修正 |

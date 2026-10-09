@@ -1059,7 +1059,7 @@ AZURE_OPENAI_DEPLOYMENT=gpt-6-sol,gpt-6-luna</pre>
             <p>建立虛擬環境、安裝依賴後啟動 FastAPI（8001 埠），資料表會在第一次啟動時自動建立。第一次啟動也會下載嵌入與重排模型（約 1.2 GB）；重排模型是必要元件，載入失敗時後端不會啟動。</p>
             <div class="note">
               <svg class="icon" aria-hidden="true"><use href="#i-warning-circle"></use></svg>
-              <span><b>先改 .env：</b><span class="mono">.env.example</span> 的 DATABASE_URL 預設指向 PostgreSQL，零依賴啟動請改成 <span class="mono">sqlite:///./chatbot.db</span>，並把 ADMIN_API_KEY 換成隨機字串。LLM 提供商金鑰擇一設定即可。JWT 一律以 <span class="mono">backend/keys/</span> 的 RSA 金鑰簽署，第一次啟動自動產生，該目錄須可寫入。</span>
+              <span><b>先改 .env：</b><span class="mono">.env.example</span> 的 DATABASE_URL 指向 PostgreSQL，零依賴啟動請改成 <span class="mono">sqlite:///./chatbot.db</span>，並把 ADMIN_API_KEY 換成隨機字串。TOOL_SECRETS_KEY 必須換成自行產生的 Fernet 金鑰（程式碼中的 <span class="mono">py -c</span> 指令會印出一組），範本值不是有效的金鑰，沒換掉時後端不會啟動。LLM 提供商金鑰擇一設定即可。JWT 一律以 <span class="mono">backend/keys/</span> 的 RSA 金鑰簽署，第一次啟動自動產生，該目錄須可寫入。</span>
             </div>
           </div>
           <div class="codebox">
@@ -1069,6 +1069,8 @@ AZURE_OPENAI_DEPLOYMENT=gpt-6-sol,gpt-6-luna</pre>
 <span data-cmd>.\.venv\Scripts\Activate.ps1</span>
 <span data-cmd>pip install -r requirements.txt</span>
 <span data-cmd>cp .env.example .env</span>
+<span class="c"># 印出一組 Fernet 金鑰，填入 .env 的 TOOL_SECRETS_KEY</span>
+<span data-cmd>py -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"</span>
 <span data-cmd>py main.py</span></pre>
             <button class="copy" type="button" data-copy="code-backend" data-copied="false"><svg class="icon" aria-hidden="true"><use href="#i-copy"></use></svg><span>複製</span></button>
           </div>
@@ -1079,7 +1081,7 @@ AZURE_OPENAI_DEPLOYMENT=gpt-6-sol,gpt-6-luna</pre>
             <p>以 Bun 安裝依賴並啟動 Vite 開發伺服器，開啟 <span class="mono">http://localhost:3000</span> 即可登入；若沿用 <span class="mono">frontend/.env.example</span> 的 PORT=3001，則改為 3001。</p>
             <div class="note">
               <svg class="icon" aria-hidden="true"><use href="#i-info"></use></svg>
-              <span><b>第一位管理員：</b>系統不會預先建立管理員。先在註冊頁建立帳號，再依 <a href="https://github.com/Scorpio-meow/AskMiao#4-建立第一位管理員" target="_blank" rel="noopener">README 的指令</a>把它設為管理員，才看得到知識庫與 AI 工具。</span>
+              <span><b>第一位管理員：</b>系統不會預先建立管理員，範本的 <span class="mono">ALLOW_REGISTRATION=false</span> 也不開放自行註冊。請在 <span class="mono">backend/</span> 啟用虛擬環境後執行 <span class="mono">py scripts/create_user.py --username admin --email admin@example.com --admin</span>，依提示輸入兩次密碼，再以這組帳號登入，才看得到知識庫與 AI 工具。其他帳號同樣以這個腳本建立，說明見 <a href="https://github.com/Scorpio-meow/AskMiao#4-建立第一位管理員" target="_blank" rel="noopener">README</a>。</span>
             </div>
             <div class="note note--info">
               <svg class="icon" aria-hidden="true"><use href="#i-device-mobile"></use></svg>
@@ -1105,6 +1107,18 @@ AZURE_OPENAI_DEPLOYMENT=gpt-6-sol,gpt-6-luna</pre>
           <pre class="code" id="code-env"><span class="c"># 資料庫與安全</span>
 <span data-cmd>DATABASE_URL=sqlite:///./chatbot.db</span>
 <span data-cmd>ADMIN_API_KEY=請換成隨機字串</span>
+<span data-cmd>TOOL_SECRETS_KEY=請換成自行產生的 Fernet 金鑰</span>
+<span data-cmd>ALLOW_REGISTRATION=false</span>
+<span class="c"># 登入失敗節流</span>
+<span data-cmd>LOGIN_MAX_FAILURES_PER_ACCOUNT=5</span>
+<span data-cmd>LOGIN_MAX_FAILURES_PER_ADDRESS=20</span>
+<span data-cmd>LOGIN_FAILURE_WINDOW_SECONDS=900</span>
+<span data-cmd>LOGIN_LOCKOUT_SECONDS=900</span>
+<span class="c"># 伺服器</span>
+<span data-cmd>HOST=127.0.0.1</span>
+<span data-cmd>RELOAD=false</span>
+<span data-cmd>COOKIE_SECURE=false</span>
+<span data-cmd>ENABLE_API_DOCS=false</span>
 <span class="c"># Agent 與聯網</span>
 <span data-cmd>ENABLE_WEB_SEARCH=true</span>
 <span data-cmd>AGENT_MAX_TURNS=5</span>
@@ -1117,7 +1131,7 @@ AZURE_OPENAI_DEPLOYMENT=gpt-6-sol,gpt-6-luna</pre>
 <span data-cmd>DOMAIN_PROFILE_PATH=config/domain_profile.json</span></pre>
             <button class="copy" type="button" data-copy="code-env" data-copied="false"><svg class="icon" aria-hidden="true"><use href="#i-copy"></use></svg><span>複製</span></button>
           </div>
-          <p class="envref__note">其餘設定都有預設值，逐項說明見 <a href="https://github.com/Scorpio-meow/AskMiao/blob/HEAD/docs/configuration.md" target="_blank" rel="noopener">設定參考</a>。4.0.0 移除了 <span class="mono">JWT_SECRET_KEY</span> 與 <span class="mono">JWT_ALGORITHM</span>，留在 .env 中會被忽略；使用 <span class="mono">docker-compose.yml</span> 的 PostgreSQL 時必須另設 <span class="mono">POSTGRES_PASSWORD</span>。從舊版升級的步驟見 <a href="https://github.com/Scorpio-meow/AskMiao/blob/HEAD/docs/upgrading.md" target="_blank" rel="noopener">升級指南</a>。</p>
+          <p class="envref__note">其餘設定都有預設值，逐項說明見 <a href="https://github.com/Scorpio-meow/AskMiao/blob/HEAD/docs/configuration.md" target="_blank" rel="noopener">設定參考</a>。<span class="mono">TOOL_SECRETS_KEY</span> 用來加密工具憑證，每個部署各自產生；以 HTTPS 提供服務時 <span class="mono">COOKIE_SECURE</span> 必須設為 true，<span class="mono">HOST</span> 只在容器或其他主機上的反向代理需要連入時才改為 0.0.0.0。4.0.0 移除了 <span class="mono">JWT_SECRET_KEY</span> 與 <span class="mono">JWT_ALGORITHM</span>，留在 .env 中會被忽略；使用 <span class="mono">docker-compose.yml</span> 的 PostgreSQL 時必須另設 <span class="mono">POSTGRES_PASSWORD</span>（超級使用者 postgres 的密碼，只供管理用途），以及 <span class="mono">POSTGRES_APP_USER</span>、<span class="mono">POSTGRES_APP_PASSWORD</span>（後端連線用的非超級使用者，<span class="mono">DATABASE_URL</span> 使用這組帳號）。從舊版升級的步驟見 <a href="https://github.com/Scorpio-meow/AskMiao/blob/HEAD/docs/upgrading.md" target="_blank" rel="noopener">升級指南</a>。</p>
         </div>
       </details>
 

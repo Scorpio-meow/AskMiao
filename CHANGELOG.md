@@ -29,7 +29,8 @@
 >
 > - `.env` 新增 10 個必填設定：`ALLOW_REGISTRATION`、`LOGIN_MAX_FAILURES_PER_ACCOUNT`、`LOGIN_MAX_FAILURES_PER_ADDRESS`、`LOGIN_FAILURE_WINDOW_SECONDS`、`LOGIN_LOCKOUT_SECONDS`、`TOOL_SECRETS_KEY`、`HOST`、`RELOAD`、`COOKIE_SECURE`、`ENABLE_API_DOCS`，缺少任一項後端就無法啟動；`TOOL_SECRETS_KEY` 必須是各部署自行產生的 Fernet 金鑰。
 > - `HOST` 與 `RELOAD` 不再預設 `0.0.0.0` 與 `true`，`COOKIE_SECURE` 不再依 `ENVIRONMENT` 推導；`/docs`、`/redoc`、`/openapi.json` 只在 `ENABLE_API_DOCS=true` 時提供。
-> - 使用 `backend/docker-compose.yml` 時必須設定 `POSTGRES_APP_USER`、`POSTGRES_APP_PASSWORD`，`DATABASE_URL` 改用這組非超級使用者帳號；既有資料卷要執行一次 `20-app-role.sh`。
+> - 使用 `backend/docker-compose.yml` 時必須設定 `POSTGRES_APP_USER`、`POSTGRES_APP_PASSWORD`，`DATABASE_URL` 改用這組非超級使用者帳號；既有資料卷要先以新設定重建容器，再執行一次 `20-app-role.sh`。
+> - stdio MCP 子行程改在每次新建的空暫存目錄執行，`command`、`args` 中相對於後端工作目錄的路徑要改為絕對路徑。
 > - 沒有在 `parameters_schema` 宣告的工具參數一律回傳 `400`；`GET /api/external-tags`、WebSocket `/api/chat/ws/{user_id}` 已移除；`POST /api/api-tools/parse-spec` 的回應不再包含 `raw_spec`。
 > - 新增或升級後端套件改為修改 `requirements.in` 再重新產生 `requirements.txt`；`bun install` 在 `bun.lock` 與 `package.json` 不一致時會失敗。
 > - 變更密碼後，包含目前這一個在內的所有工作階段都需要以新密碼重新登入。
@@ -39,7 +40,7 @@
 #### 認證與帳號
 
 - **登入失敗節流**：同一登入識別（不分大小寫）或同一來源位址在 `LOGIN_FAILURE_WINDOW_SECONDS` 內失敗達門檻後，暫停該識別或位址的登入 `LOGIN_LOCKOUT_SECONDS` 秒，回傳 `429` 與 `Retry-After`；不存在的帳號同樣計數，鎖定期間正確密碼也不接受，回應不透露密碼是否正確（CWE-307）。
-- **變更密碼撤銷所有權杖**：`users` 新增 `tokens_valid_after`，變更密碼時更新為當下，簽發時間早於它的存取與重新整理權杖一律無效；權杖的 `iat` 保留微秒，同一秒內稍早簽發的權杖也會失效，被盜的重新整理權杖不能在受害者改密碼後繼續換發。`POST /api/auth/change-password` 與帶新密碼的 `PUT /api/auth/me` 會清除重新整理權杖 Cookie（CWE-613）。
+- **變更密碼撤銷所有權杖**：`users` 新增 `tokens_valid_after`，變更密碼時更新為當下，簽發時間早於它的存取與重新整理權杖一律無效；權杖的 `iat` 保留微秒，同一秒內稍早簽發的權杖也會失效，被盜的重新整理權杖不能在受害者改密碼後繼續換發。`POST /api/auth/change-password` 與帶新密碼的 `PUT /api/auth/me` 會清除重新整理權杖 Cookie；回退到舊版期間建立、此欄位為空的帳號會在每次啟動時以 `created_at` 補值（CWE-613）。
 - **可以關閉自行註冊**：新增必填設定 `ALLOW_REGISTRATION`，關閉時 `POST /api/auth/register` 回傳 `403` 並寫入安全日誌；帳號（含第一位管理員）改以 `scripts/create_user.py` 建立。原本任何能連到 API 的人都能註冊，查詢整個知識庫並以營運者的憑證呼叫已啟用的工具（CWE-284）。
 - **管理員使用者 API 不再回傳密碼雜湊**：`GET /api/admin/users` 與 `PUT /api/admin/users/{user_id}` 改以 `UserProfile` 篩選欄位，回應不再帶有 `hashed_password`（CWE-200）。
 - **權杖過期也能登出**：`POST /api/auth/logout` 只驗存取權杖的簽章，權杖過期時仍會撤銷重新整理權杖並清除 Cookie；仍要求 `Authorization` 標頭，跨站表單無法觸發登出（CWE-613）。
@@ -84,7 +85,8 @@
 - `GET /api/auth/registration` 回傳是否開放自行註冊；前端據此隱藏登入頁的註冊入口，註冊頁改為顯示說明。
 - `backend/scripts/create_user.py`：以互動方式輸入密碼建立帳號，套用與註冊相同的規則，`--admin` 建立管理員。
 - `backend/init-app-role.sh`（PostgreSQL 應用程式帳號，可重複執行）與 `backend/requirements.in`、`frontend/bun.lock`。
-- 管理 API 的工具與 MCP 伺服器回應新增 `credentials_unreadable`：無法以目前的金鑰解密時讓管理員重新輸入，而不是整頁失敗；此時工具測試與 MCP 探索端點回傳 `400` 說明需要重新輸入。
+- 管理 API 的工具與 MCP 伺服器回應新增 `credentials_unreadable`：無法以目前的金鑰解密時讓管理員重新輸入，而不是整頁失敗；此時工具測試與 MCP 探索端點回傳 `400` 說明需要重新輸入，「AI 工具」頁的卡片與編輯視窗也顯示提示。
+- README 與介紹頁的快速開始改為產生 `TOOL_SECRETS_KEY`、以 `scripts/create_user.py` 建立第一位管理員，並列出 20 項必填設定；[升級指南](docs/upgrading.md#從-400-升級到未發行版本) 新增本版的升級步驟。
 - 新增後端測試 `test_admin_user_api.py`、`test_login_throttle.py`、`test_registration.py`、`test_tool_secrets.py`。
 - **介紹頁「工具核准」區段**：可操作的核准卡片示範（核准、拒絕、模擬逾時），同步顯示 `approval_required`、`approval_resolved` 等 SSE 事件；另依 HTTP 方法切換自訂 API 工具的預設核准規則，規則與 `tool_approval.py` 相同。
 - 介紹頁新增 4.0.0 版本標籤與數據列、安全區段的「每個入口都有上限」資源上限表，文件導覽補上 ADR-0006。
@@ -97,6 +99,8 @@
 - 未宣告任何參數的自訂 API 工具不再接受參數；`POST /api/api-tools/parse-spec` 的回應不再包含 `raw_spec`。
 - 管理 API 回應中的工具與 MCP 憑證以 `••••••••` 顯示；`Accept`、`Content-Type` 等一般標頭與 `key_name`、`username` 等設定照常顯示。更換 `TOOL_SECRETS_KEY` 後已儲存的憑證需要重新輸入。
 - 入侵偵測只保留警報；`RateLimitMiddleware` 不再有回傳 `403` 的封鎖分支。
+- stdio MCP 子行程不再以後端的工作目錄執行，相對路徑需改為絕對路徑；HTTP MCP 只跟隨同一來源的轉址。
+- 新增或升級前端套件時，先把 `frontend/bunfig.toml` 的 `frozenLockfile` 暫時改為 `false`，以 `bun add`／`bun remove` 更新後改回 `true`，並一併提交 `package.json` 與 `bun.lock`。
 - `backend/.env.example` 新增上述必填設定，`DATABASE_URL` 範例改用 `askmiao_app`；`frontend/.env.example` 註明 `VITE_API_BASE` 會寫入 CSP 的 `connect-src`。
 
 ### 移除 (Removed)

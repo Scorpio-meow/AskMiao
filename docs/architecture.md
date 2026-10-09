@@ -2,7 +2,7 @@
 
 [繁體中文](architecture.md) | [English](architecture_en.md)
 
-> 本文件說明 AskMiao **4.0.0**的整體架構、啟動流程、資料模型、文件處理與檢索管線、Agentic RAG 研究迴圈、LLM 呼叫層、外部工具整合、認證與安全設計，以及前端架構。設計背後的取捨記錄在 [架構決策紀錄（ADR）](adr/README.md)。
+> 本文件說明 AskMiao 4.0.0 之後**未發行版本**的整體架構、啟動流程、資料模型、文件處理與檢索管線、Agentic RAG 研究迴圈、LLM 呼叫層、外部工具整合、認證與安全設計，以及前端架構（與 4.0.0 的差異見 [CHANGELOG](../CHANGELOG.md#unreleased)）。設計背後的取捨記錄在 [架構決策紀錄（ADR）](adr/README.md)。
 
 ## 目錄
 
@@ -25,7 +25,7 @@
 
 ## 1. 系統總覽
 
-AskMiao 採前後端分離架構。前端以 React 19、TypeScript 7 與 Vite 8 建構（Bun 管理套件）；後端以 FastAPI 提供 REST API 與 SSE 串流，SQLAlchemy 連接 SQLite 或 PostgreSQL。向量索引（FAISS）與關鍵字索引（Whoosh BM25）存在本機檔案，片段的權威資料存在資料庫；權杖撤銷名單、速率限制計數、同時串流數、待核准的工具呼叫與統計快取都在後端行程的記憶體中，沒有 Redis 等外部依賴。
+AskMiao 採前後端分離架構。前端以 React 19、TypeScript 7 與 Vite 8 建構（Bun 管理套件）；後端以 FastAPI 提供 REST API 與 SSE 串流，SQLAlchemy 連接 SQLite 或 PostgreSQL。向量索引（FAISS）與關鍵字索引（Whoosh BM25）存在本機檔案，片段的權威資料存在資料庫；權杖撤銷名單、速率限制與登入失敗計數、同時串流數、待核准的工具呼叫與統計快取都在後端行程的記憶體中，沒有 Redis 等外部依賴。
 
 ```mermaid
 flowchart TB
@@ -63,7 +63,7 @@ flowchart TB
         FAISS["FAISS IndexIDMap2"]
         BM25["Whoosh BM25"]
         Files["data/uploads"]
-        Mem[("行程記憶體<br/>撤銷名單、速率計數、待核准項目、快取")]
+        Mem[("行程記憶體<br/>撤銷名單、速率與登入失敗計數、待核准項目、快取")]
     end
 
     Client --> BodyLimit --> SecHeaders --> RateLimit --> CORS
@@ -90,7 +90,7 @@ flowchart TB
 | 層 | 主要模組 | 職責 |
 |---|---|---|
 | 路由 | `app/api/*.py` | 請求驗證、權限檢查、回應格式 |
-| 核心 | `app/core/*.py` | 設定、認證、LLM 呼叫、SSRF、錯誤代碼、日誌脫敏 |
+| 核心 | `app/core/*.py` | 設定、認證與登入節流、LLM 呼叫、SSRF、工具憑證加密、錯誤代碼、日誌脫敏 |
 | RAG | `app/rag/` | 片段儲存、索引、混合檢索、研究 Agent 與工具 |
 | 服務 | `app/services/` | 對話持久化、文件擷取與摘要、OpenAPI 解析、MCP 用戶端 |
 | 背景任務 | `app/tasks/uploads_watcher.py` | 定期檢查上傳檔是否遺失（只記警告） |
@@ -109,13 +109,13 @@ sequenceDiagram
     participant RAG as HybridContextualRAG
 
     Main->>Cfg: 讀取 backend/.env 與環境變數
-    Cfg->>Cfg: 驗證必填設定與數值範圍、解析相對路徑
+    Cfg->>Cfg: 驗證必填設定、數值範圍與 TOOL_SECRETS_KEY 格式，解析相對路徑
     Cfg->>Cfg: 寫出 HF_* 環境變數（載入模型前）
     Main->>Imp: 匯入路由
     Imp->>Imp: 驗證領域設定檔、載入或產生 RSA 金鑰
-    Main->>Main: 設定日誌、註冊中介軟體與路由
-    Main->>Life: uvicorn 啟動
-    Life->>Life: 建立資料表（create_all）並補上缺少的欄位（upgrade_schema）
+    Main->>Main: 設定日誌、註冊中介軟體與路由（ENABLE_API_DOCS=true 時才提供 /docs）
+    Main->>Life: uvicorn 依 HOST、PORT、RELOAD 啟動
+    Life->>Life: 建立資料表（create_all），補上缺少的欄位並加密明文的工具憑證（upgrade_schema）
     Life->>RAG: 初始化
     RAG->>RAG: 設定 jieba 詞典並計算斷詞簽章
     RAG->>RAG: 載入嵌入模型與 FAISS（舊格式改名 .legacy.bak，維度不符改名 .mismatch.bak）
@@ -128,7 +128,7 @@ sequenceDiagram
 
 | 階段 | 失敗原因 | 訊息 |
 |---|---|---|
-| 設定驗證 | 缺少必填設定、數值超出範圍、`WEB_FETCH_ALLOWED_DOMAINS` 格式錯誤 | `Field required`、`Input should be ...` 或網域格式說明 |
+| 設定驗證 | 缺少必填設定、數值超出範圍、`WEB_FETCH_ALLOWED_DOMAINS` 格式錯誤、`TOOL_SECRETS_KEY` 不是有效的 Fernet 金鑰（例如仍是範本值） | `Field required`、`Input should be ...`、網域格式說明或 `TOOL_SECRETS_KEY 必須是 Fernet 金鑰` |
 | 領域設定檔 | 檔案不存在或格式不符 | `找不到 DOMAIN_PROFILE_PATH 指定的領域設定檔`、`領域設定檔 ... 格式錯誤` |
 | RSA 金鑰 | `backend/keys/` 的金鑰無法載入或產生（任何 `ENVIRONMENT`） | 匯入 `jwt_auth.py` 時的金鑰讀取或寫入例外 |
 | jieba 詞典 | `JIEBA_DICTIONARY` 指向不存在的檔案 | `找不到 JIEBA_DICTIONARY 指定的詞典檔` |
@@ -156,6 +156,7 @@ erDiagram
         string role
         datetime created_at
         datetime last_login
+        datetime tokens_valid_after "早於此時刻簽發的權杖無效"
     }
     conversations {
         int id PK
@@ -196,7 +197,8 @@ erDiagram
         string name UK
         string method
         string url
-        text auth_config "JSON"
+        text headers "加密 JSON"
+        text auth_config "加密 JSON"
         text parameters_schema "JSON"
         text param_locations "JSON"
         bool is_enabled
@@ -207,8 +209,9 @@ erDiagram
         string name UK
         string transport_type
         string command
-        text env_vars "JSON"
+        text env_vars "加密 JSON"
         string url
+        text headers "加密 JSON"
         text discovered_tools "JSON 工具快取"
         string status
         bool is_enabled
@@ -219,9 +222,11 @@ erDiagram
 - **`rag_chunks` 是片段的權威來源**：`id` 就是 chunk_id，FAISS 與 BM25 都以它為鍵。`chunk_metadata` 保存 `source`、`document_id`、`chunk_index`、`original_filename`、`content_type`，Q&A 片段另有 `question`，結構化記錄另有 `record_index`、`author`、`link`。
 - **`messages.context_used`**：助理訊息存 `sources`、`sources_detail`、`research_trace`；使用者訊息存 `attachments`（含附件的 base64，每位使用者合計上限 200 MiB）。`/api/chat` 的回應只提供解析後的欄位，`context_used` 一律為 `null`。
 - **`requires_approval`**：自訂 API 工具與 MCP 伺服器的呼叫前核准旗標，見第 9 節。
+- **`users.tokens_valid_after`**：簽發時間早於此時刻的存取與重新整理權杖一律無效。建立帳號時等於 `created_at`（帳號刪除後 id 被重用時，舊權杖不會對應到新帳號），變更密碼時更新為當下，見第 10 節。
+- **工具憑證欄位**：`custom_api_tools` 的 `headers`、`auth_config` 與 `mcp_servers` 的 `env_vars`、`headers` 以 `TOOL_SECRETS_KEY`（Fernet）加密後存放，內容以 `fernet:` 開頭，見第 9 節。
 - **資料庫以外的檔案**：`backend/data/`（`faiss_index.bin`、`index_metadata.pkl`、`bm25_index/`、`uploads/`、`jieba_cache/`）、`backend/keys/`（JWT 金鑰對）、`backend/mcp_filesystem_sandbox/`（檔案系統 MCP 範本的根目錄）與 `backend/logs/`（日誌）。
 
-資料表在後端啟動時以 SQLAlchemy `create_all` 建立，接著由 `upgrade_schema()` 為既有資料表補上後來新增的欄位並回填（目前為兩個 `requires_approval`：API 工具依方法回填，`GET`、`HEAD`、`OPTIONS` 以外為 `true`；MCP 伺服器一律為 `true`）。新建立的 SQLite 資料庫中，`users` 與 `documents` 使用 `AUTOINCREMENT`，刪除後的 id 不會被新資料重用。`backend/init.sql` 是 PostgreSQL 容器的初始化結構。
+資料表在後端啟動時以 SQLAlchemy `create_all` 建立，接著由 `upgrade_schema()` 為既有資料表補上後來新增的欄位並回填（目前為兩個 `requires_approval`：API 工具依方法回填，`GET`、`HEAD`、`OPTIONS` 以外為 `true`；MCP 伺服器一律為 `true`；以及 `users.tokens_valid_after`，以 `created_at` 回填；此欄位為空的帳號，例如回退到舊版期間建立的，每次啟動都會補值），再把仍以明文存放的工具憑證改為加密（無法解析為 JSON 的值會清空並記下警告）。新建立的 SQLite 資料庫中，`users` 與 `documents` 使用 `AUTOINCREMENT`，刪除後的 id 不會被新資料重用。`backend/init.sql` 是 PostgreSQL 容器的初始化結構，`backend/init-app-role.sh` 接著建立後端連線用的非超級使用者並把資料表交給它擁有（見第 13 節）。
 
 ---
 
@@ -256,7 +261,7 @@ flowchart TB
 | HTML | 以 `app/core/html_text.py` 單次線性掃描去除標籤、`script`、`style` 與 `noscript` 後的文字 |
 | 其他文字檔 | 依序嘗試 UTF-8、UTF-8 BOM、Big5、GBK、GB2312、Latin-1 編碼讀取 |
 
-擷取前會依宣告的類型檢查檔頭特徵；OOXML（DOCX、PPTX、XLSX）另先檢查 ZIP 成員宣告的解壓大小（合計 ≤ 200 MiB）與壓縮比（解壓後超過 10 MiB 的成員 ≤ 100），擋下壓縮炸彈。擷取不出文字的檔案回報失敗並刪除暫存檔。SVG 去除、JSON 宣告抽取、Q&A 切分與目錄行清理都改為線性時間的實作，惡意構造的輸入不會觸發二次時間的正規式回溯。
+擷取前會依宣告的類型檢查檔頭特徵。管理員上傳與聊天附件各用一組資源預算（`app/core/limits.py` 的 `ExtractionLimits`，呼叫端必須指定）：OOXML（DOCX、PPTX、XLSX）先檢查 ZIP 的成員數（≤ 10,000）、成員宣告的解壓大小合計（管理員上傳 ≤ 200 MiB、聊天附件 ≤ 64 MiB）與壓縮比（解壓後超過 10 MiB 的單一成員或整個檔案 ≤ 100），擋下壓縮炸彈；聊天附件的 DOCX、PPTX 另依 `[Content_Types].xml` 加總會被建成 DOM 的 XML 部件（另含 `.rels`），上限 8 MiB，改副檔名無法繞過。聊天附件的 JSON 與程式碼超過 2,000,000 字時不交給 `json.loads`，只做線性的雜訊清除；整個行程同時最多解析 2 個聊天附件，超過預算的附件不讀取內容，改以一段說明告知模型。擷取不出文字的檔案回報失敗並刪除暫存檔。SVG 去除、JSON 宣告抽取、Q&A 切分與目錄行清理都改為線性時間的實作，惡意構造的輸入不會觸發二次時間的正規式回溯。
 
 ### AI 摘要
 
@@ -402,7 +407,7 @@ flowchart TB
 `app/rag/tool_approval.py` 的 `ToolApprovalBroker` 讓發問的使用者在對話中決定有副作用的工具是否執行，設計背景見 [ADR-0006](adr/0006-tool-call-approval.md)：
 
 1. Agent 準備執行工具時，`ResearchToolRegistry.approval_requirement()` 依名稱查詢對應的自訂 API 工具或 MCP 伺服器的 `requires_approval`；內建工具不需要核准。
-2. 需要核准時，Broker 建立一個綁定發問者 `user_id` 的待核准項目（隨機 `approval_id`），串流送出 `approval_required`（含工具名稱、顯示名稱與參數），Agent 暫停等待。
+2. 需要核准時，Broker 建立一個綁定發問者 `user_id` 的待核准項目（隨機 `approval_id`），串流送出 `approval_required`（含工具名稱、顯示名稱、參數，以及實際送出的位置 `target`：自訂 API 工具為 HTTP 方法與主機，MCP 為傳輸方式與主機或本機指令名稱），Agent 暫停等待。
 3. 前端在該則回答中顯示確認卡片；使用者按下核准或拒絕後呼叫 `POST /api/chat/approvals/{approval_id}`。只有同一位使用者能處理，其他人或已處理、已逾時的項目回傳 `404`。
 4. 串流送出 `approval_resolved`。核准時照常執行工具；拒絕或 300 秒逾時時不執行，Agent 收到「使用者未核准」的工具結果並改以已取得的資料回答。
 5. 沒有可核准的使用者時（`approval_user_id` 為 `None`，例如非互動式呼叫），需要核准的工具一律不執行。
@@ -470,12 +475,14 @@ flowchart TB
 
 1. **動態載入**：每次組裝工具定義時查詢資料庫，工具異動即時生效。MCP 工具使用探索時寫入的快取，不必每次連線。
 2. **命名**：自訂 API 工具以 `name` 註冊（取自 `operationId` 或方法與路徑，只含英數與底線）；MCP 工具為 `mcp_<伺服器>_<工具>`，名稱中的非英數字元換成底線並轉小寫，`execute_tool` 依此前綴路由。
-3. **HTTP 執行器**：以百分比編碼替換路徑參數（拒絕 `.`、`..`，代入後的 scheme、主機與埠號必須與設定相同）、組裝查詢字串與標頭、注入認證（Bearer、API Key、Basic）、序列化 JSON 主體，並以 `SSRFSafeTransport` 在第一個請求與每次轉址前重新做 SSRF 驗證、把連線固定在驗證過的 IP。最多 5 次轉址，跨來源轉址時移除管理員設定的標頭與認證標頭；回應本文上限 1 MiB；結果與網址中出現的憑證值換成 `[已遮蔽]`。
-4. **MCP 傳輸**：`McpStdioClient` 以子行程的標準輸入輸出交換 JSON-RPC；`McpHttpClient` 以 HTTP POST 交換 JSON-RPC（`http` 與 `sse` 兩種設定都走這條路徑），同樣經 `SSRFSafeTransport` 逐跳驗證並固定 IP，單次回應上限 4 MiB。每次呼叫都會重新建立連線並完成 `initialize` 交握。
-5. **子行程隔離**：`build_stdio_env()` 只繼承 MCP 官方 SDK 預設清單中的系統變數，略過以 `()` 開頭的 shell 函式定義，再加上伺服器的 `env_vars`；後端的資料庫連線與模型金鑰不會傳給第三方 MCP 伺服器。每個子行程自成一個程序群組，關閉時連同 `npx`、`uvx` 啟動的孫行程整棵終止；同時最多 4 個子行程。
+3. **HTTP 執行器**：呼叫端（模型）只能使用 `parameters_schema` 宣告的參數，`request_body` 有宣告欄位的 `request_body_schema` 且 `additionalProperties` 不是 `true` 時一併檢查其中的欄位，未宣告的參數不送出，直接回傳 `400`。接著以百分比編碼替換路徑參數（拒絕 `.`、`..`，代入後的 scheme、主機與埠號必須與設定相同）、組裝查詢字串與標頭、注入認證（Bearer、API Key、Basic）、序列化 JSON 主體。工具網址中的查詢參數由管理員固定，呼叫端提供同名參數時回傳 `400`；查詢字串一律自行組好，不依賴 httpx 對既有查詢字串的處理。請求經 `SSRFSafeTransport` 在第一個請求與每次轉址前重新做 SSRF 驗證、把連線固定在驗證過的 IP；轉址由 `send_following_redirects` 手動跟隨（最多 5 次），轉址回應的本文不讀取，跨來源轉址時移除管理員設定的標頭與認證標頭。整個呼叫（含轉址與逐段讀取）以工具的 `timeout` 為總時限，逾時回傳 `504`；回應本文上限 1 MiB。結果與網址中出現的憑證值換成 `[已遮蔽]`，工具網址中固定的查詢參數值（可能是寫在網址裡的金鑰）也不出現在回傳的網址中。
+4. **MCP 傳輸**：`McpStdioClient` 以子行程的標準輸入輸出交換 JSON-RPC，單行訊息上限 4 MiB；`McpHttpClient` 以 HTTP POST 交換 JSON-RPC（`http` 與 `sse` 兩種設定都走這條路徑），同樣經 `SSRFSafeTransport` 逐跳驗證並固定 IP，單次回應上限 4 MiB。HTTP 轉址由 `send_following_redirects` 手動跟隨，只接受同一來源（最多 5 次），管理員設定的標頭與 JSON-RPC 本文不會送往其他網域；每次請求以伺服器的逾時設定為總時限。每次呼叫都會重新建立連線並完成 `initialize` 交握。探索時只保留名稱符合 `[A-Za-z0-9_.-]{1,128}` 的工具；工具失敗只回傳錯誤代碼（stderr、JSON-RPC 錯誤與 SSRF 拒絕原因只寫入日誌），啟動失敗的訊息只含指令名稱、不含參數。
+5. **子行程隔離**：`build_stdio_env()` 只繼承 MCP 官方 SDK 預設清單中的系統變數，略過以 `()` 開頭的 shell 函式定義，再加上伺服器的 `env_vars`；後端的資料庫連線與模型金鑰不會傳給第三方 MCP 伺服器。子行程的工作目錄是每次新建的空暫存目錄，後端目錄下的 `.env` 與 `keys/` 不在其相對路徑範圍內（子行程仍以後端的系統帳號執行，能讀取該帳號可讀的檔案）。每個子行程自成一個程序群組，關閉時連同 `npx`、`uvx` 啟動的孫行程整棵終止；同時最多 4 個子行程，等待空位的時間不超過該伺服器的逾時設定。stderr 持續讀出以免管線寫滿卡住，只保留最後 2 KiB 供日誌診斷。
 6. **內建範本**：只提供 `mcp_time` 與 `mcp_filesystem`。檔案系統範本釘選 `@modelcontextprotocol/server-filesystem@2026.8.31`，根目錄是專屬的 `backend/mcp_filesystem_sandbox`（絕對路徑，與含 pickle 索引中繼資料的 `DATA_DIR` 分開）。網頁擷取類範本已移除，因為 `stdio` 子行程的出站連線不受 `web_fetch` 的 SSRF、網域白名單與網址來源限制約束。
 7. **呼叫前核准**：自訂 API 工具與 MCP 伺服器各有 `requires_approval` 旗標；Agent 呼叫這類工具前須由發問的使用者核准，見第 7 節「工具呼叫核准」與 [ADR-0006](adr/0006-tool-call-approval.md)。
 8. **管理權限**：工具由所有使用者的 Agent 共用，`stdio` 模式還會在主機上執行指令，因此 `/api/api-tools` 與 `/api/mcp` 的所有端點（含查詢）只開放管理員。一般使用者只能在對話中讓 Agent 使用已啟用的工具。詳見 [ADR-0002](adr/0002-external-tools-and-outbound-safety.md) 與 [ADR-0004](adr/0004-tool-admin-permissions-and-subprocess-isolation.md)。
+9. **憑證加密與遮蔽**：`app/core/tool_secrets.py` 在寫入資料庫前以 `TOOL_SECRETS_KEY`（Fernet）加密自訂 API 工具的 `headers`、`auth_config` 與 MCP 伺服器的 `env_vars`、`headers`，執行工具時才解密。管理 API 的回應以 `••••••••` 取代秘密值：`accept`、`accept-encoding`、`accept-language`、`cache-control`、`content-type`、`user-agent` 以外的標頭，`auth_config` 的 `token`、`key_value`、`password`，以及 MCP 的所有環境變數；`key_name`、`username` 等設定照常顯示。更新時仍為遮蔽字樣的欄位沿用已儲存的值，沒有已儲存的值時回傳 `400`。無法以目前的金鑰解密時（例如更換了 `TOOL_SECRETS_KEY`），回應帶 `credentials_unreadable: true`，由管理員重新輸入。
+10. **規格解析**：`OpenApiParser` 拒絕含 YAML 別名的規格（別名在後續處理時會被逐一展開），`POST /api/api-tools/parse-spec` 的回應不含原始規格；規格網址同樣經 SSRF 驗證。
 
 ---
 
@@ -490,19 +497,20 @@ sequenceDiagram
     participant DB as 資料庫
 
     User->>API: POST /api/auth/login（使用者名稱或電子郵件、密碼）
-    API->>DB: 查詢帳號並以 Argon2 驗證密碼
+    API->>API: 登入節流：識別或來源位址暫停中時直接回傳 429
+    API->>DB: 查詢帳號並以 Argon2 驗證密碼（失敗時計入節流）
     API-->>User: 存取權杖（JSON）＋ 重新整理權杖（HttpOnly Cookie）
     User->>API: 呼叫 API（Authorization: Bearer）
     API->>BL: 檢查權杖是否已撤銷
     API->>API: 驗證 RS256 簽章、到期時間與權杖類型
-    API->>DB: 依 sub 讀取帳號：存在、啟用、權杖簽發不早於帳號建立
+    API->>DB: 依 sub 讀取帳號：存在、啟用、權杖簽發不早於 tokens_valid_after
     API-->>User: 回應（身分與權限取自資料庫）
     Note over User,API: 存取權杖剩不到 5 分鐘或收到 401 時，前端自動呼叫 /api/auth/refresh
     User->>API: POST /api/auth/refresh（Cookie）
-    API->>DB: 同樣依 sub 確認帳號存在且啟用
+    API->>DB: 同樣依 sub 確認帳號存在、啟用且權杖不早於 tokens_valid_after
     API->>BL: 撤銷用過的重新整理權杖
     API-->>User: 新的存取權杖＋重設 Cookie
-    User->>API: POST /api/auth/logout
+    User->>API: POST /api/auth/logout（只驗簽章，存取權杖過期也可）
     API->>BL: 兩個權杖寫入撤銷名單直到各自到期
     API-->>User: 刪除 Cookie
 ```
@@ -511,13 +519,16 @@ sequenceDiagram
 |---|---|
 | 簽章 | 一律 RSA-2048 RS256；金鑰對在 `backend/keys/`，首次啟動自動產生。金鑰無法載入或產生時，任何環境都拒絕啟動，沒有共用密鑰的退路 |
 | 存取權杖 | 有效 `ACCESS_TOKEN_EXPIRE_MINUTES` 分鐘，內含 `sub`、`username`、`email`、`role`、`is_admin`、`iat` 與 `type: access` |
-| 帳號綁定 | 每次請求由 `resolve_token_user()` 依 `sub` 讀取帳號：不存在、已停用，或 `iat` 早於帳號 `created_at`（帳號刪除後 id 被重用）時回傳 `401`；`username`、`role`、`is_admin` 取自資料庫而非權杖 |
-| 重新整理權杖 | 有效 `REFRESH_TOKEN_EXPIRE_DAYS` 天，只含 `sub` 與 `type: refresh`，存於 HttpOnly Cookie（路徑 `/api/auth`，`Secure` 由 `COOKIE_SECURE` 或 `production` 決定，`SameSite` 預設 `lax`）；只能使用一次，換發時撤銷舊權杖並重設 Cookie |
+| 帳號綁定 | 每次請求由 `resolve_token_user()` 依 `sub` 讀取帳號：不存在、已停用，或 `iat` 早於帳號的 `tokens_valid_after`（建立帳號時等於 `created_at`，防止帳號刪除後 id 被重用；變更密碼時更新為當下；`iat` 保留微秒，同一秒內稍早簽發的權杖同樣無效）時回傳 `401`；`username`、`role`、`is_admin` 取自資料庫而非權杖 |
+| 重新整理權杖 | 有效 `REFRESH_TOKEN_EXPIRE_DAYS` 天，只含 `sub` 與 `type: refresh`，存於 HttpOnly Cookie（路徑 `/api/auth`，`Secure` 由必填的 `COOKIE_SECURE` 決定，不再依 `ENVIRONMENT` 推導，`SameSite` 預設 `lax`）；只能使用一次，換發時撤銷舊權杖並重設 Cookie |
 | 密碼 | Argon2 雜湊；舊的 bcrypt 雜湊仍可驗證，登入成功時自動改存 Argon2。註冊與改密碼要求 8 至 256 字元並包含大小寫字母與數字；雜湊與驗證在執行緒中進行，同時最多 4 個 |
-| 授權 | 管理員端點依資料庫中該帳號的 `is_admin` 判斷，變更後下一個請求就生效 |
-| 撤銷 | 登出時把權杖字串寫入行程內撤銷名單，保留到權杖到期，並自動清理過期項目；名單最多 100,000 筆，滿了先淘汰最早到期者 |
+| 變更密碼 | `POST /api/auth/change-password` 與帶新密碼的 `PUT /api/auth/me` 把 `tokens_valid_after` 更新為當下並清除重新整理權杖 Cookie：該帳號先前簽發的權杖（含其他裝置、可能已外洩者與目前這一個）全部失效，前端隨即清除登入狀態並導回登入頁 |
+| 登入節流 | `app/core/login_throttle.py` 對登入識別（不分大小寫、忽略前後空白）與來源位址分別計數：`LOGIN_FAILURE_WINDOW_SECONDS` 內失敗達 `LOGIN_MAX_FAILURES_PER_ACCOUNT` 或 `LOGIN_MAX_FAILURES_PER_ADDRESS` 次，該識別或位址的登入暫停 `LOGIN_LOCKOUT_SECONDS` 秒，期間不驗證密碼，直接回傳 `429` 與 `Retry-After`（`LOGIN_THROTTLED` 寫入安全日誌）。不存在的帳號同樣計數，回應與存在的帳號相同；登入成功只清除該識別的紀錄。計數在行程記憶體中，追蹤的識別與位址各最多 10,000 個，最久沒有新失敗者先淘汰 |
+| 註冊 | `ALLOW_REGISTRATION=false` 時 `POST /api/auth/register` 回傳 `403` 並寫入安全日誌（`REGISTER_REJECTED`）；`GET /api/auth/registration`（不需登入）回傳 `{"enabled": bool}`，前端據此顯示或隱藏註冊入口。帳號（含第一位管理員）由 `backend/scripts/create_user.py` 建立，套用與註冊相同的規則，`--admin` 建立管理員，密碼以互動方式輸入 |
+| 授權 | 管理員端點依資料庫中該帳號的 `is_admin` 判斷，變更後下一個請求就生效。`GET /api/admin/users` 與 `PUT /api/admin/users/{user_id}` 的回應只含 `UserProfile` 欄位，不含密碼雜湊；變更帳號權限、狀態與刪除帳號時寫入安全日誌（`ADMIN_USER_UPDATED`、`ADMIN_USER_DELETED`） |
+| 撤銷 | 登出時把權杖字串寫入行程內撤銷名單，保留到權杖到期，並自動清理過期項目；名單最多 100,000 筆，滿了先淘汰最早到期者。登出只驗存取權杖的簽章，存取權杖過期時仍能撤銷重新整理權杖並清除 Cookie，但仍要求 `Authorization` 標頭，跨站表單無法觸發登出 |
 
-**已知限制**：撤銷名單在後端重啟後清空，多行程部署時也不共享。詳見 [API 參考：已知限制](api.md#10-已知限制)。
+**已知限制**：撤銷名單與登入失敗計數在後端重啟後清空，多行程部署時也不共享。詳見 [API 參考：已知限制](api.md#10-已知限制)。
 
 ---
 
@@ -553,7 +564,7 @@ flowchart LR
     Input["網址"] --> Scheme{"協定<br/>http / https"}
     Scheme --> Port{"連接埠<br/>危險埠清單"}
     Port --> Host{"主機名稱<br/>localhost、.internal 等"}
-    Host --> Resolve["DNS 解析取得所有 IP<br/>專用執行緒池，5 秒逾時"]
+    Host --> Resolve["DNS 解析取得所有 IP<br/>依來源使用專用執行緒池，5 秒逾時"]
     Resolve --> IPCheck{"IP 範圍"}
     IPCheck -->|私有、迴環、連結本地、保留、雲端中繼資料| Block["拒絕（SSRFProtectionError）"]
     IPCheck -->|公開位址| Allow["連線固定到驗證過的 IP 送出；每次轉址重新驗證"]
@@ -562,11 +573,11 @@ flowchart LR
 | 類別 | 封鎖清單 |
 |---|---|
 | IPv4 | `0.0.0.0/8`、`10.0.0.0/8`、`100.64.0.0/10`、`127.0.0.0/8`、`169.254.0.0/16`（含雲端中繼資料 `169.254.169.254`）、`172.16.0.0/12`、`192.0.0.0/24`、`192.0.2.0/24`、`192.88.99.0/24`、`192.168.0.0/16`、`198.18.0.0/15`、`198.51.100.0/24`、`203.0.113.0/24`、`224.0.0.0/4`、`240.0.0.0/4`、`255.255.255.255/32` |
-| IPv6 | `::/128`、`::1/128`、`::ffff:0:0/96`（另會拆出內嵌的 IPv4 再檢查）、`64:ff9b::/96`、`100::/64`、`2001::/23`、`2001:db8::/32`、`fc00::/7`、`fe80::/10`、`ff00::/8` |
+| IPv6 | `::/128`、`::1/128`、`::ffff:0:0/96`（另會拆出內嵌的 IPv4 再檢查）、`64:ff9b::/96`、`64:ff9b:1::/48`（NAT64 local-use）、`100::/64`、`2001::/23`、`2001:db8::/32`、`2002::/16`（6to4）、`fc00::/7`、`fe80::/10`、`ff00::/8` |
 | 主機名稱 | `localhost`、`localhost.localdomain`、`broadcasthost`、`ip6-localhost`、`ip6-loopback`、`local`、`internal`、`metadata.google.internal`、`metadata.internal`，以及 `.localhost`、`.local`、`.internal`、`.lan`、`.home.arpa`、`.localdomain`、`.corp` 結尾的名稱 |
 | 連接埠 | 22、23、25、111、135、139、445、1433、1521、2375、2376、3306、5432、6379、11211、27017 |
 
-自訂 API 工具與 MCP HTTP 傳輸的 httpx 用戶端使用 `SSRFSafeTransport`：第一個請求與每次轉址前都重新驗證，並把連線固定在驗證時核可的 IP（`Host` 標頭與 TLS SNI、憑證驗證仍使用原主機名稱），避免驗證與連線各做一次 DNS 解析時被 DNS rebinding 導向內網。`safe_fetch_text`（`web_fetch` 與規格網址）手動逐跳驗證轉址、同樣固定 IP，並限制下載大小與轉址次數。DNS 查詢在 4 條執行緒的專用執行緒池中進行，5 秒逾時視為無法解析，不占用共用執行緒池。這些用戶端不讀取 `HTTP_PROXY`、`HTTPS_PROXY` 環境變數。相關行為由 `backend/tests/test_ssrf_protection.py` 覆蓋。
+自訂 API 工具與 MCP HTTP 傳輸的 httpx 用戶端使用 `SSRFSafeTransport`：第一個請求與每次轉址前都重新驗證，並把連線固定在驗證時核可的 IP（`Host` 標頭與 TLS SNI、憑證驗證仍使用原主機名稱），避免驗證與連線各做一次 DNS 解析時被 DNS rebinding 導向內網；轉址由 `send_following_redirects` 手動跟隨，轉址回應的本文不讀取。`safe_fetch_text`（`web_fetch` 與規格網址）手動逐跳驗證轉址、同樣固定 IP，並限制下載大小與轉址次數。DNS 查詢依來源在兩個專用執行緒池中進行：使用者網址（`web_fetch`，`DnsPool.USER_URL`，8 條執行緒）與管理員設定的端點（自訂 API 工具、MCP HTTP 伺服器、OpenAPI 規格網址，`DnsPool.CONFIGURED_ENDPOINT`，4 條執行緒）。`getaddrinfo` 無法取消，使用者以慢速網域占滿前者時，工具與規格匯入的檢查不受影響；5 秒逾時視為無法解析，兩個池都不占用共用執行緒池。這些用戶端不讀取 `HTTP_PROXY`、`HTTPS_PROXY` 環境變數。相關行為由 `backend/tests/test_ssrf_protection.py` 覆蓋。
 
 > [!NOTE]
 > 介紹頁（`site/`）的 SSRF 互動示範在瀏覽器端重現這裡的檢查順序與封鎖清單，修改規則時請同步更新 `site/index.html` 與 `site/main.js`。
@@ -579,21 +590,25 @@ flowchart LR
 2. **網域白名單**：`WEB_FETCH_ALLOWED_DOMAINS` 限定可讀取的網域（含子網域），明確寫 `*` 才表示不限制；白名單只檢查初始網址。
 3. **讀過知識庫後停用聯網**：`BLOCK_WEB_TOOLS_AFTER_KB=true` 時，同一次提問只要知識庫工具回傳過內容，之後的 `web_search` 與 `web_fetch` 一律拒絕。
 
-自訂 API 與 MCP 工具的結果同樣包上不可信標記，但不列入網址來源與引用編號，其出站請求不受上述三道限制（已知風險，見 [ADR-0003](adr/0003-rrf-relevance-citations-and-tool-trust.md)）。緩解方式是呼叫前核准：有副作用的工具由發問的使用者看過工具與參數後才執行（[ADR-0006](adr/0006-tool-call-approval.md)）。
+自訂 API 與 MCP 工具的結果同樣包上不可信標記，但不列入網址來源與引用編號，其出站請求不受上述三道限制（已知風險，見 [ADR-0003](adr/0003-rrf-relevance-citations-and-tool-trust.md)）。緩解方式是呼叫前核准：有副作用的工具由發問的使用者看過工具、送出的位置與參數後才執行（[ADR-0006](adr/0006-tool-call-approval.md)）；自訂 API 工具也只接受管理員在 `parameters_schema` 宣告的參數，不能夾帶其他查詢參數或本文欄位（第 9 節）。
 
 ### 11.5 其他防護
 
 | 機制 | 內容 |
 |---|---|
 | 安全回應標頭 | `X-Content-Type-Options: nosniff`、`X-Frame-Options: DENY`、`X-XSS-Protection: 1; mode=block`、`Referrer-Policy: strict-origin-when-cross-origin`、`Permissions-Policy: geolocation=(), microphone=(), camera=()`，並移除 `Server` 標頭 |
-| 請求本文上限 | `RequestBodyLimitMiddleware`（純 ASGI，位於最外層）在 FastAPI 讀取本文前檢查：一般請求 1 MiB，聊天送出與文件上傳只有帶著簽章有效的存取權杖時才放寬；`Content-Length` 超過即回 `413`，分塊傳輸邊讀邊計數 |
-| 速率限制 | 每個來源 IP 在 60 秒滑動視窗內最多 `RATE_LIMIT_PER_MINUTE` 次，超過回傳 `429` 與 `Retry-After`；入侵偵測列入封鎖名單的 IP 直接回傳 `403`。來源 IP 預設是實際連線對端（uvicorn 的 `proxy_headers` 只在設定 `FORWARDED_ALLOW_IPS` 時開啟），用戶端自帶的 `X-Forwarded-For` 不會被採信 |
-| 入侵偵測 | 依位址與事件類型保留有長度上限的滑動視窗，最多追蹤 10,000 個位址（最久未活動者先淘汰），單次記錄的成本與歷史事件數無關 |
+| 請求本文上限 | `RequestBodyLimitMiddleware`（純 ASGI，位於最外層）在 FastAPI 讀取本文前檢查：一般請求 1 MiB；聊天送出只有帶著簽章有效、未撤銷的存取權杖時才放寬，文件上傳另要求權杖帶有 `is_admin` 聲明（只用來決定本文上限，路由本身仍以資料庫判定是否為管理員）；`Content-Length` 超過即回 `413`，分塊傳輸邊讀邊計數 |
+| 速率限制 | 每個來源 IP 在 60 秒滑動視窗內最多 `RATE_LIMIT_PER_MINUTE` 次，超過回傳 `429` 與 `Retry-After`；追蹤的位址最多 10,000 個，最久未活動者先淘汰。來源 IP 預設是實際連線對端（uvicorn 的 `proxy_headers` 只在設定 `FORWARDED_ALLOW_IPS` 時開啟），用戶端自帶的 `X-Forwarded-For` 不會被採信 |
+| 入侵偵測 | 依位址與事件類型保留有長度上限的滑動視窗，最多追蹤 10,000 個位址（最久未活動者先淘汰），單次記錄的成本與歷史事件數無關。只發出警報（寫入 `logs/intrusion_detection.log`），不封鎖任何位址；登入失敗由第 10 節的登入節流處理 |
+| 部署設定 | `HOST`、`RELOAD`、`COOKIE_SECURE`、`ENABLE_API_DOCS` 都是必填設定，沒有預設值；列出所有端點與參數的互動式文件（`/docs`、`/redoc`、`/openapi.json`）只在 `ENABLE_API_DOCS=true` 時提供 |
+| 資料庫帳號 | compose 的 PostgreSQL 由 `backend/init-app-role.sh` 建立後端連線用的 `POSTGRES_APP_USER`（`NOSUPERUSER`、`NOCREATEDB`、`NOCREATEROLE`），只授予資料庫的 `CONNECT` 與 `public` schema 的 `USAGE`、`CREATE`，並把資料表交給它擁有；SQL 注入無法以 `COPY ... TO PROGRAM` 執行系統指令或讀取伺服器檔案 |
+| 相依套件 | `backend/requirements.txt` 由 `requirements.in` 以 `uv pip compile --universal --generate-hashes` 產生，安裝時驗證雜湊；`frontend/bun.lock` 隨版本庫提交，`frontend/bunfig.toml` 設定 `frozenLockfile = true` |
 | CORS | 只允許 `ALLOWED_ORIGINS`（可加上 `DEVTUNNEL_URL`），允許攜帶 Cookie |
-| 上傳檢查 | 檔名長度與危險字元、副檔名白名單、檔頭特徵、大小上限、OOXML 壓縮炸彈檢查 |
-| 資源上限 | 訊息長度、附件數量與大小、工具結果長度、每位使用者的同時串流數與附件儲存量等，集中定義於 `app/core/limits.py`，完整清單見 [設定參考：資源上限](configuration.md#資源上限) |
-| 前端渲染 | 回答以 react-markdown 渲染，不渲染原始 HTML；Markdown 圖片改為點擊才開啟的連結，不自動向外部主機載入 |
-| 反點擊劫持 | Vite 開發與預覽伺服器送出 `X-Frame-Options: DENY` 與 `Content-Security-Policy: frame-ancestors 'none'; img-src 'self' data: blob:`；`index.html` 另有內嵌樣式守衛，頁面被嵌入 iframe 時保持隱藏 |
+| 上傳檢查 | 檔名長度與危險字元、副檔名白名單、檔頭特徵、大小上限、OOXML 壓縮炸彈檢查；聊天附件另有解析預算（第 4 節） |
+| 資源上限 | 訊息長度、附件數量與大小、聊天附件的解析預算、工具結果長度、每位使用者的同時串流數與附件儲存量等，集中定義於 `app/core/limits.py`，完整清單見 [設定參考：資源上限](configuration.md#資源上限) |
+| 前端渲染 | 回答以 react-markdown 渲染，不渲染原始 HTML；Markdown 圖片改為點擊才開啟的連結，不自動向外部主機載入；外部連結以解析後的網址判斷，在新分頁開啟並標示實際主機；研究軌跡的參數與輸出預覽一律轉成文字顯示 |
+| 建置產物的 CSP | `bun run build` 由 `frontend/vite.config.js` 的外掛把 CSP `<meta>` 寫入 `index.html`：`default-src 'self'`；`script-src`、`style-src` 只允許同源與 `index.html` 內嵌內容的 SHA-256 雜湊；`img-src 'self' data: blob:`；`connect-src` 另加入 `VITE_API_BASE`／`VITE_API_URL` 的來源；`object-src 'none'`、`base-uri 'none'`、`form-action 'self'`。網頁伺服器沒有設定 CSP 時，被注入的 HTML 也無法執行腳本。只在建置時套用，開發伺服器需要內嵌的 HMR 腳本 |
+| 反點擊劫持 | Vite 開發與預覽伺服器送出 `X-Frame-Options: DENY` 與 `Content-Security-Policy: frame-ancestors 'none'; img-src 'self' data: blob:`；`index.html` 另有內嵌樣式守衛，頁面被嵌入 iframe 時保持隱藏。`<meta>` 形式的 CSP 不支援 `frame-ancestors`，正式環境的反框架標頭須由網頁伺服器送出 |
 
 ---
 
@@ -601,7 +616,7 @@ flowchart LR
 
 | 路由 | 頁面 | 權限 |
 |---|---|---|
-| `/login`、`/register` | 登入、註冊 | 未登入（已登入時導向首頁） |
+| `/login`、`/register` | 登入、註冊（未開放自行註冊時，註冊頁只顯示說明） | 未登入（已登入時導向首頁） |
 | `/` | 導向 `/chat` | — |
 | `/chat` | 聊天 | 登入 |
 | `/profile` | 個人資料與改密碼 | 登入 |
@@ -610,9 +625,10 @@ flowchart LR
 | `/admin` | 管理後台 | 管理員 |
 
 - **路由守衛**：`PrivateRoute` 未登入時導向登入頁；`AdminRoute` 對非管理員顯示「沒有權限」頁面；`PublicRoute` 讓已登入者離開登入與註冊頁。頁面以 `React.lazy` 延遲載入。
-- **API 用戶端**（`services/api.ts`）：Axios 實例自動附上存取權杖；權杖剩不到 5 分鐘時先換發，收到 `401` 時換發後重試一次；登入、註冊與換發端點本身的 `401` 不會觸發換發。
+- **API 用戶端**（`services/api.ts`）：Axios 實例自動附上存取權杖；權杖剩不到 5 分鐘時先換發，收到 `401` 時換發後重試一次；登入、註冊與換發端點本身的 `401` 不會觸發換發。請求失敗時主控台只記錄狀態碼與錯誤訊息（`utils/secureLogger.ts`），不記錄帶有密碼、API 金鑰與存取權杖的 axios 錯誤物件。
+- **登入狀態**：登入頁依 `GET /api/auth/registration` 決定是否顯示註冊入口（查詢失敗時視為未開放）；變更密碼成功後清除登入狀態並導回登入頁；登出請求失敗時在登入頁提示伺服器沒有撤銷重新整理權杖。
 - **SSE**（`services/sse.ts`、`hooks/useChat.ts`）：以 `fetch` 讀取串流，依規格解析事件（可處理跨讀取切段、CRLF 與多行資料）；支援停止產生、重新傳送與串流中切換對話。送出失敗且回應是 `422` 欄位驗證錯誤時，取出每一項的說明顯示（例如附件過大）。
-- **工具核准卡片**（`pages/Chat/ToolApprovalCard`）：收到 `approval_required` 時在該則回答中顯示工具名稱與參數，按下核准或拒絕後呼叫 `POST /api/chat/approvals/{approval_id}`；收到 `approval_resolved` 或停止串流時收起。「AI 工具」頁的自訂 API 工具與 MCP 伺服器表單各有「需使用者確認」核取方塊，API 工具依 HTTP 方法預設勾選。
+- **工具核准卡片**（`pages/Chat/ToolApprovalCard`）：收到 `approval_required` 時在該則回答中顯示工具名稱、實際送出的位置（`target`）與每一個參數，不放在需要捲動的區域，控制字元與格式字元（雙向文字控制、零寬字元、Unicode 標籤字元等）以 `⟦U+…⟧` 標示；按下核准或拒絕後呼叫 `POST /api/chat/approvals/{approval_id}`；收到 `approval_resolved` 或停止串流時收起。「AI 工具」頁的自訂 API 工具與 MCP 伺服器表單各有「需使用者確認」核取方塊，API 工具依 HTTP 方法預設勾選。
 - **外觀**：`ThemeContext` 提供淺色、深色與跟隨系統，設定存於 `localStorage` 的 `askmiao_theme_mode`；`index.html` 的內嵌腳本在第一次繪製前套用，避免閃白。
 - **元件庫**（`components/ui/`）：Dialog、Menu、Tooltip、Snackbar 等以原生 `<dialog>` 與 ARIA 規範實作，支援鍵盤操作與焦點管理；設計 token 集中在 `styles/tokens.css`。
 - **模型清單**：聊天頁呼叫 `GET /api/chat/models`，結果快取在 `localStorage` 5 分鐘。
@@ -621,10 +637,11 @@ flowchart LR
 
 ## 13. 部署與維運
 
-- **單一行程**：權杖撤銷名單、速率限制計數、入侵偵測封鎖名單、每位使用者的同時串流數、待核准的工具呼叫與統計快取都存在後端行程的記憶體中。以多個 worker 或多台主機部署時，這些狀態不會共享，撤銷名單在重啟後也會清空。
-- **對外提供**：Vite 開發與預覽伺服器只監聽 `localhost`。讓其他裝置使用時，請以 `bun run build` 建置，由正式的網頁伺服器提供 `frontend/build/`、送出反框架標頭並反向代理 `/api`；該代理會覆寫 `X-Forwarded-For` 時，可把它的位址設為 `FORWARDED_ALLOW_IPS`，速率限制才會以真實用戶端 IP 計算。
-- **PostgreSQL 容器**：`backend/docker-compose.yml` 需要 `POSTGRES_PASSWORD`，且只綁定 `127.0.0.1:7690`。
-- **資料與備份**：需要備份的是資料庫與 `backend/data/`（索引、上傳檔、模型快取）；索引可由資料庫重建，上傳原檔則用於重新擷取文字。`backend/keys/` 遺失時會產生新金鑰，所有既有權杖隨之失效；目錄無法寫入或金鑰損毀時後端無法啟動。
+- **單一行程**：權杖撤銷名單、速率限制與登入失敗計數、入侵偵測的事件視窗、每位使用者的同時串流數、待核准的工具呼叫與統計快取都存在後端行程的記憶體中。以多個 worker 或多台主機部署時，這些狀態不會共享（登入節流在每個行程各自計數），撤銷名單與登入失敗計數在重啟後也會清空。
+- **對外提供**：後端以 `python main.py` 啟動時監聽 `HOST`（範本為 `127.0.0.1`），只有容器或其他主機上的反向代理需要連入時才改為 `0.0.0.0`；以 HTTPS 提供服務時 `COOKIE_SECURE` 必須為 `true`。Vite 開發與預覽伺服器只監聽 `localhost`。讓其他裝置使用時，請以 `bun run build` 建置，由正式的網頁伺服器提供 `frontend/build/`、送出反框架標頭並反向代理 `/api`；該代理會覆寫 `X-Forwarded-For` 時，可把它的位址設為 `FORWARDED_ALLOW_IPS`，速率限制與依位址的登入節流才會以真實用戶端 IP 計算。
+- **PostgreSQL 容器**：`backend/docker-compose.yml` 需要 `POSTGRES_PASSWORD`（超級使用者，只供管理用途）與 `POSTGRES_APP_USER`、`POSTGRES_APP_PASSWORD`（後端連線用的非超級使用者，`DATABASE_URL` 使用這組帳號），且只綁定 `127.0.0.1:7690`。資料卷第一次初始化時依序執行 `10-init.sql`（`backend/init.sql`）與 `20-app-role.sh`（`backend/init-app-role.sh`）；以舊版初始化的資料卷要執行一次 `docker compose exec postgres bash /docker-entrypoint-initdb.d/20-app-role.sh`（可重複執行）。
+- **資料與備份**：需要備份的是資料庫與 `backend/data/`（索引、上傳檔、模型快取）；索引可由資料庫重建，上傳原檔則用於重新擷取文字。`backend/keys/` 遺失時會產生新金鑰，所有既有權杖隨之失效；目錄無法寫入或金鑰損毀時後端無法啟動。`TOOL_SECRETS_KEY` 遺失或更換時，資料庫中已加密的工具憑證無法解密，需要重新輸入。
+- **相依套件**：後端依 `requirements.txt` 的雜湊安裝；新增或升級套件時修改 `requirements.in`，再於 `backend/` 執行 `uv pip compile requirements.in --universal --python-version 3.10 --generate-hashes -o requirements.txt` 重新產生。前端 `bun install` 依凍結的 `bun.lock` 安裝，與 `package.json` 不一致時失敗。
 - **日誌**：應用程式日誌寫入 `backend/logs/app.log`；安全事件只寫入啟動目錄下的 `logs/security.log`（在 `backend/` 啟動即為 `backend/logs/`），兩者都以 10 MiB × 5 份輪替。錯誤代碼可在日誌中搜尋對應的完整例外。
 - **介紹頁**：`.github/workflows/deploy-pages.yml` 在 `New` 分支的 `site/` 有變更時，把整個目錄部署到 GitHub Pages。
 - **版本號**：後端以 `backend/app/__init__.py` 的 `__version__` 為準（OpenAPI 文件與 MCP 交握皆引用），前端為 `frontend/package.json` 的 `version`，發行時與 `CHANGELOG.md` 一併更新。
