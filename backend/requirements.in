@@ -1,0 +1,58 @@
+# 後端的直接依賴：只列程式實際匯入或執行時需要的套件，版本由 requirements.txt 鎖定（含雜湊）。
+# 新增或升級套件時修改本檔，再於 backend/ 執行下列指令重新產生 requirements.txt：
+#   uv pip compile requirements.in --universal --python-version 3.10 --generate-hashes -o requirements.txt
+# 使用 NVIDIA GPU 時，先依 PyTorch 官網安裝同版本的 CUDA 版 torch（例如 2.x.y+cu130），
+# 再執行 pip install -r requirements.txt；已安裝的同版本 torch 會被視為符合鎖定版本。
+
+# Web 框架與設定
+fastapi
+uvicorn
+pydantic
+pydantic-settings
+python-multipart
+python-dotenv
+websockets
+
+# 資料庫
+sqlalchemy
+psycopg2-binary
+
+# 檢索：嵌入、重排、向量與全文索引、斷詞
+torch
+sentence-transformers
+huggingface_hub[hf_xet]
+numpy
+faiss-cpu
+whoosh
+jieba
+filelock
+langchain-core
+langchain-text-splitters
+
+# 模型供應商與出站請求
+anthropic
+httpx
+requests
+
+# 文件解析
+pypdf
+pymupdf
+fonttools
+python-docx
+python-pptx
+openpyxl
+lxml
+PyYAML
+
+# 認證與密碼
+python-jose[cryptography]
+passlib
+argon2-cffi
+bcrypt
+email-validator
+cryptography
+
+# 測試
+pytest
+pytest-asyncio
+psutil

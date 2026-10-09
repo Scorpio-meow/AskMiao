@@ -1,7 +1,6 @@
 
 [install]
-frozenLockfile = false
-cache = "~/.bun/install/cache"
+frozenLockfile = true
 peer = true
 [run]
 silent = false
