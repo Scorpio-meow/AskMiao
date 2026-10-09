@@ -271,14 +271,14 @@ class PDFService:
             logger.warning(f"第 {page_num} 頁執行 Vision OCR 失敗: {e}")
         return f"[第 {page_num} 頁為掃描圖片或複雜版面，已記錄]"
     @classmethod
-    def extract_text_robust(cls, file_path: str, max_ocr_pages: Optional[int] = None) -> str:
+    def extract_text_robust(cls, file_path: str, max_ocr_pages: Optional[int]) -> str:
         """
         同步/標準進入點：執行多層防護 PDF 抽取（支援內嵌字型修復 + Vision OCR 智慧補全）
         max_ocr_pages：最多送 Vision OCR 的頁數（每頁一次付費呼叫）；None 表示不限，只用於管理員上傳
         """
         return cls._extract_sync_internal(file_path, max_ocr_pages)
     @classmethod
-    def _extract_sync_internal(cls, file_path: str, max_ocr_pages: Optional[int] = None) -> str:
+    def _extract_sync_internal(cls, file_path: str, max_ocr_pages: Optional[int]) -> str:
         """內部提取實作：PyMuPDF + 字型 CMap 修復 + Vision OCR + pypdf 雙重備援"""
         import concurrent.futures
         try:

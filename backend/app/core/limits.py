@@ -3,6 +3,8 @@
 這些是保護單一後端行程可用性與操作者付費用量的安全上限，不是部署偏好設定；
 調整時請同步更新 docs/configuration.md 的「資源上限」一節。
 """
+from dataclasses import dataclass
+from typing import Optional
 
 MIB = 1024 * 1024
 
@@ -32,7 +34,51 @@ MAX_PDF_OCR_PAGES = 20
 MAX_OCR_PIXELS = 25_000_000
 MAX_OOXML_UNCOMPRESSED_BYTES = 200 * MIB
 MAX_OOXML_COMPRESSION_RATIO = 100
+# 解壓後超過此大小的單一成員或整個 OOXML 檔案才檢查壓縮比：一般 XML 本來就能壓縮很多倍
+OOXML_RATIO_CHECK_MIN_BYTES = 10 * MIB
+# OOXML（ZIP）的成員數：python-docx／python-pptx 會替每個可達的部件建立物件與 DOM
+MAX_OOXML_MEMBERS = 10_000
 MAX_TEXT_CLEANUP_CHARS = 2_000_000
+
+# 聊天附件的解析預算：任何登入的使用者都能送出附件，而附件文字最後只取 MAX_ATTACHMENT_TEXT_CHARS 字
+MAX_ATTACHMENT_OOXML_UNCOMPRESSED_BYTES = 64 * MIB
+# python-docx／python-pptx 會把 XML 部件整份建成 lxml DOM，記憶體約為 XML 大小的 15～30 倍
+MAX_ATTACHMENT_OOXML_XML_BYTES = 8 * MIB
+# 交給 json.loads 做結構化降噪的附件文字長度；更長的附件只做線性的雜訊清除
+MAX_ATTACHMENT_STRUCTURED_PARSE_CHARS = 2_000_000
+# 整個行程同時進行的附件解析數；與上面的單檔預算相乘即為附件解析的記憶體上界
+MAX_CONCURRENT_ATTACHMENT_EXTRACTIONS = 2
+
+
+@dataclass(frozen=True)
+class ExtractionLimits:
+    """文件文字抽取的資源預算：管理員上傳與聊天附件各用一組"""
+    # 最多送 Vision OCR 的 PDF 頁數；None 表示不限
+    max_ocr_pages: Optional[int]
+    # OOXML 成員宣告的解壓總量與成員數
+    max_ooxml_uncompressed_bytes: int
+    max_ooxml_members: int
+    # docx／pptx 會被整份建成 DOM 的 XML 部件總量（依 [Content_Types].xml 判定，另含 .rels）
+    max_ooxml_xml_bytes: int
+    # 交給 json.loads 的文字長度；None 表示不限
+    max_structured_parse_chars: Optional[int]
+
+
+# 管理員上傳的知識庫文件：來源可信，維持原本的上限
+ADMIN_UPLOAD_EXTRACTION_LIMITS = ExtractionLimits(
+    max_ocr_pages=None,
+    max_ooxml_uncompressed_bytes=MAX_OOXML_UNCOMPRESSED_BYTES,
+    max_ooxml_members=MAX_OOXML_MEMBERS,
+    max_ooxml_xml_bytes=MAX_OOXML_UNCOMPRESSED_BYTES,
+    max_structured_parse_chars=None,
+)
+CHAT_ATTACHMENT_EXTRACTION_LIMITS = ExtractionLimits(
+    max_ocr_pages=MAX_PDF_OCR_PAGES,
+    max_ooxml_uncompressed_bytes=MAX_ATTACHMENT_OOXML_UNCOMPRESSED_BYTES,
+    max_ooxml_members=MAX_OOXML_MEMBERS,
+    max_ooxml_xml_bytes=MAX_ATTACHMENT_OOXML_XML_BYTES,
+    max_structured_parse_chars=MAX_ATTACHMENT_STRUCTURED_PARSE_CHARS,
+)
 
 # 工具結果放進模型脈絡前的長度上限（每次工具呼叫）
 MAX_TOOL_RESULT_CHARS = 20_000

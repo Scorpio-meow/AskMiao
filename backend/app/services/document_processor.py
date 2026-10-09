@@ -7,6 +7,7 @@ import hashlib
 import re
 import zipfile
 from typing import Optional
+from lxml import etree
 from pypdf import PdfReader
 from docx import Document as DocxDocument
 from pptx import Presentation
@@ -14,12 +15,64 @@ import openpyxl
 from app.core.config import settings
 from app.core.domain_profile import domain_profile
 from app.core.html_text import extract_text_and_title
-from app.core.limits import MAX_OOXML_COMPRESSION_RATIO, MAX_OOXML_UNCOMPRESSED_BYTES, MIB
+from app.core.limits import MAX_OOXML_COMPRESSION_RATIO, OOXML_RATIO_CHECK_MIN_BYTES, ExtractionLimits
 logger = logging.getLogger(__name__)
 # 摘要啟發式只看每行開頭的這些字元
 MAX_TOC_LINE_CHARS = 300
-# 小於此大小的 ZIP 成員不檢查壓縮比：一般 XML 本來就能壓縮很多倍
-OOXML_RATIO_CHECK_MIN_BYTES = 10 * MIB
+OOXML_CONTENT_TYPES_PART = "[Content_Types].xml"
+# 與 python-docx／python-pptx 相同：不展開實體、不連網
+OOXML_XML_PARSER = etree.XMLParser(resolve_entities=False, no_network=True)
+
+
+class DocumentLimitExceeded(ValueError):
+    """文件超過本次抽取的資源預算；訊息只描述哪一項上限，可以原樣告知使用者"""
+
+
+def _is_xml_content_type(content_type: str) -> bool:
+    lowered = content_type.lower()
+    return lowered.endswith("+xml") or lowered.endswith("/xml")
+
+
+def _ooxml_xml_bytes(archive: zipfile.ZipFile, members: list, max_xml_bytes: int) -> int:
+    """依 [Content_Types].xml 加總會被當成 XML 解析的成員大小（另含 .rels 與該檔本身）。
+
+    python-docx／python-pptx 依內容類型而非副檔名決定是否把部件建成 DOM，因此改名不能繞過這個預算"""
+    try:
+        content_types_info = archive.getinfo(OOXML_CONTENT_TYPES_PART)
+    except KeyError as e:
+        raise ValueError("無效的 Office 文件格式") from e
+    if content_types_info.file_size > max_xml_bytes:
+        raise DocumentLimitExceeded("文件的 XML 內容超過解析上限")
+    try:
+        root = etree.fromstring(archive.read(content_types_info), parser=OOXML_XML_PARSER)
+    except etree.XMLSyntaxError as e:
+        raise ValueError("無效的 Office 文件格式") from e
+    defaults = {}
+    overrides = {}
+    for element in root:
+        if not isinstance(element.tag, str):
+            continue
+        name = etree.QName(element).localname
+        content_type = element.get("ContentType")
+        extension = element.get("Extension")
+        part_name = element.get("PartName")
+        if name == "Default" and content_type is not None and extension is not None:
+            defaults[extension.lower()] = content_type
+        elif name == "Override" and content_type is not None and part_name is not None:
+            overrides[part_name.lower()] = content_type
+    total = content_types_info.file_size
+    for info in members:
+        if info.filename == OOXML_CONTENT_TYPES_PART:
+            continue
+        name = info.filename.lower()
+        content_type = overrides.get("/" + name)
+        if content_type is None:
+            content_type = defaults.get(os.path.splitext(name)[1].lstrip("."))
+        if name.endswith(".rels") or (content_type is not None and _is_xml_content_type(content_type)):
+            total += info.file_size
+    return total
+
+
 JSON_DECLARATION_PATTERN = re.compile(r'(?:\b(?:const|let|var)\s+\w+\s*=|module\.exports\s*=)\s*')
 SVG_OPEN = "<svg"
 SVG_CLOSE = "</svg>"
@@ -114,8 +167,8 @@ class DocumentProcessor:
         return sha256_hash.hexdigest()
     
     @staticmethod
-    def extract_text_from_file(file_path: str, content_type: str, max_ocr_pages: Optional[int] = None) -> Optional[str]:
-        """max_ocr_pages：PDF 最多送 Vision OCR 的頁數；None 表示不限，只用於管理員上傳"""
+    def extract_text_from_file(file_path: str, content_type: str, limits: ExtractionLimits) -> Optional[str]:
+        """limits：本次抽取的資源預算，管理員上傳與聊天附件各用 app.core.limits 中的一組"""
         try:
             ext = os.path.splitext(file_path)[1].lower()
             
@@ -141,20 +194,21 @@ class DocumentProcessor:
             if file_size > max_size:
                 raise ValueError(f"檔案大小 ({file_size} bytes) 超過限制")
             if ext == ".pdf" or content_type == "application/pdf":
-                return DocumentProcessor._extract_from_pdf(file_path, max_ocr_pages)
+                return DocumentProcessor._extract_from_pdf(file_path, limits.max_ocr_pages)
             elif ext == ".docx" or content_type == "application/vnd.openxmlformats-officedocument.wordprocessingml.document":
-                DocumentProcessor._check_ooxml_archive(file_path)
+                DocumentProcessor._check_ooxml_archive(file_path, limits, builds_dom=True)
                 return DocumentProcessor._extract_from_docx(file_path)
             elif ext == ".pptx" or content_type == "application/vnd.openxmlformats-officedocument.presentationml.presentation":
-                DocumentProcessor._check_ooxml_archive(file_path)
+                DocumentProcessor._check_ooxml_archive(file_path, limits, builds_dom=True)
                 return DocumentProcessor._extract_from_pptx(file_path)
             elif ext == ".xlsx" or content_type == "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet":
-                DocumentProcessor._check_ooxml_archive(file_path)
+                # openpyxl 以 read_only 串流讀取工作表，不會整份建成 DOM
+                DocumentProcessor._check_ooxml_archive(file_path, limits, builds_dom=False)
                 return DocumentProcessor._extract_from_xlsx(file_path)
             elif ext == ".csv" or content_type == "text/csv":
                 return DocumentProcessor._extract_from_csv(file_path)
             elif ext in (".js", ".ts", ".jsx", ".tsx", ".json", ".jsonl", ".py", ".yaml", ".yml", ".ini", ".env", ".sql"):
-                return DocumentProcessor._extract_from_code_or_data(file_path, ext)
+                return DocumentProcessor._extract_from_code_or_data(file_path, limits.max_structured_parse_chars)
             elif ext in (".html", ".htm") or content_type == "text/html":
                 return DocumentProcessor._extract_from_html(file_path)
             else:
@@ -164,17 +218,30 @@ class DocumentProcessor:
             raise
     
     @staticmethod
-    def _check_ooxml_archive(file_path: str) -> None:
-        """OOXML 是 ZIP：解析前先檢查成員宣告的解壓大小與壓縮比，擋下壓縮炸彈"""
+    def _check_ooxml_archive(file_path: str, limits: ExtractionLimits, builds_dom: bool) -> None:
+        """OOXML 是 ZIP：解析前先檢查成員數、宣告的解壓大小與壓縮比，擋下壓縮炸彈。
+
+        zipfile 讀取成員時不會超過宣告的大小，因此宣告值可以當作上界。壓縮比除了逐一成員，
+        也看整個檔案，拆成許多小成員的炸彈同樣會被擋下。builds_dom 為 True 的格式另外限制
+        會被建成 lxml DOM 的 XML 總量：DOM 的記憶體是 XML 大小的十幾到幾十倍"""
         try:
             with zipfile.ZipFile(file_path) as archive:
+                members = archive.infolist()
+                if len(members) > limits.max_ooxml_members:
+                    raise DocumentLimitExceeded("文件內含的檔案數超過上限")
                 total = 0
-                for info in archive.infolist():
+                total_compressed = 0
+                for info in members:
                     total += info.file_size
-                    if total > MAX_OOXML_UNCOMPRESSED_BYTES:
-                        raise ValueError("文件解壓後的大小超過上限")
+                    total_compressed += info.compress_size
+                    if total > limits.max_ooxml_uncompressed_bytes:
+                        raise DocumentLimitExceeded("文件解壓後的大小超過上限")
                     if info.file_size > OOXML_RATIO_CHECK_MIN_BYTES and info.file_size > info.compress_size * MAX_OOXML_COMPRESSION_RATIO:
-                        raise ValueError("文件的壓縮比異常，疑似壓縮炸彈")
+                        raise DocumentLimitExceeded("文件的壓縮比異常，疑似壓縮炸彈")
+                if total > OOXML_RATIO_CHECK_MIN_BYTES and total > total_compressed * MAX_OOXML_COMPRESSION_RATIO:
+                    raise DocumentLimitExceeded("文件的壓縮比異常，疑似壓縮炸彈")
+                if builds_dom and _ooxml_xml_bytes(archive, members, limits.max_ooxml_xml_bytes) > limits.max_ooxml_xml_bytes:
+                    raise DocumentLimitExceeded("文件的 XML 內容超過解析上限")
         except zipfile.BadZipFile as e:
             raise ValueError("無效的 Office 文件格式") from e
     @staticmethod
@@ -359,13 +426,15 @@ class DocumentProcessor:
                 pass
         return []
     @staticmethod
-    def _extract_from_code_or_data(file_path: str, ext: str) -> str:
+    def _extract_from_code_or_data(file_path: str, max_structured_parse_chars: Optional[int]) -> str:
+        """max_structured_parse_chars：超過此長度不交給 json.loads（解析後的物件約為文字的二十多倍）；None 表示不限"""
         raw_text = DocumentProcessor._extract_from_txt(file_path)
-        
-        cleaned = DocumentProcessor._clean_structured_data(raw_text)
-        if cleaned:
-            return cleaned
-        
+
+        if max_structured_parse_chars is None or len(raw_text) <= max_structured_parse_chars:
+            cleaned = DocumentProcessor._clean_structured_data(raw_text)
+            if cleaned:
+                return cleaned
+
         import re
         cleaned_code = re.sub(r'data:image\/[a-zA-Z]+;base64,[a-zA-Z0-9+/=]{100,}', '[BASE64_IMAGE_OMITTED]', raw_text)
         return _replace_svg_blocks(cleaned_code)
@@ -378,7 +447,7 @@ class DocumentProcessor:
         return extracted or raw_text
     
     @staticmethod
-    def _extract_from_pdf(file_path: str, max_ocr_pages: Optional[int] = None) -> str:
+    def _extract_from_pdf(file_path: str, max_ocr_pages: Optional[int]) -> str:
         from app.services.pdf_service import PDFService
         return PDFService.extract_text_robust(file_path, max_ocr_pages=max_ocr_pages)
     

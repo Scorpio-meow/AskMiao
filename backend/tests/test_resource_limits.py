@@ -14,6 +14,7 @@ import io
 import threading
 import time
 import zipfile
+from dataclasses import replace
 
 import pymupdf as fitz
 import pytest
@@ -31,9 +32,12 @@ from app.core.body_limit import RequestBodyLimitMiddleware
 from app.core.config import settings
 from app.core.jwt_auth import create_token_pair
 from app.core.limits import (
+    ADMIN_UPLOAD_EXTRACTION_LIMITS,
+    CHAT_ATTACHMENT_EXTRACTION_LIMITS,
     MAX_CHAT_ATTACHMENT_BYTES,
     MAX_CHAT_ATTACHMENTS,
     MAX_CHAT_MESSAGE_CHARS,
+    MAX_CONCURRENT_ATTACHMENT_EXTRACTIONS,
     MAX_REQUEST_BODY_BYTES,
     MAX_TOOL_RESULT_CHARS,
     MIB,
@@ -46,7 +50,12 @@ from app.rag.tools import ResearchToolRegistry, extract_html_text
 from app.services import chat_service as chat_service_module
 from app.services import pdf_service
 from app.services.chat_service import AttachmentQuotaExceeded, ChatService
-from app.services.document_processor import DocumentProcessor, _extract_declared_json, _replace_svg_blocks
+from app.services.document_processor import (
+    DocumentLimitExceeded,
+    DocumentProcessor,
+    _extract_declared_json,
+    _replace_svg_blocks,
+)
 from app.services.pdf_service import PDFService
 
 
@@ -252,13 +261,119 @@ def test_ocr_rendering_is_single_threaded_pixel_bounded_and_page_capped(monkeypa
     assert "超過每份文件的 OCR 頁數上限" in text
 
 
-def test_ooxml_decompression_bomb_is_rejected(tmp_path):
-    path = tmp_path / "bomb.docx"
+DOCX_TYPE = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+# 主文件部件刻意不用 .xml 副檔名：是否建成 DOM 由內容類型決定
+CONTENT_TYPES_XML = (
+    '<?xml version="1.0" encoding="UTF-8"?>'
+    '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'
+    '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>'
+    '<Default Extension="png" ContentType="image/png"/>'
+    '<Override PartName="/word/body.bin" '
+    'ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>'
+    '</Types>'
+)
+
+
+def write_zip(path, members):
     with zipfile.ZipFile(path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
-        archive.writestr("[Content_Types].xml", "<Types/>")
-        archive.writestr("word/document.xml", b"\0" * (64 * MIB))
-    with pytest.raises(ValueError, match="壓縮"):
-        DocumentProcessor.extract_text_from_file(str(path), "application/vnd.openxmlformats-officedocument.wordprocessingml.document")
+        for name, data in members.items():
+            archive.writestr(name, data)
+    return str(path)
+
+
+def test_ooxml_decompression_bomb_is_rejected(tmp_path):
+    path = write_zip(tmp_path / "bomb.docx", {"[Content_Types].xml": "<Types/>", "word/document.xml": b"\0" * (64 * MIB)})
+    with pytest.raises(DocumentLimitExceeded, match="壓縮"):
+        DocumentProcessor.extract_text_from_file(path, DOCX_TYPE, ADMIN_UPLOAD_EXTRACTION_LIMITS)
+
+
+def test_ooxml_ratio_is_checked_across_small_members(tmp_path):
+    # 每個成員都小於逐一檢查的門檻，但整個檔案的壓縮比異常
+    members = {"[Content_Types].xml": "<Types/>"}
+    members.update({f"word/part{index}.xml": b"\0" * MIB for index in range(11)})
+    path = write_zip(tmp_path / "split.docx", members)
+    for limits in (ADMIN_UPLOAD_EXTRACTION_LIMITS, CHAT_ATTACHMENT_EXTRACTION_LIMITS):
+        with pytest.raises(DocumentLimitExceeded, match="壓縮"):
+            DocumentProcessor.extract_text_from_file(path, DOCX_TYPE, limits)
+
+
+def test_attachment_xml_budget_follows_content_types(tmp_path):
+    limits = replace(CHAT_ATTACHMENT_EXTRACTION_LIMITS, max_ooxml_xml_bytes=4096)
+    xml_body = ("<w:p>" + "段落文字" * 1000 + "</w:p>").encode()
+    renamed = write_zip(tmp_path / "renamed.docx", {"[Content_Types].xml": CONTENT_TYPES_XML, "word/body.bin": xml_body})
+    with pytest.raises(DocumentLimitExceeded, match="XML"):
+        DocumentProcessor.extract_text_from_file(renamed, DOCX_TYPE, limits)
+    # 圖片等非 XML 部件只占記憶體一次，不計入 DOM 預算；串流讀取的 xlsx 也不套用
+    media = write_zip(tmp_path / "media.docx", {"[Content_Types].xml": CONTENT_TYPES_XML, "word/media/image1.png": xml_body})
+    DocumentProcessor._check_ooxml_archive(media, limits, builds_dom=True)
+    DocumentProcessor._check_ooxml_archive(renamed, limits, builds_dom=False)
+    # .rels 一律會被解析
+    rels = write_zip(tmp_path / "rels.docx", {"[Content_Types].xml": "<Types/>", "word/_rels/body.bin.rels": xml_body})
+    with pytest.raises(DocumentLimitExceeded, match="XML"):
+        DocumentProcessor._check_ooxml_archive(rels, limits, builds_dom=True)
+
+
+def test_ooxml_member_count_is_bounded(tmp_path):
+    limits = replace(ADMIN_UPLOAD_EXTRACTION_LIMITS, max_ooxml_members=3)
+    members = {"[Content_Types].xml": CONTENT_TYPES_XML}
+    members.update({f"ppt/slides/slide{index}.xml": "<p/>" for index in range(3)})
+    path = write_zip(tmp_path / "many.pptx", members)
+    with pytest.raises(DocumentLimitExceeded, match="檔案數"):
+        DocumentProcessor.extract_text_from_file(path, "application/vnd.openxmlformats-officedocument.presentationml.presentation", limits)
+
+
+def test_structured_parse_budget_skips_json_loads(tmp_path):
+    path = tmp_path / "posts.json"
+    path.write_text('[{"author": "喵", "content": "第一則"}]', encoding="utf-8")
+    structured = DocumentProcessor.extract_text_from_file(str(path), "application/json", ADMIN_UPLOAD_EXTRACTION_LIMITS)
+    assert structured.startswith("【記錄 1】")
+    raw = DocumentProcessor.extract_text_from_file(
+        str(path), "application/json", replace(CHAT_ATTACHMENT_EXTRACTION_LIMITS, max_structured_parse_chars=10)
+    )
+    assert raw.startswith("[{")
+
+
+def test_attachment_over_budget_is_reported_instead_of_parsed(monkeypatch, tmp_path):
+    monkeypatch.setattr(agent_module, "CHAT_ATTACHMENT_EXTRACTION_LIMITS", replace(CHAT_ATTACHMENT_EXTRACTION_LIMITS, max_ooxml_members=1))
+    path = write_zip(tmp_path / "a.docx", {"[Content_Types].xml": CONTENT_TYPES_XML, "word/body.bin": "<w:p/>"})
+    with open(path, "rb") as handle:
+        url = f"data:{DOCX_TYPE};base64," + base64.b64encode(handle.read()).decode()
+    text = agent_module._extract_attachment_text("a.docx", DOCX_TYPE, url)
+    assert text.startswith("[附件超過解析上限") and "檔案數" in text
+
+
+@pytest.mark.anyio
+async def test_attachment_extractions_are_bounded_process_wide(monkeypatch):
+    assert agent_module._attachment_extraction_slots._value == MAX_CONCURRENT_ATTACHMENT_EXTRACTIONS
+    # 號誌綁定第一個等待它的事件迴圈；測試各自建立事件迴圈，因此換成同樣大小的新號誌
+    monkeypatch.setattr(agent_module, "_attachment_extraction_slots", asyncio.Semaphore(MAX_CONCURRENT_ATTACHMENT_EXTRACTIONS))
+    lock = threading.Lock()
+    running = {"now": 0, "peak": 0}
+
+    def slow_extract(fname, ftype, url):
+        with lock:
+            running["now"] += 1
+            running["peak"] = max(running["peak"], running["now"])
+        time.sleep(0.05)
+        with lock:
+            running["now"] -= 1
+        return "內容"
+
+    async def fake_chat_completion(messages, **kwargs):
+        return {"role": "assistant", "content": "好"}
+
+    monkeypatch.setattr(agent_module, "_extract_attachment_text", slow_extract)
+    monkeypatch.setattr(agent_module, "chat_completion", fake_chat_completion)
+    registry = ResearchToolRegistry()
+    monkeypatch.setattr(registry, "get_tool_definitions", lambda: [])
+    attachments = [FileAttachment(filename=f"{i}.txt", file_type="text/plain", data_url=data_url(10)) for i in range(2)]
+
+    async def ask():
+        agent = agent_module.ResearchAgent(tool_registry=registry)
+        return [event async for event in agent.stream_research("摘要", attachments=attachments, max_turns=1)]
+
+    await asyncio.gather(*(ask() for _ in range(MAX_CONCURRENT_ATTACHMENT_EXTRACTIONS + 2)))
+    assert running["peak"] == MAX_CONCURRENT_ATTACHMENT_EXTRACTIONS
 
 
 # ---------- 6. 線性時間的清洗與切分、工具結果上限 ----------

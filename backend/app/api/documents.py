@@ -5,7 +5,7 @@ from app.models import Document as DBDocument
 from app.core.rag_manager import get_rag_system
 from app.core.user_context import get_current_user_id, get_default_user_id
 from app.core.jwt_auth import get_current_admin_user
-from app.core.limits import MAX_FILES_PER_UPLOAD
+from app.core.limits import ADMIN_UPLOAD_EXTRACTION_LIMITS, MAX_FILES_PER_UPLOAD
 from app.rag.tools import invalidate_knowledge_base_description
 from app.services.document_processor import DocumentProcessor
 from app.core.input_validator import InputValidator
@@ -189,7 +189,9 @@ async def upload_document(
             file_hash = DocumentProcessor.calculate_file_hash(file_path)
             logger.info(f"Uploaded file hash: {file_hash}")
             try:
-                content = await asyncio.to_thread(DocumentProcessor.extract_text_from_file, file_path, up.content_type)
+                content = await asyncio.to_thread(
+                    DocumentProcessor.extract_text_from_file, file_path, up.content_type, ADMIN_UPLOAD_EXTRACTION_LIMITS
+                )
             except ValueError as ve:
                 if os.path.exists(file_path):
                     os.remove(file_path)
@@ -421,7 +423,8 @@ async def rebuild_index(
                 if os.path.exists(file_path):
                     try:
                         fresh_content = await asyncio.to_thread(
-                            DocumentProcessor.extract_text_from_file, file_path, doc.file_type or "text/plain"
+                            DocumentProcessor.extract_text_from_file, file_path, doc.file_type or "text/plain",
+                            ADMIN_UPLOAD_EXTRACTION_LIMITS
                         )
                         if fresh_content and fresh_content.strip():
                             content_to_process = fresh_content.strip()

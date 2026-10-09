@@ -5,6 +5,7 @@ sys.path.insert(0, backend_dir)
 from app.models.database import SessionLocal
 from app.models import Document as DBDocument
 from app.services.document_processor import DocumentProcessor
+from app.core.limits import ADMIN_UPLOAD_EXTRACTION_LIMITS
 from app.core.rag_manager import get_rag_system
 from app.api.documents import process_document_for_rag
 import asyncio
@@ -31,7 +32,9 @@ async def reprocess_all():
         if os.path.exists(file_path):
             try:
                 print(f"正在從實體檔案重新提取文字 (含 OCR)...")
-                fresh_content = DocumentProcessor.extract_text_from_file(file_path, doc.file_type or "text/plain")
+                fresh_content = DocumentProcessor.extract_text_from_file(
+                    file_path, doc.file_type or "text/plain", ADMIN_UPLOAD_EXTRACTION_LIMITS
+                )
                 if fresh_content and fresh_content.strip():
                     content = fresh_content.strip()
                     doc.content = content

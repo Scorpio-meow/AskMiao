@@ -6,7 +6,11 @@ import os
 import tempfile
 import time
 from typing import Any, Dict, List, Optional, AsyncGenerator
-from app.core.limits import MAX_ATTACHMENT_TEXT_CHARS, MAX_PDF_OCR_PAGES
+from app.core.limits import (
+    CHAT_ATTACHMENT_EXTRACTION_LIMITS,
+    MAX_ATTACHMENT_TEXT_CHARS,
+    MAX_CONCURRENT_ATTACHMENT_EXTRACTIONS,
+)
 from app.core.llm_client import chat_completion, stream_completion
 from app.rag.tools import ResearchToolRegistry
 from app.rag.research_session import ResearchSession, strip_citations
@@ -43,9 +47,14 @@ SYSTEM_PROMPT = """你是一個具備自主研究能力的智慧助理「AskMiao
 """
 
 
+# 附件解析的記憶體上界 = 同時解析數 × 單檔預算（CHAT_ATTACHMENT_EXTRACTION_LIMITS），整個行程共用
+_attachment_extraction_slots = asyncio.Semaphore(MAX_CONCURRENT_ATTACHMENT_EXTRACTIONS)
+
+
 def _extract_attachment_text(fname: str, ftype: str, data_url: str) -> Optional[str]:
-    """解碼附件並抽出文字（同步、CPU 與 I/O 密集，須在執行緒中呼叫）"""
-    from app.services.document_processor import DocumentProcessor
+    """解碼附件並抽出文字（同步、CPU 與 I/O 密集，須在執行緒中呼叫）。
+    超過附件解析預算時回傳說明文字，讓模型能告知使用者附件未被讀取"""
+    from app.services.document_processor import DocumentLimitExceeded, DocumentProcessor
 
     _, b64_data = data_url.split(",", 1)
     file_bytes = base64.b64decode(b64_data)
@@ -54,7 +63,10 @@ def _extract_attachment_text(fname: str, ftype: str, data_url: str) -> Optional[
         tmp.write(file_bytes)
         tmp_path = tmp.name
     try:
-        return DocumentProcessor.extract_text_from_file(tmp_path, ftype, max_ocr_pages=MAX_PDF_OCR_PAGES)
+        return DocumentProcessor.extract_text_from_file(tmp_path, ftype, CHAT_ATTACHMENT_EXTRACTION_LIMITS)
+    except DocumentLimitExceeded as e:
+        logger.warning(f"附件 {fname} 超過解析上限: {e}")
+        return f"[附件超過解析上限，未讀取內容：{e}]"
     finally:
         if os.path.exists(tmp_path):
             os.remove(tmp_path)
@@ -116,7 +128,8 @@ class ResearchAgent:
                     if not extracted_text and data_url and "," in data_url:
                         try:
                             # 解碼與解析會長時間占用 CPU，移到執行緒以免阻塞其他使用者的請求
-                            extracted_text = await asyncio.to_thread(_extract_attachment_text, fname, ftype, data_url)
+                            async with _attachment_extraction_slots:
+                                extracted_text = await asyncio.to_thread(_extract_attachment_text, fname, ftype, data_url)
                         except Exception as e:
                             logger.warning(f"即時解析附件 {fname} 失敗: {e}")
 
