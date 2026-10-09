@@ -57,7 +57,8 @@ class Settings(BaseSettings):
     OLLAMA_FETCH_ENDPOINT: str = "https://ollama.com/api/web_fetch"
     DUCKDUCKGO_SEARCH_ENDPOINT: str = "https://html.duckduckgo.com/html/"
     DEFAULT_CONVERSATION_TITLE: str = "新對話"
-    COOKIE_SECURE: Optional[bool] = None
+    # 重新整理權杖 Cookie 是否帶 Secure（只經 HTTPS 傳送）；以 HTTPS 提供服務時必須為 true
+    COOKIE_SECURE: bool
     COOKIE_SAMESITE: str = "lax"
     EXTERNAL_TAGS_URL: str = ""
     LLM_TAGS_TIMEOUT: float = 10.0
@@ -73,9 +74,13 @@ class Settings(BaseSettings):
     LOGIN_FAILURE_WINDOW_SECONDS: int = Field(ge=1)
     LOGIN_LOCKOUT_SECONDS: int = Field(ge=1)
     ENVIRONMENT: str = "development"
-    HOST: str = "0.0.0.0"
+    # python main.py 的監聽位址；只有容器或其他主機上的反向代理需要連入時才改為 0.0.0.0
+    HOST: str
     PORT: int = 8001
-    RELOAD: bool = True
+    # 程式碼變更時自動重新載入，只用於開發
+    RELOAD: bool
+    # 是否提供 /docs、/redoc 與 /openapi.json（完整列出所有端點與參數）
+    ENABLE_API_DOCS: bool
     LOG_LEVEL: str = "INFO"
     DATABASE_URL: str
     DB_POOL_SIZE: int = 20

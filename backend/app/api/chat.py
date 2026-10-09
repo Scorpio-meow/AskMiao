@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 from app.models.database import get_db
@@ -63,22 +63,6 @@ async def _ensure_model_allowed(model_name: Optional[str]) -> None:
         return
     if model_name not in await _allowed_models():
         raise HTTPException(status_code=400, detail="不支援的模型")
-class ConnectionManager:
-    def __init__(self):
-        self.active_connections: List[WebSocket] = []
-        self.user_connections: dict = {}
-    async def connect(self, websocket: WebSocket, user_id: int):
-        await websocket.accept()
-        self.active_connections.append(websocket)
-        self.user_connections[user_id] = websocket
-    def disconnect(self, websocket: WebSocket, user_id: int = None):
-        self.active_connections.remove(websocket)
-        if user_id and user_id in self.user_connections:
-            del self.user_connections[user_id]
-    async def send_personal_message(self, message: str, user_id: int):
-        if user_id in self.user_connections:
-            await self.user_connections[user_id].send_text(message)
-manager = ConnectionManager()
 @router.get("/models")
 async def get_available_models():
     from app.core.llm_client import get_available_models as get_configured_models
@@ -319,25 +303,3 @@ def delete_conversation(
         raise HTTPException(status_code=404, detail="找不到該對話")
     
     return {"message": "對話已刪除"}
-@router.websocket("/ws/{user_id}")
-async def websocket_endpoint(websocket: WebSocket, user_id: int):
-    try:
-        await manager.connect(websocket, user_id)
-        
-        while True:
-            data = await websocket.receive_text()
-            message_data = json.loads(data)
-            
-            response = {
-                "type": "message",
-                "content": f"收到訊息: {message_data['content']}",
-                "timestamp": "now"
-            }
-            
-            await manager.send_personal_message(json.dumps(response), user_id)
-            
-    except WebSocketDisconnect:
-        manager.disconnect(websocket, user_id)
-    except Exception as e:
-        logger.exception("WebSocket 連線發生錯誤")
-        manager.disconnect(websocket, user_id)

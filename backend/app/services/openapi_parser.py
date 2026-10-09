@@ -3,10 +3,20 @@ import logging
 import re
 from typing import Any, Dict, List, Optional, Tuple, Union
 import yaml
-from app.core.ssrf_protection import safe_fetch_text, SSRFProtectionError
+from app.core.ssrf_protection import DnsPool, safe_fetch_text, SSRFProtectionError
 from app.core.error_response import SafeClientError, format_ssrf_rejection, log_and_get_error_id
 
 logger = logging.getLogger(__name__)
+
+
+class NoAliasSafeLoader(yaml.SafeLoader):
+    """OpenAPI 規格不需要 YAML 別名：別名在後續清理 schema 與序列化回應時會被逐一展開，
+    幾 KB 的規格就能產生上百 MB 的資料並阻塞事件迴圈，因此一律拒絕"""
+
+    def compose_node(self, parent, index):
+        if self.check_event(yaml.events.AliasEvent):
+            raise yaml.composer.ComposerError(None, None, "規格不可使用 YAML 別名（*alias）", self.peek_event().start_mark)
+        return super().compose_node(parent, index)
 
 
 class OpenApiParser:
@@ -31,8 +41,7 @@ class OpenApiParser:
             "title": "API Title",
             "description": "...",
             "base_url": "https://api.example.com",
-            "endpoints": [ ... ],
-            "raw_spec": { ... }
+            "endpoints": [ ... ]
         }
         """
         raw_text = spec_content_or_url.strip()
@@ -40,6 +49,7 @@ class OpenApiParser:
             try:
                 raw_text = await safe_fetch_text(
                     url=raw_text,
+                    dns_pool=DnsPool.CONFIGURED_ENDPOINT,
                     timeout=15.0,
                     max_redirects=5,
                     max_size_bytes=10 * 1024 * 1024
@@ -69,8 +79,7 @@ class OpenApiParser:
             "description": description,
             "base_url": effective_base_url,
             "endpoints_count": len(endpoints),
-            "endpoints": endpoints,
-            "raw_spec": spec_dict
+            "endpoints": endpoints
         }
     @classmethod
     def _parse_raw_text_to_dict(cls, text: str) -> Dict[str, Any]:
@@ -82,7 +91,7 @@ class OpenApiParser:
             except Exception:
                 pass
         try:
-            return yaml.safe_load(text)
+            return yaml.load(text, Loader=NoAliasSafeLoader)
         except Exception as e:
             try:
                 return json.loads(text)

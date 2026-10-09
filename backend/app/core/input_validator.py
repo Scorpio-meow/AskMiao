@@ -175,7 +175,7 @@ class InputValidator:
 
     @staticmethod
     def validate_url_for_ssrf(url: str, allow_private_ips: bool = False) -> tuple[bool, str]:
-        from app.core.ssrf_protection import validate_url_ssrf
+        from app.core.ssrf_protection import DnsPool, validate_url_ssrf
         import asyncio
         try:
             try:
@@ -183,12 +183,12 @@ class InputValidator:
                 import concurrent.futures
                 with concurrent.futures.ThreadPoolExecutor() as executor:
                     is_safe, reason, _ = executor.submit(
-                        asyncio.run, validate_url_ssrf(url, allow_private_ips=allow_private_ips)
+                        asyncio.run, validate_url_ssrf(url, DnsPool.CONFIGURED_ENDPOINT, allow_private_ips=allow_private_ips)
                     ).result()
                     return is_safe, reason
             except RuntimeError:
                 is_safe, reason, _ = asyncio.run(
-                    validate_url_ssrf(url, allow_private_ips=allow_private_ips)
+                    validate_url_ssrf(url, DnsPool.CONFIGURED_ENDPOINT, allow_private_ips=allow_private_ips)
                 )
                 return is_safe, reason
         except Exception as e:

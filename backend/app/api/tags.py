@@ -1,9 +1,6 @@
 import asyncio
 import time
 from fastapi import APIRouter
-from fastapi.responses import JSONResponse
-from fastapi import status
-import os
 import logging
 from collections.abc import Iterable, Mapping, Sequence
 from typing import Optional
@@ -153,37 +150,3 @@ def _coerce_to_iterable(candidate: object) -> Iterable[object] | None:
                 if nested:
                     return nested
     return None
-@router.get("/external-tags")
-def get_external_tags():
-    configured_models = get_available_models()
-    if configured_models:
-        azure_dep = settings.AZURE_OPENAI_DEPLOYMENT.split(',')[0].strip() if settings.AZURE_OPENAI_DEPLOYMENT else None
-        default_model = settings.MODEL_NAME or azure_dep or configured_models[0]
-        if default_model not in configured_models:
-            default_model = configured_models[0]
-        return JSONResponse(content={"tags": configured_models, "default": default_model})
-    custom_url = (settings.EXTERNAL_TAGS_URL or "").strip()
-    base = (settings.LLM_API_BASE or "").strip()
-    if custom_url:
-        url = custom_url
-    else:
-        if not base:
-            return JSONResponse(status_code=status.HTTP_400_BAD_REQUEST, content={
-                "error": "No external tags URL configured (set EXTERNAL_TAGS_URL or LLM_API_BASE)."
-            })
-        url = f"{base.rstrip('/')}/api/tags"
-    timeout = float(settings.LLM_TAGS_TIMEOUT)
-    headers: dict[str, str] = {}
-    if "ngrok-free.app" in url or settings.ADD_NGROK_HEADER:
-        headers["ngrok-skip-browser-warning"] = "true"
-    try:
-        resp = requests.get(url, headers=headers, timeout=timeout)
-        resp.raise_for_status()
-        return JSONResponse(content=resp.json())
-    except Exception as exc:
-        logger.exception("Failed to fetch external tags from %s", url)
-        fallback = _load_fallback_models()
-        return JSONResponse(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            content={"error": "Failed to fetch external tags", "models": fallback},
-        )

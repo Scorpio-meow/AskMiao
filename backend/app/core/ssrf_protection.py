@@ -6,6 +6,7 @@ SSRF (Server-Side Request Forgery) 防護模組
 import asyncio
 import ipaddress
 from concurrent.futures import ThreadPoolExecutor
+from enum import Enum
 import logging
 import re
 import socket
@@ -41,9 +42,12 @@ DISALLOWED_IPV6_NETWORKS = [
     ipaddress.ip_network("::1/128"),           # Loopback
     ipaddress.ip_network("::ffff:0:0/96"),      # IPv4-mapped IPv6
     ipaddress.ip_network("64:ff9b::/96"),       # IPv4/IPv6 translation
+    ipaddress.ip_network("64:ff9b:1::/48"),     # Local-use IPv4/IPv6 translation (RFC 8215)
     ipaddress.ip_network("100::/64"),           # Discard-only
     ipaddress.ip_network("2001::/23"),          # IETF Protocol Assignments
     ipaddress.ip_network("2001:db8::/32"),      # Documentation
+    # 6to4 內嵌任意 IPv4（含內網）；舊版直譯器的 is_private 不涵蓋此網段，必須明確列出
+    ipaddress.ip_network("2002::/16"),          # 6to4
     ipaddress.ip_network("fc00::/7"),           # Unique Local Address (ULA)
     ipaddress.ip_network("fe80::/10"),          # Link-Local unicast
     ipaddress.ip_network("ff00::/8"),           # Multicast
@@ -93,11 +97,26 @@ BLOCKED_DANGEROUS_PORTS: Set[int] = {
 }
 
 
-# DNS 解析使用專屬的有界執行緒池並設定逾時：getaddrinfo 無法取消，
-# 慢速或惡意的權威伺服器只會占住這個池，不會拖垮事件迴圈共用的預設執行緒池
+class DnsPool(Enum):
+    """DNS 解析使用的執行緒池。
+
+    getaddrinfo 無法取消：逾時後執行緒仍要等系統解析器放棄才會釋放，慢速或惡意的權威伺服器
+    因此能長時間占住執行緒。使用者在對話中提供的網址與管理員設定的端點各用一個池，
+    使用者以慢速網域占滿前者時，自訂 API 工具、MCP 與 OpenAPI 規格的檢查不受影響；
+    兩者也都與事件迴圈共用的預設執行緒池分開。
+    """
+    # 使用者訊息或工具結果中的網址（web_fetch）
+    USER_URL = "user-url"
+    # 管理員設定的端點：自訂 API 工具、MCP HTTP 伺服器、OpenAPI 規格網址
+    CONFIGURED_ENDPOINT = "configured-endpoint"
+
+
 DNS_RESOLVE_TIMEOUT_SECONDS = 5.0
-DNS_RESOLVER_MAX_WORKERS = 4
-_dns_executor = ThreadPoolExecutor(max_workers=DNS_RESOLVER_MAX_WORKERS, thread_name_prefix="ssrf-dns")
+DNS_RESOLVER_MAX_WORKERS = {DnsPool.USER_URL: 8, DnsPool.CONFIGURED_ENDPOINT: 4}
+_dns_executors = {
+    pool: ThreadPoolExecutor(max_workers=workers, thread_name_prefix=f"ssrf-dns-{pool.value}")
+    for pool, workers in DNS_RESOLVER_MAX_WORKERS.items()
+}
 
 
 class SSRFProtectionError(ValueError):
@@ -169,12 +188,14 @@ def _resolve_hostname_sync(hostname: str, port: int) -> List[Union[ipaddress.IPv
     return resolved_ips
 
 
-async def resolve_hostname(hostname: str, port: int = 80) -> List[Union[ipaddress.IPv4Address, ipaddress.IPv6Address]]:
+async def resolve_hostname(
+    hostname: str, port: int, dns_pool: DnsPool
+) -> List[Union[ipaddress.IPv4Address, ipaddress.IPv6Address]]:
     """非阻塞非同步 DNS 解析主機名稱；逾時視為無法解析"""
     loop = asyncio.get_running_loop()
     try:
         return await asyncio.wait_for(
-            loop.run_in_executor(_dns_executor, _resolve_hostname_sync, hostname, port),
+            loop.run_in_executor(_dns_executors[dns_pool], _resolve_hostname_sync, hostname, port),
             timeout=DNS_RESOLVE_TIMEOUT_SECONDS,
         )
     except asyncio.TimeoutError:
@@ -187,6 +208,7 @@ IPAddress = Union[ipaddress.IPv4Address, ipaddress.IPv6Address]
 
 async def validate_url_ssrf(
     url: str,
+    dns_pool: DnsPool,
     allowed_schemes: Tuple[str, ...] = ("http", "https"),
     allow_private_ips: bool = False
 ) -> Tuple[bool, str, Optional[ParseResult]]:
@@ -196,12 +218,13 @@ async def validate_url_ssrf(
     驗證通過後若自行發出連線，請改用 SSRFSafeTransport，否則連線時的第二次 DNS 解析
     可能被 DNS rebinding 導向內網。
     """
-    is_valid, reason, parsed, _ = await _check_url(url, allowed_schemes, allow_private_ips)
+    is_valid, reason, parsed, _ = await _check_url(url, dns_pool, allowed_schemes, allow_private_ips)
     return is_valid, reason, parsed
 
 
 async def _check_url(
     url: str,
+    dns_pool: DnsPool,
     allowed_schemes: Tuple[str, ...] = ("http", "https"),
     allow_private_ips: bool = False
 ) -> Tuple[bool, str, Optional[ParseResult], List[IPAddress]]:
@@ -279,7 +302,7 @@ async def _check_url(
             return True, "", parsed, approved_ips
 
         # 5. DNS 解析並驗證所有解析出的 IP
-        resolved_ips = await resolve_hostname(hostname_lower, port)
+        resolved_ips = await resolve_hostname(hostname_lower, port, dns_pool)
         if not resolved_ips:
             return False, f"無法解析主機名稱之 IP 位址: {hostname}", None, []
 
@@ -300,16 +323,17 @@ class SSRFSafeTransport(httpx.AsyncBaseTransport):
     指向內網（DNS rebinding）。這裡改以核可的 IP 建立連線，Host 標頭與 TLS SNI／憑證
     驗證仍使用原本的主機名稱。
 
-    用法：httpx.AsyncClient(transport=SSRFSafeTransport(), ...)
+    用法：httpx.AsyncClient(transport=SSRFSafeTransport(DnsPool.CONFIGURED_ENDPOINT), ...)
     """
 
-    def __init__(self, allow_private_ips: bool = False) -> None:
+    def __init__(self, dns_pool: DnsPool, allow_private_ips: bool = False) -> None:
+        self._dns_pool = dns_pool
         self._allow_private_ips = allow_private_ips
         self._transport = httpx.AsyncHTTPTransport()
 
     async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
         is_safe, error_msg, _, approved_ips = await _check_url(
-            str(request.url), allow_private_ips=self._allow_private_ips
+            str(request.url), self._dns_pool, allow_private_ips=self._allow_private_ips
         )
         if not is_safe:
             raise SSRFProtectionError(f"SSRF 防護拒絕連線: {error_msg}")
@@ -329,20 +353,38 @@ class SSRFSafeTransport(httpx.AsyncBaseTransport):
         await self._transport.aclose()
 
 
-async def reject_unsafe_request(request: httpx.Request) -> None:
-    """
-    httpx 的 request event hook：每次送出請求前（含自動轉址的每一跳）重新做 SSRF 檢查，
-    避免外部服務以轉址把請求導向內網或雲端 Metadata。
+def same_origin(a: httpx.URL, b: httpx.URL) -> bool:
+    return (a.scheme, a.host, a.port) == (b.scheme, b.host, b.port)
 
-    用法：httpx.AsyncClient(event_hooks={"request": [reject_unsafe_request]})
+
+async def send_following_redirects(
+    client: httpx.AsyncClient,
+    request: httpx.Request,
+    max_redirects: int,
+    allow_cross_origin: bool,
+) -> httpx.Response:
+    """以串流送出請求並手動跟隨轉址，回傳尚未讀取本文的最終回應（呼叫端負責 aclose）。
+
+    httpx 的自動轉址會把每一跳轉址回應的本文整份讀進記憶體（並解壓），繞過呼叫端對最終回應
+    設下的大小上限；這裡一律不讀轉址回應的本文。client 的 request 事件掛鉤在每一跳都會執行，
+    搭配 SSRFSafeTransport 時每一跳也都會重新做 SSRF 檢查。allow_cross_origin 為 False 時，
+    轉址到其他來源（scheme、主機或連接埠不同）即拒絕。
     """
-    is_safe, error_msg, _ = await validate_url_ssrf(str(request.url))
-    if not is_safe:
-        raise SSRFProtectionError(f"SSRF 防護拒絕連線: {error_msg}")
+    for _ in range(max_redirects + 1):
+        response = await client.send(request, stream=True, follow_redirects=False)
+        next_request = response.next_request
+        if next_request is None:
+            return response
+        await response.aclose()
+        if not allow_cross_origin and not same_origin(next_request.url, request.url):
+            raise ValueError("轉址到其他來源，已拒絕")
+        request = next_request
+    raise ValueError(f"轉址次數超過上限 ({max_redirects})")
 
 
 async def safe_fetch_text(
     url: str,
+    dns_pool: DnsPool,
     timeout: float = 15.0,
     max_redirects: int = 5,
     max_size_bytes: int = 10 * 1024 * 1024,
@@ -387,6 +429,7 @@ async def safe_fetch_text(
         # 1. 驗證當前 URL 的 SSRF 安全性
         is_safe, error_msg, _ = await validate_url_ssrf(
             current_url,
+            dns_pool,
             allowed_schemes=("http", "https"),
             allow_private_ips=allow_private_ips
         )
@@ -399,7 +442,7 @@ async def safe_fetch_text(
         client_kwargs = {
             "timeout": timeout,
             "follow_redirects": False,
-            "transport": SSRFSafeTransport(allow_private_ips=allow_private_ips),
+            "transport": SSRFSafeTransport(dns_pool, allow_private_ips=allow_private_ips),
         }
 
         try:

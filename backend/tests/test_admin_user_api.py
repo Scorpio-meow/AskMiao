@@ -2,6 +2,7 @@
 管理後台的使用者端點
 驗證：
 1. 使用者清單與更新回應只含 UserProfile 欄位，不帶 hashed_password
+2. 變更權限、帳號狀態與刪除使用者時寫入安全日誌，記錄操作的管理員
 """
 from datetime import datetime
 
@@ -61,3 +62,24 @@ def test_user_list_and_update_do_not_expose_password_hashes(client):
     assert updated.status_code == 200
     assert updated.json()["user"]["is_admin"] is True
     assert "hashed_password" not in updated.text
+
+
+def test_admin_changes_are_audited(client, monkeypatch):
+    events = []
+    monkeypatch.setattr(admin_api, "log_security_event", lambda event, **kwargs: events.append((event, kwargs)))
+    user_id = client.get("/api/admin/users").json()[0]["id"]
+
+    client.put(f"/api/admin/users/{user_id}", json={"is_admin": True, "email": "member@example.com"})
+    event, kwargs = events[-1]
+    assert event == "ADMIN_USER_UPDATED"
+    assert kwargs["user_id"] == 99
+    assert kwargs["details"] == {"target_user_id": user_id, "changes": {"is_admin": {"from": False, "to": True}}}
+
+    # 沒有實際變更時不寫日誌
+    client.put(f"/api/admin/users/{user_id}", json={"is_admin": True})
+    assert len(events) == 1
+
+    assert client.delete(f"/api/admin/users/{user_id}").status_code == 200
+    event, kwargs = events[-1]
+    assert event == "ADMIN_USER_DELETED"
+    assert kwargs["details"] == {"target_user_id": user_id, "username": "member", "was_admin": True}

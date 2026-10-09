@@ -120,6 +120,23 @@ class TokenManager:
             )
     
     @staticmethod
+    def decode_token_ignoring_expiry(token: str) -> Dict[str, Any]:
+        """只驗簽章、不檢查到期：登出時存取權杖可能已過期，仍要據此確認請求者並撤銷其重新整理權杖"""
+        try:
+            return jwt.decode(
+                token,
+                RSA_PUBLIC_KEY,
+                algorithms=[ALGORITHM],
+                options={"verify_signature": True, "verify_exp": False}
+            )
+        except JWTError:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="認證權杖無效：驗證失敗",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+    
+    @staticmethod
     def verify_token_type(payload: Dict[str, Any], expected_type: str) -> bool:
         return payload.get("type") == expected_type
 def resolve_token_user(db: Session, payload: Dict[str, Any]) -> User:

@@ -37,7 +37,11 @@ app = FastAPI(
     title="AskMiao API",
     description="AskMiao 智慧知識庫對話系統：Agentic RAG 自主研究、混合檢索與外部工具整合",
     version=__version__,
-    lifespan=lifespan
+    lifespan=lifespan,
+    # 互動式文件會列出所有端點與參數，由 ENABLE_API_DOCS 決定是否對外提供
+    docs_url="/docs" if settings.ENABLE_API_DOCS else None,
+    redoc_url="/redoc" if settings.ENABLE_API_DOCS else None,
+    openapi_url="/openapi.json" if settings.ENABLE_API_DOCS else None
 )
 setup_middlewares(app)
 app.include_router(auth.router, tags=["authentication"])
@@ -72,7 +76,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Run AskMiao ChatBot Backend API Server")
     parser.add_argument("--host", type=str, default=settings.HOST, help=f"Host address (default: {settings.HOST})")
     parser.add_argument("--port", type=int, default=settings.PORT, help=f"Port number (default: {settings.PORT})")
-    parser.add_argument("--reload", action=argparse.BooleanOptionalAction, default=settings.RELOAD, help="Enable/disable auto-reload (default: enabled)")
+    parser.add_argument("--reload", action=argparse.BooleanOptionalAction, default=settings.RELOAD, help=f"Enable/disable auto-reload (default: RELOAD={settings.RELOAD})")
     args = parser.parse_args()
     reload_dirs = [os.path.join(BASE_DIR, "app")]
     reload_excludes = [

@@ -7,6 +7,7 @@
 4. Argon2 在執行緒中執行；工具清單需要登入且知識庫描述有快取
 5. stdio MCP 子行程關閉時連同孫行程一起終止
 6. jieba 快取放在資料目錄；已刪除文件的片段不會被寫回索引
+7. 速率限制追蹤的位址數有上限；JWT 私鑰建立時就只有擁有者可讀
 """
 import asyncio
 import logging
@@ -23,7 +24,9 @@ from pydantic import ValidationError
 from app.api import auth as auth_api
 from app.api import chat as chat_api
 from app.core import redis_client
+from app.core import security as security_module
 from app.core.intrusion_detection import IntrusionDetector
+from app.core.rsa_keys import RSAKeyManager
 from app.core.limits import MAX_LOG_FIELD_CHARS, MAX_LOGIN_IDENTIFIER_CHARS
 from app.core.redis_client import TokenBlacklist
 from app.core.security_logging import security_logger, truncate_log_value
@@ -160,3 +163,37 @@ def test_jieba_cache_lives_in_the_data_directory(monkeypatch, tmp_path):
     tokenizers.configure_tokenizer(None, ["測試詞"])
     assert tokenizers._jieba_tokenizer.tmp_dir == str(tmp_path / "jieba_cache")
     assert (tmp_path / "jieba_cache").is_dir()
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX 權限位元")
+def test_rsa_private_key_is_created_owner_only(tmp_path):
+    manager = RSAKeyManager(keys_dir=str(tmp_path / "keys"))
+    assert (tmp_path / "keys").stat().st_mode & 0o777 == 0o700
+    assert manager.private_key_path.stat().st_mode & 0o777 == 0o600
+    # 只剩私鑰時重新產生整組金鑰
+    manager.public_key_path.unlink()
+    RSAKeyManager(keys_dir=str(tmp_path / "keys"))
+    assert manager.public_key_path.exists()
+    assert manager.private_key_path.stat().st_mode & 0o777 == 0o600
+
+
+@pytest.mark.anyio
+async def test_rate_limiter_tracks_a_bounded_number_of_addresses(monkeypatch):
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    monkeypatch.setattr(security_module, "MAX_TRACKED_ADDRESSES", 3)
+    app = FastAPI()
+
+    @app.get("/ping")
+    async def ping():
+        return {"ok": True}
+
+    limiter = security_module.RateLimitMiddleware(app, calls=2, period=60)
+    for index in range(5):
+        client = TestClient(limiter, client=(f"198.51.100.{index}", 1234))
+        assert client.get("/ping").status_code == 200
+    assert list(limiter.clients) == ["198.51.100.2", "198.51.100.3", "198.51.100.4"]
+    client = TestClient(limiter, client=("198.51.100.4", 1234))
+    assert client.get("/ping").status_code == 200
+    assert client.get("/ping").status_code == 429

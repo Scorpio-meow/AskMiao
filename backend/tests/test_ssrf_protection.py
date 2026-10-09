@@ -16,6 +16,8 @@ import pytest
 import httpx
 
 from app.core.ssrf_protection import (
+    DISALLOWED_IPV6_NETWORKS,
+    DnsPool,
     is_ip_disallowed,
     validate_url_ssrf,
     safe_fetch_text,
@@ -87,6 +89,14 @@ def test_ip_disallowed_ipv6():
         assert disallowed is True, f"應該封鎖 IPv6 IP: {ip}"
 
 
+def test_embedded_ipv4_ranges_are_listed_explicitly():
+    """6to4 與 NAT64 local-use 不依賴直譯器版本的 is_private 判定"""
+    for ip in ("2002:7f00:1::", "2002:a9fe:a9fe::1", "64:ff9b:1::a9fe:a9fe", "64:ff9b::a00:1"):
+        address = ipaddress.ip_address(ip)
+        assert any(address in net for net in DISALLOWED_IPV6_NETWORKS), ip
+        assert is_ip_disallowed(ip)[0] is True, ip
+
+
 def test_ip_allowed_public_ips():
     """測試合法的公開 IPv4 / IPv6 位址"""
     public_ips = [
@@ -117,7 +127,7 @@ async def test_validate_url_disallowed_schemes():
         "javascript:alert(1)",
     ]
     for u in invalid_urls:
-        is_safe, reason, _ = await validate_url_ssrf(u)
+        is_safe, reason, _ = await validate_url_ssrf(u, DnsPool.CONFIGURED_ENDPOINT)
         assert is_safe is False
         assert "協定" in reason or "格式" in reason
 
@@ -136,7 +146,7 @@ async def test_validate_url_disallowed_hostnames():
         "http://metadata.google.internal/computeMetadata/v1/",
     ]
     for u in blocked_hosts:
-        is_safe, reason, _ = await validate_url_ssrf(u)
+        is_safe, reason, _ = await validate_url_ssrf(u, DnsPool.CONFIGURED_ENDPOINT)
         assert is_safe is False
         assert "保留" in reason or "內部" in reason or "主機" in reason
 
@@ -154,7 +164,7 @@ async def test_validate_url_direct_private_ips():
         "http://[::1]:8080/spec",
     ]
     for u in blocked_ip_urls:
-        is_safe, reason, _ = await validate_url_ssrf(u)
+        is_safe, reason, _ = await validate_url_ssrf(u, DnsPool.CONFIGURED_ENDPOINT)
         assert is_safe is False
         assert "IP" in reason or "禁止" in reason or "主機" in reason
 
@@ -163,7 +173,7 @@ async def test_validate_url_direct_private_ips():
 async def test_validate_url_userinfo_blocked():
     """測試禁止 URL 攜帶認證帳密資訊"""
     u = "http://admin:secret@example.com/api"
-    is_safe, reason, _ = await validate_url_ssrf(u)
+    is_safe, reason, _ = await validate_url_ssrf(u, DnsPool.CONFIGURED_ENDPOINT)
     assert is_safe is False
     assert "Userinfo" in reason or "帳號密碼" in reason
 
@@ -179,7 +189,7 @@ async def test_validate_url_dangerous_ports():
         "http://example.com:27017/",
     ]
     for u in dangerous_port_urls:
-        is_safe, reason, _ = await validate_url_ssrf(u)
+        is_safe, reason, _ = await validate_url_ssrf(u, DnsPool.CONFIGURED_ENDPOINT)
         assert is_safe is False
         assert "連接埠" in reason or "連接" in reason
 
@@ -190,7 +200,7 @@ async def test_validate_url_valid_public_domain():
     mock_ips = [ipaddress.ip_address("93.184.216.34")]
     with patch("app.core.ssrf_protection.resolve_hostname", new_callable=AsyncMock) as mock_dns:
         mock_dns.return_value = mock_ips
-        is_safe, reason, parsed = await validate_url_ssrf("https://example.com/openapi.json")
+        is_safe, reason, parsed = await validate_url_ssrf("https://example.com/openapi.json", DnsPool.CONFIGURED_ENDPOINT)
         assert is_safe is True
         assert reason == ""
         assert parsed is not None
@@ -205,13 +215,13 @@ async def test_validate_url_valid_public_domain():
 async def test_safe_fetch_text_blocks_ssrf():
     """測試 safe_fetch_text 直接阻擋私有 IP 與惡意 URL"""
     with pytest.raises(SSRFProtectionError):
-        await safe_fetch_text("http://127.0.0.1:8000/secret.json")
+        await safe_fetch_text("http://127.0.0.1:8000/secret.json", DnsPool.USER_URL)
 
     with pytest.raises(SSRFProtectionError):
-        await safe_fetch_text("http://169.254.169.254/latest/meta-data/")
+        await safe_fetch_text("http://169.254.169.254/latest/meta-data/", DnsPool.USER_URL)
 
     with pytest.raises(SSRFProtectionError):
-        await safe_fetch_text("file:///etc/passwd")
+        await safe_fetch_text("file:///etc/passwd", DnsPool.USER_URL)
 
 
 @pytest.mark.anyio
@@ -234,7 +244,7 @@ async def test_safe_fetch_text_blocks_redirect_to_private_ip():
             mock_send.return_value = mock_response_302
 
             with pytest.raises(SSRFProtectionError) as exc_info:
-                await safe_fetch_text("https://example.com/redirect-to-metadata")
+                await safe_fetch_text("https://example.com/redirect-to-metadata", DnsPool.USER_URL)
 
             assert "SSRF 防護" in str(exc_info.value)
             assert "169.254.169.254" in str(exc_info.value) or "禁止" in str(exc_info.value)
@@ -256,7 +266,7 @@ async def test_safe_fetch_text_size_limit():
             mock_send.return_value = mock_response
 
             with pytest.raises(ValueError) as exc_info:
-                await safe_fetch_text("https://example.com/large_spec.json", max_size_bytes=10 * 1024 * 1024)
+                await safe_fetch_text("https://example.com/large_spec.json", DnsPool.USER_URL, max_size_bytes=10 * 1024 * 1024)
 
             assert "過大" in str(exc_info.value) or "超過限制" in str(exc_info.value)
 

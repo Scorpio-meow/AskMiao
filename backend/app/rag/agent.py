@@ -231,6 +231,7 @@ class ResearchAgent:
                                     "step": step_num,
                                     "tool": fn_name,
                                     "tool_display_name": approval["display_name"],
+                                    "target": approval["target"],
                                     "arguments": args,
                                 },
                             }

@@ -72,6 +72,10 @@ def body_limit_client():
     async def echo(request: Request):
         return {"size": len(await request.body())}
 
+    @app.post("/api/documents/upload")
+    async def upload(request: Request):
+        return {"size": len(await request.body())}
+
     app.add_middleware(RequestBodyLimitMiddleware)
     return TestClient(app)
 
@@ -90,18 +94,23 @@ def test_unauthenticated_large_body_is_rejected_before_parsing():
 
 
 def test_valid_access_token_raises_limit_for_large_body_routes(monkeypatch):
-    monkeypatch.setattr(body_limit, "_has_valid_access_token", lambda headers: headers.get(b"authorization") == b"Bearer good")
+    claims = {b"Bearer member": {"is_admin": False}, b"Bearer admin": {"is_admin": True}}
+    monkeypatch.setattr(body_limit, "_access_token_claims", lambda headers: claims.get(headers.get(b"authorization")))
     client = body_limit_client()
     payload = b"x" * (2 * MIB)
     assert client.post("/api/chat/send", content=payload, headers={"Authorization": "Bearer bad"}).status_code == 413
-    assert client.post("/api/chat/send", content=payload, headers={"Authorization": "Bearer good"}).json() == {"size": 2 * MIB}
+    assert client.post("/api/chat/send", content=payload, headers={"Authorization": "Bearer member"}).json() == {"size": 2 * MIB}
+    # 文件上傳只限管理員：一般使用者的有效權杖不會放寬本文上限
+    assert client.post("/api/documents/upload", content=payload, headers={"Authorization": "Bearer member"}).status_code == 413
+    assert client.post("/api/documents/upload", content=payload, headers={"Authorization": "Bearer admin"}).json() == {"size": 2 * MIB}
 
 
 def test_access_token_check_requires_signed_access_token():
-    token = create_token_pair({"user_id": 1, "username": "u"})
-    assert body_limit._has_valid_access_token({b"authorization": f"Bearer {token['access_token']}".encode()})
-    assert not body_limit._has_valid_access_token({b"authorization": f"Bearer {token['refresh_token']}".encode()})
-    assert not body_limit._has_valid_access_token({b"authorization": b"Bearer not-a-token"})
+    token = create_token_pair({"user_id": 1, "username": "u", "is_admin": True})
+    claims = body_limit._access_token_claims({b"authorization": f"Bearer {token['access_token']}".encode()})
+    assert claims["sub"] == "1" and claims["is_admin"] is True
+    assert body_limit._access_token_claims({b"authorization": f"Bearer {token['refresh_token']}".encode()}) is None
+    assert body_limit._access_token_claims({b"authorization": b"Bearer not-a-token"}) is None
 
 
 # ---------- 2. 聊天附件與訊息驗證 ----------
@@ -401,6 +410,12 @@ def test_split_faq_is_linear_and_keeps_semantics():
     text = "Q：特休幾天？\nA：依年資。\n補充說明\nＱ: 病假？\nＡ: 一年三十天"
     assert split_faq(text) == [("特休幾天？", "依年資。\n補充說明"), ("病假？", "一年三十天")]
     assert assert_fast(split_faq, "Q: x\n" * 100_000) == []
+
+
+def test_structured_record_split_is_linear():
+    records = DocumentProcessor.split_structured_records("【記錄 1】\n作者: a\n\n---\n\n【記錄 2】\n作者: b")
+    assert [meta["author"] for _, meta in records] == ["a", "b"]
+    assert_fast(DocumentProcessor.split_structured_records, "【記錄 1】---" + "\n" * 200_000 + "x")
 
 
 def test_fallback_summary_toc_cleanup_is_linear():

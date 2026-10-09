@@ -1,5 +1,5 @@
 import asyncio
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import func
 from app.models.database import get_db
@@ -7,6 +7,7 @@ from app.models import User, Conversation, Message, Document
 from app.core.rag_manager import get_rag_system
 from app.core.jwt_auth import get_current_admin_user
 from app.core.cache import cache_response, invalidate_cache
+from app.core.security_logging import log_security_event
 from app.rag.tools import invalidate_knowledge_base_description
 from app.schemas.auth import UserProfile
 from typing import List, Dict, Any
@@ -168,12 +169,14 @@ async def delete_document(
 async def update_user(
     user_id: int,
     user_update: UserUpdate,
+    request: Request,
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_admin_user)
 ):
     user = db.query(User).filter(User.id == user_id).first()
     if not user:
         raise HTTPException(status_code=404, detail="使用者不存在")
+    before = {field: getattr(user, field) for field in ("username", "email", "is_active", "is_admin")}
     
     if user_update.username is not None:
         existing_user = db.query(User).filter(
@@ -199,8 +202,19 @@ async def update_user(
     if user_update.is_admin is not None:
         user.is_admin = user_update.is_admin
     
+    changes = {
+        field: {"from": before[field], "to": getattr(user, field)}
+        for field in before
+        if before[field] != getattr(user, field)
+    }
     db.commit()
     db.refresh(user)
+    if changes:
+        # 權限與帳號狀態的變更要能追溯到操作的管理員
+        log_security_event("ADMIN_USER_UPDATED", request=request, user_id=current_user["user_id"], details={
+            "target_user_id": user_id,
+            "changes": changes
+        }, severity="WARNING")
     
     invalidate_cache("admin_stats")
     
@@ -208,6 +222,7 @@ async def update_user(
 @router.delete("/users/{user_id}")
 async def delete_user(
     user_id: int,
+    request: Request,
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_admin_user)
 ):
@@ -221,8 +236,10 @@ async def delete_user(
 
         db.delete(conv)
     
+    deleted = {"target_user_id": user_id, "username": user.username, "was_admin": bool(user.is_admin)}
     db.delete(user)
     db.commit()
+    log_security_event("ADMIN_USER_DELETED", request=request, user_id=current_user["user_id"], details=deleted, severity="WARNING")
     
     invalidate_cache("admin_stats")
     

@@ -59,7 +59,11 @@ def approval_agent(monkeypatch):
         executed.append((name, dict(arguments)))
         return {"ok": True}
 
-    monkeypatch.setattr(registry, "approval_requirement", lambda name: {"kind": "custom_api", "display_name": "建立訂單"} if name == "create_order" else None)
+    monkeypatch.setattr(
+        registry,
+        "approval_requirement",
+        lambda name: {"kind": "custom_api", "display_name": "建立訂單", "target": "POST api.example.com"} if name == "create_order" else None,
+    )
     monkeypatch.setattr(registry, "execute_tool", fake_execute)
     ScriptedLLM([tool_call("create_order", {"item": "A", "qty": 1}), answer("完成")]).install(monkeypatch)
     return agent, executed
@@ -83,6 +87,7 @@ async def test_agent_waits_for_the_users_decision(monkeypatch, decision):
     assert names.index("step_start") < names.index("approval_required") < names.index("approval_resolved") < names.index("step_end")
     required = next(e for e in events if e["event"] == "approval_required")["data"]
     assert required["tool"] == "create_order" and required["arguments"] == {"item": "A", "qty": 1}
+    assert required["target"] == "POST api.example.com"
     assert executed == ([("create_order", {"item": "A", "qty": 1})] if decision else [])
 
 
@@ -153,6 +158,19 @@ def test_api_tool_creation_applies_policy_and_update_never_loosens_silently(clea
     assert changed["requires_approval"] is True
     relaxed = client.put(f"/api/api-tools/{created['POST']['id']}", json={"requires_approval": False}).json()["tool"]
     assert relaxed["requires_approval"] is False
+
+
+def test_approval_requirement_names_the_destination(clean_tools):
+    from app.rag.tools import ResearchToolRegistry
+
+    client = admin_client()
+    name = clean_tools[0]
+    client.post("/api/api-tools", json={
+        "name": name, "display_name": "建立工單", "description": "d", "method": "post",
+        "url": "https://tickets.example.com:8443/v1/tickets?token=secret",
+    })
+    requirement = ResearchToolRegistry().approval_requirement(name)
+    assert requirement == {"kind": "custom_api", "display_name": "建立工單", "target": "POST tickets.example.com:8443"}
 
 
 def test_approval_endpoint_rejects_other_users():

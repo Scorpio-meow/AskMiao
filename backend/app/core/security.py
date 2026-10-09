@@ -1,12 +1,15 @@
 import os
 import secrets
 import hmac
-from typing import Optional
+import time
+from collections import OrderedDict, deque
+from typing import Deque, Optional
 from fastapi import Header, HTTPException, Request, Response
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from starlette.middleware.base import BaseHTTPMiddleware
 import logging
 from app.core.config import settings
+from app.core.limits import MAX_TRACKED_ADDRESSES
 from app.core.security_logging import log_unauthorized_access, log_security_event, SecurityEvent
 logger = logging.getLogger(__name__)
 security = HTTPBearer()
@@ -47,11 +50,12 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
             del response.headers["Server"]
         return response
 class RateLimitMiddleware(BaseHTTPMiddleware):
-    def __init__(self, app, calls: int = 60, period: int = 60):
+    def __init__(self, app, calls: int, period: int):
         super().__init__(app)
         self.calls = calls
         self.period = period
-        self.clients = {}
+        # 以位址分組的請求時間；追蹤的位址數有上限，最久未活動的先淘汰，大量來源位址不會讓記憶體持續成長
+        self.clients: "OrderedDict[str, Deque[float]]" = OrderedDict()
     async def dispatch(self, request: Request, call_next):
         client_ip = request.client.host
         try:
@@ -60,16 +64,19 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         except Exception as e:
             logger.debug(f"入侵檢測系統不可用: {e}")
             detector = None
-        import time
         current_time = time.time()
-        if client_ip not in self.clients:
-            self.clients[client_ip] = []
-        self.clients[client_ip] = [
-            req_time for req_time in self.clients[client_ip]
-            if current_time - req_time < self.period
-        ]
-        if len(self.clients[client_ip]) >= self.calls:
-            logger.warning(f"速率限制: {client_ip} 超過限制 ({len(self.clients[client_ip])} requests)")
+        timestamps = self.clients.get(client_ip)
+        if timestamps is None:
+            timestamps = deque()
+            self.clients[client_ip] = timestamps
+            while len(self.clients) > MAX_TRACKED_ADDRESSES:
+                self.clients.popitem(last=False)
+        else:
+            self.clients.move_to_end(client_ip)
+        while timestamps and current_time - timestamps[0] >= self.period:
+            timestamps.popleft()
+        if len(timestamps) >= self.calls:
+            logger.warning(f"速率限制: {client_ip} 超過限制 ({len(timestamps)} requests)")
             if detector:
                 detector.record_event(
                     'api_request',
@@ -81,8 +88,8 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
                 status_code=429,
                 headers={"Retry-After": str(self.period)}
             )
-        self.clients[client_ip].append(current_time)
-        if detector and len(self.clients[client_ip]) % 10 == 0:
+        timestamps.append(current_time)
+        if detector and len(timestamps) % 10 == 0:
             detector.record_event('api_request', client_ip)
         response = await call_next(request)
         return response

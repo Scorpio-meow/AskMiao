@@ -73,6 +73,7 @@ def _ooxml_xml_bytes(archive: zipfile.ZipFile, members: list, max_xml_bytes: int
     return total
 
 
+RECORD_SEPARATOR_PATTERN = re.compile(r'(?<!\n)\n+(?:---|___|\*\*\*)\n+')
 JSON_DECLARATION_PATTERN = re.compile(r'(?:\b(?:const|let|var)\s+\w+\s*=|module\.exports\s*=)\s*')
 SVG_OPEN = "<svg"
 SVG_CLOSE = "</svg>"
@@ -345,7 +346,8 @@ class DocumentProcessor:
         if not content or not content.strip():
             return []
         if "【記錄 " in content and "---" in content:
-            raw_records = re.split(r'\n+(?:---|___|\*\*\*)\n+', content)
+            # (?<!\n) 讓比對只能從一串換行的第一個字元開始；少了它，沒有分隔線的長串換行會讓每個起點都重新回溯（二次方時間）
+            raw_records = RECORD_SEPARATOR_PATTERN.split(content)
             records = []
             for rc in raw_records:
                 rc_clean = rc.strip()

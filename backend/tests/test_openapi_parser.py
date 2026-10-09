@@ -104,3 +104,22 @@ paths:
     print("All OpenAPI Parser tests passed successfully!")
 if __name__ == "__main__":
     asyncio.run(main())
+
+@pytest.mark.anyio
+async def test_yaml_aliases_are_rejected():
+    from app.core.error_response import SafeClientError
+
+    spec_with_alias = """
+openapi: 3.0.3
+info: &info
+  title: Alias API
+  version: 1.0.0
+x-copy: *info
+paths: {}
+"""
+    with pytest.raises(SafeClientError, match="別名"):
+        await OpenApiParser.parse(spec_with_alias)
+    # 只有錨點、沒有別名的規格照常解析，回應不再夾帶整份原始規格
+    parsed = await OpenApiParser.parse(spec_with_alias.replace("x-copy: *info\n", ""))
+    assert parsed["title"] == "Alias API"
+    assert "raw_spec" not in parsed

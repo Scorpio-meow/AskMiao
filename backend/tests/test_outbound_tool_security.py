@@ -7,9 +7,13 @@
 3. web_fetch 與 SSRF 拒絕訊息不帶出伺服器端 DNS 解析結果
 4. HTTP MCP 回應大小上限
 5. MCP 範本不含網頁擷取、檔案系統範本不與資料目錄重疊且釘選版本
+6. 轉址回應的本文不讀取；HTTP MCP 不跟隨跨來源轉址；整個呼叫有總時限；工具網址中的固定查詢值不回傳
+7. MCP 工具失敗只回傳錯誤代碼；stdio 子行程在空的暫存目錄執行，stderr 持續讀出，可讀取超過 64 KiB 的訊息行
 """
+import asyncio
 import ipaddress
 import os
+import sys
 import time
 from unittest.mock import AsyncMock, patch
 
@@ -55,7 +59,7 @@ async def test_connection_is_pinned_to_validated_ip(upstream):
     upstream["handler"] = lambda request: httpx.Response(200, text="ok", request=request)
     with patch("app.core.ssrf_protection.resolve_hostname", new_callable=AsyncMock) as mock_dns:
         mock_dns.side_effect = lambda *args, **kwargs: answers.pop(0)
-        async with httpx.AsyncClient(transport=ssrf_protection.SSRFSafeTransport()) as client:
+        async with httpx.AsyncClient(transport=ssrf_protection.SSRFSafeTransport(ssrf_protection.DnsPool.CONFIGURED_ENDPOINT)) as client:
             response = await client.get("https://rebind.example.com/page")
     assert response.text == "ok"
     request = upstream["sent"][0]
@@ -71,7 +75,7 @@ async def test_safe_fetch_text_never_connects_to_rebound_address(upstream):
     with patch("app.core.ssrf_protection.resolve_hostname", new_callable=AsyncMock) as mock_dns:
         mock_dns.side_effect = lambda *args, **kwargs: answers.pop(0) if answers else [ipaddress.ip_address("10.0.0.5")]
         with pytest.raises(ssrf_protection.SSRFProtectionError):
-            await safe_fetch_text("https://rebind.example.com/page")
+            await safe_fetch_text("https://rebind.example.com/page", ssrf_protection.DnsPool.USER_URL)
     assert upstream["sent"] == []
 
 
@@ -80,7 +84,7 @@ async def test_dns_resolution_times_out(monkeypatch):
     monkeypatch.setattr(ssrf_protection, "DNS_RESOLVE_TIMEOUT_SECONDS", 0.2)
     monkeypatch.setattr(ssrf_protection, "_resolve_hostname_sync", lambda host, port: time.sleep(1) or [PUBLIC_IP])
     started = time.monotonic()
-    assert await ssrf_protection.resolve_hostname("slow.example.com") == []
+    assert await ssrf_protection.resolve_hostname("slow.example.com", 443, ssrf_protection.DnsPool.USER_URL) == []
     assert time.monotonic() - started < 0.9
 
 
@@ -268,3 +272,138 @@ def test_mcp_presets_are_constrained():
     assert os.path.isabs(filesystem_args[-1])
     assert not root.startswith(data_dir + os.sep) and root != data_dir
     assert not data_dir.startswith(root + os.sep)
+
+
+
+class UnreadStream(httpx.AsyncByteStream):
+    """記錄本文是否被讀取的串流"""
+
+    def __init__(self):
+        self.read = False
+
+    async def __aiter__(self):
+        self.read = True
+        yield b"x" * 1024
+
+    async def aclose(self):
+        pass
+
+
+@pytest.mark.anyio
+async def test_redirect_bodies_are_never_read(public_dns, upstream):
+    redirect_bodies = []
+
+    def handler(request):
+        if request.url.path == "/start":
+            body = UnreadStream()
+            redirect_bodies.append(body)
+            return httpx.Response(302, headers={"Location": "/final"}, stream=body, request=request)
+        return httpx.Response(200, json={"ok": True}, request=request)
+
+    upstream["handler"] = handler
+    result = await execute_http_api_tool({"name": "hop", "method": "GET", "url": "https://api.example.com/start"}, {})
+    assert result["is_success"] is True
+    assert result["url"] == "https://api.example.com/final"
+    assert len(redirect_bodies) == 1 and redirect_bodies[0].read is False
+
+
+@pytest.mark.anyio
+async def test_mcp_http_refuses_cross_origin_redirects(public_dns, upstream):
+    def handler(request):
+        if request.headers["host"] == "mcp.example.com":
+            return httpx.Response(307, headers={"Location": "https://collector.example.net/rpc"}, request=request)
+        return httpx.Response(200, json={"jsonrpc": "2.0", "id": 1, "result": {}}, request=request)
+
+    upstream["handler"] = handler
+    server = {"transport_type": "http", "url": "https://mcp.example.com/rpc", "headers": {"X-API-Key": "mcp-secret"}, "timeout": 5}
+    result = await McpManager.execute_mcp_tool(server, "lookup", {"query": "使用者資料"})
+    assert result["is_success"] is False
+    assert [request.headers["host"] for request in upstream["sent"]] == ["mcp.example.com"]
+
+
+@pytest.mark.anyio
+async def test_mcp_failures_return_only_an_error_code(public_dns, upstream):
+    upstream["handler"] = lambda request: httpx.Response(
+        200, json={"jsonrpc": "2.0", "id": 1, "error": {"message": "postgresql://admin:pw@10.0.0.5/db"}}, request=request
+    )
+    server = {"transport_type": "http", "url": "https://mcp.example.com/rpc", "timeout": 5}
+    result = await McpManager.execute_mcp_tool(server, "lookup", {})
+    assert result["is_success"] is False
+    assert result["error_id"] in result["error"]
+    assert "postgresql" not in str(result) and "10.0.0.5" not in str(result)
+
+
+@pytest.mark.anyio
+async def test_fixed_query_values_are_not_returned(public_dns, upstream):
+    upstream["handler"] = lambda request: httpx.Response(200, json={}, request=request)
+    tool = {"name": "weather", "method": "GET", "url": "https://api.example.com/weather?appid=url-embedded-secret&units=metric"}
+    result = await execute_http_api_tool(tool, {})
+    assert upstream["sent"][0].url.params["appid"] == "url-embedded-secret"
+    assert "url-embedded-secret" not in str(result)
+
+
+@pytest.mark.anyio
+async def test_tool_call_has_a_total_deadline(public_dns, monkeypatch):
+    async def slow_send(self, request):
+        await asyncio.sleep(5)
+        return httpx.Response(200, json={}, request=request)
+
+    monkeypatch.setattr(httpx.AsyncHTTPTransport, "handle_async_request", slow_send)
+    started = time.monotonic()
+    result = await execute_http_api_tool({"name": "slow", "method": "GET", "url": "https://api.example.com/slow", "timeout": 1}, {})
+    assert result["status_code"] == 504
+    assert time.monotonic() - started < 3
+
+
+STDIO_SERVER = r"""
+import json, os, sys
+sys.stderr.write("x" * 200000); sys.stderr.flush()
+for line in sys.stdin:
+    request = json.loads(line)
+    if "id" not in request:
+        continue
+    if request["method"] == "initialize":
+        result = {"protocolVersion": "2024-11-05", "capabilities": {"tools": {}}, "cwd": os.getcwd(), "files": os.listdir(".")}
+    else:
+        result = {"tools": [{"name": "big", "description": "y" * 200000, "inputSchema": {"type": "object"}}]}
+    sys.stdout.write(json.dumps({"jsonrpc": "2.0", "id": request["id"], "result": result}) + "\n")
+    sys.stdout.flush()
+"""
+
+
+@pytest.mark.anyio
+async def test_stdio_server_runs_in_an_empty_workdir_and_large_output_does_not_hang():
+    server = {"transport_type": "stdio", "command": sys.executable, "args": ["-c", STDIO_SERVER], "timeout": 10}
+    tools, init_info = await McpManager.discover_server_tools(server)
+    assert len(tools[0]["description"]) == 200000
+    assert init_info["files"] == []
+    assert os.path.realpath(init_info["cwd"]) != os.path.realpath(os.getcwd())
+    assert not os.path.exists(init_info["cwd"])
+
+
+@pytest.mark.anyio
+async def test_stdio_slot_wait_is_bounded(monkeypatch):
+    monkeypatch.setattr(mcp_service, "_stdio_process_slots", asyncio.Semaphore(0))
+    server = {"transport_type": "stdio", "command": sys.executable, "args": ["-c", "pass"], "timeout": 0.2}
+    with pytest.raises(TimeoutError, match="上限"):
+        await McpManager.discover_server_tools(server)
+
+
+@pytest.mark.anyio
+async def test_user_urls_and_configured_endpoints_use_separate_dns_pools(monkeypatch, upstream):
+    executors = ssrf_protection._dns_executors
+    assert executors[ssrf_protection.DnsPool.USER_URL] is not executors[ssrf_protection.DnsPool.CONFIGURED_ENDPOINT]
+    monkeypatch.setattr(settings, "OLLAMA_API_KEY", None)
+    upstream["handler"] = lambda request: httpx.Response(200, text="<p>ok</p>", request=request)
+    with patch("app.core.ssrf_protection.resolve_hostname", new_callable=AsyncMock) as mock_dns:
+        mock_dns.return_value = [PUBLIC_IP]
+        await ResearchToolRegistry().web_fetch("https://news.example.com/a")
+        assert {call.args[2] for call in mock_dns.call_args_list} == {ssrf_protection.DnsPool.USER_URL}
+        mock_dns.reset_mock()
+        await execute_http_api_tool({"name": "t", "method": "GET", "url": "https://api.example.com/x"}, {})
+        assert {call.args[2] for call in mock_dns.call_args_list} == {ssrf_protection.DnsPool.CONFIGURED_ENDPOINT}
+
+
+def test_mcp_tools_with_unsafe_names_are_dropped():
+    tools = [{"name": "read_file"}, {"name": "../../documents/rebuild-index?"}, {"name": ""}, {"description": "no name"}, {"name": "a" * 129}]
+    assert [tool["name"] for tool in mcp_service._usable_tools(tools)] == ["read_file"]

@@ -1,3 +1,4 @@
+import asyncio
 import base64
 import json
 import logging
@@ -18,7 +19,7 @@ from app.models import (
     ToolTestRequest,
 )
 from app.core.jwt_auth import get_current_admin_user
-from app.core.ssrf_protection import SSRFProtectionError, SSRFSafeTransport
+from app.core.ssrf_protection import DnsPool, SSRFProtectionError, SSRFSafeTransport, same_origin, send_following_redirects
 from app.services.openapi_parser import OpenApiParser
 from app.rag.tool_approval import default_requires_approval
 from app.core.error_response import SafeClientError, log_and_get_error_id, format_client_error, format_ssrf_rejection
@@ -137,8 +138,9 @@ def _redact(value: Any, secrets: Set[str]) -> Any:
     return value
 
 
-def _same_origin(a: httpx.URL, b: httpx.URL) -> bool:
-    return (a.scheme, a.host, a.port) == (b.scheme, b.host, b.port)
+def _without_query(url: str) -> str:
+    """回傳給模型與使用者的網址不帶查詢字串：管理員可能把金鑰寫在工具網址的查詢參數中"""
+    return url.split("#", 1)[0].split("?", 1)[0]
 
 
 def _declared_properties(schema: Any) -> Optional[Dict[str, Any]]:
@@ -197,7 +199,7 @@ async def execute_http_api_tool(tool_dict: Dict[str, Any], arguments: Dict[str, 
             "status_code": 400,
             "is_success": False,
             "duration_seconds": round(time.time() - start_time, 3),
-            "url": url,
+            "url": _without_query(url),
             "error": f"工具參數無效：未宣告的參數 {', '.join(undeclared)}",
         }
     param_locations = tool_dict.get("param_locations") or {}
@@ -254,25 +256,29 @@ async def execute_http_api_tool(tool_dict: Dict[str, Any], arguments: Dict[str, 
             "status_code": 400,
             "is_success": False,
             "duration_seconds": round(time.time() - start_time, 3),
-            "url": url,
+            "url": _without_query(url),
             "error": f"工具參數無效：{e}",
         }
     if "request_body" in arguments and isinstance(arguments["request_body"], dict):
         body_data = arguments["request_body"]
 
+    # 工具網址中固定的查詢參數（可能是寫在網址裡的金鑰）與憑證查詢參數，回傳時一律遮蔽其值
+    hidden_query_names: Set[str] = {credential_query_key} if credential_query_key else set()
+
     def display_url(target: httpx.URL) -> str:
-        if credential_query_key and credential_query_key in target.params:
-            target = target.copy_set_param(credential_query_key, REDACTED)
+        for name in hidden_query_names & set(target.params.keys()):
+            target = target.copy_set_param(name, REDACTED)
         return _redact(str(target), secrets)
 
     try:
         original_url = httpx.URL(path_replaced_url)
         template_url = httpx.URL(url.replace("{", "").replace("}", ""))
-        if not _same_origin(original_url, template_url):
+        if not same_origin(original_url, template_url):
             raise SafeClientError("代入參數後的網址與工具設定的主機不符")
         # 工具網址中的查詢參數由管理員固定，呼叫端不可覆寫；查詢字串一律在這裡組好，
         # 不依賴 httpx 對既有查詢字串是合併還是取代（不同版本行為不同）
         fixed_params = original_url.params
+        hidden_query_names.update(fixed_params.keys())
         overridden = sorted(name for name in query_params if name in fixed_params and name != credential_query_key)
         if overridden:
             raise SafeClientError(f"工具參數無效：不可覆寫工具網址中固定的查詢參數 {', '.join(overridden)}")
@@ -281,41 +287,46 @@ async def execute_http_api_tool(tool_dict: Dict[str, Any], arguments: Dict[str, 
 
         async def strip_credentials_cross_origin(request: httpx.Request) -> None:
             # 轉址到其他來源時不轉送管理員設定的憑證標頭
-            if not _same_origin(request.url, original_url):
+            if not same_origin(request.url, original_url):
                 for name in list(request.headers.keys()):
                     if name.lower() in credential_header_names:
                         del request.headers[name]
 
-        # 每一跳（含轉址）都在傳輸層做 SSRF 檢查，並固定連線到檢查時核可的 IP
-        async with httpx.AsyncClient(
-            timeout=float(timeout),
-            follow_redirects=True,
-            max_redirects=MAX_API_TOOL_REDIRECTS,
-            transport=SSRFSafeTransport(),
-            event_hooks={"request": [strip_credentials_cross_origin]},
-        ) as client:
-            req_kwargs: Dict[str, Any] = {
-                "method": method,
-                "url": original_url.copy_with(query=None),
-                "headers": headers,
-                "params": request_params,
-            }
-            if method in ["POST", "PUT", "PATCH", "DELETE"]:
-                if body_data:
-                    req_kwargs["json"] = body_data
-            async with client.stream(**req_kwargs) as response:
-                content_length = response.headers.get("content-length")
-                if content_length and content_length.isdigit() and int(content_length) > MAX_API_TOOL_RESPONSE_BYTES:
-                    raise ApiToolResponseTooLarge()
-                chunks = []
-                total = 0
-                async for chunk in response.aiter_bytes():
-                    total += len(chunk)
-                    if total > MAX_API_TOOL_RESPONSE_BYTES:
+        # 每一跳（含轉址）都在傳輸層做 SSRF 檢查，並固定連線到檢查時核可的 IP；
+        # 轉址由 send_following_redirects 手動跟隨，轉址回應的本文不讀取，最終回應才套用大小上限
+        req_kwargs: Dict[str, Any] = {
+            "method": method,
+            "url": original_url.copy_with(query=None),
+            "headers": headers,
+            "params": request_params,
+        }
+        if method in ["POST", "PUT", "PATCH", "DELETE"] and body_data:
+            req_kwargs["json"] = body_data
+
+        async def perform() -> Dict[str, Any]:
+            async with httpx.AsyncClient(
+                timeout=float(timeout),
+                follow_redirects=False,
+                transport=SSRFSafeTransport(DnsPool.CONFIGURED_ENDPOINT),
+                event_hooks={"request": [strip_credentials_cross_origin]},
+            ) as client:
+                response = await send_following_redirects(
+                    client, client.build_request(**req_kwargs), MAX_API_TOOL_REDIRECTS, allow_cross_origin=True
+                )
+                try:
+                    content_length = response.headers.get("content-length")
+                    if content_length and content_length.isdigit() and int(content_length) > MAX_API_TOOL_RESPONSE_BYTES:
                         raise ApiToolResponseTooLarge()
-                    chunks.append(chunk)
+                    chunks = []
+                    total = 0
+                    async for chunk in response.aiter_bytes():
+                        total += len(chunk)
+                        if total > MAX_API_TOOL_RESPONSE_BYTES:
+                            raise ApiToolResponseTooLarge()
+                        chunks.append(chunk)
+                finally:
+                    await response.aclose()
                 raw = b"".join(chunks)
-                duration = round(time.time() - start_time, 3)
                 encoding = response.encoding or "utf-8"
                 try:
                     text = raw.decode(encoding)
@@ -333,10 +344,21 @@ async def execute_http_api_tool(tool_dict: Dict[str, Any], arguments: Dict[str, 
                 return {
                     "status_code": response.status_code,
                     "is_success": response.is_success,
-                    "duration_seconds": duration,
+                    "duration_seconds": round(time.time() - start_time, 3),
                     "url": display_url(response.url),
                     "data": _redact(res_body, secrets)
                 }
+
+        # httpx 的逾時是逐次讀寫計算；整個呼叫（含轉址與慢速逐段回應）另以工具的逾時設定為總時限
+        return await asyncio.wait_for(perform(), timeout=float(timeout))
+    except asyncio.TimeoutError:
+        return {
+            "status_code": 504,
+            "is_success": False,
+            "duration_seconds": round(time.time() - start_time, 3),
+            "url": display_url(httpx.URL(path_replaced_url)),
+            "error": f"上游在 {timeout} 秒內沒有完成回應",
+        }
     except ApiToolResponseTooLarge:
         return {
             "status_code": 502,
@@ -350,7 +372,7 @@ async def execute_http_api_tool(tool_dict: Dict[str, Any], arguments: Dict[str, 
             "status_code": 400,
             "is_success": False,
             "duration_seconds": round(time.time() - start_time, 3),
-            "url": url,
+            "url": _without_query(url),
             "error": str(e),
         }
     except SSRFProtectionError as e:
@@ -375,7 +397,7 @@ async def execute_http_api_tool(tool_dict: Dict[str, Any], arguments: Dict[str, 
             "status_code": 500,
             "is_success": False,
             "duration_seconds": duration,
-            "url": _redact(path_replaced_url, secrets),
+            "url": _redact(_without_query(path_replaced_url), secrets),
             "error": format_client_error(error_id),
             "error_id": error_id
         }

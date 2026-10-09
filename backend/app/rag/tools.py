@@ -1,6 +1,7 @@
 import asyncio
 import json
 import logging
+import os
 import re
 import threading
 import time
@@ -27,6 +28,14 @@ def is_web_fetch_domain_allowed(url: str) -> bool:
 KB_DESCRIPTION_CACHE_SECONDS = 60.0
 _kb_description_lock = threading.Lock()
 _kb_description_cache: Optional[Tuple[float, str]] = None
+
+
+def _url_host(url: str) -> str:
+    """只取主機與連接埠，不帶路徑、查詢字串或帳號資訊"""
+    parsed = urlparse(url)
+    if parsed.hostname is None:
+        return ""
+    return f"{parsed.hostname}:{parsed.port}" if parsed.port else parsed.hostname
 
 
 def invalidate_knowledge_base_description() -> None:
@@ -289,12 +298,12 @@ class ResearchToolRegistry:
             return {"query": query, "error": f"外部搜尋發生錯誤（錯誤代碼：{error_id}）", "results": []}
     async def web_fetch(self, url: str) -> Dict[str, Any]:
         """深入讀取指定網頁全文（優先使用 Ollama Web Fetch，失敗時使用具備 SSRF 防護之 HTTP 抓取並解析 HTML）"""
-        from app.core.ssrf_protection import safe_fetch_text, validate_url_ssrf, SSRFProtectionError
+        from app.core.ssrf_protection import DnsPool, safe_fetch_text, validate_url_ssrf, SSRFProtectionError
 
         if not is_web_fetch_domain_allowed(url):
             return {"url": url, "error": "該網址的網域不在 WEB_FETCH_ALLOWED_DOMAINS 允許清單內", "content": ""}
 
-        is_safe, error_msg, _ = await validate_url_ssrf(url)
+        is_safe, error_msg, _ = await validate_url_ssrf(url, DnsPool.USER_URL)
         if not is_safe:
             # 拒絕原因可能含伺服器端 DNS 解析結果，只寫入日誌
             error_id = log_and_get_error_id(
@@ -326,6 +335,7 @@ class ResearchToolRegistry:
         try:
             raw_html = await safe_fetch_text(
                 url=url,
+                dns_pool=DnsPool.USER_URL,
                 timeout=12.0,
                 max_redirects=5,
                 max_size_bytes=5 * 1024 * 1024
@@ -561,7 +571,8 @@ class ResearchToolRegistry:
                     return ms, mt.get("name")
         return None, None
     def approval_requirement(self, name: str) -> Optional[Dict[str, str]]:
-        """需要使用者核准的工具回傳顯示資訊，其餘（含內建工具與找不到的工具）回傳 None"""
+        """需要使用者核准的工具回傳顯示資訊，其餘（含內建工具與找不到的工具）回傳 None。
+        target 說明實際送出的位置（HTTP 方法與主機、MCP 的傳輸方式與主機或指令），讓核准者知道資料會送到哪裡"""
         if name in BUILTIN_TOOL_NAMES:
             return None
         from app.models.database import SessionLocal
@@ -571,11 +582,17 @@ class ResearchToolRegistry:
             if name.startswith("mcp_"):
                 server, tool_name = self._find_mcp_tool(db, name)
                 if server is not None and server.requires_approval:
-                    return {"kind": "mcp", "display_name": f"{server.display_name} → {tool_name}"}
+                    if server.transport_type == "stdio":
+                        target = f"本機指令 {os.path.basename(server.command or '')}"
+                    else:
+                        target = f"{(server.transport_type or '').upper()} {_url_host(server.url or '')}"
+                    return {"kind": "mcp", "display_name": f"{server.display_name} → {tool_name}", "target": target}
                 return None
             tool = db.query(CustomApiTool).filter(CustomApiTool.name == name, CustomApiTool.is_enabled == True).first()
             if tool is not None and tool.requires_approval:
-                return {"kind": "custom_api", "display_name": tool.display_name or tool.name}
+                configured_url = tool.url or f"{(tool.base_url or '').rstrip('/')}/{(tool.path or '').lstrip('/')}"
+                target = f"{(tool.method or 'GET').upper()} {_url_host(configured_url)}"
+                return {"kind": "custom_api", "display_name": tool.display_name or tool.name, "target": target}
             return None
         finally:
             db.close()

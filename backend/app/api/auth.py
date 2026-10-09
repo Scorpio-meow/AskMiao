@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException, status, Request, Response
-from fastapi.security import HTTPBearer
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.orm import Session
 from typing import List, Optional
 import asyncio
@@ -22,7 +22,7 @@ from app.core.jwt_auth import (
     create_token_pair, verify_refresh_token,
     get_current_active_user, get_current_admin_user,
     validate_password_strength, sanitize_username,
-    PasswordManager, revoke_token, resolve_token_user
+    PasswordManager, TokenManager, revoke_token, resolve_token_user
 )
 from app.core.config import settings
 from app.core.limits import MAX_CONCURRENT_PASSWORD_HASHES
@@ -37,10 +37,6 @@ _password_hash_slots = asyncio.Semaphore(MAX_CONCURRENT_PASSWORD_HASHES)
 async def _run_password_work(func, *args):
     async with _password_hash_slots:
         return await asyncio.to_thread(func, *args)
-def _get_cookie_secure() -> bool:
-    if settings.COOKIE_SECURE is not None:
-        return settings.COOKIE_SECURE
-    return settings.ENVIRONMENT == "production"
 def _get_cookie_samesite() -> str:
     return settings.COOKIE_SAMESITE or "lax"
 def _client_address(request: Request) -> Optional[str]:
@@ -52,7 +48,7 @@ def _set_refresh_cookie(response: Response, refresh_token: str) -> None:
         key=REFRESH_COOKIE_NAME,
         value=refresh_token,
         httponly=True,
-        secure=_get_cookie_secure(),
+        secure=settings.COOKIE_SECURE,
         samesite=_get_cookie_samesite(),
         max_age=settings.REFRESH_TOKEN_EXPIRE_DAYS * 86400,
         path=REFRESH_COOKIE_PATH,
@@ -361,35 +357,25 @@ async def change_password(
 async def logout(
     request: Request,
     response: Response,
-    user: dict = Depends(get_current_active_user)
+    credentials: HTTPAuthorizationCredentials = Depends(security)
 ):
-    try:
-        auth_header = request.headers.get("Authorization")
-        if auth_header and auth_header.startswith("Bearer "):
-            access_token = auth_header.split(" ")[1]
-            revoke_token(access_token)
-        
-        refresh_token_value = request.cookies.get(REFRESH_COOKIE_NAME)
-        if refresh_token_value:
-            revoke_token(refresh_token_value)
-        
-        response.delete_cookie(
-            key=REFRESH_COOKIE_NAME,
-            path=REFRESH_COOKIE_PATH
+    """撤銷這次帶來的存取權杖與重新整理權杖 Cookie。存取權杖過期時也要能登出（否則重新整理權杖
+    會留在瀏覽器裡繼續有效），因此只驗簽章；仍要求 Authorization 標頭，跨站表單無法觸發登出"""
+    payload = TokenManager.decode_token_ignoring_expiry(credentials.credentials)
+    if not TokenManager.verify_token_type(payload, "access"):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="權杖類型無效",
+            headers={"WWW-Authenticate": "Bearer"},
         )
-        
-        log_security_event("USER_LOGOUT", request=request, user_id=user["user_id"], details={
-            "username": user["username"]
-        })
-        
-        return MessageResponse(message="登出成功")
-    
-    except Exception as e:
-        log_security_event("LOGOUT_ERROR", request=request, user_id=user.get("user_id"), details={
-            "error": str(e)
-        })
-        response.delete_cookie(key=REFRESH_COOKIE_NAME, path=REFRESH_COOKIE_PATH)
-        return MessageResponse(message="登出成功")
+    # 已過期的存取權杖撤銷會失敗，本來也已無效
+    revoke_token(credentials.credentials)
+    refresh_token_value = request.cookies.get(REFRESH_COOKIE_NAME)
+    if refresh_token_value:
+        revoke_token(refresh_token_value)
+    _clear_refresh_cookie(response)
+    log_security_event("USER_LOGOUT", request=request, details={"sub": payload.get("sub")})
+    return MessageResponse(message="登出成功")
 @router.post("/validate-token", response_model=MessageResponse)
 async def validate_token(
     user: dict = Depends(get_current_active_user)

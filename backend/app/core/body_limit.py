@@ -2,11 +2,14 @@
 
 FastAPI 會在執行驗證相依之前讀完並解析整個請求本文，因此本文上限必須在更外層處理：
 - 一般請求（含所有未帶有效存取權杖的請求）最多 MAX_REQUEST_BODY_BYTES；
-- 聊天送出與文件上傳需要較大的本文，只有帶著簽章有效的存取權杖時才放寬。
+- 聊天送出需要較大的本文，只有帶著簽章有效的存取權杖時才放寬；
+- 文件上傳只限管理員，另外要求權杖中的 is_admin 聲明。這裡只用來決定本文上限
+  （降權後最多到權杖到期前仍可送出大本文），路由本身仍以資料庫判定是否為管理員。
 Content-Length 超過上限時直接回 413；分塊傳輸則邊讀邊計數，超過即中止。
 """
 import json
-from typing import Awaitable, Callable, Dict
+from dataclasses import dataclass
+from typing import Any, Awaitable, Callable, Dict, Optional
 
 from fastapi import HTTPException
 
@@ -18,32 +21,45 @@ from app.core.limits import (
     MIB,
 )
 
-LARGE_BODY_ROUTES: Dict[str, int] = {
-    "/api/chat/send": MAX_CHAT_REQUEST_BODY_BYTES,
-    "/api/documents/upload": MAX_FILES_PER_UPLOAD * settings.MAX_FILE_SIZE_MB * MIB + 1 * MIB,
+
+@dataclass(frozen=True)
+class LargeBodyRoute:
+    limit: int
+    admin_only: bool
+
+
+LARGE_BODY_ROUTES: Dict[str, LargeBodyRoute] = {
+    "/api/chat/send": LargeBodyRoute(limit=MAX_CHAT_REQUEST_BODY_BYTES, admin_only=False),
+    "/api/documents/upload": LargeBodyRoute(
+        limit=MAX_FILES_PER_UPLOAD * settings.MAX_FILE_SIZE_MB * MIB + 1 * MIB, admin_only=True
+    ),
 }
 TOO_LARGE_DETAIL = "請求內容超過大小上限"
 
 
-def _has_valid_access_token(headers: Dict[bytes, bytes]) -> bool:
+def _access_token_claims(headers: Dict[bytes, bytes]) -> Optional[Dict[str, Any]]:
+    """簽章有效且未撤銷的存取權杖回傳其聲明，否則回傳 None"""
     authorization = headers.get(b"authorization", b"").decode("latin-1")
     scheme, _, token = authorization.partition(" ")
     if scheme.lower() != "bearer" or not token:
-        return False
+        return None
     from app.core.jwt_auth import TokenManager
 
     try:
         payload = TokenManager.decode_token(token)
     except HTTPException:
-        return False
-    return TokenManager.verify_token_type(payload, "access")
+        return None
+    return payload if TokenManager.verify_token_type(payload, "access") else None
 
 
 def body_limit_for(path: str, headers: Dict[bytes, bytes]) -> int:
-    route_limit = LARGE_BODY_ROUTES.get(path.rstrip("/"))
-    if route_limit is not None and _has_valid_access_token(headers):
-        return route_limit
-    return MAX_REQUEST_BODY_BYTES
+    route = LARGE_BODY_ROUTES.get(path.rstrip("/"))
+    if route is None:
+        return MAX_REQUEST_BODY_BYTES
+    claims = _access_token_claims(headers)
+    if claims is None or (route.admin_only and claims.get("is_admin") is not True):
+        return MAX_REQUEST_BODY_BYTES
+    return route.limit
 
 
 class RequestBodyLimitMiddleware:

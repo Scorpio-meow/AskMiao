@@ -5,6 +5,7 @@
 2. 視窗外的失敗不計入；登入識別不分大小寫；成功登入清除該帳號的失敗紀錄
 3. 登入路由在鎖定期間回傳 429 與 Retry-After，正確密碼也不會被接受，不洩漏密碼是否正確
 4. 追蹤的鍵數有上限
+5. 存取權杖過期時仍能登出並撤銷重新整理權杖；沒有 Authorization 標頭時不受理
 """
 from datetime import datetime
 
@@ -152,3 +153,24 @@ def test_password_change_clears_the_refresh_cookie_and_ends_the_session(client, 
     assert changed.status_code == 200
     assert 'refresh_token=""' in changed.headers["set-cookie"]
     assert http.get("/api/auth/me", headers=headers).status_code == 401
+
+
+def test_logout_with_an_expired_access_token_revokes_the_refresh_cookie(client):
+    from datetime import timedelta
+
+    from app.core.jwt_auth import TokenManager
+    from app.core.redis_client import TokenBlacklist
+
+    http, _ = client
+    login = http.post("/api/auth/login", json={"username": "member", "password": "Secret123"})
+    refresh_cookie = login.cookies["refresh_token"]
+    user_id = login.json()["user"]["id"]
+    expired = TokenManager.create_access_token({"sub": str(user_id)}, expires_delta=timedelta(seconds=-60))
+
+    assert http.post("/api/auth/logout").status_code in (401, 403)
+    assert not TokenBlacklist.is_blacklisted(refresh_cookie)
+
+    response = http.post("/api/auth/logout", headers={"Authorization": f"Bearer {expired}"})
+    assert response.status_code == 200
+    assert 'refresh_token=""' in response.headers["set-cookie"]
+    assert TokenBlacklist.is_blacklisted(refresh_cookie)
