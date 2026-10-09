@@ -7,6 +7,7 @@
 4. SQLite 的 users 表以 AUTOINCREMENT 建立，刪除後的 id 不會配給新帳號
 5. 變更密碼後，先前簽發的存取與重新整理權杖一律失效（同一秒內稍早簽發的也是）；既有資料庫補上 tokens_valid_after，
    回退到舊版期間建立、此欄位為 NULL 的帳號在每次啟動時補值
+6. 撤銷的權杖保留到原本的到期時間，與伺服器的時區無關
 """
 import base64
 import hashlib
@@ -30,8 +31,10 @@ from app.core.jwt_auth import (
     create_token_pair,
     get_current_user_from_token,
     resolve_token_user,
+    revoke_token,
     verify_refresh_token,
 )
+from app.core.redis_client import TokenBlacklist
 from app.crud import crud_user
 from app.models import User
 from app.models.database import Base, upgrade_schema
@@ -236,6 +239,21 @@ def test_accounts_created_without_tokens_valid_after_are_backfilled_on_every_sta
         rows = dict(conn.execute(text("SELECT username, tokens_valid_after FROM users")).all())
     assert rows == {"upgraded": "2026-05-06 07:08:09", "created-by-old-version": "2026-03-04 05:06:07"}
     old.dispose()
+
+
+@pytest.mark.skipif(not hasattr(time, "tzset"), reason="需要 time.tzset 切換時區")
+@pytest.mark.parametrize("zone", ["UTC", "Asia/Taipei", "America/Los_Angeles"])
+def test_revocation_lasts_until_the_token_expires_in_any_timezone(monkeypatch, zone):
+    monkeypatch.setenv("TZ", zone)
+    time.tzset()
+    try:
+        token = TokenManager.create_access_token({"sub": "1"}, expires_delta=timedelta(minutes=30))
+        assert revoke_token(token)
+        expires_at = TokenBlacklist._blacklist[TokenBlacklist._key(token)]
+        assert abs(expires_at - (time.time() + 30 * 60)) < 5
+    finally:
+        monkeypatch.undo()
+        time.tzset()
 
 
 def test_refresh_token_cannot_be_used_as_access_token(db):

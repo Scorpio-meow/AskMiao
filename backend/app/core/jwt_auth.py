@@ -1,5 +1,6 @@
 
 import calendar
+import time
 from datetime import datetime, timedelta
 from typing import Optional, Dict, Any
 import logging
@@ -262,7 +263,9 @@ def revoke_token(token: str, expires_in: int = None):
             payload = TokenManager.decode_token(token)
             exp = payload.get("exp")
             if exp:
-                expires_in = max(int(exp - datetime.utcnow().timestamp()), 0)
+                # exp 是 epoch 秒數，須與 time.time() 比較；naive 的 datetime.utcnow().timestamp() 會被當成本地時間，
+                # 伺服器在 UTC 負時區時算出 0，撤銷只維持 1 秒，登出的權杖隨即又能使用
+                expires_in = max(int(exp - time.time()), 0)
             else:
                 expires_in = 86400
         
