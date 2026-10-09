@@ -9,13 +9,18 @@ services:
       POSTGRES_USER: postgres
       # 必須在 backend/.env 或殼層環境設定 POSTGRES_PASSWORD，未設定時拒絕啟動
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?請在 backend/.env 設定 POSTGRES_PASSWORD}
+      # 後端連線用的帳號（非超級使用者），由 init-app-role.sh 建立；DATABASE_URL 使用這組帳號
+      POSTGRES_APP_USER: ${POSTGRES_APP_USER:?請在 backend/.env 設定 POSTGRES_APP_USER}
+      POSTGRES_APP_PASSWORD: ${POSTGRES_APP_PASSWORD:?請在 backend/.env 設定 POSTGRES_APP_PASSWORD}
       TZ: Asia/Taipei
     ports:
       # 只綁定本機回送位址，不對區網或公網開放
       - "127.0.0.1:7690:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
-      - ./init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+      # 依檔名順序執行：先建立資料表，再建立後端帳號並把資料表交給它
+      - ./init.sql:/docker-entrypoint-initdb.d/10-init.sql:ro
+      - ./init-app-role.sh:/docker-entrypoint-initdb.d/20-app-role.sh:ro
     healthcheck:
       test: [ "CMD-SHELL", "pg_isready -U postgres -d chatbot" ]
       interval: 10s
