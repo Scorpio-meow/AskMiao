@@ -22,14 +22,93 @@ All notable changes to AskMiao are documented in this file. The format is based 
 
 ## [Unreleased]
 
+This release addresses the findings of a second security audit: chat attachment parsing has a memory budget, failed logins pause the account or source address, a password change revokes every token, self-registration can be turned off, tool credentials are encrypted at rest and no longer readable through the admin API, custom API tools accept only declared parameters, dependencies are pinned by hash, and PostgreSQL is accessed as a non-superuser.
+
+> [!WARNING]
+> **This release requires manual changes.** Before upgrading, work through the [upgrade guide](docs/upgrading_en.md#upgrading-from-400-to-the-unreleased-version):
+>
+> - `.env` has 10 new required settings: `ALLOW_REGISTRATION`, `LOGIN_MAX_FAILURES_PER_ACCOUNT`, `LOGIN_MAX_FAILURES_PER_ADDRESS`, `LOGIN_FAILURE_WINDOW_SECONDS`, `LOGIN_LOCKOUT_SECONDS`, `TOOL_SECRETS_KEY`, `HOST`, `RELOAD`, `COOKIE_SECURE`, and `ENABLE_API_DOCS`. The backend does not start if any is missing, and `TOOL_SECRETS_KEY` must be a Fernet key generated for each deployment.
+> - `HOST` and `RELOAD` no longer default to `0.0.0.0` and `true`, and `COOKIE_SECURE` is no longer derived from `ENVIRONMENT`; `/docs`, `/redoc`, and `/openapi.json` are served only with `ENABLE_API_DOCS=true`.
+> - With `backend/docker-compose.yml`, `POSTGRES_APP_USER` and `POSTGRES_APP_PASSWORD` are required and `DATABASE_URL` must use that non-superuser account; existing data volumes need a one-time run of `20-app-role.sh`.
+> - Tool parameters not declared in `parameters_schema` return `400`; `GET /api/external-tags` and the WebSocket `/api/chat/ws/{user_id}` are removed; the `POST /api/api-tools/parse-spec` response no longer includes `raw_spec`.
+> - To add or upgrade a backend package, edit `requirements.in` and regenerate `requirements.txt`; `bun install` fails when `bun.lock` and `package.json` disagree.
+> - After a password change, every session, including the current one, must sign in again with the new password.
+
+### Security
+
+#### Authentication and accounts
+
+- **Login failure throttling**: once one login identifier (case-insensitive) or one source address reaches its failure threshold within `LOGIN_FAILURE_WINDOW_SECONDS`, logins for that identifier or address pause for `LOGIN_LOCKOUT_SECONDS` with `429` and `Retry-After`. Unknown accounts are counted too, the right password is not accepted during a lockout, and the response does not reveal whether the password was correct (CWE-307).
+- **A password change revokes every token**: `users` gains `tokens_valid_after`, which is set to the current time on a password change; access and refresh tokens issued before it are rejected, so a stolen refresh token cannot keep renewing after the victim changes their password. `POST /api/auth/change-password` and a `PUT /api/auth/me` that sets a new password clear the refresh token cookie (CWE-613).
+- **Self-registration can be turned off**: with the new required `ALLOW_REGISTRATION` set to false, `POST /api/auth/register` returns `403` and writes a security log entry, and accounts (including the first admin) are created with `scripts/create_user.py`. Previously anyone who could reach the API could register, query the whole knowledge base, and call the enabled tools with the operator's credentials (CWE-284).
+- **The admin user API no longer returns password hashes**: `GET /api/admin/users` and `PUT /api/admin/users/{user_id}` filter fields through `UserProfile`, so responses no longer contain `hashed_password` (CWE-200).
+- **Logout works with an expired access token**: `POST /api/auth/logout` verifies only the access token's signature, so it still revokes the refresh token and clears the cookie after the access token expires; the `Authorization` header is still required, so a cross-site form cannot trigger a logout (CWE-613).
+- Admin changes to an account's role or status and account deletions are written to the security log (`ADMIN_USER_UPDATED`, `ADMIN_USER_DELETED`) with the acting admin and the changes (CWE-778).
+- The JWT private key is created with mode `0600` from the start instead of being written with default permissions and changed afterwards; a newly created `backend/keys/` is `0700` (CWE-276).
+
+#### Deployment and dependencies
+
+- **PostgreSQL is accessed as a non-superuser**: `docker-compose.yml` requires `POSTGRES_APP_USER` and `POSTGRES_APP_PASSWORD`, and `backend/init-app-role.sh` runs after `init.sql` to create the account, grant `USAGE` and `CREATE` on the `public` schema, and hand it ownership of existing tables. A SQL injection can no longer run system commands with `COPY ... TO PROGRAM` or read server files (CWE-250).
+- **Insecure defaults are now required settings**: `HOST`, `RELOAD`, and `COOKIE_SECURE` no longer default to listening on all interfaces, auto-reloading, or deriving Secure from `ENVIRONMENT`; the new required `ENABLE_API_DOCS` turns off the interactive documentation that lists every endpoint and parameter (CWE-1188).
+- **Dependencies are pinned by hash**: `backend/requirements.in` lists only direct dependencies, and `requirements.txt` is generated with `uv pip compile --universal --generate-hashes` and verified on install; `frontend/bun.lock` is committed and `frozenLockfile = true`. Previously neither side pinned versions, so every install took the newest release available at the time (CWE-1357, CWE-494).
+- Removed `GET /api/external-tags`, which needed no login, was not cached, and relayed upstream JSON as is, and the WebSocket `/api/chat/ws/{user_id}`, which needed no authentication and bypassed rate limiting; the frontend used neither (CWE-306).
+- The larger upload body limit applies only to requests whose token carries `is_admin`, so regular users cannot make the backend parse a multipart body of about 500 MiB; the rate limiter tracks a bounded number of addresses and evicts the least recently active first (CWE-770).
+
+#### Tool credentials and outbound requests
+
+- **Tool credentials are encrypted at rest**: custom API tools' `headers` and `auth_config` and MCP servers' `env_vars` and `headers` are encrypted with `TOOL_SECRETS_KEY` (Fernet) before they reach the database, and existing plaintext rows are encrypted at startup. Admin API responses show `••••••••` in place of secret values, and fields sent back masked keep their stored value on update. They used to be stored in plaintext and returned as is (CWE-312, CWE-522).
+- **Custom API tools accept only declared parameters**: parameters must be declared in `parameters_schema`, and body fields are checked too when `request_body` has a schema with declared properties. Query parameters in the tool URL are fixed by the admin, and a call that supplies a parameter with the same name is rejected. Previously every key from the model was sent, and on httpx 0.28 any query parameter replaced the fixed parameters in the URL entirely (CWE-20, CWE-915).
+- **Redirects are followed manually**: custom API tools and HTTP MCP never read the body of a redirect response, and the whole call has a deadline (`504`); HTTP MCP follows only same-origin redirects, so admin-configured headers and the JSON-RPC body are never sent to another domain (CWE-200, CWE-400).
+- **MCP subprocesses and errors**: stdio subprocesses run in a fresh empty temporary directory, waiting for a free slot has a timeout, stderr is drained continuously, and a single message line is capped at 4 MiB; only tools whose names match `[A-Za-z0-9_.-]{1,128}` are kept; tool failures return only an error ID, and startup failures no longer include the command's arguments (CWE-400, CWE-209).
+- User-supplied URLs (`web_fetch`) and admin-configured endpoints use separate DNS thread pools, so a slow domain cannot stall the SSRF checks for tools and spec imports; the SSRF deny list explicitly covers 6to4 (`2002::/16`) and NAT64 local-use (`64:ff9b:1::/48`) (CWE-400, CWE-918).
+- Fixed query parameter values in a tool URL (which may be keys written into the URL) no longer appear in URLs returned to the model and the user; the `approval_required` event gains `target`, which names where the request is actually sent (CWE-200).
+- OpenAPI specs with YAML aliases are rejected, and the parse result no longer carries the whole raw spec (CWE-776).
+
+#### Resource limits
+
+- **A parsing budget for chat attachments**: admin uploads and chat attachments each use their own `ExtractionLimits`. For chat attachments, the XML parts of a docx or pptx that are built into a DOM, counted from `[Content_Types].xml` so renaming does not bypass the check, are capped at 8 MiB; the total uncompressed size is capped at 64 MiB and the member count at 10,000, and the compression ratio is checked for the whole file as well as for each member. JSON and code over 2,000,000 characters are not passed to `json.loads`. At most 2 attachments are parsed at a time per process, and an attachment over budget is reported to the model as unread (CWE-409, CWE-400).
+- The separator pattern in `split_structured_records` now runs in linear time (CWE-1333).
+
+#### Frontend
+
+- **The build ships a CSP**: `bun run build` writes a CSP `<meta>` tag into `index.html` that allows only the built scripts and the hashes of the inline scripts in `index.html`, adds the API origin from `VITE_API_BASE`/`VITE_API_URL` to `connect-src`, and allows images only from the same origin, `data:`, and `blob:`. Even when the web server sets no CSP, injected HTML cannot run scripts (CWE-79).
+- **The tool approval card shows everything**: it lists where the request is sent and every parameter, no longer inside a scrolling box, and marks control and format characters (bidirectional controls, zero-width characters, Unicode tag characters, and so on) as `⟦U+…⟧` (CWE-451).
+- **External links show the real site**: whether a link is external is decided from the resolved URL; external links open in a new tab and name the actual host, a Markdown `title` cannot replace the URL hint, and external links no longer get the in-app action button style (CWE-451).
+- Failed requests log only the status code and error message to the console, not the axios error object with passwords, API keys, and access tokens (CWE-532).
+- When the logout request fails, the login page says so: the server did not revoke the refresh token, and the httpOnly cookie holding it can still obtain access tokens until it expires (CWE-613).
+- Research trace arguments and output previews are always rendered as text, so an object from the model no longer crashes the conversation page (the trace is stored in the database, so the page used to crash every time the conversation was opened); the post author field no longer uses a pattern that backtracks in quadratic time on a long run of dots (CWE-1333).
+
 ### Added
 
+- Required settings `ALLOW_REGISTRATION`, `LOGIN_MAX_FAILURES_PER_ACCOUNT`, `LOGIN_MAX_FAILURES_PER_ADDRESS`, `LOGIN_FAILURE_WINDOW_SECONDS`, `LOGIN_LOCKOUT_SECONDS`, `TOOL_SECRETS_KEY`, `HOST`, `RELOAD`, `COOKIE_SECURE`, and `ENABLE_API_DOCS`; `POSTGRES_APP_USER` and `POSTGRES_APP_PASSWORD` in `docker-compose.yml`.
+- `GET /api/auth/registration` reports whether self-registration is open; the frontend uses it to hide the sign-up link on the login page and shows an explanation on the sign-up page.
+- `backend/scripts/create_user.py` creates an account with an interactively entered password, applying the same rules as registration; `--admin` creates an admin.
+- `backend/init-app-role.sh` (the PostgreSQL application account, safe to rerun), `backend/requirements.in`, and `frontend/bun.lock`.
+- Tool and MCP server responses from the admin API gain `credentials_unreadable`, so credentials that cannot be decrypted with the current key can be re-entered instead of breaking the page.
+- New backend tests `test_admin_user_api.py`, `test_login_throttle.py`, `test_registration.py`, and `test_tool_secrets.py`.
 - **"Tool approval" section on the website**: an interactive approval card (approve, deny, simulate a timeout) that shows the resulting SSE events such as `approval_required` and `approval_resolved`, plus a switch between HTTP methods that shows a custom API tool's default approval rule, matching `tool_approval.py`.
 - The website gains a 4.0.0 release pill and stats row, a "Every entry point has a limit" resource-limit table in the security section, and ADR-0006 in the documentation list.
 - The README gains "What's new in 4.0.0", "Tool call approval", "Threat coverage", and "Key resource limits" sections, and two troubleshooting entries on approval timeouts and read-only tools asking for approval.
 
+### Changed
+
+- A password change also signs out the current session; the frontend clears the sign-in state and returns to the login page.
+- Custom API tools that declare no parameters no longer accept any; the `POST /api/api-tools/parse-spec` response no longer includes `raw_spec`.
+- Tool and MCP credentials in admin API responses are shown as `••••••••`; ordinary headers such as `Accept` and `Content-Type` and settings such as `key_name` and `username` are shown as before. After changing `TOOL_SECRETS_KEY`, stored credentials must be entered again.
+- Intrusion detection now only raises alerts; `RateLimitMiddleware` no longer has a blocking branch that returns `403`.
+- `backend/.env.example` adds the required settings above and its `DATABASE_URL` example uses `askmiao_app`; `frontend/.env.example` notes that `VITE_API_BASE` is written into the CSP `connect-src`.
+
+### Removed
+
+- `GET /api/external-tags` and the WebSocket `/api/chat/ws/{user_id}`.
+- The intrusion detection IP blocklist, which was never populated.
+- The unused `app/core/secret_manager.py`, which silently fell back to a random key when its key was missing, and the unused `reject_unsafe_request`, which did not pin the connection IP.
+- Backend packages no code used: FlagEmbedding, waitress, docxtpl, XlsxWriter, PyJWT, langchain, and langchain-community.
+
 ### Fixed
 
+- Installing from `requirements.txt` paired an old datasets release pulled in by FlagEmbedding with a new pyarrow, so sentence-transformers failed to import; pydantic-settings, PyYAML, and lxml, previously installed only as transitive dependencies, are now direct dependencies.
+- `cache = "~/.bun/install/cache"` in `bunfig.toml` did not expand `~` and created a cache directory literally named `~` under `frontend/`, whose third-party tests vitest then picked up.
 - The website's web_fetch inspector now matches URL provenance on the full normalized URL, as `research_session.py` does; it used to match a decoded substring, which counted fragments of a URL as having appeared.
 - The website no longer mentions the removed `JWT_SECRET_KEY` (quick start, required settings, and the subprocess environment table) and explains RSA keys, `POSTGRES_PASSWORD`, and the local-only dev server instead; the security notes now cover IP pinning and tokens resolved to database accounts.
 

@@ -22,14 +22,93 @@
 
 ## [Unreleased]
 
+這一版處理第二輪安全稽核的發現：聊天附件解析有記憶體預算、登入失敗會暫停該帳號或來源位址、變更密碼即撤銷所有權杖、可以關閉自行註冊、工具憑證加密存放且管理 API 不再讀出、自訂 API 工具只接受宣告的參數、相依套件以雜湊鎖定，PostgreSQL 改以非超級使用者連線。
+
+> [!WARNING]
+> **本版含需要手動處理的變更**，升級前請依 [升級指南](docs/upgrading.md#從-400-升級到未發行版本) 逐項確認：
+>
+> - `.env` 新增 10 個必填設定：`ALLOW_REGISTRATION`、`LOGIN_MAX_FAILURES_PER_ACCOUNT`、`LOGIN_MAX_FAILURES_PER_ADDRESS`、`LOGIN_FAILURE_WINDOW_SECONDS`、`LOGIN_LOCKOUT_SECONDS`、`TOOL_SECRETS_KEY`、`HOST`、`RELOAD`、`COOKIE_SECURE`、`ENABLE_API_DOCS`，缺少任一項後端就無法啟動；`TOOL_SECRETS_KEY` 必須是各部署自行產生的 Fernet 金鑰。
+> - `HOST` 與 `RELOAD` 不再預設 `0.0.0.0` 與 `true`，`COOKIE_SECURE` 不再依 `ENVIRONMENT` 推導；`/docs`、`/redoc`、`/openapi.json` 只在 `ENABLE_API_DOCS=true` 時提供。
+> - 使用 `backend/docker-compose.yml` 時必須設定 `POSTGRES_APP_USER`、`POSTGRES_APP_PASSWORD`，`DATABASE_URL` 改用這組非超級使用者帳號；既有資料卷要執行一次 `20-app-role.sh`。
+> - 沒有在 `parameters_schema` 宣告的工具參數一律回傳 `400`；`GET /api/external-tags`、WebSocket `/api/chat/ws/{user_id}` 已移除；`POST /api/api-tools/parse-spec` 的回應不再包含 `raw_spec`。
+> - 新增或升級後端套件改為修改 `requirements.in` 再重新產生 `requirements.txt`；`bun install` 在 `bun.lock` 與 `package.json` 不一致時會失敗。
+> - 變更密碼後，包含目前這一個在內的所有工作階段都需要以新密碼重新登入。
+
+### 安全性 (Security)
+
+#### 認證與帳號
+
+- **登入失敗節流**：同一登入識別（不分大小寫）或同一來源位址在 `LOGIN_FAILURE_WINDOW_SECONDS` 內失敗達門檻後，暫停該識別或位址的登入 `LOGIN_LOCKOUT_SECONDS` 秒，回傳 `429` 與 `Retry-After`；不存在的帳號同樣計數，鎖定期間正確密碼也不接受，回應不透露密碼是否正確（CWE-307）。
+- **變更密碼撤銷所有權杖**：`users` 新增 `tokens_valid_after`，變更密碼時更新為當下，簽發時間早於它的存取與重新整理權杖一律無效；被盜的重新整理權杖不能在受害者改密碼後繼續換發。`POST /api/auth/change-password` 與帶新密碼的 `PUT /api/auth/me` 會清除重新整理權杖 Cookie（CWE-613）。
+- **可以關閉自行註冊**：新增必填設定 `ALLOW_REGISTRATION`，關閉時 `POST /api/auth/register` 回傳 `403` 並寫入安全日誌；帳號（含第一位管理員）改以 `scripts/create_user.py` 建立。原本任何能連到 API 的人都能註冊，查詢整個知識庫並以營運者的憑證呼叫已啟用的工具（CWE-284）。
+- **管理員使用者 API 不再回傳密碼雜湊**：`GET /api/admin/users` 與 `PUT /api/admin/users/{user_id}` 改以 `UserProfile` 篩選欄位，回應不再帶有 `hashed_password`（CWE-200）。
+- **權杖過期也能登出**：`POST /api/auth/logout` 只驗存取權杖的簽章，權杖過期時仍會撤銷重新整理權杖並清除 Cookie；仍要求 `Authorization` 標頭，跨站表單無法觸發登出（CWE-613）。
+- 管理員變更帳號權限、狀態與刪除帳號時寫入安全日誌（`ADMIN_USER_UPDATED`、`ADMIN_USER_DELETED`），記錄操作者與變更內容（CWE-778）。
+- JWT 私鑰建立當下即為 `0600`，不再先以預設權限寫入再修改；新建立的 `backend/keys/` 為 `0700`（CWE-276）。
+
+#### 部署與相依套件
+
+- **PostgreSQL 改以非超級使用者連線**：`docker-compose.yml` 新增必填的 `POSTGRES_APP_USER`、`POSTGRES_APP_PASSWORD`，`backend/init-app-role.sh` 在 `init.sql` 之後建立帳號、授予 `public` schema 的 `USAGE` 與 `CREATE`，並把既有資料表交給它擁有；SQL 注入不再能以 `COPY ... TO PROGRAM` 執行系統指令或讀取伺服器檔案（CWE-250）。
+- **不安全的預設值改為必填**：`HOST`、`RELOAD`、`COOKIE_SECURE` 不再預設對所有介面監聽、自動重新載入或依 `ENVIRONMENT` 推導 Secure；新增必填的 `ENABLE_API_DOCS`，關閉時不提供列出所有端點與參數的互動式文件（CWE-1188）。
+- **相依套件以雜湊鎖定**：`backend/requirements.in` 只列直接依賴，`requirements.txt` 由 `uv pip compile --universal --generate-hashes` 產生並在安裝時驗證雜湊；提交 `frontend/bun.lock` 並改為 `frozenLockfile = true`。原本兩邊都沒有鎖定版本，每次安裝都取得當下最新版（CWE-1357、CWE-494）。
+- 移除不需登入、未快取並原樣轉送上游 JSON 的 `GET /api/external-tags`，以及不需認證、繞過速率限制的 WebSocket `/api/chat/ws/{user_id}`；前端都沒有使用（CWE-306）。
+- 文件上傳的大本文上限只放寬給權杖帶有 `is_admin` 的請求，一般使用者不能讓後端先解析約 500 MiB 的 multipart；速率限制追蹤的位址數有上限，最久未活動的先淘汰（CWE-770）。
+
+#### 工具憑證與出站請求
+
+- **工具憑證加密存放**：自訂 API 工具的 `headers`、`auth_config` 與 MCP 伺服器的 `env_vars`、`headers` 寫入資料庫前以 `TOOL_SECRETS_KEY`（Fernet）加密，啟動時把既有明文資料改為加密；管理 API 的回應以 `••••••••` 取代秘密值，更新時送回遮蔽字樣的欄位沿用原值。原本以明文存放且管理 API 原樣回傳（CWE-312、CWE-522）。
+- **自訂 API 工具只接受宣告的參數**：參數必須在 `parameters_schema` 中宣告，`request_body` 有宣告欄位的 schema 時一併檢查；工具網址中的查詢參數由管理員固定，呼叫端提供同名參數時拒絕。原本模型給的任何鍵都會送出，在 httpx 0.28 上帶任何查詢參數還會整段取代網址中的固定參數（CWE-20、CWE-915）。
+- **轉址改為手動跟隨**：自訂 API 工具與 HTTP MCP 不讀取轉址回應的本文，整個呼叫另有總時限（`504`）；HTTP MCP 只跟隨同一來源的轉址，管理員設定的標頭與 JSON-RPC 本文不會送往其他網域（CWE-200、CWE-400）。
+- **MCP 子行程與錯誤**：stdio 子行程在每次新建的空暫存目錄執行，等待執行空位有時限，stderr 持續讀出，單行訊息上限 4 MiB；只保留名稱符合 `[A-Za-z0-9_.-]{1,128}` 的工具；工具失敗只回傳錯誤代碼，啟動失敗的訊息不含指令參數（CWE-400、CWE-209）。
+- 使用者網址（`web_fetch`）與管理員設定的端點各用一個 DNS 執行緒池，慢速網域不會拖垮工具與規格匯入的 SSRF 檢查；SSRF 拒絕清單明確列出 6to4（`2002::/16`）與 NAT64 local-use（`64:ff9b:1::/48`）（CWE-400、CWE-918）。
+- 工具網址中固定的查詢參數值（可能是寫在網址裡的金鑰）不出現在回傳給模型與使用者的網址中；`approval_required` 事件新增 `target`，標出實際送出的位置（CWE-200）。
+- OpenAPI 規格拒絕 YAML 別名，解析結果不再夾帶整份原始規格（CWE-776）。
+
+#### 資源上限
+
+- **聊天附件的解析預算**：管理員上傳與聊天附件各用一組 `ExtractionLimits`。聊天附件的 docx／pptx 依 `[Content_Types].xml` 加總會建成 DOM 的 XML 部件，上限 8 MiB（改副檔名無法繞過）；解壓總量上限 64 MiB、成員數上限 10,000，壓縮比除了逐一成員也檢查整個檔案；JSON 與程式碼超過 2,000,000 字時不交給 `json.loads`；整個行程同時最多解析 2 個附件，超過預算時告知模型附件未被讀取（CWE-409、CWE-400）。
+- `split_structured_records` 的分隔線正規式改為線性時間（CWE-1333）。
+
+#### 前端
+
+- **建置產物帶有 CSP**：`bun run build` 把 CSP 以 `<meta>` 寫入 `index.html`：腳本只允許建置產物與 `index.html` 內嵌腳本的雜湊，`connect-src` 依 `VITE_API_BASE`／`VITE_API_URL` 加入 API 來源，圖片只允許同源與 `data:`／`blob:`。網頁伺服器沒有設定 CSP 時，被注入的 HTML 也無法執行腳本（CWE-79）。
+- **工具核准卡片顯示完整內容**：列出實際送出的位置與每一個參數，不再藏在需要捲動的區域；控制字元與格式字元（雙向文字控制、零寬字元、Unicode 標籤字元等）以 `⟦U+…⟧` 標示（CWE-451）。
+- **外部連結標示實際網站**：以解析後的網址判斷是否為外部連結，在新分頁開啟並標示實際主機；Markdown 中的 `title` 不能取代網址提示，外部連結也不套用站內動作按鈕的樣式（CWE-451）。
+- 請求失敗時主控台只記錄狀態碼與錯誤訊息，不再記錄帶有密碼、API 金鑰與存取權杖的 axios 錯誤物件（CWE-532）。
+- 登出請求失敗時在登入頁提示：伺服器沒有撤銷重新整理權杖，存放它的 httpOnly Cookie 在到期前仍可換發存取權杖（CWE-613）。
+- 研究軌跡的參數與輸出預覽一律轉成文字顯示：模型給出物件時不再讓對話頁面崩潰（軌跡存在資料庫中，原本之後每次開啟該對話都會崩潰）；貼文作者欄位不再使用在一長串「.」上回溯成二次方時間的正規式（CWE-1333）。
+
 ### 新增 (Added)
 
+- 必填設定 `ALLOW_REGISTRATION`、`LOGIN_MAX_FAILURES_PER_ACCOUNT`、`LOGIN_MAX_FAILURES_PER_ADDRESS`、`LOGIN_FAILURE_WINDOW_SECONDS`、`LOGIN_LOCKOUT_SECONDS`、`TOOL_SECRETS_KEY`、`HOST`、`RELOAD`、`COOKIE_SECURE`、`ENABLE_API_DOCS`；`docker-compose.yml` 的 `POSTGRES_APP_USER`、`POSTGRES_APP_PASSWORD`。
+- `GET /api/auth/registration` 回傳是否開放自行註冊；前端據此隱藏登入頁的註冊入口，註冊頁改為顯示說明。
+- `backend/scripts/create_user.py`：以互動方式輸入密碼建立帳號，套用與註冊相同的規則，`--admin` 建立管理員。
+- `backend/init-app-role.sh`（PostgreSQL 應用程式帳號，可重複執行）與 `backend/requirements.in`、`frontend/bun.lock`。
+- 管理 API 的工具與 MCP 伺服器回應新增 `credentials_unreadable`：無法以目前的金鑰解密時讓管理員重新輸入，而不是整頁失敗。
+- 新增後端測試 `test_admin_user_api.py`、`test_login_throttle.py`、`test_registration.py`、`test_tool_secrets.py`。
 - **介紹頁「工具核准」區段**：可操作的核准卡片示範（核准、拒絕、模擬逾時），同步顯示 `approval_required`、`approval_resolved` 等 SSE 事件；另依 HTTP 方法切換自訂 API 工具的預設核准規則，規則與 `tool_approval.py` 相同。
 - 介紹頁新增 4.0.0 版本標籤與數據列、安全區段的「每個入口都有上限」資源上限表，文件導覽補上 ADR-0006。
 - README 新增「4.0.0 重點」、「工具呼叫核准」、「防護對照」與「主要資源上限」各節，疑難排解新增核准逾時與唯讀工具要求核准兩項。
 
+### 變更 (Changed)
+
+- 變更密碼後目前的工作階段也會登出，前端清除登入狀態並導回登入頁。
+- 未宣告任何參數的自訂 API 工具不再接受參數；`POST /api/api-tools/parse-spec` 的回應不再包含 `raw_spec`。
+- 管理 API 回應中的工具與 MCP 憑證以 `••••••••` 顯示；`Accept`、`Content-Type` 等一般標頭與 `key_name`、`username` 等設定照常顯示。更換 `TOOL_SECRETS_KEY` 後已儲存的憑證需要重新輸入。
+- 入侵偵測只保留警報；`RateLimitMiddleware` 不再有回傳 `403` 的封鎖分支。
+- `backend/.env.example` 新增上述必填設定，`DATABASE_URL` 範例改用 `askmiao_app`；`frontend/.env.example` 註明 `VITE_API_BASE` 會寫入 CSP 的 `connect-src`。
+
+### 移除 (Removed)
+
+- `GET /api/external-tags` 與 WebSocket `/api/chat/ws/{user_id}`。
+- 入侵偵測中從未被填入的 IP 封鎖名單。
+- 未使用、且缺少金鑰時會悄悄改用隨機金鑰的 `app/core/secret_manager.py`；未使用、且不固定連線 IP 的 `reject_unsafe_request`。
+- 沒有任何程式使用的後端套件：FlagEmbedding、waitress、docxtpl、XlsxWriter、PyJWT、langchain、langchain-community。
+
 ### 修正 (Fixed)
 
+- 依 `requirements.txt` 安裝時，FlagEmbedding 帶入的舊版 datasets 與新版 pyarrow 不相容，使 sentence-transformers 無法匯入；原本只靠其他套件間接安裝的 pydantic-settings、PyYAML、lxml 改為直接依賴。
+- `bunfig.toml` 的 `cache = "~/.bun/install/cache"` 不會展開 `~`，在 `frontend/` 下建立名為 `~` 的快取目錄，vitest 也會掃到其中第三方套件的測試。
 - 介紹頁的 web_fetch 檢查器改以正規化後的完整網址比對來源，與 `research_session.py` 一致；原本以解碼後的子字串比對，會把網址的片段也當成出現過。
 - 介紹頁移除已不存在的 `JWT_SECRET_KEY`（快速開始、必填設定與子行程環境變數表），改說明 RSA 金鑰、`POSTGRES_PASSWORD` 與開發伺服器只接受本機連線；安全說明補上連線固定 IP 與權杖對應資料庫帳號。
 
