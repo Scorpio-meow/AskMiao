@@ -26,17 +26,25 @@ const getToolDisplayInfo = (toolName: string): ToolDisplayInfo => {
       return { label: toolName, icon: 'code', toneClass: styles.toneDefault };
   }
 };
+// 研究軌跡的參數由模型產生，可能是任何 JSON 型別；物件直接當成 React 子元素會讓整個對話頁面崩潰，
+// 而且軌跡會存進資料庫，之後每次開啟這段對話都會再崩潰一次，因此一律轉成文字再顯示
+const toDisplayText = (value: unknown): string => {
+  if (value === undefined || value === null) return '';
+  return typeof value === 'string' ? value : JSON.stringify(value);
+};
 const formatStepQueryParam = (step: ResearchTraceStep): string => {
-  const args = step.arguments || {};
+  const args = step.arguments;
+  if (typeof args !== 'object' || args === null || Array.isArray(args)) return toDisplayText(args);
+  const fields = args as Record<string, unknown>;
   if (step.tool === 'filter_and_count_records') {
     const parts: string[] = [];
-    if (args.date_range) parts.push(`日期: ${args.date_range}`);
-    if (args.author) parts.push(`作者: ${args.author}`);
-    if (args.keyword) parts.push(`關鍵字: ${args.keyword}`);
-    if (args.target_document) parts.push(`文件: ${args.target_document}`);
+    if (fields.date_range) parts.push(`日期: ${toDisplayText(fields.date_range)}`);
+    if (fields.author) parts.push(`作者: ${toDisplayText(fields.author)}`);
+    if (fields.keyword) parts.push(`關鍵字: ${toDisplayText(fields.keyword)}`);
+    if (fields.target_document) parts.push(`文件: ${toDisplayText(fields.target_document)}`);
     if (parts.length > 0) return parts.join(' | ');
   }
-  return args.query || args.url || '';
+  return toDisplayText(fields.query) || toDisplayText(fields.url);
 };
 export const ResearchTraceBlock: React.FC<ResearchTraceBlockProps> = ({
   trace,
@@ -112,6 +120,7 @@ export const ResearchTraceBlock: React.FC<ResearchTraceBlockProps> = ({
           {trace.map((step: ResearchTraceStep, index: number) => {
             const toolInfo = getToolDisplayInfo(step.tool);
             const queryParam = formatStepQueryParam(step);
+            const outputPreview = toDisplayText(step.output_preview);
             const isStepRunning = step.status === 'running';
             const isStepError = step.status === 'error';
             return (
@@ -155,9 +164,9 @@ export const ResearchTraceBlock: React.FC<ResearchTraceBlockProps> = ({
                     </span>
                   </div>
                 )}
-                {step.output_preview && (
+                {outputPreview && (
                   <pre className={styles.outputPreview}>
-                    {step.output_preview}
+                    {outputPreview}
                   </pre>
                 )}
               </li>

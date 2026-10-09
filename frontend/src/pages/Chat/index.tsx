@@ -4,6 +4,7 @@ import api, { Conversation, Message } from '../../services/api';
 import { useChat } from '../../hooks/useChat';
 import { useDocumentTitle } from '../../hooks/useDocumentTitle';
 import { copyText } from '../../utils/clipboard';
+import { describeRequestError } from '../../utils/secureLogger';
 import { SnackbarState, ModelDetail, ChatAttachment } from './types';
 import ChatSidebar from './ChatSidebar';
 import ChatHeader from './ChatHeader';
@@ -132,7 +133,7 @@ export const ChatPage: React.FC = () => {
         setSelectedModel(defaultModel);
       }
     } catch (err) {
-      console.warn('載入可用模型失敗', err);
+      console.warn('載入可用模型失敗', describeRequestError(err));
       setAvailableModels([]);
       setModelDetails([]);
       if (!userSelectedModelRef.current) {

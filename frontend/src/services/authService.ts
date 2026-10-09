@@ -1,4 +1,5 @@
 import api, { User } from './api';
+import { describeRequestError } from '../utils/secureLogger';
 const TOKEN_KEY = 'access_token';
 const REFRESH_TOKEN_KEY = 'refresh_token';
 const USER_KEY = 'user_info';
@@ -7,6 +8,16 @@ export interface Tokens {
   refresh_token: string;
   token_type: string;
 }
+export interface LoginNotice {
+  message: string;
+  severity: 'info' | 'warning';
+}
+// 登出請求失敗時伺服器沒有撤銷重新整理權杖，而存放它的 httpOnly Cookie 只有伺服器能清除：
+// 這個瀏覽器在權杖到期前仍能用它換發新的存取權杖，因此要讓使用者知道登出沒有完成
+export const LOGOUT_UNCONFIRMED_NOTICE: LoginNotice = {
+  message: '無法向伺服器確認登出，這個瀏覽器中的登入憑證可能仍然有效。若在共用電腦上，請待連線恢復後重新登入再登出一次，或清除此網站的 Cookie。',
+  severity: 'warning',
+};
 export interface RegisterLoginResult {
   success: boolean;
   user?: User;
@@ -49,7 +60,7 @@ class AuthService {
       this.saveUser(user);
       return { success: true, user, tokens };
     } catch (error: any) {
-      console.error('註冊失敗:', error);
+      console.error('註冊失敗:', describeRequestError(error));
       let errorMessage = error.isTimeout ? error.message : '註冊失敗';
       if (!error.isTimeout && error.response?.data?.detail) {
         const detail = error.response.data.detail;
@@ -81,7 +92,7 @@ class AuthService {
       this.saveUser(user);
       return { success: true, user, tokens };
     } catch (error: any) {
-      console.error('登入失敗:', error);
+      console.error('登入失敗:', describeRequestError(error));
       let errorMessage = error.isTimeout ? error.message : '登入失敗';
       if (!error.isTimeout && error.response?.data?.detail) {
         const detail = error.response.data.detail;
@@ -99,14 +110,17 @@ class AuthService {
       };
     }
   }
-  async logout(): Promise<void> {
+  /** 回傳伺服器是否確認登出；無論結果如何都會清除本機的登入狀態 */
+  async logout(): Promise<boolean> {
     try {
       await withTimeout(
         (signal) => api.post('/auth/logout', {}, { signal }),
         10000
       );
+      return true;
     } catch (error) {
-      console.error('登出請求失敗:', error);
+      console.error('登出請求失敗:', describeRequestError(error));
+      return false;
     } finally {
       this.clearAuth();
     }
@@ -131,7 +145,7 @@ class AuthService {
       });
       return access_token;
     } catch (error) {
-      console.error('刷新令牌失敗:', error);
+      console.error('刷新令牌失敗:', describeRequestError(error));
       this.clearAuth();
       throw error;
     }
@@ -162,7 +176,7 @@ class AuthService {
       this.saveUser(user);
       return { success: true, user };
     } catch (error: any) {
-      console.error('更新用戶資料失敗:', error);
+      console.error('更新用戶資料失敗:', describeRequestError(error));
       const errorMsg = error.isTimeout ? error.message : (error.response?.data?.detail || '更新失敗');
       return {
         success: false,
@@ -184,7 +198,7 @@ class AuthService {
       this.clearAuth();
       return { success: true, message: response.data.message };
     } catch (error: any) {
-      console.error('修改密碼失敗:', error);
+      console.error('修改密碼失敗:', describeRequestError(error));
       const errorMsg = error.isTimeout ? error.message : (error.response?.data?.detail || '修改密碼失敗');
       return {
         success: false,

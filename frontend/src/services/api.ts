@@ -32,8 +32,8 @@ export interface Message {
   research_trace?: Array<{
     step: number;
     tool: string;
-    arguments?: Record<string, any>;
-    output_preview?: string;
+    arguments?: unknown;
+    output_preview?: unknown;
     duration_seconds?: number;
     status?: string;
   }>;
@@ -52,7 +52,9 @@ export interface PendingToolApproval {
   step: number;
   tool: string;
   tool_display_name: string;
-  arguments?: Record<string, any>;
+  // 實際送出的位置：自訂 API 工具為「方法 主機」，MCP 為傳輸方式與主機或指令
+  target: string;
+  arguments?: unknown;
 }
 export interface Conversation {
   id: number;
@@ -523,7 +525,7 @@ export const mcpService = {
   },
   async testTool(serverId: number, toolName: string, argumentsData: Record<string, any>): Promise<{ status: string; tool_name: string; result: any }> {
     const response = await api.post<{ status: string; tool_name: string; result: any }>(
-      `/mcp/servers/${serverId}/tools/${toolName}/test`,
+      `/mcp/servers/${serverId}/tools/${encodeURIComponent(toolName)}/test`,
       { arguments: argumentsData }
     );
     return response.data;

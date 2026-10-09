@@ -1,6 +1,7 @@
 import { useId, useState } from 'react';
 import { useNavigate, useLocation, Outlet, NavLink } from 'react-router-dom';
 import { useAuth } from '../hooks/useAuth';
+import { LOGOUT_UNCONFIRMED_NOTICE } from '../services/authService';
 import { useTheme } from '../contexts/ThemeContext';
 import { APP_NAME } from '../config/brand';
 import NetworkStatus from './NetworkStatus';
@@ -47,8 +48,8 @@ function Layout() {
   };
   const handleLogout = async () => {
     handleMenuClose();
-    await logout();
-    navigate('/login', { replace: true });
+    const confirmed = await logout();
+    navigate('/login', { replace: true, state: confirmed ? null : { notice: LOGOUT_UNCONFIRMED_NOTICE } });
   };
   return (
     <div className={`${styles.wrapper} ${isFixedLayout ? styles.wrapperFixed : ''}`}>

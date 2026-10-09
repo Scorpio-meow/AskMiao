@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../hooks/useAuth';
+import { LOGOUT_UNCONFIRMED_NOTICE } from '../services/authService';
 import { useDocumentTitle } from '../hooks/useDocumentTitle';
 import {
   TextField,
@@ -59,14 +60,14 @@ const ProfilePage = () => {
     setSubmitting(false);
     if (result.success) {
       // 變更密碼會讓所有裝置的登入失效，包含目前這一個
-      navigate('/login', { replace: true, state: { notice: '密碼已變更，請以新密碼重新登入' } });
+      navigate('/login', { replace: true, state: { notice: { message: '密碼已變更，請以新密碼重新登入', severity: 'info' } } });
     } else {
       setDialogError(result.error || '修改密碼失敗');
     }
   };
   const handleLogout = async () => {
-    await logout();
-    navigate('/login', { replace: true });
+    const confirmed = await logout();
+    navigate('/login', { replace: true, state: confirmed ? null : { notice: LOGOUT_UNCONFIRMED_NOTICE } });
   };
   if (!user) {
     return (

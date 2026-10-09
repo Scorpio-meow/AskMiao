@@ -11,8 +11,8 @@ export interface SourceDetail {
 export interface ResearchTraceStep {
   step: number;
   tool: string;
-  arguments?: Record<string, any>;
-  output_preview?: string;
+  arguments?: unknown;
+  output_preview?: unknown;
   duration_seconds?: number;
   status?: 'success' | 'error' | string;
 }

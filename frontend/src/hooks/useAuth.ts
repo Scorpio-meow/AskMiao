@@ -43,14 +43,13 @@ export function useAuth() {
       setLoading(false);
     }
   }, []);
-  const logout = useCallback(async (): Promise<void> => {
+  /** 回傳伺服器是否確認登出；本機的登入狀態一律清除 */
+  const logout = useCallback(async (): Promise<boolean> => {
     setLoading(true);
     try {
-      await authService.logout();
-      setUser(null);
-    } catch (err) {
-      console.error('Logout failed:', err);
+      return await authService.logout();
     } finally {
+      setUser(null);
       setLoading(false);
     }
   }, []);

@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import axios from 'axios';
 import api from '../services/api';
+import { describeRequestError } from '../utils/secureLogger';
 import { useDocuments, getApiErrorMessage } from '../hooks/useDocuments';
 import { useDocumentTitle } from '../hooks/useDocumentTitle';
 import {
@@ -213,7 +214,7 @@ function Documents() {
         return 'failed';
       }
     } catch (err) {
-      console.error('Upload error:', err);
+      console.error('Upload error:', describeRequestError(err));
       if ((axios.isCancel && axios.isCancel(err)) || err.name === 'CanceledError') {
         setUploadItems((prev) => {
           const next = prev.slice();
@@ -328,7 +329,7 @@ function Documents() {
       await deleteDocument(id);
       setSuccess(`已刪除「${filename}」`);
     } catch (err) {
-      console.error('刪除文件錯誤:', err);
+      console.error('刪除文件錯誤:', describeRequestError(err));
       setLocalError(`刪除「${filename}」失敗：${getApiErrorMessage(err, '請稍後再試')}`);
     } finally {
       setDeletingIds((prev) => {
@@ -380,7 +381,7 @@ function Documents() {
       setRebuildDialog(false);
       fetchDocuments();
     } catch (err) {
-      console.error('重建索引錯誤:', err);
+      console.error('重建索引錯誤:', describeRequestError(err));
       setRebuildDialog(false);
       setLocalError('重建索引失敗：' + getApiErrorMessage(err, '請稍後再試'));
     } finally {
@@ -398,7 +399,7 @@ function Documents() {
         fetchDocuments();
       }
     } catch (err) {
-      console.error('重新生成大綱錯誤:', err);
+      console.error('重新生成大綱錯誤:', describeRequestError(err));
       setLocalError(`重新生成大綱失敗：${getApiErrorMessage(err, '請稍後再試')}`);
     } finally {
       setRegeneratingStatus((prev) => ({ ...prev, [documentId]: false }));
@@ -424,7 +425,7 @@ function Documents() {
       setEditingDocId(null);
       fetchDocuments();
     } catch (err) {
-      console.error('儲存大綱錯誤:', err);
+      console.error('儲存大綱錯誤:', describeRequestError(err));
       setLocalError(`儲存大綱失敗：${getApiErrorMessage(err, '請稍後再試')}`);
     } finally {
       setSavingDesc(false);

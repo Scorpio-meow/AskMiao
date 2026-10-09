@@ -12,8 +12,9 @@ import styles from './ChatMessageItem.module.css';
 const SOCIAL_PLATFORM_DOMAINS = ['threads.com', 'threads.net', 'instagram.com', 'twitter.com', 'x.com'];
 const ACTION_BUTTON_KEYWORDS = ['貼文', '查看', '前往', '開啟', '↗'];
 const POST_TIME_PREFIX_REGEX = /^(上午|下午|\d{1,2}:\d{2}|\d{4}[-/年]\d{1,2}[-/月])/;
+// 不在結尾加上 $：分隔符號與作者名稱都接受「.」，加上 $ 後一長串「.」會回溯成二次方時間，
+// 模型輸出的長段落可讓分頁凍結；需要整段比對時改以比對長度是否等於整段判斷
 const POST_AUTHOR_PREFIX_REGEX = /^(?:(\d+)[\.:\s]+)?(@?[\w\.-]+)/;
-const POST_AUTHOR_EXACT_REGEX = /^(?:(\d+)[\.:\s]+)?(@?[\w\.-]+)$/;
 const POST_LINK_PREFIX_REGEX = /^(連結|來源)[：:]\s*/;
 const POST_CONTENT_PREFIX_REGEX = /^(內容)[：:]\s*/;
 const timeFormatter = new Intl.DateTimeFormat('zh-TW', { hour: '2-digit', minute: '2-digit' });
@@ -26,6 +27,17 @@ const isSocialUrl = (href?: string): boolean => {
     return SOCIAL_PLATFORM_DOMAINS.some((domain) => host === domain || host.endsWith(`.${domain}`));
   } catch {
     return false;
+  }
+};
+/** 連到其他網站的 http(s) 連結回傳解析後的網址；站內連結與 mailto 等其他協定回傳 null */
+const parseExternalLink = (href?: string): URL | null => {
+  if (!href) return null;
+  try {
+    const url = new URL(href, window.location.href);
+    const isWeb = url.protocol === 'http:' || url.protocol === 'https:';
+    return isWeb && url.origin !== window.location.origin ? url : null;
+  } catch {
+    return null;
   }
 };
 const formatMessageTime = (value: string) => {
@@ -87,13 +99,12 @@ function parsePipeDelimitedPost(children: React.ReactNode): React.ReactNode | nu
       timeStr = p;
       continue;
     }
-    const authorMatch = p.match(POST_AUTHOR_EXACT_REGEX);
-    if (authorMatch && !authorStr && !p.includes('內容') && !p.includes('連結')) {
-      if (authorMatch[1]) indexStr = authorMatch[1];
-      authorStr = authorMatch[2].startsWith('@') ? authorMatch[2] : `@${authorMatch[2]}`;
+    const authorMatchPrefix = p.match(POST_AUTHOR_PREFIX_REGEX);
+    if (authorMatchPrefix && authorMatchPrefix[0].length === p.length && !authorStr && !p.includes('內容') && !p.includes('連結')) {
+      if (authorMatchPrefix[1]) indexStr = authorMatchPrefix[1];
+      authorStr = authorMatchPrefix[2].startsWith('@') ? authorMatchPrefix[2] : `@${authorMatchPrefix[2]}`;
       continue;
     }
-    const authorMatchPrefix = p.match(POST_AUTHOR_PREFIX_REGEX);
     if (authorMatchPrefix && !authorStr && !p.includes('內容') && !p.includes('連結') && !p.includes('[[LINK]]')) {
       if (authorMatchPrefix[1]) indexStr = authorMatchPrefix[1];
       authorStr = authorMatchPrefix[2].startsWith('@') ? authorMatchPrefix[2] : `@${authorMatchPrefix[2]}`;
@@ -313,25 +324,27 @@ export const ChatMessageItem: React.FC<ChatMessageItemProps> = ({
               <ReactMarkdown
                 remarkPlugins={[remarkGfm]}
                 components={{
+                  // 回答可能受外部資料影響，連結文字可以與實際網址不同；外部連結一律標示實際前往的網站，
+                  // 不套用站內動作按鈕的樣式，Markdown 中的 title 也不能取代實際網址的提示
                   a: ({ node, href, children, ...props }) => {
-                    const isExternal = href?.startsWith('http://') || href?.startsWith('https://');
+                    const external = parseExternalLink(href);
                     const isSocial = isSocialUrl(href);
                     const text = String(children);
-                    const isPill = isSocial || ACTION_BUTTON_KEYWORDS.some((kw) => text.includes(kw));
+                    const isPill = isSocial || (!external && ACTION_BUTTON_KEYWORDS.some((kw) => text.includes(kw)));
                     return (
                       <a
-                        href={href}
-                        target={isExternal ? '_blank' : undefined}
-                        rel={isExternal ? 'noopener noreferrer' : undefined}
-                        className={isPill ? styles.postLinkBadge : styles.markdownLink}
-                        title={isExternal ? `在新分頁開啟 ${href}` : undefined}
                         {...props}
+                        href={href}
+                        target={external ? '_blank' : undefined}
+                        rel={external ? 'noopener noreferrer' : undefined}
+                        className={isPill ? styles.postLinkBadge : styles.markdownLink}
+                        title={external ? `在新分頁開啟 ${external.href}` : props.title}
                       >
                         {children}
-                        {isExternal && !text.includes('↗') && (
+                        {external && !text.includes('↗') && (
                           <span className={styles.externalIcon} aria-hidden="true">↗</span>
                         )}
-                        {isExternal && <span className="sr-only">（在新分頁開啟）</span>}
+                        {external && <span className="sr-only">（在新分頁開啟 {external.host}）</span>}
                       </a>
                     );
                   },

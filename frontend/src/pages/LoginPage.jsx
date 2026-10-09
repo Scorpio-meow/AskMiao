@@ -51,8 +51,8 @@ const LoginPage = () => {
           <p className={styles.subtitle}>使用您的帳號登入系統</p>
         </div>
         {notice && !error && (
-          <Alert severity="info" style={{ marginBottom: '16px' }}>
-            {notice}
+          <Alert severity={notice.severity} style={{ marginBottom: '16px' }}>
+            {notice.message}
           </Alert>
         )}
         {error && (

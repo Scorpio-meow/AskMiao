@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import api from '../services/api';
+import { describeRequestError } from '../utils/secureLogger';
 import { useDocumentTitle } from '../hooks/useDocumentTitle';
 import {
   Button,
@@ -86,11 +87,11 @@ function AdminDashboard() {
       } catch (err) {
         if (!isMountedRef.current) return;
         if (err.name === 'AbortError' || err.name === 'CanceledError') {
-          if (import.meta.env.DEV) console.debug('Admin data loading was cancelled', err);
+          if (import.meta.env.DEV) console.debug('Admin data loading was cancelled', describeRequestError(err));
         } else {
           setError('載入資料失敗：' + (err.response?.data?.detail || err.message || '未知錯誤'));
         }
-        console.error('Admin data loading error:', err);
+        console.error('Admin data loading error:', describeRequestError(err));
       } finally {
         clearTimeout(timeoutId);
         setLoading(false);
@@ -134,7 +135,7 @@ function AdminDashboard() {
       } else {
         setDialogError('更新使用者失敗：' + (err.response?.data?.detail || err.message));
       }
-      console.error('Update user error:', err);
+      console.error('Update user error:', describeRequestError(err));
     } finally {
       clearTimeout(timeoutId);
       setSavingUser(false);
@@ -156,7 +157,7 @@ function AdminDashboard() {
       } else {
         setError(`刪除${subject}失敗：` + (err.response?.data?.detail || err.message));
       }
-      console.error('Delete error:', err);
+      console.error('Delete error:', describeRequestError(err));
     } finally {
       clearTimeout(timeoutId);
       setDeleting(false);

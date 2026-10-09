@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { chatService, apiToolService, mcpService } from '../services/api';
+import { describeRequestError } from '../utils/secureLogger';
 import { useDocumentTitle } from '../hooks/useDocumentTitle';
 import {
   Alert,
@@ -315,7 +316,7 @@ export default function AiTools() {
         setMcpPresets(resPresets.value.presets);
       }
     } catch (err) {
-      console.warn('載入工具清單失敗:', err);
+      console.warn('載入工具清單失敗:', describeRequestError(err));
     } finally {
       setLoading(false);
     }
@@ -337,7 +338,7 @@ export default function AiTools() {
       );
       showSnackbar(res.message, 'success');
     } catch (err) {
-      console.warn('切換工具狀態失敗:', err);
+      console.warn('切換工具狀態失敗:', describeRequestError(err));
       showSnackbar(getRequestErrorMessage(err, '切換狀態失敗'), 'error');
     }
   };
@@ -357,7 +358,7 @@ export default function AiTools() {
         showSnackbar(`已刪除 MCP 伺服器「${item.display_name}」`, 'success');
       }
     } catch (err) {
-      console.warn('刪除失敗:', err);
+      console.warn('刪除失敗:', describeRequestError(err));
       showSnackbar(getRequestErrorMessage(err, '刪除失敗，請稍後再試'), 'error');
     } finally {
       setDeleting(false);
@@ -422,7 +423,7 @@ export default function AiTools() {
       showSnackbar(res.message, 'success');
       fetchAllTools();
     } catch (err) {
-      console.warn('匯入工具失敗:', err);
+      console.warn('匯入工具失敗:', describeRequestError(err));
       setDialogError(getRequestErrorMessage(err, '匯入工具失敗'));
     } finally {
       setImporting(false);
@@ -525,7 +526,7 @@ export default function AiTools() {
       );
       showSnackbar(res.message, 'success');
     } catch (err) {
-      console.warn('切換 MCP 狀態失敗:', err);
+      console.warn('切換 MCP 狀態失敗:', describeRequestError(err));
       showSnackbar(getRequestErrorMessage(err, '切換狀態失敗'), 'error');
     }
   };
@@ -539,7 +540,7 @@ export default function AiTools() {
       );
       showSnackbar(res.message, 'success');
     } catch (err) {
-      console.warn('探索 MCP 伺服器失敗:', err);
+      console.warn('探索 MCP 伺服器失敗:', describeRequestError(err));
       showSnackbar(getRequestErrorMessage(err, '連線與探索 MCP 工具失敗'), 'error');
       // 重新整理取得更新後的 error status
       fetchAllTools();
