@@ -180,6 +180,8 @@ class AuthService {
         }, { signal }),
         45000
       );
+      // 後端在變更密碼後撤銷所有權杖（含這一次的），本機的登入狀態也一併清除
+      this.clearAuth();
       return { success: true, message: response.data.message };
     } catch (error: any) {
       console.error('修改密碼失敗:', error);

@@ -36,6 +36,7 @@ def create_user(
     is_admin: bool = False
 ) -> User:
     hashed_password = PasswordManager.hash_password(password)
+    now = datetime.utcnow()
     
     db_user = User(
         username=username,
@@ -44,7 +45,8 @@ def create_user(
         role=role,
         is_admin=is_admin,
         is_active=True,
-        created_at=datetime.utcnow()
+        created_at=now,
+        tokens_valid_after=now
     )
     
     db.add(db_user)
@@ -84,6 +86,8 @@ def update_user_password(
         return None
     
     user.hashed_password = PasswordManager.hash_password(new_password)
+    # 變更密碼後，所有已簽發的存取與重新整理權杖（含其他裝置與可能外洩者）一律失效
+    user.tokens_valid_after = datetime.utcnow()
     db.commit()
     db.refresh(user)
     

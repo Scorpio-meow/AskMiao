@@ -26,6 +26,8 @@ class User(Base):
     role = Column(String, default="user")
     created_at = Column(DateTime, default=datetime.utcnow)
     last_login = Column(DateTime, nullable=True)
+    # 簽發時間早於此時刻的權杖一律無效：建立帳號時等於 created_at（防 id 重用），變更密碼時更新為當下（撤銷所有工作階段）
+    tokens_valid_after = Column(DateTime, nullable=False)
     
     conversations = relationship("Conversation", back_populates="user")
 class Conversation(Base):

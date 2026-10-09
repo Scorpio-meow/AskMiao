@@ -22,11 +22,8 @@ class IntrusionDetector:
         
         self.ip_events: "OrderedDict[str, Dict[str, Deque[datetime]]]" = OrderedDict()
         
-        self.blacklist: set = set()
-        
+        # 只發出警報、不封鎖位址；登入失敗的節流見 app.core.login_throttle
         self.thresholds = {
-            'failed_login_max': 5,
-            'failed_login_window': 300,
             'api_requests_max': 1000,
             'api_requests_window': 3600,
             'file_uploads_max': 50,
@@ -34,7 +31,6 @@ class IntrusionDetector:
         }
         # 事件類型 -> (門檻, 視窗秒數, 警報類型)
         self._rules = {
-            'failed_login': ('failed_login', 'BRUTE_FORCE_ATTACK'),
             'api_request': ('api_requests', 'DDOS_ATTACK'),
             'file_upload': ('file_uploads', 'SUSPICIOUS_FILE_UPLOAD'),
         }
@@ -84,13 +80,10 @@ class IntrusionDetector:
             return
         prefix, threat_type = rule
         messages = {
-            'failed_login': f"檢測到 {count} 次失敗的登入嘗試",
             'api_request': f"檢測到異常高頻率的 API 請求: {count} 次",
             'file_upload': f"檢測到異常高頻率的文件上傳: {count} 次",
         }
         self._trigger_alert(ip_address, threat_type, messages[event_type], {'count': count})
-        if event_type == 'failed_login':
-            self.blacklist.add(ip_address)
     
     def _trigger_alert(
         self, 
@@ -112,18 +105,6 @@ class IntrusionDetector:
         with open(self.log_file, 'a', encoding='utf-8') as f:
             f.write(json.dumps(alert, ensure_ascii=False) + '\n')
     
-    def is_blacklisted(self, ip_address: str) -> bool:
-        return ip_address in self.blacklist
-    
-    def add_to_blacklist(self, ip_address: str, reason: str = ""):
-        self.blacklist.add(ip_address)
-        logger.warning(f"IP {ip_address} 已添加到黑名單。原因: {reason}")
-    
-    def remove_from_blacklist(self, ip_address: str):
-        if ip_address in self.blacklist:
-            self.blacklist.remove(ip_address)
-            logger.info(f"IP {ip_address} 已從黑名單中移除")
-    
     def get_suspicious_ips(self, limit: int = 10) -> List[Dict]:
         ip_scores = []
         cutoff = datetime.utcnow() - timedelta(hours=1)
@@ -135,8 +116,6 @@ class IntrusionDetector:
                 ip_scores.append({
                     'ip': ip,
                     'event_count': event_count,
-                    'failed_logins': recent.get('failed_login', 0),
-                    'is_blacklisted': ip in self.blacklist
                 })
         
         ip_scores.sort(key=lambda x: x['event_count'], reverse=True)

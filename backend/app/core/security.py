@@ -57,12 +57,6 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         try:
             from app.core.intrusion_detection import get_intrusion_detector
             detector = get_intrusion_detector()
-            if detector.is_blacklisted(client_ip):
-                logger.error(f"拒絕黑名單 IP 訪問: {client_ip}")
-                return Response(
-                    content="Access Denied. Your IP has been blacklisted due to suspicious activity.",
-                    status_code=403
-                )
         except Exception as e:
             logger.debug(f"入侵檢測系統不可用: {e}")
             detector = None

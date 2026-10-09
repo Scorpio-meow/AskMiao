@@ -32,6 +32,7 @@ def client():
             is_admin=False,
             role="user",
             created_at=datetime.utcnow(),
+            tokens_valid_after=datetime.utcnow(),
         ))
         session.commit()
 

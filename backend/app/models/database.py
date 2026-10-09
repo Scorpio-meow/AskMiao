@@ -30,27 +30,30 @@ else:
     )
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
-# 既有資料庫缺少的欄位：(資料表, 欄位, 補值 SQL)。create_all 不會替已存在的資料表加欄位
+# 既有資料庫缺少的欄位：(資料表, 欄位, 型別, 補值 SQL)。create_all 不會替已存在的資料表加欄位
 COLUMN_UPGRADES = (
     (
         "custom_api_tools",
         "requires_approval",
+        "BOOLEAN",
         "UPDATE custom_api_tools SET requires_approval = "
         "(UPPER(COALESCE(method, 'GET')) NOT IN ('GET', 'HEAD', 'OPTIONS'))",
     ),
-    ("mcp_servers", "requires_approval", "UPDATE mcp_servers SET requires_approval = TRUE"),
+    ("mcp_servers", "requires_approval", "BOOLEAN", "UPDATE mcp_servers SET requires_approval = TRUE"),
+    # 既有帳號沿用原本「權杖不得早於帳號建立時間」的規則
+    ("users", "tokens_valid_after", "TIMESTAMP", "UPDATE users SET tokens_valid_after = created_at"),
 )
 def upgrade_schema(target_engine=None) -> None:
     target_engine = target_engine or engine
     inspector = inspect(target_engine)
     tables = set(inspector.get_table_names())
     with target_engine.begin() as conn:
-        for table, column, backfill in COLUMN_UPGRADES:
+        for table, column, column_type, backfill in COLUMN_UPGRADES:
             if table not in tables:
                 continue
             if column in {c["name"] for c in inspector.get_columns(table)}:
                 continue
-            conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {column} BOOLEAN"))
+            conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {column} {column_type}"))
             conn.execute(text(backfill))
 async def create_tables():
     Base.metadata.create_all(bind=engine)

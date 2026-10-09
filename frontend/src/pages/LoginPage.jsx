@@ -17,6 +17,7 @@ const LoginPage = () => {
   const [localError, setLocalError] = useState('');
   useDocumentTitle('登入');
   const from = location.state?.from?.pathname || '/';
+  const notice = location.state?.notice;
   const handleChange = (e) => {
     setFormData({
       ...formData,
@@ -47,6 +48,11 @@ const LoginPage = () => {
           <h1 className={styles.title}>登入 {APP_NAME}</h1>
           <p className={styles.subtitle}>使用您的帳號登入系統</p>
         </div>
+        {notice && !error && (
+          <Alert severity="info" style={{ marginBottom: '16px' }}>
+            {notice}
+          </Alert>
+        )}
         {error && (
           <Alert severity="error" style={{ marginBottom: '16px' }}>
             {error}

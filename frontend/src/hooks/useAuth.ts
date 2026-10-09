@@ -92,7 +92,9 @@ export function useAuth() {
     setError(null);
     try {
       const result = await authService.changePassword(currentPassword, newPassword, confirmPassword);
-      if (!result.success) {
+      if (result.success) {
+        setUser(null);
+      } else {
         setError(result.error || '修改密碼失敗');
       }
       return result;

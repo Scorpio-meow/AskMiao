@@ -5,6 +5,7 @@
 2. 身分與管理員權限取自資料庫，不信任權杖內的 is_admin 等聲明
 3. 帳號刪除、停用，或權杖簽發早於帳號建立（id 被重用）時權杖立即失效
 4. SQLite 的 users 表以 AUTOINCREMENT 建立，刪除後的 id 不會配給新帳號
+5. 變更密碼後，先前簽發的存取與重新整理權杖一律失效；既有資料庫補上 tokens_valid_after
 """
 from datetime import datetime, timedelta
 
@@ -12,15 +13,22 @@ import pytest
 from fastapi import HTTPException
 from fastapi.security import HTTPAuthorizationCredentials
 from jose import jwt
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 from sqlalchemy.schema import CreateTable
 
 from app.core import jwt_auth
-from app.core.jwt_auth import TokenManager, create_token_pair, get_current_user_from_token
+from app.core.jwt_auth import (
+    TokenManager,
+    create_token_pair,
+    get_current_user_from_token,
+    resolve_token_user,
+    verify_refresh_token,
+)
+from app.crud import crud_user
 from app.models import User
-from app.models.database import Base
+from app.models.database import Base, upgrade_schema
 
 
 @pytest.fixture
@@ -35,7 +43,8 @@ def db():
         engine.dispose()
 
 
-def add_user(db, username, *, is_admin=False, created_at=None):
+def add_user(db, username, *, is_admin=False):
+    created_at = datetime.utcnow() - timedelta(minutes=5)
     user = User(
         username=username,
         email=f"{username}@example.com",
@@ -43,7 +52,8 @@ def add_user(db, username, *, is_admin=False, created_at=None):
         is_active=True,
         is_admin=is_admin,
         role="admin" if is_admin else "user",
-        created_at=created_at or datetime.utcnow() - timedelta(minutes=5),
+        created_at=created_at,
+        tokens_valid_after=created_at,
     )
     db.add(user)
     db.commit()
@@ -129,10 +139,51 @@ def test_deleted_or_inactive_user_token_is_rejected(db):
 def test_token_issued_before_account_creation_is_rejected(db):
     user = add_user(db, "reused")
     stale_token = access_token_for(user)
-    # 模擬同一 id 在權杖簽發後才重新建立的帳號
-    user.created_at = datetime.utcnow() + timedelta(seconds=5)
+    # 模擬同一 id 在權杖簽發後才重新建立的帳號（建立帳號時 tokens_valid_after 等於 created_at）
+    user.created_at = user.tokens_valid_after = datetime.utcnow() + timedelta(seconds=5)
     db.commit()
     assert_rejected(db, stale_token)
+
+
+def frozen_utcnow(moment):
+    return type("FrozenDatetime", (datetime,), {"utcnow": classmethod(lambda cls: moment)})
+
+
+def test_password_change_revokes_previously_issued_tokens(db, monkeypatch):
+    user = add_user(db, "member")
+    tokens = create_token_pair({"user_id": user.id, "username": user.username})
+    assert authenticate(db, tokens["access_token"])["user_id"] == user.id
+
+    changed_at = datetime.utcnow() + timedelta(minutes=1)
+    monkeypatch.setattr(crud_user, "datetime", frozen_utcnow(changed_at))
+    crud_user.update_user_password(db, user.id, "NewSecret123")
+    assert user.tokens_valid_after == changed_at
+    assert_rejected(db, tokens["access_token"])
+    with pytest.raises(HTTPException) as exc_info:
+        resolve_token_user(db, verify_refresh_token(tokens["refresh_token"]))
+    assert exc_info.value.status_code == 401
+
+    # 變更之後才簽發的權杖照常有效
+    monkeypatch.setattr(jwt_auth, "datetime", frozen_utcnow(changed_at + timedelta(seconds=1)))
+    fresh = create_token_pair({"user_id": user.id, "username": user.username})
+    assert authenticate(db, fresh["access_token"])["user_id"] == user.id
+
+
+def test_new_accounts_start_with_tokens_valid_after_creation(db):
+    user = crud_user.create_user(db, "newbie", "newbie@example.com", "Secret123")
+    assert user.tokens_valid_after == user.created_at
+
+
+def test_existing_users_table_gets_tokens_valid_after_backfill(tmp_path):
+    old = create_engine(f"sqlite:///{tmp_path / 'old.db'}")
+    with old.begin() as conn:
+        conn.execute(text("CREATE TABLE users (id INTEGER PRIMARY KEY, username VARCHAR, created_at DATETIME)"))
+        conn.execute(text("INSERT INTO users (username, created_at) VALUES ('legacy', '2026-01-02 03:04:05')"))
+    upgrade_schema(old)
+    upgrade_schema(old)
+    with old.connect() as conn:
+        assert conn.execute(text("SELECT tokens_valid_after FROM users")).scalar() == "2026-01-02 03:04:05"
+    old.dispose()
 
 
 def test_refresh_token_cannot_be_used_as_access_token(db):

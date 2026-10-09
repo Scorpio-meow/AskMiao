@@ -125,7 +125,8 @@ class TokenManager:
 def resolve_token_user(db: Session, payload: Dict[str, Any]) -> User:
     """把已驗簽的權杖綁定到資料庫中的現存帳號。
 
-    帳號不存在、已停用，或權杖簽發早於帳號建立時間（刪除後 id 被重用）都視為無效；
+    帳號不存在、已停用，或權杖簽發早於帳號的 tokens_valid_after（帳號建立時間，
+    防止刪除後 id 被重用；變更密碼時更新為當下）都視為無效；
     身分與權限一律取自資料庫，不信任權杖內的聲明。
     """
     invalid = HTTPException(
@@ -142,9 +143,9 @@ def resolve_token_user(db: Session, payload: Dict[str, Any]) -> User:
     except (TypeError, ValueError):
         raise invalid
     user = db.query(User).filter(User.id == user_id).first()
-    if user is None or not user.is_active or user.created_at is None:
+    if user is None or not user.is_active or user.tokens_valid_after is None:
         raise invalid
-    if issued_at < calendar.timegm(user.created_at.utctimetuple()):
+    if issued_at < calendar.timegm(user.tokens_valid_after.utctimetuple()):
         raise invalid
     return user
 def get_current_user_from_token(

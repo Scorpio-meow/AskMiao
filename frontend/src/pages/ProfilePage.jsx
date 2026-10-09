@@ -26,7 +26,6 @@ const ProfilePage = () => {
   const [submitting, setSubmitting] = useState(false);
   const [dialogError, setDialogError] = useState('');
   const [mismatch, setMismatch] = useState(false);
-  const [success, setSuccess] = useState('');
   const [passwordDialog, setPasswordDialog] = useState(false);
   const [passwordData, setPasswordData] = useState(EMPTY_PASSWORD_FORM);
   useDocumentTitle('個人資料');
@@ -59,9 +58,8 @@ const ProfilePage = () => {
     );
     setSubmitting(false);
     if (result.success) {
-      setSuccess('密碼修改成功');
-      setPasswordDialog(false);
-      setPasswordData(EMPTY_PASSWORD_FORM);
+      // 變更密碼會讓所有裝置的登入失效，包含目前這一個
+      navigate('/login', { replace: true, state: { notice: '密碼已變更，請以新密碼重新登入' } });
     } else {
       setDialogError(result.error || '修改密碼失敗');
     }
@@ -86,11 +84,6 @@ const ProfilePage = () => {
         </h1>
         <p className={styles.subtitle}>管理您的帳號資訊和安全設定</p>
       </div>
-      {success && (
-        <Alert severity="success" style={{ marginBottom: '16px' }} onClose={() => setSuccess('')}>
-          {success}
-        </Alert>
-      )}
       <div className={styles.card}>
         <div className={styles.cardHeader}>
           <h2 className={styles.cardTitle}>基本資訊</h2>

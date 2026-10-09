@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, status, Request, Response
 from fastapi.security import HTTPBearer
 from sqlalchemy.orm import Session
-from typing import List
+from typing import List, Optional
 import asyncio
 import logging
 import os
@@ -26,6 +26,7 @@ from app.core.jwt_auth import (
 )
 from app.core.config import settings
 from app.core.limits import MAX_CONCURRENT_PASSWORD_HASHES
+from app.core.login_throttle import login_throttle
 from app.core.security_logging import log_security_event
 REFRESH_COOKIE_NAME = "refresh_token"
 REFRESH_COOKIE_PATH = "/api/auth"
@@ -42,6 +43,10 @@ def _get_cookie_secure() -> bool:
     return settings.ENVIRONMENT == "production"
 def _get_cookie_samesite() -> str:
     return settings.COOKIE_SAMESITE or "lax"
+def _client_address(request: Request) -> Optional[str]:
+    return request.client.host if request.client else None
+def _clear_refresh_cookie(response: Response) -> None:
+    response.delete_cookie(key=REFRESH_COOKIE_NAME, path=REFRESH_COOKIE_PATH)
 def _set_refresh_cookie(response: Response, refresh_token: str) -> None:
     response.set_cookie(
         key=REFRESH_COOKIE_NAME,
@@ -134,19 +139,35 @@ async def login(
     response: Response,
     db: Session = Depends(get_db)
 ):
+    address = _client_address(request)
+    retry_after = login_throttle.retry_after(credentials.username, address)
+    if retry_after:
+        log_security_event("LOGIN_THROTTLED", request=request, details={
+            "username": credentials.username,
+            "retry_after": retry_after
+        }, severity="WARNING")
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="登入失敗次數過多，請稍後再試",
+            headers={"Retry-After": str(retry_after)},
+        )
+
     user = await _run_password_work(authenticate_user, db, credentials.username, credentials.password)
     
     if not user:
+        locked = login_throttle.record_failure(credentials.username, address)
         log_security_event("LOGIN_FAILED", request=request, details={
             "username": credentials.username,
-            "reason": "無效的憑證"
-        })
+            "reason": "無效的憑證",
+            "locked": locked
+        }, severity="WARNING" if locked else "INFO")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="使用者名稱或密碼錯誤",
             headers={"WWW-Authenticate": "Bearer"},
         )
     
+    login_throttle.record_success(credentials.username)
     update_user_last_login(db, user.id)
     
     tokens = create_token_pair({
@@ -236,6 +257,7 @@ async def get_current_user_profile(
 async def update_current_user_profile(
     user_update: UserUpdate,
     request: Request,
+    response: Response,
     user: dict = Depends(get_current_active_user),
     db: Session = Depends(get_db)
 ):
@@ -281,6 +303,8 @@ async def update_current_user_profile(
             )
         
         await _run_password_work(update_user_password, db, user_obj.id, user_update.new_password)
+        # 變更密碼後所有權杖（含本次的）都已失效，需以新密碼重新登入
+        _clear_refresh_cookie(response)
         log_security_event("PASSWORD_CHANGED", request=request, user_id=user_obj.id)
     
     user_obj = get_user_by_id(db, user_obj.id)
@@ -289,6 +313,7 @@ async def update_current_user_profile(
 async def change_password(
     password_data: PasswordChange,
     request: Request,
+    response: Response,
     user: dict = Depends(get_current_active_user),
     db: Session = Depends(get_db)
 ):
@@ -317,9 +342,11 @@ async def change_password(
         )
     
     await _run_password_work(update_user_password, db, user_obj.id, password_data.new_password)
+    # 變更密碼後所有權杖（含本次的）都已失效，需以新密碼重新登入
+    _clear_refresh_cookie(response)
     log_security_event("PASSWORD_CHANGED", request=request, user_id=user_obj.id)
     
-    return MessageResponse(message="密碼修改成功")
+    return MessageResponse(message="密碼修改成功，所有裝置都需要以新密碼重新登入")
 @router.post("/logout", response_model=MessageResponse)
 async def logout(
     request: Request,

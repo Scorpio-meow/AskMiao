@@ -65,6 +65,11 @@ class Settings(BaseSettings):
     ADMIN_API_KEY: str
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
     REFRESH_TOKEN_EXPIRE_DAYS: int = 7
+    # 登入失敗節流：同一帳號或同一來源位址在視窗內失敗達門檻後，暫停該帳號或位址的登入
+    LOGIN_MAX_FAILURES_PER_ACCOUNT: int = Field(ge=1)
+    LOGIN_MAX_FAILURES_PER_ADDRESS: int = Field(ge=1)
+    LOGIN_FAILURE_WINDOW_SECONDS: int = Field(ge=1)
+    LOGIN_LOCKOUT_SECONDS: int = Field(ge=1)
     ENVIRONMENT: str = "development"
     HOST: str = "0.0.0.0"
     PORT: int = 8001
