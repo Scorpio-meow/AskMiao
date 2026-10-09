@@ -10,7 +10,7 @@
 
 [繁體中文](README.md) | [English](README_en.md)
 
-[![Version](https://img.shields.io/badge/version-4.0.0-2563eb?style=flat)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-5.0.0-2563eb?style=flat)](CHANGELOG.md)
 [![Python](https://img.shields.io/badge/Python-3.10+-3776AB?style=flat&logo=python&logoColor=white)](https://www.python.org/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-005571?style=flat&logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
 [![React](https://img.shields.io/badge/React-19.2-61DAFB?style=flat&logo=react&logoColor=black)](https://react.dev/)
@@ -31,13 +31,14 @@
 </picture>
 
 > [!IMPORTANT]
-> **4.0.0 含破壞性變更**：移除 `JWT_SECRET_KEY` 與 `JWT_ALGORITHM`、RSA 金鑰改為必要、compose 需設定 `POSTGRES_PASSWORD`、開發伺服器只接受本機連線、有副作用的工具呼叫需使用者核准。升級前請先閱讀 [升級指南](docs/upgrading.md)。
+> **5.0.0 含需要手動處理的破壞性變更**：`.env` 新增 10 個必填設定（含每個部署自行產生的 `TOOL_SECRETS_KEY`），compose 的 PostgreSQL 改以非超級使用者連線，後端套件要依新的 `requirements.txt`（鎖定版本與雜湊）重新安裝，變更密碼後所有工作階段都要重新登入。升級前請先閱讀 [升級指南](docs/upgrading.md#從-400-升級到-500)，完整變更見 [CHANGELOG 5.0.0](CHANGELOG.md#500---2026-10-10)。
 >
-> **4.0.0 之後尚未發行的變更同樣需要手動處理**：`.env` 新增 10 個必填設定（含每個部署自行產生的 `TOOL_SECRETS_KEY`），compose 的 PostgreSQL 改以非超級使用者連線，變更密碼後所有工作階段都要重新登入。詳見 [CHANGELOG 的 `[Unreleased]`](CHANGELOG.md#unreleased) 與 [升級指南](docs/upgrading.md#從-400-升級到未發行版本)。
+> **4.0.0 含破壞性變更**：移除 `JWT_SECRET_KEY` 與 `JWT_ALGORITHM`、RSA 金鑰改為必要、compose 需設定 `POSTGRES_PASSWORD`、開發伺服器只接受本機連線、有副作用的工具呼叫需使用者核准。從 3.x 升級前請先閱讀 [升級指南](docs/upgrading.md#從-300-升級到-400)。
 
 ## 目錄
 
 - [特色一覽](#特色一覽)
+- [5.0.0 重點](#500-重點)
 - [4.0.0 重點](#400-重點)
 - [功能特色](#功能特色)
 - [畫面預覽](#畫面預覽)
@@ -65,6 +66,23 @@
 | 5 | **五家模型供應商** | Ollama、OpenAI、Azure OpenAI、Anthropic Claude、Google Gemini 都能呼叫工具與串流 |
 | 6 | **外部工具與 MCP** | 貼上 OpenAPI 規格即可匯入 API 工具，也能接入 MCP 伺服器；只限管理員管理，有副作用的呼叫先經使用者核准 |
 | 7 | **防護完整** | RSA JWT、Argon2 密碼雜湊與登入失敗節流、逐跳 SSRF 驗證並固定連線 IP、工具憑證加密存放、工具輸出信任邊界、資源上限、對外只回錯誤代碼 |
+
+## 5.0.0 重點
+
+5.0.0 處理第二輪安全稽核的發現：日常使用上，登入失敗達門檻會暫停登入，變更密碼後所有工作階段都要重新登入；部署上，`.env` 新增 10 個必填設定，PostgreSQL 改以非超級使用者連線，相依套件以雜湊鎖定。
+
+| 面向 | 改變 | 升級時要做的事 |
+|---|---|---|
+| 登入 | 同一登入識別或來源位址失敗達門檻後暫停登入，回傳 `429` 與 `Retry-After`；鎖定期間正確密碼也不接受 | 設定四個 `LOGIN_*` 門檻 |
+| 變更密碼 | 先前簽發的權杖一律失效，包含目前這一個在內的所有工作階段都要以新密碼重新登入 | 不需處理；`users.tokens_valid_after` 在啟動時自動加入並回填 |
+| 帳號 | 新增必填的 `ALLOW_REGISTRATION`，設為 `false` 時註冊回傳 `403`，帳號（含第一位管理員）改以 `scripts/create_user.py` 建立 | 決定是否開放自行註冊 |
+| 工具 | 工具憑證以 `TOOL_SECRETS_KEY`（Fernet）加密存放，管理 API 以 `••••••••` 取代秘密值；自訂 API 工具只接受 `parameters_schema` 宣告的參數 | 產生 `TOOL_SECRETS_KEY` 並與資料庫備份一起保存；檢查每個工具的參數宣告 |
+| 相依套件 | `requirements.txt` 鎖定版本與雜湊，並以 PyJWT 取代 python-jose；`bun.lock` 納入版本控制並改為 `frozenLockfile = true` | 依新的 `requirements.txt` 重新安裝後端套件（建議使用新的虛擬環境）；新增後端套件改為修改 `requirements.in` |
+| 前端建置 | `bun run build` 把 CSP 以 `<meta>` 寫入 `index.html`，網頁伺服器沒有設定 CSP 時，被注入的 HTML 也無法執行腳本 | 重新建置；API 位於其他來源時在建置時設定 `VITE_API_BASE` |
+| 部署 | `.env` 新增 10 個必填設定，`HOST`、`RELOAD`、`COOKIE_SECURE` 不再有預設值；互動式 API 文件只在 `ENABLE_API_DOCS=true` 時提供；compose 的 PostgreSQL 改以非超級使用者 `POSTGRES_APP_USER` 連線 | 補上必填設定；設定 `POSTGRES_APP_USER`、`POSTGRES_APP_PASSWORD` 並讓 `DATABASE_URL` 改用這組帳號，既有資料卷重建容器後執行一次 `20-app-role.sh` |
+| API | 移除 `GET /api/external-tags` 與 WebSocket `/api/chat/ws/{user_id}`；`POST /api/api-tools/parse-spec` 不再回傳 `raw_spec`；管理員使用者 API 不再回傳 `hashed_password` | 依 [API 參考](docs/api.md) 調整用戶端 |
+
+完整變更見 [CHANGELOG 5.0.0](CHANGELOG.md#500---2026-10-10)，逐步操作見 [升級指南](docs/upgrading.md#從-400-升級到-500)。
 
 ## 4.0.0 重點
 
@@ -472,7 +490,7 @@ docker compose up -d
 
 容器只在本機回送位址 `127.0.0.1:7690` 開放，區網與公網都連不到。`POSTGRES_PASSWORD` 只供 compose 與資料庫管理使用，後端不讀取；後端以非超級使用者連線，即使出現 SQL 注入也無法執行系統指令或讀取伺服器檔案。密碼含 `@`、`:`、`/` 等字元時，`DATABASE_URL` 中需改寫成百分比編碼。
 
-以舊版 compose 初始化的資料卷不會自動建立應用程式帳號：設定上述變數並以 `docker compose up -d --wait` 重建容器、等它就緒後，執行一次 `docker compose exec postgres bash /docker-entrypoint-initdb.d/20-app-role.sh`，詳見 [升級指南](docs/upgrading.md#從-400-升級到未發行版本)。
+以舊版 compose 初始化的資料卷不會自動建立應用程式帳號：設定上述變數並以 `docker compose up -d --wait` 重建容器、等它就緒後，執行一次 `docker compose exec postgres bash /docker-entrypoint-initdb.d/20-app-role.sh`，詳見 [升級指南](docs/upgrading.md#從-400-升級到-500)。
 
 ## 設定
 
@@ -643,7 +661,7 @@ bun run build        # 產出 build/
 <details>
 <summary><b>後端啟動失敗，出現 <code>Field required</code></b></summary>
 
-`.env` 缺少必填設定，錯誤訊息會列出欄位名稱。對照 [設定](#設定) 補上即可；4.0.0 之後新增了 `ALLOW_REGISTRATION`、`TOOL_SECRETS_KEY`、`HOST`、`RELOAD`、`COOKIE_SECURE`、`ENABLE_API_DOCS` 與四個 `LOGIN_*` 設定，從舊版升級請參考 [升級指南](docs/upgrading.md)。
+`.env` 缺少必填設定，錯誤訊息會列出欄位名稱。對照 [設定](#設定) 補上即可；5.0.0 新增了 `ALLOW_REGISTRATION`、`TOOL_SECRETS_KEY`、`HOST`、`RELOAD`、`COOKIE_SECURE`、`ENABLE_API_DOCS` 與四個 `LOGIN_*` 設定，從舊版升級請參考 [升級指南](docs/upgrading.md)。
 
 </details>
 
@@ -751,7 +769,7 @@ MCP 伺服器預設需要核准，自訂 API 工具則依 HTTP 方法決定。�
 | [API 參考](docs/api.md) | 所有端點的權限、請求與回應格式、SSE 事件規格與錯誤代碼 |
 | [系統架構與設計](docs/architecture.md) | 分層架構、資料模型、檢索管線、Agent 迴圈、認證與安全設計 |
 | [設定參考](docs/configuration.md) | 每個環境變數的預設值與作用、供應商路由、門檻校準、前端設定 |
-| [升級指南](docs/upgrading.md) | 從 2.x 升級到 3.0.0、從 3.0.0 升級到 4.0.0、從 4.0.0 升級到未發行版本的步驟、回退方式與常見問題 |
+| [升級指南](docs/upgrading.md) | 從 2.x 升級到 3.0.0、從 3.0.0 升級到 4.0.0、從 4.0.0 升級到 5.0.0 的步驟、回退方式與常見問題 |
 | [架構決策紀錄（ADR）](docs/adr/README.md) | 重大設計的背景、取捨與後續修訂 |
 | [llms.txt](llms.txt) | 給 AI Agent 讀的檔案地圖、系統約束與驗證方式 |
 | [版本變更紀錄](CHANGELOG.md) | 每個版本的新增、變更、移除與修正 |
@@ -759,7 +777,7 @@ MCP 伺服器預設需要核准，自訂 API 工具則依 HTTP 方法決定。�
 
 ## 版本資訊
 
-- **目前版本**：4.0.0（2026-09-27），變更內容見 [CHANGELOG](CHANGELOG.md)。
+- **目前版本**：5.0.0（2026-10-10），變更內容見 [CHANGELOG](CHANGELOG.md)。
 - **版本規則**：遵循 [語意化版本](https://semver.org/lang/zh-TW/)。不相容的變更（例如新增必填設定、改變 API 權限或索引格式）升主版號。
 - **版本號位置**：後端 `backend/app/__init__.py` 的 `__version__`（OpenAPI 文件與 MCP 交握皆引用）、前端 `frontend/package.json`，發行時與 `CHANGELOG.md` 一併更新。
 
@@ -779,6 +797,9 @@ MCP 伺服器預設需要核准，自訂 API 工具則依 HTTP 方法決定。�
    - `services/mcp_service.py`：`INHERITED_ENV_VARS`
    - `rag/tool_approval.py`、`rag/agent.py`：預設需要核准的 HTTP 方法、核准逾時秒數與 SSE 事件
    - `core/limits.py`：介紹頁「每個入口都有上限」的數值
+   - `core/login_throttle.py`、`api/auth.py`：登入失敗的門檻、時間視窗、鎖定秒數與 `429` 回應
+   - `core/jwt_auth.py`：以 `tokens_valid_after` 判斷權杖是否失效
+   - `core/tool_secrets.py`：工具憑證的加密格式與管理 API 的遮蔽規則
 6. 開啟 Pull Request，說明變更內容與驗證方式。
 
 ## 授權條款

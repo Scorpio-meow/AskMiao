@@ -6,6 +6,7 @@ All notable changes to AskMiao are documented in this file. The format is based 
 
 | Version | Release date | Highlights |
 |---|---|---|
+| [5.0.0](#500---2026-10-10) | 2026-10-10 | Second security audit fixes: login failure throttling, token revocation on password change, optional self-registration, encrypted tool credentials, PyJWT in place of python-jose, hash-pinned dependencies, a non-superuser PostgreSQL account |
 | [4.0.0](#400---2026-09-27) | 2026-09-27 | Security audit fixes: tokens bound to database accounts, user approval for tool calls, IP-pinned outbound connections, resource limits |
 | [3.0.0](#300---2026-09-25) | 2026-09-25 | chunk_id index, RRF with a relevance threshold, answer citations, tool trust boundary and admin-only tool management, frontend UI/UX overhaul |
 | [2.2.1](#221---2026-09-19) | 2026-09-19 | Error responses use error codes |
@@ -16,16 +17,20 @@ All notable changes to AskMiao are documented in this file. The format is based 
 | [1.0.0](#100---2026-08-01) | 2026-08-01 | Hybrid RAG and security foundations |
 
 > [!TIP]
-> Upgrading from 3.0.0 to 4.0.0? Read the [upgrade guide](docs/upgrading_en.md#upgrading-from-300-to-400) first: RSA keys are now mandatory, compose needs `POSTGRES_PASSWORD`, and the dev server only accepts local connections. Coming from 2.x, first follow [upgrading to 3.0.0](docs/upgrading_en.md#upgrading-from-2x-to-300).
+> Upgrading from 4.0.0 to 5.0.0? Read the [upgrade guide](docs/upgrading_en.md#upgrading-from-400-to-500) first: `.env` has 10 new required settings (including `TOOL_SECRETS_KEY`, a Fernet key each deployment generates itself), the compose PostgreSQL is accessed through a non-superuser account, and the backend packages must be reinstalled from the new `requirements.txt`, which pins versions with hashes. Coming from 3.0.0, first follow [upgrading to 4.0.0](docs/upgrading_en.md#upgrading-from-300-to-400) (RSA keys are now mandatory, compose needs `POSTGRES_PASSWORD`, and the dev server only accepts local connections); coming from 2.x, first follow [upgrading to 3.0.0](docs/upgrading_en.md#upgrading-from-2x-to-300).
 
 ---
 
 ## [Unreleased]
 
+---
+
+## [5.0.0] - 2026-10-10
+
 This release addresses the findings of a second security audit: chat attachment parsing has a memory budget, failed logins pause the account or source address, a password change revokes every token, self-registration can be turned off, tool credentials are encrypted at rest and no longer readable through the admin API, custom API tools accept only declared parameters, dependencies are pinned by hash, and PostgreSQL is accessed as a non-superuser.
 
 > [!WARNING]
-> **This release requires manual changes.** Before upgrading, work through the [upgrade guide](docs/upgrading_en.md#upgrading-from-400-to-the-unreleased-version):
+> **This release requires manual changes.** Before upgrading, work through the [upgrade guide](docs/upgrading_en.md#upgrading-from-400-to-500):
 >
 > - `.env` has 10 new required settings: `ALLOW_REGISTRATION`, `LOGIN_MAX_FAILURES_PER_ACCOUNT`, `LOGIN_MAX_FAILURES_PER_ADDRESS`, `LOGIN_FAILURE_WINDOW_SECONDS`, `LOGIN_LOCKOUT_SECONDS`, `TOOL_SECRETS_KEY`, `HOST`, `RELOAD`, `COOKIE_SECURE`, and `ENABLE_API_DOCS`. The backend does not start if any is missing, and `TOOL_SECRETS_KEY` must be a Fernet key generated for each deployment.
 > - `HOST` and `RELOAD` no longer default to `0.0.0.0` and `true`, and `COOKIE_SECURE` is no longer derived from `ENVIRONMENT`; `/docs`, `/redoc`, and `/openapi.json` are served only with `ENABLE_API_DOCS=true`.
@@ -89,14 +94,17 @@ This release addresses the findings of a second security audit: chat attachment 
 - `backend/scripts/create_user.py` creates an account with an interactively entered password, applying the same rules as registration; `--admin` creates an admin.
 - `backend/init-app-role.sh` (the PostgreSQL application account, safe to rerun), `backend/requirements.in`, and `frontend/bun.lock`.
 - Tool and MCP server responses from the admin API gain `credentials_unreadable`, so credentials that cannot be decrypted with the current key can be re-entered instead of breaking the page; meanwhile the tool test and MCP discover endpoints return `400` saying the credentials must be entered again, and the AI tools page shows a notice on the card and in the edit dialog.
-- The quick starts in the README and on the website now generate `TOOL_SECRETS_KEY`, create the first admin with `scripts/create_user.py`, and list all 20 required settings; the [upgrade guide](docs/upgrading_en.md#upgrading-from-400-to-the-unreleased-version) covers this release.
+- The quick starts in the README and on the website now generate `TOOL_SECRETS_KEY`, create the first admin with `scripts/create_user.py`, and list all 20 required settings; the [upgrade guide](docs/upgrading_en.md#upgrading-from-400-to-500) covers this release.
 - New backend tests `test_admin_user_api.py`, `test_login_throttle.py`, `test_registration.py`, and `test_tool_secrets.py`, and the frontend test `remarkGfmSafe.test.tsx`.
 - **"Tool approval" section on the website**: an interactive approval card (approve, deny, simulate a timeout) that shows the resulting SSE events such as `approval_required` and `approval_resolved`, plus a switch between HTTP methods that shows a custom API tool's default approval rule, matching `tool_approval.py`.
 - The website gains a 4.0.0 release pill and stats row, a "Every entry point has a limit" resource-limit table in the security section, and ADR-0006 in the documentation list.
 - The README gains "What's new in 4.0.0", "Tool call approval", "Threat coverage", and "Key resource limits" sections, and two troubleshooting entries on approval timeouts and read-only tools asking for approval.
+- **"5.0.0" release section on the website**: an interactive login-throttling demo (wrong passwords, an identifier in different case, a nonexistent account, and many accounts tried in turn, with counting, lockout, and `429`/`Retry-After` responses matching `login_throttle.py`), a password-change demo that compares each token's `iat` with `tokens_valid_after` (including a token issued earlier in the same second), and one set of tool credentials as stored in the database, returned by the admin API, and sent in the real request; plus the other fixes and the six steps for upgrading from 4.0.0. The navigation bar, the hero release pill, and the version timeline all point to 5.0.0.
+- The README gains a "What's new in 5.0.0" section.
 
 ### Changed
 
+- Visual refresh of the website: the hero gains a slowly drifting brand-blue glow and, on desktop, a screenshot that tilts slightly with the pointer; the navigation bar shows scroll progress; cards in the features, defenses, and release sections get a border glow that follows the pointer. All motion respects `prefers-reduced-motion`, and browsers without scroll-driven animations show the static page. The dark palette in `site/styles.css` is now defined once as `--night-*` and shared by the dark theme and the release panel, which is dark in both themes.
 - A password change also signs out the current session; the frontend clears the sign-in state and returns to the login page.
 - The `iat` of access and refresh tokens is now a fractional number with microseconds (RFC 7519 NumericDate allows fractions); clients that decode tokens themselves should not assume it is an integer.
 - Custom API tools that declare no parameters no longer accept any; the `POST /api/api-tools/parse-spec` response no longer includes `raw_spec`.

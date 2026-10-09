@@ -6,6 +6,7 @@
 
 | 版本 | 發行日期 | 重點 |
 |---|---|---|
+| [5.0.0](#500---2026-10-10) | 2026-10-10 | 第二輪安全稽核修正：登入失敗節流、變更密碼撤銷權杖、可關閉自行註冊、工具憑證加密、改用 PyJWT、相依套件雜湊鎖定、PostgreSQL 非超級使用者 |
 | [4.0.0](#400---2026-09-27) | 2026-09-27 | 安全稽核修正：權杖綁定資料庫帳號、工具呼叫需使用者核准、出站連線固定 IP、資源上限 |
 | [3.0.0](#300---2026-09-25) | 2026-09-25 | chunk_id 索引、RRF 與相關性門檻、答案引用出處、工具信任邊界與管理權限、前端 UI/UX 全面修整 |
 | [2.2.1](#221---2026-09-19) | 2026-09-19 | 錯誤回應改用錯誤代碼 |
@@ -16,16 +17,20 @@
 | [1.0.0](#100---2026-08-01) | 2026-08-01 | 混合 RAG 與安全基礎 |
 
 > [!TIP]
-> 從 3.0.0 升級到 4.0.0 前，請先閱讀 [升級指南](docs/upgrading.md#從-300-升級到-400)：RSA 金鑰改為必要、compose 需設定 `POSTGRES_PASSWORD`，開發伺服器只接受本機連線。從 2.x 升級請先完成 [升級到 3.0.0](docs/upgrading.md#從-2x-升級到-300) 的步驟。
+> 從 4.0.0 升級到 5.0.0 前，請先閱讀 [升級指南](docs/upgrading.md#從-400-升級到-500)：`.env` 新增 10 個必填設定（含每個部署自行產生的 Fernet 金鑰 `TOOL_SECRETS_KEY`），compose 的 PostgreSQL 改以非超級使用者帳號連線，後端套件要依新的 `requirements.txt`（鎖定版本與雜湊）重新安裝。從 3.0.0 升級請先完成 [升級到 4.0.0](docs/upgrading.md#從-300-升級到-400) 的步驟（RSA 金鑰改為必要、compose 需設定 `POSTGRES_PASSWORD`，開發伺服器只接受本機連線），從 2.x 升級則先完成 [升級到 3.0.0](docs/upgrading.md#從-2x-升級到-300) 的步驟。
 
 ---
 
 ## [Unreleased]
 
+---
+
+## [5.0.0] - 2026-10-10
+
 這一版處理第二輪安全稽核的發現：聊天附件解析有記憶體預算、登入失敗會暫停該帳號或來源位址、變更密碼即撤銷所有權杖、可以關閉自行註冊、工具憑證加密存放且管理 API 不再讀出、自訂 API 工具只接受宣告的參數、相依套件以雜湊鎖定，PostgreSQL 改以非超級使用者連線。
 
 > [!WARNING]
-> **本版含需要手動處理的變更**，升級前請依 [升級指南](docs/upgrading.md#從-400-升級到未發行版本) 逐項確認：
+> **本版含需要手動處理的變更**，升級前請依 [升級指南](docs/upgrading.md#從-400-升級到-500) 逐項確認：
 >
 > - `.env` 新增 10 個必填設定：`ALLOW_REGISTRATION`、`LOGIN_MAX_FAILURES_PER_ACCOUNT`、`LOGIN_MAX_FAILURES_PER_ADDRESS`、`LOGIN_FAILURE_WINDOW_SECONDS`、`LOGIN_LOCKOUT_SECONDS`、`TOOL_SECRETS_KEY`、`HOST`、`RELOAD`、`COOKIE_SECURE`、`ENABLE_API_DOCS`，缺少任一項後端就無法啟動；`TOOL_SECRETS_KEY` 必須是各部署自行產生的 Fernet 金鑰。
 > - `HOST` 與 `RELOAD` 不再預設 `0.0.0.0` 與 `true`，`COOKIE_SECURE` 不再依 `ENVIRONMENT` 推導；`/docs`、`/redoc`、`/openapi.json` 只在 `ENABLE_API_DOCS=true` 時提供。
@@ -89,14 +94,17 @@
 - `backend/scripts/create_user.py`：以互動方式輸入密碼建立帳號，套用與註冊相同的規則，`--admin` 建立管理員。
 - `backend/init-app-role.sh`（PostgreSQL 應用程式帳號，可重複執行）與 `backend/requirements.in`、`frontend/bun.lock`。
 - 管理 API 的工具與 MCP 伺服器回應新增 `credentials_unreadable`：無法以目前的金鑰解密時讓管理員重新輸入，而不是整頁失敗；此時工具測試與 MCP 探索端點回傳 `400` 說明需要重新輸入，「AI 工具」頁的卡片與編輯視窗也顯示提示。
-- README 與介紹頁的快速開始改為產生 `TOOL_SECRETS_KEY`、以 `scripts/create_user.py` 建立第一位管理員，並列出 20 項必填設定；[升級指南](docs/upgrading.md#從-400-升級到未發行版本) 新增本版的升級步驟。
+- README 與介紹頁的快速開始改為產生 `TOOL_SECRETS_KEY`、以 `scripts/create_user.py` 建立第一位管理員，並列出 20 項必填設定；[升級指南](docs/upgrading.md#從-400-升級到-500) 新增本版的升級步驟。
 - 新增後端測試 `test_admin_user_api.py`、`test_login_throttle.py`、`test_registration.py`、`test_tool_secrets.py`，以及前端測試 `remarkGfmSafe.test.tsx`。
 - **介紹頁「工具核准」區段**：可操作的核准卡片示範（核准、拒絕、模擬逾時），同步顯示 `approval_required`、`approval_resolved` 等 SSE 事件；另依 HTTP 方法切換自訂 API 工具的預設核准規則，規則與 `tool_approval.py` 相同。
 - 介紹頁新增 4.0.0 版本標籤與數據列、安全區段的「每個入口都有上限」資源上限表，文件導覽補上 ADR-0006。
 - README 新增「4.0.0 重點」、「工具呼叫核准」、「防護對照」與「主要資源上限」各節，疑難排解新增核准逾時與唯讀工具要求核准兩項。
+- **介紹頁「5.0.0」發行區段**：登入失敗節流的互動示範（錯誤密碼、大小寫不同的識別、不存在的帳號與多個帳號輪流嘗試，計數、鎖定與 `429`／`Retry-After` 回應與 `login_throttle.py` 相同）、變更密碼撤銷權杖的示範（逐一比對 `iat` 與 `tokens_valid_after`，含同一秒內稍早簽發的權杖），以及同一組工具憑證在資料庫、管理 API 與實際請求中的樣子；另列其他修正與從 4.0.0 升級的六個步驟。導覽列、Hero 版本標籤與版本時間軸都指向 5.0.0。
+- README 新增「5.0.0 重點」一節。
 
 ### 變更 (Changed)
 
+- 介紹頁視覺更新：Hero 加上緩慢移動的品牌藍光暈，桌面版截圖隨游標輕微傾斜；導覽列底部顯示捲動進度；功能、防線與發行區段的卡片加上隨游標移動的光暈邊框。動態效果全部尊重 `prefers-reduced-motion`，不支援捲動驅動動畫的瀏覽器直接顯示靜態畫面。`site/styles.css` 的深色色票集中為 `--night-*` 一處定義，深色主題與兩種主題下都是深色的發行面板共用。
 - 變更密碼後目前的工作階段也會登出，前端清除登入狀態並導回登入頁。
 - 存取與重新整理權杖的 `iat` 改為含微秒的小數（RFC 7519 的 NumericDate 允許小數）；自行解析權杖的客戶端不要假設它是整數。
 - 未宣告任何參數的自訂 API 工具不再接受參數；`POST /api/api-tools/parse-spec` 的回應不再包含 `raw_spec`。

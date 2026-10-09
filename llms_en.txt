@@ -2,7 +2,7 @@
 
 [繁體中文](llms.txt) | [English](llms_en.txt)
 
-> An enterprise knowledge-base chat system that checks its own sources and cites them (version 4.0.0). The FastAPI backend answers with hybrid retrieval (FAISS + BM25 + Cross-Encoder) and a ReAct research agent, citing the chunks or web pages it used as `[n]`; the React frontend streams the research trace and citations over SSE.
+> An enterprise knowledge-base chat system that checks its own sources and cites them (version 5.0.0). The FastAPI backend answers with hybrid retrieval (FAISS + BM25 + Cross-Encoder) and a ReAct research agent, citing the chunks or web pages it used as `[n]`; the React frontend streams the research trace and citations over SSE.
 
 This file is for AI agents: read "System constraints" before changing code, and run the checks under "Verification" afterwards.
 
@@ -76,7 +76,7 @@ This file is for AI agents: read "System constraints" before changing code, and 
 9. **MCP subprocess environments come from `build_stdio_env()`**: only `INHERITED_ENV_VARS` plus the server's `env_vars`; each subprocess runs in a fresh empty temporary directory and in its own process group, and closing it terminates the whole tree.
 10. **Sources list cited entries only**: `sources_detail` comes from `ResearchSession.cited_sources()`, driven by the `[n]` markers in the answer.
 11. **SSE event contract**: `start` → `step_start` / (`approval_required` / `approval_resolved` when approval is needed) / `step_end` → `token` → `sources` → `done`, with `error` on exceptions. The backend `app/api/chat.py` and the frontend `useChat.ts` and `sse.ts` follow it, so change event names or fields in all three places.
-12. **Keep the intro site in sync**: when changing `rag/research_session.py`, `rag/retrievers/hybrid.py`, `WEB_FETCH_ALLOWED_DOMAINS` in `rag/tools.py` and `core/config.py`, `core/ssrf_protection.py`, or `INHERITED_ENV_VARS` in `services/mcp_service.py`, update `site/index.html` and `site/main.js` too.
+12. **Keep the intro site in sync**: when changing `rag/research_session.py`, `rag/retrievers/hybrid.py`, `WEB_FETCH_ALLOWED_DOMAINS` in `rag/tools.py` and `core/config.py`, `core/ssrf_protection.py`, `INHERITED_ENV_VARS` in `services/mcp_service.py`, `core/login_throttle.py`, the `tokens_valid_after` check in `core/jwt_auth.py`, or the masking rules in `core/tool_secrets.py`, update `site/index.html` and `site/main.js` too.
 13. **Bilingual documentation**: README, CHANGELOG, `docs/`, and the ADRs all have `_en` versions; update both and record changes under `[Unreleased]` in `CHANGELOG.md`.
 14. **Bump versions together**: `__version__` in `backend/app/__init__.py`, `version` in `frontend/package.json`, and `CHANGELOG.md`; new required settings or changes to API permissions or the index format are breaking and bump the major version.
 15. **Taiwan Mandarin wording**: user-visible text uses Taiwan Traditional Chinese terms, such as 使用者名稱, 電子郵件, 權杖, and 字元.
@@ -99,6 +99,6 @@ This file is for AI agents: read "System constraints" before changing code, and 
 - [API reference](docs/api_en.md): endpoint permissions, request and response formats, SSE events, known limitations
 - [Architecture](docs/architecture_en.md): startup, data model, retrieval pipeline, agent loop, LLM layer, security design
 - [Configuration reference](docs/configuration_en.md): every environment variable's default and effect, provider routing, threshold calibration, resource limits
-- [Upgrade guide](docs/upgrading_en.md): upgrading from 2.x to 3.0.0, from 3.0.0 to 4.0.0, and from 4.0.0 to the unreleased version, and rolling back
+- [Upgrade guide](docs/upgrading_en.md): upgrading from 2.x to 3.0.0, from 3.0.0 to 4.0.0, and from 4.0.0 to 5.0.0, and rolling back
 - [Architecture decision records](docs/adr/README_en.md): ADR-0001 to ADR-0006
 - [Changelog](CHANGELOG_en.md): changes in each release

@@ -1,5 +1,6 @@
 /* AskMiao 介紹頁互動：主題切換、導覽、運作方式軌道、推理檔位、分頁、引用示範、RRF 檢索示範、
-   工具呼叫核准、web_fetch 出站檢查器、子行程環境變數比較、複製指令。示範的判斷規則對應後端原始碼，註解標出出處。 */
+   工具呼叫核准、web_fetch 出站檢查器、子行程環境變數比較、卡片游標光暈與 Hero 傾斜、
+   5.0.0 的登入失敗節流與權杖撤銷示範、複製指令。示範的判斷規則對應後端原始碼，註解標出出處。 */
 (() => {
   const root = document.documentElement;
   const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
@@ -667,6 +668,306 @@
       platformButtons.forEach((b) => b.setAttribute('aria-pressed', String(b === button)));
       inheritedCell.textContent = button.dataset.platformVars;
     }));
+  }
+
+  /* ---------- 卡片游標光暈與 Hero 傾斜：只在精準指標裝置、未要求減少動態時跟隨游標 ---------- */
+  const finePointer = window.matchMedia('(hover: hover) and (pointer: fine)');
+  const followPointer = () => finePointer.matches && !reduceMotion.matches;
+  let spotFrame = 0;
+  document.addEventListener('pointermove', (event) => {
+    if (!followPointer() || !(event.target instanceof Element)) return;
+    const card = event.target.closest('.cell, .guard, .spot');
+    if (!card) return;
+    cancelAnimationFrame(spotFrame);
+    spotFrame = requestAnimationFrame(() => {
+      const rect = card.getBoundingClientRect();
+      card.style.setProperty('--mx', `${Math.round(event.clientX - rect.left)}px`);
+      card.style.setProperty('--my', `${Math.round(event.clientY - rect.top)}px`);
+    });
+  }, { passive: true });
+
+  const hero = document.querySelector('.hero');
+  const tiltTarget = document.querySelector('[data-tilt]');
+  if (hero && tiltTarget) {
+    let tiltFrame = 0;
+    const setTilt = (x, y) => {
+      tiltTarget.style.setProperty('--tilt-y', `${(x * 7).toFixed(2)}deg`);
+      tiltTarget.style.setProperty('--tilt-x', `${(-y * 5).toFixed(2)}deg`);
+    };
+    hero.addEventListener('pointermove', (event) => {
+      if (!followPointer()) return;
+      cancelAnimationFrame(tiltFrame);
+      tiltFrame = requestAnimationFrame(() => {
+        const rect = hero.getBoundingClientRect();
+        setTilt((event.clientX - rect.left) / rect.width - 0.5, (event.clientY - rect.top) / rect.height - 0.5);
+      });
+    }, { passive: true });
+    hero.addEventListener('pointerleave', () => {
+      cancelAnimationFrame(tiltFrame);
+      setTilt(0, 0);
+    });
+  }
+
+  /* ---------- 5.0.0：登入失敗節流（backend/app/core/login_throttle.py 與 api/auth.py 的 login） ----------
+     先檢查鎖定（429 + Retry-After，連正確密碼也不驗），再驗證密碼；失敗時帳號與來源位址各記一次，
+     達到門檻就清空失敗紀錄並鎖定。登入成功只清除該帳號的紀錄，位址的計數保留。門檻取 .env.example 的建議值。 */
+  const throttleDemo = document.querySelector('[data-throttle]');
+  if (throttleDemo) {
+    const MAX_FAILURES_PER_ACCOUNT = 5;
+    const MAX_FAILURES_PER_ADDRESS = 20;
+    const WINDOW_SECONDS = 900;
+    const LOCKOUT_SECONDS = 900;
+    const ADDRESS = '203.0.113.7';
+    const EXISTING_ACCOUNTS = new Set(['alice']);
+    const SPRAY_NAMES = ['admin', 'root', 'test', 'guest', 'hr', 'it', 'finance', 'sales', 'support', 'service',
+      'backup', 'dev', 'ops', 'manager', 'office', 'info', 'demo', 'user', 'staff', 'intern'];
+    const HINTS = {
+      alice: 'alice 是存在的帳號，正確密碼可以登入。',
+      ALICE: '大小寫不同仍是同一個識別：去掉前後空白、轉成小寫後與 alice 共用同一份計數。',
+      ghost: 'ghost 不存在：失敗照樣計數，回應與密碼錯誤完全相同，無法藉此探測帳號是否存在。',
+      spray: '每次換一個帳號猜密碼：單一帳號都到不了門檻，但同一個來源位址累積 20 次失敗就會被暫停。',
+    };
+
+    const makeTracker = (maxFailures) => {
+      const records = new Map();
+      return {
+        retryAfter(key, now) {
+          const record = records.get(key);
+          return !record || record.lockedUntil <= now ? 0 : record.lockedUntil - now;
+        },
+        recordFailure(key, now) {
+          let record = records.get(key);
+          if (!record) {
+            record = { failures: [], lockedUntil: 0 };
+            records.set(key, record);
+          }
+          record.failures = record.failures.filter((time) => time > now - WINDOW_SECONDS);
+          record.failures.push(now);
+          if (record.failures.length >= maxFailures) {
+            record.failures = [];
+            record.lockedUntil = now + LOCKOUT_SECONDS;
+            return true;
+          }
+          return false;
+        },
+        count(key, now) {
+          const record = records.get(key);
+          return record ? record.failures.filter((time) => time > now - WINDOW_SECONDS).length : 0;
+        },
+        clear(key) { records.delete(key); },
+      };
+    };
+
+    const whoButtons = Array.from(throttleDemo.querySelectorAll('[data-who]'));
+    const hint = throttleDemo.querySelector('[data-who-hint]');
+    const keyLabel = throttleDemo.querySelector('[data-meter-key]');
+    const accountCount = throttleDemo.querySelector('[data-meter-acct-count]');
+    const addressCount = throttleDemo.querySelector('[data-meter-addr-count]');
+    const accountDots = Array.from(throttleDemo.querySelectorAll('[data-meter-acct] li'));
+    const addressTicks = Array.from(throttleDemo.querySelectorAll('[data-meter-addr] li'));
+    const lockBanner = throttleDemo.querySelector('[data-lock]');
+    const lockText = throttleDemo.querySelector('[data-lock-text]');
+    const lockTimer = throttleDemo.querySelector('[data-lock-timer]');
+    const log = throttleDemo.querySelector('[data-throttle-log]');
+    const emptyLog = log.innerHTML;
+
+    let accounts;
+    let addresses;
+    let startedAt;
+    let skipped;
+    let sprayIndex;
+    let who = 'alice';
+    let shownKey = 'alice';
+    let ticker = null;
+    const now = () => (performance.now() - startedAt) / 1000 + skipped;
+    const clock = (seconds) => `+${Math.floor(seconds / 60)}:${String(Math.floor(seconds % 60)).padStart(2, '0')}`;
+    const countdown = (seconds) => {
+      const whole = Math.ceil(seconds);
+      return `${Math.floor(whole / 60)}:${String(whole % 60).padStart(2, '0')}`;
+    };
+
+    const addLog = (code, title, detail, { at = now(), animate = true } = {}) => {
+      log.querySelector('.throttle__empty')?.remove();
+      const item = document.createElement('li');
+      item.className = animate ? 'log is-new' : 'log';
+      item.dataset.code = String(code);
+      const codeElement = document.createElement('span');
+      codeElement.className = 'log__code';
+      codeElement.textContent = String(code);
+      const body = document.createElement('span');
+      body.className = 'log__body';
+      const titleElement = document.createElement('b');
+      titleElement.textContent = title;
+      const detailElement = document.createElement('small');
+      detailElement.textContent = detail;
+      body.append(titleElement, detailElement);
+      const time = document.createElement('span');
+      time.className = 'log__time';
+      time.textContent = clock(at);
+      item.append(codeElement, body, time);
+      log.prepend(item);
+    };
+
+    /* 開場就有三筆失敗：alice 錯兩次，再以 ALICE 錯一次（大小寫不同仍共用計數），再錯兩次就會鎖定 */
+    const SEED = [['alice', 0], ['alice', 6], ['ALICE', 11]];
+    const seed = () => {
+      SEED.forEach(([identifier, at]) => {
+        const key = identifier.trim().toLowerCase();
+        accounts.recordFailure(key, at);
+        addresses.recordFailure(ADDRESS, at);
+        addLog(401, '使用者名稱或密碼錯誤', `${identifier} · 密碼錯誤 · 識別 ${accounts.count(key, at)}/${MAX_FAILURES_PER_ACCOUNT}、位址 ${addresses.count(ADDRESS, at)}/${MAX_FAILURES_PER_ADDRESS}`, { at, animate: false });
+      });
+      skipped = SEED.at(-1)[1] + 3;
+    };
+
+    const render = () => {
+      const t = now();
+      const accountWait = accounts.retryAfter(shownKey, t);
+      const addressWait = addresses.retryAfter(ADDRESS, t);
+      const accountFailures = accounts.count(shownKey, t);
+      const addressFailures = addresses.count(ADDRESS, t);
+      keyLabel.textContent = shownKey;
+      accountCount.textContent = accountWait ? '鎖定中' : `${accountFailures} / ${MAX_FAILURES_PER_ACCOUNT}`;
+      addressCount.textContent = addressWait ? '鎖定中' : `${addressFailures} / ${MAX_FAILURES_PER_ADDRESS}`;
+      accountDots.forEach((dot, i) => {
+        dot.classList.toggle('is-locked', accountWait > 0);
+        dot.classList.toggle('is-on', !accountWait && i < accountFailures);
+      });
+      addressTicks.forEach((tick, i) => {
+        tick.classList.toggle('is-locked', addressWait > 0);
+        tick.classList.toggle('is-on', !addressWait && i < addressFailures);
+      });
+      const wait = Math.max(accountWait, addressWait);
+      lockBanner.hidden = wait <= 0;
+      if (wait > 0) {
+        lockText.textContent = addressWait >= accountWait ? `來源位址 ${ADDRESS} 暫停登入（所有帳號）` : `${shownKey} 暫停登入`;
+        lockTimer.textContent = countdown(wait);
+      }
+      if (wait > 0 && !ticker) ticker = setInterval(render, 1000);
+      if (wait <= 0 && ticker) {
+        clearInterval(ticker);
+        ticker = null;
+      }
+    };
+
+    const attempt = (kind) => {
+      const t = now();
+      const identifier = who === 'spray' ? (SPRAY_NAMES[sprayIndex] ?? `user${sprayIndex + 1}`) : who;
+      if (who === 'spray') sprayIndex += 1;
+      const key = identifier.trim().toLowerCase();
+      shownKey = key;
+      const wait = Math.max(accounts.retryAfter(key, t), addresses.retryAfter(ADDRESS, t));
+      if (wait > 0) {
+        addLog(429, '登入失敗次數過多，請稍後再試', `${identifier} · Retry-After: ${Math.ceil(wait)}${kind === 'right' ? ' · 鎖定期間不驗證密碼' : ''}`);
+        render();
+        return;
+      }
+      if (kind === 'right' && EXISTING_ACCOUNTS.has(key)) {
+        accounts.clear(key);
+        addLog(200, '登入成功', `${identifier} · 只清除這個帳號的失敗紀錄，來源位址的計數保留`);
+        render();
+        return;
+      }
+      const accountLocked = accounts.recordFailure(key, t);
+      const addressLocked = addresses.recordFailure(ADDRESS, t);
+      const reason = EXISTING_ACCOUNTS.has(key) ? '密碼錯誤' : '帳號不存在';
+      const counts = `識別 ${accountLocked ? MAX_FAILURES_PER_ACCOUNT : accounts.count(key, t)}/${MAX_FAILURES_PER_ACCOUNT}、位址 ${addressLocked ? MAX_FAILURES_PER_ADDRESS : addresses.count(ADDRESS, t)}/${MAX_FAILURES_PER_ADDRESS}`;
+      const lockNote = accountLocked || addressLocked ? '；達到門檻，接下來 15 分鐘一律回 429' : '';
+      addLog(401, '使用者名稱或密碼錯誤', `${identifier} · ${reason} · ${counts}${lockNote}`);
+      render();
+    };
+
+    const selectWho = (value) => {
+      who = value;
+      whoButtons.forEach((button) => button.setAttribute('aria-pressed', String(button.dataset.who === value)));
+      hint.textContent = HINTS[value];
+      if (value !== 'spray') shownKey = value.trim().toLowerCase();
+      render();
+    };
+
+    const reset = () => {
+      accounts = makeTracker(MAX_FAILURES_PER_ACCOUNT);
+      addresses = makeTracker(MAX_FAILURES_PER_ADDRESS);
+      startedAt = performance.now();
+      skipped = 0;
+      sprayIndex = 0;
+      log.innerHTML = emptyLog;
+      seed();
+      selectWho(who);
+    };
+
+    whoButtons.forEach((button) => button.addEventListener('click', () => selectWho(button.dataset.who)));
+    throttleDemo.querySelectorAll('[data-attempt]').forEach((button) => button.addEventListener('click', () => attempt(button.dataset.attempt)));
+    throttleDemo.querySelector('[data-skip]').addEventListener('click', () => {
+      skipped += LOCKOUT_SECONDS;
+      log.querySelector('.throttle__empty')?.remove();
+      const marker = document.createElement('li');
+      marker.className = 'log log--skip';
+      marker.textContent = `快轉 15 分鐘（${clock(now())}）：鎖定到期，視窗外的失敗不再計數`;
+      log.prepend(marker);
+      render();
+    });
+    throttleDemo.querySelector('[data-throttle-reset]').addEventListener('click', reset);
+    reset();
+  }
+
+  /* ---------- 5.0.0：變更密碼撤銷權杖（backend/app/core/jwt_auth.py 的 resolve_token_user） ----------
+     權杖的 iat 早於帳號的 tokens_valid_after 就無效；兩邊都保留微秒，所以同一秒內稍早簽發的權杖也會失效。 */
+  const tokensDemo = document.querySelector('[data-tokens]');
+  if (tokensDemo) {
+    const CHANGED_AT = '1791627312.420117';
+    const sessions = Array.from(tokensDemo.querySelectorAll('.session'));
+    const tva = tokensDemo.querySelector('[data-tva]');
+    const tvaLabel = tokensDemo.querySelector('[data-tva-label]');
+    const note = tokensDemo.querySelector('[data-tokens-note]');
+    const changeButton = tokensDemo.querySelector('[data-change-password]');
+    const resetButton = tokensDemo.querySelector('[data-tokens-reset]');
+    const initial = { tva: tva.textContent, label: tvaLabel.textContent, note: note.textContent };
+    /* 以字串比較整數秒與微秒，避免浮點數誤差 */
+    const isEarlier = (a, b) => {
+      const [aSeconds, aFraction = ''] = a.split('.');
+      const [bSeconds, bFraction = ''] = b.split('.');
+      if (aSeconds !== bSeconds) return Number(aSeconds) < Number(bSeconds);
+      return aFraction.padEnd(6, '0') < bFraction.padEnd(6, '0');
+    };
+
+    changeButton.addEventListener('click', () => {
+      sessions.forEach((session, index) => {
+        const revoked = isEarlier(session.dataset.iat, CHANGED_AT);
+        session.style.transitionDelay = reduceMotion.matches ? '0s' : `${index * 140}ms`;
+        session.classList.toggle('is-revoked', revoked);
+        session.querySelector('[data-state]').textContent = revoked ? '已失效 · 401' : '有效';
+        if (session.classList.contains('session--leak')) {
+          const comparison = document.createElement('span');
+          comparison.className = 'session__cmp';
+          comparison.dataset.cmp = '';
+          comparison.textContent = `${session.dataset.iat} < ${CHANGED_AT}`;
+          session.append(comparison);
+        }
+      });
+      tva.textContent = CHANGED_AT;
+      tva.classList.add('is-changed');
+      tvaLabel.textContent = '18:15:12.420 變更密碼';
+      note.textContent = '三個權杖的 iat 都早於 tokens_valid_after，下一次請求一律回 401「認證權杖無效：驗證失敗」，回應也清除了重新整理權杖的 Cookie。外洩的權杖與改密碼在同一秒：iat 若只記到整數秒，1791627312 不小於 1791627312，它就會漏網，所以 iat 保留到微秒。';
+      changeButton.disabled = true;
+      resetButton.hidden = false;
+    });
+
+    resetButton.addEventListener('click', () => {
+      sessions.forEach((session) => {
+        session.style.transitionDelay = '0s';
+        session.classList.remove('is-revoked');
+        session.querySelector('[data-state]').textContent = '有效';
+        session.querySelector('[data-cmp]')?.remove();
+      });
+      tva.textContent = initial.tva;
+      tva.classList.remove('is-changed');
+      tvaLabel.textContent = initial.label;
+      note.textContent = initial.note;
+      changeButton.disabled = false;
+      resetButton.hidden = true;
+      changeButton.focus();
+    });
   }
 
   /* ---------- 版本時間軸：預設捲到最右邊，先看到最新版本 ---------- */

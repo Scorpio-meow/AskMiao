@@ -10,7 +10,7 @@ AskMiao answers with hybrid retrieval (FAISS + BM25 + Cross-Encoder) and agentic
 
 [繁體中文](README.md) | [English](README_en.md)
 
-[![Version](https://img.shields.io/badge/version-4.0.0-2563eb?style=flat)](CHANGELOG_en.md)
+[![Version](https://img.shields.io/badge/version-5.0.0-2563eb?style=flat)](CHANGELOG_en.md)
 [![Python](https://img.shields.io/badge/Python-3.10+-3776AB?style=flat&logo=python&logoColor=white)](https://www.python.org/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-005571?style=flat&logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
 [![React](https://img.shields.io/badge/React-19.2-61DAFB?style=flat&logo=react&logoColor=black)](https://react.dev/)
@@ -31,13 +31,14 @@ AskMiao answers with hybrid retrieval (FAISS + BM25 + Cross-Encoder) and agentic
 </picture>
 
 > [!IMPORTANT]
-> **4.0.0 contains breaking changes**: `JWT_SECRET_KEY` and `JWT_ALGORITHM` are removed, RSA keys are mandatory, compose needs `POSTGRES_PASSWORD`, the dev server only accepts local connections, and tool calls with side effects need user approval. Read the [upgrade guide](docs/upgrading_en.md) before upgrading.
+> **5.0.0 contains breaking changes that need manual steps**: `.env` has 10 new required settings (including `TOOL_SECRETS_KEY`, which each deployment generates itself), the compose PostgreSQL is accessed as a non-superuser, the backend packages must be reinstalled from the new `requirements.txt` (pinned versions with hashes), and every session must sign in again after a password change. Read the [upgrade guide](docs/upgrading_en.md#upgrading-from-400-to-500) before upgrading; the [5.0.0 changelog](CHANGELOG_en.md#500---2026-10-10) lists every change.
 >
-> **The unreleased changes since 4.0.0 also need manual steps**: `.env` has 10 new required settings (including `TOOL_SECRETS_KEY`, which each deployment generates itself), the compose PostgreSQL is accessed as a non-superuser, and every session must sign in again after a password change. See the [changelog's `[Unreleased]` section](CHANGELOG_en.md#unreleased) and the [upgrade guide](docs/upgrading_en.md#upgrading-from-400-to-the-unreleased-version).
+> **4.0.0 contains breaking changes**: `JWT_SECRET_KEY` and `JWT_ALGORITHM` are removed, RSA keys are mandatory, compose needs `POSTGRES_PASSWORD`, the dev server only accepts local connections, and tool calls with side effects need user approval. Read the [upgrade guide](docs/upgrading_en.md#upgrading-from-300-to-400) before upgrading from 3.x.
 
 ## Contents
 
 - [Highlights](#highlights)
+- [What's new in 5.0.0](#whats-new-in-500)
 - [What's new in 4.0.0](#whats-new-in-400)
 - [Features](#features)
 - [Screenshots](#screenshots)
@@ -65,6 +66,23 @@ AskMiao answers with hybrid retrieval (FAISS + BM25 + Cross-Encoder) and agentic
 | 5 | **Five LLM providers** | Ollama, OpenAI, Azure OpenAI, Anthropic Claude, and Google Gemini all support tool calling and streaming |
 | 6 | **External tools and MCP** | Paste an OpenAPI spec to import API tools or connect MCP servers; managed by admins only, and calls with side effects need the user's approval first |
 | 7 | **Defense in depth** | RSA JWT, Argon2 password hashing with login failure throttling, per-hop SSRF validation with the connection pinned to the checked IP, tool credentials encrypted at rest, a trust boundary for tool output, resource limits, and error codes instead of stack traces |
+
+## What's new in 5.0.0
+
+5.0.0 addresses the findings of a second security audit: day to day, logins pause after too many failures and a password change signs every session out; for deployment, `.env` has 10 new required settings, PostgreSQL is accessed as a non-superuser, and dependencies are pinned by hash.
+
+| Area | Change | What to do when upgrading |
+|---|---|---|
+| Sign-in | Once a login identifier or source address reaches its failure threshold, logins pause with `429` and `Retry-After`; even the right password is not accepted during a lockout | Set the four `LOGIN_*` thresholds |
+| Password changes | Every token issued earlier is rejected, so every session, including the current one, must sign in again with the new password | Nothing; `users.tokens_valid_after` is added and backfilled at startup |
+| Accounts | New required `ALLOW_REGISTRATION`: when it is `false`, registration returns `403` and accounts (including the first admin) are created with `scripts/create_user.py` | Decide whether to allow self-registration |
+| Tools | Tool credentials are encrypted with `TOOL_SECRETS_KEY` (Fernet) and the admin API shows `••••••••` in place of secret values; custom API tools accept only parameters declared in `parameters_schema` | Generate `TOOL_SECRETS_KEY` and keep it with your database backups; review each tool's parameter declarations |
+| Dependencies | `requirements.txt` pins versions with hashes, and PyJWT replaces python-jose; `bun.lock` is committed with `frozenLockfile = true` | Reinstall the backend packages from the new `requirements.txt` (a fresh virtualenv is recommended); add backend packages through `requirements.in` |
+| Frontend build | `bun run build` writes a CSP `<meta>` tag into `index.html`, so injected HTML cannot run scripts even when the web server sets no CSP | Rebuild; set `VITE_API_BASE` at build time when the API is on another origin |
+| Deployment | `.env` has 10 new required settings, and `HOST`, `RELOAD`, and `COOKIE_SECURE` no longer have defaults; the interactive API docs are served only with `ENABLE_API_DOCS=true`; the compose PostgreSQL is accessed as the non-superuser `POSTGRES_APP_USER` | Add the required settings; set `POSTGRES_APP_USER` and `POSTGRES_APP_PASSWORD` and point `DATABASE_URL` at that account; for an existing data volume, run `20-app-role.sh` once after recreating the container |
+| API | `GET /api/external-tags` and the WebSocket `/api/chat/ws/{user_id}` are removed; `POST /api/api-tools/parse-spec` no longer returns `raw_spec`; the admin user API no longer returns `hashed_password` | Adjust clients per the [API reference](docs/api_en.md) |
+
+See the [5.0.0 changelog](CHANGELOG_en.md#500---2026-10-10) for everything that changed and the [upgrade guide](docs/upgrading_en.md#upgrading-from-400-to-500) for the steps.
 
 ## What's new in 4.0.0
 
@@ -472,7 +490,7 @@ docker compose up -d
 
 The container is published on the loopback address `127.0.0.1:7690` only, so neither the LAN nor the internet can reach it. `POSTGRES_PASSWORD` is only for compose and database administration, and the backend never reads it; the backend connects as a non-superuser, so even a SQL injection cannot run system commands or read server files. If a password contains characters such as `@`, `:`, or `/`, percent-encode them in `DATABASE_URL`.
 
-A data volume initialized by an older compose file does not get the application account automatically: after setting the variables above and recreating the container with `docker compose up -d --wait` so that it is ready, run `docker compose exec postgres bash /docker-entrypoint-initdb.d/20-app-role.sh` once; see the [upgrade guide](docs/upgrading_en.md#upgrading-from-400-to-the-unreleased-version).
+A data volume initialized by an older compose file does not get the application account automatically: after setting the variables above and recreating the container with `docker compose up -d --wait` so that it is ready, run `docker compose exec postgres bash /docker-entrypoint-initdb.d/20-app-role.sh` once; see the [upgrade guide](docs/upgrading_en.md#upgrading-from-400-to-500).
 
 ## Configuration
 
@@ -643,7 +661,7 @@ Run them from `backend/` with `python scripts/<script>`:
 <details>
 <summary><b>The backend fails to start with <code>Field required</code></b></summary>
 
-A required setting is missing from `.env`; the error names the fields. Add them as listed under [Configuration](#configuration). `ALLOW_REGISTRATION`, `TOOL_SECRETS_KEY`, `HOST`, `RELOAD`, `COOKIE_SECURE`, `ENABLE_API_DOCS`, and the four `LOGIN_*` settings were added after 4.0.0; when coming from an older release, follow the [upgrade guide](docs/upgrading_en.md).
+A required setting is missing from `.env`; the error names the fields. Add them as listed under [Configuration](#configuration). `ALLOW_REGISTRATION`, `TOOL_SECRETS_KEY`, `HOST`, `RELOAD`, `COOKIE_SECURE`, `ENABLE_API_DOCS`, and the four `LOGIN_*` settings were added in 5.0.0; when coming from an older release, follow the [upgrade guide](docs/upgrading_en.md).
 
 </details>
 
@@ -751,7 +769,7 @@ Once one login identifier (user name or email, case-insensitive) fails `LOGIN_MA
 | [API Reference](docs/api_en.md) | Every endpoint's permission, request and response format, the SSE event contract, and error codes |
 | [Architecture & Design](docs/architecture_en.md) | Layers, data model, retrieval pipeline, agent loop, authentication, and security design |
 | [Configuration Reference](docs/configuration_en.md) | Defaults and effects of every environment variable, provider routing, threshold calibration, frontend settings |
-| [Upgrade Guide](docs/upgrading_en.md) | Steps from 2.x to 3.0.0, from 3.0.0 to 4.0.0, and from 4.0.0 to the unreleased version, rollback, and troubleshooting |
+| [Upgrade Guide](docs/upgrading_en.md) | Steps from 2.x to 3.0.0, from 3.0.0 to 4.0.0, and from 4.0.0 to 5.0.0, rollback, and troubleshooting |
 | [Architecture Decision Records](docs/adr/README_en.md) | Context, trade-offs, and amendments of major design decisions |
 | [llms_en.txt](llms_en.txt) | File map, system constraints, and verification steps for AI agents |
 | [Changelog](CHANGELOG_en.md) | What was added, changed, removed, and fixed in each release |
@@ -759,7 +777,7 @@ Once one login identifier (user name or email, case-insensitive) fails `LOGIN_MA
 
 ## Versioning
 
-- **Current version**: 4.0.0 (2026-09-27); see the [changelog](CHANGELOG_en.md).
+- **Current version**: 5.0.0 (2026-10-10); see the [changelog](CHANGELOG_en.md).
 - **Policy**: [Semantic Versioning](https://semver.org/). Incompatible changes, such as new required settings or changes to API permissions or the index format, bump the major version.
 - **Where the version lives**: `__version__` in `backend/app/__init__.py` (used by the OpenAPI document and the MCP handshake) and `frontend/package.json`, updated together with `CHANGELOG.md` for each release.
 
@@ -779,6 +797,9 @@ Issues and pull requests are welcome:
    - `services/mcp_service.py`: `INHERITED_ENV_VARS`
    - `rag/tool_approval.py`, `rag/agent.py`: HTTP methods that need no approval by default, the approval timeout, and the SSE events
    - `core/limits.py`: the numbers in the site's resource-limit table
+   - `core/login_throttle.py`, `api/auth.py`: login-failure thresholds, time window, lockout seconds, and the `429` response
+   - `core/jwt_auth.py`: how `tokens_valid_after` decides whether a token is revoked
+   - `core/tool_secrets.py`: the encrypted format of tool credentials and how the admin API masks them
 6. Open a pull request describing the change and how you verified it.
 
 ## License

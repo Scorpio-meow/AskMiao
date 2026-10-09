@@ -4,11 +4,11 @@
 
 > How to upgrade an existing deployment to a new release, with rollback steps and troubleshooting. See the [CHANGELOG](../CHANGELOG_en.md) for the full list of changes in each version.
 
-- [Upgrading from 4.0.0 to the unreleased version](#upgrading-from-400-to-the-unreleased-version)
-  - [Unreleased changes and required actions](#unreleased-changes-and-required-actions)
-  - [Upgrade steps for the unreleased version](#upgrade-steps-for-the-unreleased-version)
+- [Upgrading from 4.0.0 to 5.0.0](#upgrading-from-400-to-500)
+  - [5.0.0 changes and required actions](#500-changes-and-required-actions)
+  - [Upgrade steps for 5.0.0](#upgrade-steps-for-500)
   - [Rolling back to 4.0.0](#rolling-back-to-400)
-  - [After upgrading to the unreleased version](#after-upgrading-to-the-unreleased-version)
+  - [After upgrading to 5.0.0](#after-upgrading-to-500)
 - [Upgrading from 3.0.0 to 4.0.0](#upgrading-from-300-to-400)
   - [Changes and required actions](#changes-and-required-actions)
   - [Upgrade steps](#upgrade-steps)
@@ -27,13 +27,13 @@
 
 ---
 
-## Upgrading from 4.0.0 to the unreleased version
+## Upgrading from 4.0.0 to 5.0.0
 
-For upgrading from 4.0.0 to the next release, which has no version number yet; see the [CHANGELOG](../CHANGELOG_en.md#unreleased) for every change. This release addresses the findings of a second security audit. No index rebuild is needed, and the new column and the encryption of tool credentials are handled automatically at startup. The hands-on work is mostly the 10 new required settings in `.env`, how dependencies are installed, the PostgreSQL account the backend connects as, how accounts are created, and the parameter declarations of custom API tools.
+For upgrading from 4.0.0 to 5.0.0; see the [CHANGELOG](../CHANGELOG_en.md#500---2026-10-10) for every change. This release addresses the findings of a second security audit. No index rebuild is needed, and the new column and the encryption of tool credentials are handled automatically at startup. The hands-on work is mostly the 10 new required settings in `.env`, how dependencies are installed, the PostgreSQL account the backend connects as, how accounts are created, and the parameter declarations of custom API tools.
 
-### Unreleased changes and required actions
+### 5.0.0 changes and required actions
 
-| Item | 4.0.0 | Unreleased | Action |
+| Item | 4.0.0 | 5.0.0 | Action |
 |---|---|---|---|
 | Required settings | 10 | 20 | Add 10 |
 | `HOST`, `RELOAD`, `COOKIE_SECURE` | `HOST` and `RELOAD` defaulted to `0.0.0.0` and `true`; `COOKIE_SECURE` was derived from `ENVIRONMENT` when unset | Required, with no default | Set them explicitly for your deployment |
@@ -47,10 +47,10 @@ For upgrading from 4.0.0 to the next release, which has no version number yet; s
 | PostgreSQL container | The backend connected as the superuser `postgres` | The backend connects as the non-superuser `POSTGRES_APP_USER` | Set up the account, run `20-app-role.sh` once, and update `DATABASE_URL` |
 | Dependencies | Unpinned; every install took the newest releases available | `requirements.txt` pins versions with hashes; `bun.lock` is committed and cannot change during install | Prefer a fresh virtualenv; add backend packages through `requirements.in` |
 | Frontend build | No CSP in `index.html` | The build writes a CSP `<meta>` tag | Rebuild; set `VITE_API_BASE` at build time when the API is on another origin |
-| API endpoints and responses | Included `GET /api/external-tags` and the WebSocket `/api/chat/ws/{user_id}`; the admin user API returned `hashed_password` | Both endpoints are removed; responses no longer contain password hashes or tool credentials, and login can return `429` | Update API clients as described in step 9 of the [upgrade steps](#upgrade-steps-for-the-unreleased-version) |
+| API endpoints and responses | Included `GET /api/external-tags` and the WebSocket `/api/chat/ws/{user_id}`; the admin user API returned `hashed_password` | Both endpoints are removed; responses no longer contain password hashes or tool credentials, and login can return `429` | Update API clients as described in step 9 of the [upgrade steps](#upgrade-steps-for-500) |
 | Chat attachment parsing | Shared the parsing limits of admin uploads | Has its own smaller memory budget; an attachment over budget is reported to the model as unread | None; see [resource limits](configuration_en.md#resource-limits) when needed |
 
-### Upgrade steps for the unreleased version
+### Upgrade steps for 5.0.0
 
 1. **Stop and back up**: stop the backend and back up the database (copy the `.db` file for SQLite; use `pg_dump` for PostgreSQL), `backend/data/`, `backend/keys/`, and `backend/.env`. Once the new release starts, tool credentials are stored encrypted, so rolling back to 4.0.0 needs this database backup.
 2. **Update code and dependencies**:
@@ -177,12 +177,12 @@ For upgrading from 4.0.0 to the next release, which has no version number yet; s
    - **Keep the current database**: re-enter the credentials of every custom API tool and MCP server in 4.0.0. 4.0.0 ignores the `users.tokens_valid_after` column; however, in a brand-new database created by the new release this column is `NOT NULL` without a default, so 4.0.0 fails to create accounts until you drop the column or give it a default. If you upgrade again later, accounts created during the rollback have no value in this column; the new release fills it with `created_at` on every start, so no manual step is needed.
 4. PostgreSQL container: the 4.0.0 `backend/docker-compose.yml` does not need `POSTGRES_APP_USER` or `POSTGRES_APP_PASSWORD`; recreate the container with `docker compose up -d`, and the application account left in the volume does not affect 4.0.0. A `pg_dump` backup restored as `postgres` leaves the tables owned by `postgres`, so keep the `DATABASE_URL` from the backed-up `.env`, which connects as `postgres`; if you keep the current database, the application account owns the tables and 4.0.0 can keep connecting with it.
 
-### After upgrading to the unreleased version
+### After upgrading to 5.0.0
 
 <details>
 <summary><b>Startup fails with <code>Field required</code></b></summary>
 
-`.env` is missing new required settings. The error names each missing field; add them as described in step 3 of the [upgrade steps](#upgrade-steps-for-the-unreleased-version), with the recommended values from `backend/.env.example`.
+`.env` is missing new required settings. The error names each missing field; add them as described in step 3 of the [upgrade steps](#upgrade-steps-for-500), with the recommended values from `backend/.env.example`.
 
 </details>
 
@@ -220,14 +220,14 @@ Admin API responses show `credentials_unreadable` as `true` with the credential 
 <details>
 <summary><b>Registration returns <code>403</code></b></summary>
 
-This is expected with `ALLOW_REGISTRATION=false`; the response says registration is closed and asks the user to contact an admin (目前不開放註冊，請聯繫管理員建立帳號). Have an admin create the account with `scripts/create_user.py`, as in step 6 of the [upgrade steps](#upgrade-steps-for-the-unreleased-version); set `ALLOW_REGISTRATION` to `true` and restart the backend only if you do want open registration.
+This is expected with `ALLOW_REGISTRATION=false`; the response says registration is closed and asks the user to contact an admin (目前不開放註冊，請聯繫管理員建立帳號). Have an admin create the account with `scripts/create_user.py`, as in step 6 of the [upgrade steps](#upgrade-steps-for-500); set `ALLOW_REGISTRATION` to `true` and restart the backend only if you do want open registration.
 
 </details>
 
 <details>
 <summary><b>PostgreSQL reports <code>must be owner of table</code> or <code>permission denied for table</code></b></summary>
 
-The backend now connects as the application account, but the tables still belong to `postgres`, which means `20-app-role.sh` has not run yet. The script is safe to rerun, and one run hands every table in `public` to the application account; see step 4 of the [upgrade steps](#upgrade-steps-for-the-unreleased-version).
+The backend now connects as the application account, but the tables still belong to `postgres`, which means `20-app-role.sh` has not run yet. The script is safe to rerun, and one run hands every table in `public` to the application account; see step 4 of the [upgrade steps](#upgrade-steps-for-500).
 
 - Running the script reports `No such file or directory`: the container was created from the old compose setup and has no mount for the script; recreate it with `docker compose up -d --wait` first.
 - Connecting reports `password authentication failed`: the application account does not exist yet, or the user name or password in `DATABASE_URL` differs from `POSTGRES_APP_USER` and `POSTGRES_APP_PASSWORD`. Every run of the script resets the password to the current `POSTGRES_APP_PASSWORD`.

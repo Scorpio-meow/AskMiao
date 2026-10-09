@@ -4,11 +4,11 @@
 
 > 本文件說明如何把既有部署升級到新版本，並附上回退步驟與常見問題。每個版本的完整變更見 [CHANGELOG](../CHANGELOG.md)。
 
-- [從 4.0.0 升級到未發行版本](#從-400-升級到未發行版本)
-  - [未發行版本的變更與需要的動作](#未發行版本的變更與需要的動作)
-  - [升級到未發行版本的步驟](#升級到未發行版本的步驟)
+- [從 4.0.0 升級到 5.0.0](#從-400-升級到-500)
+  - [5.0.0 的變更與需要的動作](#500-的變更與需要的動作)
+  - [升級到 5.0.0 的步驟](#升級到-500-的步驟)
   - [回退到 4.0.0](#回退到-400)
-  - [升級到未發行版本後的常見狀況](#升級到未發行版本後的常見狀況)
+  - [升級到 5.0.0 後的常見狀況](#升級到-500-後的常見狀況)
 - [從 3.0.0 升級到 4.0.0](#從-300-升級到-400)
   - [變更與需要的動作](#變更與需要的動作)
   - [升級步驟](#升級步驟)
@@ -27,13 +27,13 @@
 
 ---
 
-## 從 4.0.0 升級到未發行版本
+## 從 4.0.0 升級到 5.0.0
 
-適用於從 4.0.0 升級到尚未定版號的下一版，完整變更見 [CHANGELOG](../CHANGELOG.md#unreleased)。這一版處理第二輪安全稽核的發現，不需要重建索引，新欄位與工具憑證的加密都會在啟動時自動完成；需要動手的主要是 `.env` 的 10 個新必填設定、相依套件的安裝方式、PostgreSQL 的連線帳號、帳號的建立方式與自訂 API 工具的參數宣告。
+適用於從 4.0.0 升級到 5.0.0，完整變更見 [CHANGELOG](../CHANGELOG.md#500---2026-10-10)。這一版處理第二輪安全稽核的發現，不需要重建索引，新欄位與工具憑證的加密都會在啟動時自動完成；需要動手的主要是 `.env` 的 10 個新必填設定、相依套件的安裝方式、PostgreSQL 的連線帳號、帳號的建立方式與自訂 API 工具的參數宣告。
 
-### 未發行版本的變更與需要的動作
+### 5.0.0 的變更與需要的動作
 
-| 項目 | 4.0.0 | 未發行版本 | 需要的動作 |
+| 項目 | 4.0.0 | 5.0.0 | 需要的動作 |
 |---|---|---|---|
 | 必填設定 | 10 項 | 20 項 | 補上 10 項 |
 | `HOST`、`RELOAD`、`COOKIE_SECURE` | `HOST`、`RELOAD` 預設 `0.0.0.0`、`true`；`COOKIE_SECURE` 未設定時依 `ENVIRONMENT` 推導 | 必填，沒有預設值 | 依部署方式明確設定 |
@@ -47,10 +47,10 @@
 | PostgreSQL 容器 | 後端以超級使用者 `postgres` 連線 | 後端以非超級使用者 `POSTGRES_APP_USER` 連線 | 設定帳號、執行一次 `20-app-role.sh`、更新 `DATABASE_URL` |
 | 相依套件 | 未鎖定版本，每次安裝取得當下最新版 | `requirements.txt` 鎖定版本與雜湊；`bun.lock` 納入版本控制且安裝時不可變更 | 建議建立新的虛擬環境；新增後端套件改為修改 `requirements.in` |
 | 前端建置 | `index.html` 沒有 CSP | 建置時寫入 CSP `<meta>` | 重新建置；API 位於其他來源時在建置時設定 `VITE_API_BASE` |
-| API 端點與回應 | 含 `GET /api/external-tags` 與 WebSocket `/api/chat/ws/{user_id}`；管理員使用者 API 回傳 `hashed_password` | 兩個端點移除；回應不再含密碼雜湊與工具憑證，登入可能回傳 `429` | 自行串接的客戶端依 [升級步驟](#升級到未發行版本的步驟) 第 9 點調整 |
+| API 端點與回應 | 含 `GET /api/external-tags` 與 WebSocket `/api/chat/ws/{user_id}`；管理員使用者 API 回傳 `hashed_password` | 兩個端點移除；回應不再含密碼雜湊與工具憑證，登入可能回傳 `429` | 自行串接的客戶端依 [升級步驟](#升級到-500-的步驟) 第 9 點調整 |
 | 聊天附件解析 | 與管理員上傳共用同一套解析上限 | 另有較小的記憶體預算，超過時告知模型附件未被讀取 | 無；需要時參考 [資源上限](configuration.md#資源上限) |
 
-### 升級到未發行版本的步驟
+### 升級到 5.0.0 的步驟
 
 1. **停機並備份**：停止後端，備份資料庫（SQLite 直接複製 `.db` 檔，PostgreSQL 以 `pg_dump` 匯出）、`backend/data/`、`backend/keys/` 與 `backend/.env`。新版啟動後會把工具憑證改為加密存放，要回退到 4.0.0 就需要這份資料庫備份。
 2. **更新程式碼與相依套件**：
@@ -177,12 +177,12 @@
    - **保留現有資料庫**：在 4.0.0 重新輸入每個自訂 API 工具與 MCP 伺服器的憑證。4.0.0 會忽略 `users.tokens_valid_after` 欄位；但由新版建立的全新資料庫中，這個欄位是 `NOT NULL` 且沒有預設值，4.0.0 建立帳號時會失敗，請先移除此欄位或給定預設值。日後再次升級時，回退期間建立的帳號此欄位為空值，新版每次啟動都會以 `created_at` 補上，不需要手動處理。
 4. PostgreSQL 容器：4.0.0 的 `backend/docker-compose.yml` 不需要 `POSTGRES_APP_USER`、`POSTGRES_APP_PASSWORD`，以 `docker compose up -d` 重新建立容器即可，留在資料卷中的應用程式帳號不影響 4.0.0。以 `postgres` 還原 `pg_dump` 備份後資料表屬於 `postgres`，請沿用備份 `.env` 中以 `postgres` 連線的 `DATABASE_URL`；保留現有資料庫時資料表屬於應用程式帳號，4.0.0 可以繼續用它連線。
 
-### 升級到未發行版本後的常見狀況
+### 升級到 5.0.0 後的常見狀況
 
 <details>
 <summary><b>後端啟動失敗，錯誤訊息出現 <code>Field required</code></b></summary>
 
-`.env` 缺少新的必填設定。錯誤訊息會列出每個缺少的欄位，依 [升級步驟](#升級到未發行版本的步驟) 第 3 點補上，建議值見 `backend/.env.example`。
+`.env` 缺少新的必填設定。錯誤訊息會列出每個缺少的欄位，依 [升級步驟](#升級到-500-的步驟) 第 3 點補上，建議值見 `backend/.env.example`。
 
 </details>
 
@@ -220,14 +220,14 @@
 <details>
 <summary><b>註冊回傳 <code>403</code></b></summary>
 
-這是 `ALLOW_REGISTRATION=false` 時的預期行為，回應訊息為「目前不開放註冊，請聯繫管理員建立帳號」。請由管理員以 `scripts/create_user.py` 建立帳號，見 [升級步驟](#升級到未發行版本的步驟) 第 6 點；確定要開放註冊時，才把 `ALLOW_REGISTRATION` 設為 `true` 並重新啟動後端。
+這是 `ALLOW_REGISTRATION=false` 時的預期行為，回應訊息為「目前不開放註冊，請聯繫管理員建立帳號」。請由管理員以 `scripts/create_user.py` 建立帳號，見 [升級步驟](#升級到-500-的步驟) 第 6 點；確定要開放註冊時，才把 `ALLOW_REGISTRATION` 設為 `true` 並重新啟動後端。
 
 </details>
 
 <details>
 <summary><b>PostgreSQL 回報 <code>must be owner of table</code> 或 <code>permission denied for table</code></b></summary>
 
-後端已改以應用程式帳號連線，但資料表仍屬於 `postgres`，代表 `20-app-role.sh` 還沒執行。腳本可重複執行，執行一次就會把 `public` 中的所有資料表交給應用程式帳號，見 [升級步驟](#升級到未發行版本的步驟) 第 4 點。
+後端已改以應用程式帳號連線，但資料表仍屬於 `postgres`，代表 `20-app-role.sh` 還沒執行。腳本可重複執行，執行一次就會把 `public` 中的所有資料表交給應用程式帳號，見 [升級步驟](#升級到-500-的步驟) 第 4 點。
 
 - 執行腳本時出現 `No such file or directory`：容器仍是以舊的 compose 設定建立，沒有掛載腳本，請先執行 `docker compose up -d --wait` 重新建立。
 - 連線時出現 `password authentication failed`：應用程式帳號尚未建立，或 `DATABASE_URL` 中的帳號密碼與 `POSTGRES_APP_USER`、`POSTGRES_APP_PASSWORD` 不一致。腳本每次執行都會把密碼重設為目前的 `POSTGRES_APP_PASSWORD`。
