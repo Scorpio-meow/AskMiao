@@ -195,6 +195,8 @@ const EMPTY_MCP_FORM = {
 const SAFE_HTTP_METHODS = ['GET', 'HEAD', 'OPTIONS'];
 // 後端不回傳已儲存的憑證，以遮蔽字樣代替；送回遮蔽字樣的欄位沿用原值
 const SECRET_FIELD_HINT = '已儲存的金鑰以 •••••••• 顯示，保持不變即沿用原值；要更換時請輸入完整的新值';
+// 後端回應 credentials_unreadable：已儲存的憑證無法以目前的 TOOL_SECRETS_KEY 解密（例如金鑰已更換），欄位會顯示為空白
+const CREDENTIALS_UNREADABLE_NOTICE = '已儲存的憑證無法以目前的 TOOL_SECRETS_KEY 解密（金鑰可能已更換），憑證欄位因此顯示為空白。重新輸入憑證並儲存之前，這個工具無法執行。';
 const defaultRequiresApproval = (method) => !SAFE_HTTP_METHODS.includes((method || 'GET').toUpperCase());
 const EMPTY_TOOL_FORM = {
   name: '',
@@ -916,6 +918,15 @@ export default function AiTools() {
                             : server.url}
                         </div>
                       </div>
+                      {server.credentials_unreadable && (
+                        <div className={`${styles.specBlock} ${styles.specBlockSpaced} ${styles.specBlockError}`}>
+                          <div className={styles.specLabel}>
+                            <Icon name="warning" size={14} />
+                            <span>憑證需要重新輸入</span>
+                          </div>
+                          <div className={styles.specContent}>{CREDENTIALS_UNREADABLE_NOTICE}</div>
+                        </div>
+                      )}
                       {/* 錯誤資訊 */}
                       {server.last_error && (
                         <div className={`${styles.specBlock} ${styles.specBlockSpaced} ${styles.specBlockError}`}>
@@ -1089,6 +1100,15 @@ export default function AiTools() {
                         </div>
                       </div>
                     )}
+                    {tool.isCustom && tool.credentials_unreadable && (
+                      <div className={`${styles.specBlock} ${styles.specBlockSpaced} ${styles.specBlockError}`}>
+                        <div className={styles.specLabel}>
+                          <Icon name="warning" size={14} />
+                          <span>憑證需要重新輸入</span>
+                        </div>
+                        <div className={styles.specContent}>{CREDENTIALS_UNREADABLE_NOTICE}</div>
+                      </div>
+                    )}
                     {/* 核心規格與時機 */}
                     <div className={styles.specsGrid}>
                       <div className={styles.specBlock}>
@@ -1210,6 +1230,7 @@ export default function AiTools() {
           </DialogTitle>
           <DialogContent className={styles.dialogBody}>
             {dialogError && <Alert severity="error">{dialogError}</Alert>}
+            {editingMcpServer?.credentials_unreadable && <Alert severity="warning">{CREDENTIALS_UNREADABLE_NOTICE}</Alert>}
             {!editingMcpServer && mcpPresets.length > 0 && (
               <div className={styles.formGroup}>
                 <span className={styles.formLabel} id="mcp-presets-label">快速套用官方與社群範本：</span>
@@ -1601,6 +1622,7 @@ export default function AiTools() {
           </DialogTitle>
           <DialogContent className={styles.dialogBody}>
             {dialogError && <Alert severity="error">{dialogError}</Alert>}
+            {editingTool?.credentials_unreadable && <Alert severity="warning">{CREDENTIALS_UNREADABLE_NOTICE}</Alert>}
             <div className={styles.formRow}>
               <div className={styles.formGroup}>
                 <label className={styles.formLabel} htmlFor="tool-name">工具識別碼（英文小寫與底線，供 LLM 調用）*</label>
