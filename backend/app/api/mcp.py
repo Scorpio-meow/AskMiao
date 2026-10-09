@@ -14,31 +14,29 @@ from app.models import (
 from app.core.jwt_auth import get_current_admin_user
 from app.core.ssrf_protection import SSRFProtectionError
 from app.services.mcp_service import McpManager
-from app.core.error_response import log_and_get_error_id, format_client_error
+from app.core.error_response import SafeClientError, log_and_get_error_id, format_client_error
+from app.core.tool_secrets import decrypt_for_display, decrypt_json, encrypt_json, is_any_key, is_secret_header, mask, merge_masked
 logger = logging.getLogger(__name__)
 # MCP 伺服器是所有使用者的 Agent 共用的全域設定：stdio 模式會在主機上執行指定的指令，
 # 回應中也含環境變數與標頭等憑證，因此整個模組（含查詢）只開放管理員
 router = APIRouter()
 def _serialize_mcp_server(server: McpServer) -> Dict[str, Any]:
-    """序列化 McpServer 模型為 Dict"""
+    """序列化 McpServer 模型為 Dict（含解密後的環境變數與標頭，只供連線與執行使用，不可直接回傳給用戶端）"""
+    return _server_fields(server, decrypt_json(server.env_vars), decrypt_json(server.headers))
+def _server_response(server: McpServer) -> Dict[str, Any]:
+    """管理 API 回應用：環境變數與標頭中的憑證以遮蔽字樣取代；更新時送回遮蔽字樣的欄位沿用原值"""
+    env_vars, env_unreadable = decrypt_for_display(server.env_vars)
+    headers, headers_unreadable = decrypt_for_display(server.headers)
+    fields = _server_fields(server, mask(env_vars, is_any_key), mask(headers, is_secret_header))
+    fields["credentials_unreadable"] = env_unreadable or headers_unreadable
+    return fields
+def _server_fields(server: McpServer, env_vars: Optional[Dict[str, Any]], headers: Optional[Dict[str, Any]]) -> Dict[str, Any]:
     args = []
     if server.args:
         try:
             args = json.loads(server.args)
         except Exception:
             args = [server.args]
-    env_vars = {}
-    if server.env_vars:
-        try:
-            env_vars = json.loads(server.env_vars)
-        except Exception:
-            env_vars = {}
-    headers = {}
-    if server.headers:
-        try:
-            headers = json.loads(server.headers)
-        except Exception:
-            headers = {}
     discovered_tools = []
     if server.discovered_tools:
         try:
@@ -92,7 +90,7 @@ async def get_all_servers(
     return {
         "status": "success",
         "total": len(servers),
-        "servers": [_serialize_mcp_server(s) for s in servers]
+        "servers": [_server_response(s) for s in servers]
     }
 @router.post("/servers")
 async def create_server(
@@ -112,9 +110,9 @@ async def create_server(
         transport_type=server_data.transport_type or "stdio",
         command=server_data.command,
         args=json.dumps(server_data.args, ensure_ascii=False) if server_data.args else None,
-        env_vars=json.dumps(server_data.env_vars, ensure_ascii=False) if server_data.env_vars else None,
+        env_vars=encrypt_json(server_data.env_vars),
         url=server_data.url,
-        headers=json.dumps(server_data.headers, ensure_ascii=False) if server_data.headers else None,
+        headers=encrypt_json(server_data.headers),
         is_enabled=server_data.is_enabled if server_data.is_enabled is not None else True,
         requires_approval=server_data.requires_approval if server_data.requires_approval is not None else True,
         timeout=server_data.timeout or 30,
@@ -147,7 +145,7 @@ async def create_server(
     return {
         "status": "success",
         "message": "MCP 伺服器建立成功",
-        "server": _serialize_mcp_server(new_server)
+        "server": _server_response(new_server)
     }
 @router.get("/servers/{server_id}")
 async def get_server_detail(
@@ -161,7 +159,7 @@ async def get_server_detail(
         raise HTTPException(status_code=404, detail="找不到該 MCP 伺服器")
     return {
         "status": "success",
-        "server": _serialize_mcp_server(server)
+        "server": _server_response(server)
     }
 @router.put("/servers/{server_id}")
 async def update_server(
@@ -184,12 +182,15 @@ async def update_server(
         server.command = server_data.command
     if server_data.args is not None:
         server.args = json.dumps(server_data.args, ensure_ascii=False)
-    if server_data.env_vars is not None:
-        server.env_vars = json.dumps(server_data.env_vars, ensure_ascii=False)
+    try:
+        if server_data.env_vars is not None:
+            server.env_vars = encrypt_json(merge_masked(server_data.env_vars, decrypt_for_display(server.env_vars)[0]))
+        if server_data.headers is not None:
+            server.headers = encrypt_json(merge_masked(server_data.headers, decrypt_for_display(server.headers)[0]))
+    except SafeClientError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     if server_data.url is not None:
         server.url = server_data.url
-    if server_data.headers is not None:
-        server.headers = json.dumps(server_data.headers, ensure_ascii=False)
     if server_data.is_enabled is not None:
         server.is_enabled = server_data.is_enabled
     if server_data.requires_approval is not None:
@@ -201,7 +202,7 @@ async def update_server(
     return {
         "status": "success",
         "message": "MCP 伺服器配置更新成功",
-        "server": _serialize_mcp_server(server)
+        "server": _server_response(server)
     }
 @router.delete("/servers/{server_id}")
 async def delete_server(
@@ -243,7 +244,7 @@ async def discover_server_tools(
             "tools_count": len(tools),
             "tools": tools,
             "init_info": init_info,
-            "server": _serialize_mcp_server(server)
+            "server": _server_response(server)
         }
     except SSRFProtectionError as e:
         error_id = log_and_get_error_id(logger, "MCP 伺服器網址被 SSRF 防護拒絕", e, logging.WARNING)

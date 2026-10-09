@@ -1,3 +1,5 @@
+import json
+import logging
 import os
 from sqlalchemy import create_engine, MetaData, inspect, text
 from sqlalchemy.ext.declarative import declarative_base
@@ -43,6 +45,33 @@ COLUMN_UPGRADES = (
     # 既有帳號沿用原本「權杖不得早於帳號建立時間」的規則
     ("users", "tokens_valid_after", "TIMESTAMP", "UPDATE users SET tokens_valid_after = created_at"),
 )
+# 含憑證的欄位：寫入時以 TOOL_SECRETS_KEY 加密（見 app/core/tool_secrets.py）
+ENCRYPTED_TOOL_SECRET_COLUMNS = (
+    ("custom_api_tools", ("headers", "auth_config")),
+    ("mcp_servers", ("env_vars", "headers")),
+)
+logger = logging.getLogger(__name__)
+def encrypt_stored_tool_secrets(conn, inspector, tables) -> None:
+    """把舊版以明文 JSON 存放的工具憑證改存為加密內容；已加密的不變"""
+    from app.core.tool_secrets import encrypt_json, is_encrypted
+    for table, columns in ENCRYPTED_TOOL_SECRET_COLUMNS:
+        if table not in tables:
+            continue
+        existing_columns = {c["name"] for c in inspector.get_columns(table)}
+        for column in columns:
+            if column not in existing_columns:
+                continue
+            rows = conn.execute(text(f"SELECT id, {column} FROM {table} WHERE {column} IS NOT NULL")).all()
+            for row_id, stored in rows:
+                if is_encrypted(stored):
+                    continue
+                try:
+                    value = json.loads(stored)
+                except json.JSONDecodeError:
+                    logger.warning("%s.%s（id %s）不是有效的 JSON，已清空，請重新輸入", table, column, row_id)
+                    value = None
+                encrypted = encrypt_json(value) if isinstance(value, dict) else None
+                conn.execute(text(f"UPDATE {table} SET {column} = :value WHERE id = :id"), {"value": encrypted, "id": row_id})
 def upgrade_schema(target_engine=None) -> None:
     target_engine = target_engine or engine
     inspector = inspect(target_engine)
@@ -55,6 +84,7 @@ def upgrade_schema(target_engine=None) -> None:
                 continue
             conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {column} {column_type}"))
             conn.execute(text(backfill))
+        encrypt_stored_tool_secrets(conn, inspector, tables)
 async def create_tables():
     Base.metadata.create_all(bind=engine)
     upgrade_schema()

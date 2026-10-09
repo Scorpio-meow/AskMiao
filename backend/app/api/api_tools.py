@@ -23,24 +23,33 @@ from app.core.ssrf_protection import DnsPool, SSRFProtectionError, SSRFSafeTrans
 from app.services.openapi_parser import OpenApiParser
 from app.rag.tool_approval import default_requires_approval
 from app.core.error_response import SafeClientError, log_and_get_error_id, format_client_error, format_ssrf_rejection
+from app.core.tool_secrets import (
+    NON_SECRET_HEADER_NAMES,
+    decrypt_for_display,
+    decrypt_json,
+    encrypt_json,
+    is_secret_auth_key,
+    is_secret_header,
+    mask,
+    merge_masked,
+)
 logger = logging.getLogger(__name__)
 # 自訂 API 工具是所有使用者的 Agent 共用的全域設定，回應中也含 API 金鑰等憑證，
 # 因此整個模組（含查詢）只開放管理員
 router = APIRouter()
 def _serialize_tool_model(tool: CustomApiTool) -> Dict[str, Any]:
-    """將資料庫 CustomApiTool 模型轉換為 Dict"""
-    headers = None
-    if tool.headers:
-        try:
-            headers = json.loads(tool.headers)
-        except Exception:
-            headers = {}
-    auth_config = None
-    if tool.auth_config:
-        try:
-            auth_config = json.loads(tool.auth_config)
-        except Exception:
-            auth_config = {}
+    """將資料庫 CustomApiTool 模型轉換為 Dict（含解密後的憑證，只供執行工具使用，不可直接回傳給用戶端）"""
+    headers = decrypt_json(tool.headers)
+    auth_config = decrypt_json(tool.auth_config)
+    return _tool_fields(tool, headers, auth_config)
+def _tool_response(tool: CustomApiTool) -> Dict[str, Any]:
+    """管理 API 回應用：憑證以遮蔽字樣取代；更新時送回遮蔽字樣的欄位沿用原值"""
+    headers, headers_unreadable = decrypt_for_display(tool.headers)
+    auth_config, auth_unreadable = decrypt_for_display(tool.auth_config)
+    fields = _tool_fields(tool, mask(headers, is_secret_header), mask(auth_config, is_secret_auth_key))
+    fields["credentials_unreadable"] = headers_unreadable or auth_unreadable
+    return fields
+def _tool_fields(tool: CustomApiTool, headers: Optional[Dict[str, Any]], auth_config: Optional[Dict[str, Any]]) -> Dict[str, Any]:
     parameters_schema = None
     if tool.parameters_schema:
         try:
@@ -88,8 +97,6 @@ MAX_API_TOOL_RESPONSE_BYTES = 1024 * 1024
 MAX_API_TOOL_TEXT_CHARS = 4000
 MAX_API_TOOL_REDIRECTS = 5
 REDACTED = "[已遮蔽]"
-# 這些標頭的值不是憑證，不做遮蔽（避免把回應中的一般字詞一併替換掉）
-NON_SECRET_HEADER_NAMES = {"accept", "accept-encoding", "accept-language", "cache-control", "content-type", "user-agent"}
 MIN_SECRET_LENGTH = 4
 
 
@@ -452,9 +459,9 @@ async def import_openapi_tools(
             existing.url = effective_url
             existing.base_url = effective_base
             existing.path = item.path
-            existing.headers = json.dumps(merged_headers, ensure_ascii=False) if merged_headers else None
+            existing.headers = encrypt_json(merged_headers)
             existing.auth_type = effective_auth_type
-            existing.auth_config = json.dumps(effective_auth_config, ensure_ascii=False) if effective_auth_config else None
+            existing.auth_config = encrypt_json(effective_auth_config)
             existing.parameters_schema = json.dumps(item.parameters_schema, ensure_ascii=False) if item.parameters_schema else None
             existing.request_body_schema = json.dumps(item.request_body_schema, ensure_ascii=False) if item.request_body_schema else None
             existing.param_locations = json.dumps(item.param_locations, ensure_ascii=False) if item.param_locations else None
@@ -472,9 +479,9 @@ async def import_openapi_tools(
                 url=effective_url,
                 base_url=effective_base,
                 path=item.path,
-                headers=json.dumps(merged_headers, ensure_ascii=False) if merged_headers else None,
+                headers=encrypt_json(merged_headers),
                 auth_type=effective_auth_type,
-                auth_config=json.dumps(effective_auth_config, ensure_ascii=False) if effective_auth_config else None,
+                auth_config=encrypt_json(effective_auth_config),
                 parameters_schema=json.dumps(item.parameters_schema, ensure_ascii=False) if item.parameters_schema else None,
                 request_body_schema=json.dumps(item.request_body_schema, ensure_ascii=False) if item.request_body_schema else None,
                 param_locations=json.dumps(item.param_locations, ensure_ascii=False) if item.param_locations else None,
@@ -518,7 +525,7 @@ async def get_all_api_tools(
     return {
         "status": "success",
         "total": len(tools),
-        "tools": [_serialize_tool_model(t) for t in tools]
+        "tools": [_tool_response(t) for t in tools]
     }
 @router.post("")
 async def create_api_tool(
@@ -540,9 +547,9 @@ async def create_api_tool(
         url=tool_data.url,
         base_url=tool_data.base_url,
         path=tool_data.path,
-        headers=json.dumps(tool_data.headers, ensure_ascii=False) if tool_data.headers else None,
+        headers=encrypt_json(tool_data.headers),
         auth_type=tool_data.auth_type or "none",
-        auth_config=json.dumps(tool_data.auth_config, ensure_ascii=False) if tool_data.auth_config else None,
+        auth_config=encrypt_json(tool_data.auth_config),
         parameters_schema=json.dumps(tool_data.parameters_schema, ensure_ascii=False) if tool_data.parameters_schema else None,
         request_body_schema=json.dumps(tool_data.request_body_schema, ensure_ascii=False) if tool_data.request_body_schema else None,
         param_locations=json.dumps(tool_data.param_locations, ensure_ascii=False) if tool_data.param_locations else None,
@@ -563,7 +570,7 @@ async def create_api_tool(
     return {
         "status": "success",
         "message": "自訂 API 工具建立成功",
-        "tool": _serialize_tool_model(new_tool)
+        "tool": _tool_response(new_tool)
     }
 @router.get("/{tool_id}")
 async def get_api_tool_detail(
@@ -577,7 +584,7 @@ async def get_api_tool_detail(
         raise HTTPException(status_code=404, detail="找不到該自訂 API 工具")
     return {
         "status": "success",
-        "tool": _serialize_tool_model(tool)
+        "tool": _tool_response(tool)
     }
 @router.put("/{tool_id}")
 async def update_api_tool(
@@ -604,12 +611,15 @@ async def update_api_tool(
         tool.base_url = tool_data.base_url
     if tool_data.path is not None:
         tool.path = tool_data.path
-    if tool_data.headers is not None:
-        tool.headers = json.dumps(tool_data.headers, ensure_ascii=False) if tool_data.headers else None
+    try:
+        if tool_data.headers is not None:
+            tool.headers = encrypt_json(merge_masked(tool_data.headers, decrypt_for_display(tool.headers)[0]))
+        if tool_data.auth_config is not None:
+            tool.auth_config = encrypt_json(merge_masked(tool_data.auth_config, decrypt_for_display(tool.auth_config)[0]))
+    except SafeClientError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     if tool_data.auth_type is not None:
         tool.auth_type = tool_data.auth_type
-    if tool_data.auth_config is not None:
-        tool.auth_config = json.dumps(tool_data.auth_config, ensure_ascii=False) if tool_data.auth_config else None
     if tool_data.parameters_schema is not None:
         tool.parameters_schema = json.dumps(tool_data.parameters_schema, ensure_ascii=False) if tool_data.parameters_schema else None
     if tool_data.request_body_schema is not None:
@@ -630,7 +640,7 @@ async def update_api_tool(
     return {
         "status": "success",
         "message": "自訂 API 工具更新成功",
-        "tool": _serialize_tool_model(tool)
+        "tool": _tool_response(tool)
     }
 @router.patch("/{tool_id}/toggle")
 async def toggle_api_tool(

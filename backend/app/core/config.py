@@ -66,6 +66,8 @@ class Settings(BaseSettings):
     ADMIN_API_KEY: str
     # 是否開放自行註冊：所有帳號共用整個知識庫與已啟用的工具，關閉時改由管理員以 scripts/create_user.py 建立帳號
     ALLOW_REGISTRATION: bool
+    # 加密自訂 API 工具與 MCP 伺服器憑證（headers、auth_config、env_vars）的 Fernet 金鑰；更換後既有憑證需重新輸入
+    TOOL_SECRETS_KEY: str
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
     REFRESH_TOKEN_EXPIRE_DAYS: int = 7
     # 登入失敗節流：同一帳號或同一來源位址在視窗內失敗達門檻後，暫停該帳號或位址的登入
@@ -140,6 +142,18 @@ class Settings(BaseSettings):
             return None
         path = Path(value).expanduser()
         return str(path if path.is_absolute() else (BACKEND_DIR / path).resolve())
+    @field_validator("TOOL_SECRETS_KEY")
+    @classmethod
+    def _validate_tool_secrets_key(cls, value: str) -> str:
+        from cryptography.fernet import Fernet
+        try:
+            Fernet(value.encode("ascii"))
+        except (ValueError, UnicodeEncodeError) as e:
+            raise ValueError(
+                "TOOL_SECRETS_KEY 必須是 Fernet 金鑰，可用 "
+                "python -c \"from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())\" 產生"
+            ) from e
+        return value
     @field_validator("WEB_FETCH_ALLOWED_DOMAINS")
     @classmethod
     def _validate_web_fetch_domains(cls, value: str) -> str:

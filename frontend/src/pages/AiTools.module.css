@@ -519,6 +519,13 @@
   color: var(--text-tertiary);
 }
 
+.credentialHint {
+  display: block;
+  margin-top: var(--space-1);
+  font-size: var(--font-size-xs);
+  color: var(--text-tertiary);
+}
+
 .mutedNote {
   font-size: var(--font-size-xs);
   color: var(--text-tertiary);

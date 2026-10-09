@@ -192,6 +192,8 @@ const EMPTY_MCP_FORM = {
 };
 // 與後端 tool_approval.SAFE_HTTP_METHODS 一致：其他方法可能改變外部狀態，預設需要確認
 const SAFE_HTTP_METHODS = ['GET', 'HEAD', 'OPTIONS'];
+// 後端不回傳已儲存的憑證，以遮蔽字樣代替；送回遮蔽字樣的欄位沿用原值
+const SECRET_FIELD_HINT = '已儲存的金鑰以 •••••••• 顯示，保持不變即沿用原值；要更換時請輸入完整的新值';
 const defaultRequiresApproval = (method) => !SAFE_HTTP_METHODS.includes((method || 'GET').toUpperCase());
 const EMPTY_TOOL_FORM = {
   name: '',
@@ -1328,7 +1330,9 @@ export default function AiTools() {
                     value={mcpFormData.env_vars_json}
                     onChange={(e) => setMcpFormData({ ...mcpFormData, env_vars_json: e.target.value })}
                     placeholder='{"API_KEY": "secret"}'
+                    aria-describedby="mcp-env-hint"
                   />
+                  <span id="mcp-env-hint" className={styles.credentialHint}>{SECRET_FIELD_HINT}</span>
                 </div>
               </>
             )}
@@ -1341,7 +1345,9 @@ export default function AiTools() {
                   value={mcpFormData.headers_json}
                   onChange={(e) => setMcpFormData({ ...mcpFormData, headers_json: e.target.value })}
                   placeholder='{"Authorization": "Bearer ..."}'
+                  aria-describedby="mcp-headers-hint"
                 />
+                <span id="mcp-headers-hint" className={styles.credentialHint}>{SECRET_FIELD_HINT}</span>
               </div>
             )}
             <label className={styles.approvalOption}>
@@ -1691,7 +1697,9 @@ export default function AiTools() {
                   value={formData.auth_token}
                   onChange={(e) => setFormData({ ...formData, auth_token: e.target.value })}
                   autoComplete="off"
+                  aria-describedby="tool-auth-token-hint"
                 />
+                <span id="tool-auth-token-hint" className={styles.credentialHint}>{SECRET_FIELD_HINT}</span>
               </div>
             </div>
             <div className={styles.formGroup}>
