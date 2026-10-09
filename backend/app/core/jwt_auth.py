@@ -4,7 +4,7 @@ from datetime import datetime, timedelta
 from typing import Optional, Dict, Any
 import logging
 import bcrypt as bcrypt_lib
-from jose import JWTError, jwt
+import jwt
 from passlib.context import CryptContext
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
@@ -118,7 +118,7 @@ class TokenManager:
                 algorithms=[ALGORITHM],
                 options={"verify_signature": True, "verify_exp": True}
             )
-        except JWTError:
+        except jwt.PyJWTError:
             logger.exception("無效的認證令牌: 驗證失敗")
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
@@ -136,7 +136,7 @@ class TokenManager:
                 algorithms=[ALGORITHM],
                 options={"verify_signature": True, "verify_exp": False}
             )
-        except JWTError:
+        except jwt.PyJWTError:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="認證權杖無效：驗證失敗",

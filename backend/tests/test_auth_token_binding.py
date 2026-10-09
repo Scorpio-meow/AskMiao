@@ -1,19 +1,24 @@
 """
 存取權杖與帳號的綁定
 驗證：
-1. 只接受以 RSA 私鑰簽署的 RS256 權杖，沒有可用共用密鑰偽造的 HS256 路徑
+1. 只接受以 RSA 私鑰簽署的 RS256 權杖：以共用字串或伺服器公鑰（PEM 或 DER）當 HMAC 密鑰偽造的 HS256 權杖一律拒絕
 2. 身分與管理員權限取自資料庫，不信任權杖內的 is_admin 等聲明
 3. 帳號刪除、停用，或權杖簽發早於帳號建立（id 被重用）時權杖立即失效
 4. SQLite 的 users 表以 AUTOINCREMENT 建立，刪除後的 id 不會配給新帳號
 5. 變更密碼後，先前簽發的存取與重新整理權杖一律失效（同一秒內稍早簽發的也是）；既有資料庫補上 tokens_valid_after，
    回退到舊版期間建立、此欄位為 NULL 的帳號在每次啟動時補值
 """
+import base64
+import hashlib
+import hmac
+import json
+import time
 from datetime import datetime, timedelta
 
 import pytest
+from cryptography.hazmat.primitives import serialization
 from fastapi import HTTPException
 from fastapi.security import HTTPAuthorizationCredentials
-from jose import jwt
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
@@ -85,20 +90,28 @@ def test_module_has_no_shared_secret_fallback():
     assert not hasattr(jwt_auth, "USE_RSA")
 
 
+def forge_hs256(claims, key: bytes) -> str:
+    """攻擊者自行計算 HMAC 簽出的 HS256 權杖，不經過任何 JWT 函式庫的金鑰檢查"""
+    def encode(data: bytes) -> str:
+        return base64.urlsafe_b64encode(data).rstrip(b"=").decode("ascii")
+
+    signing_input = f"{encode(json.dumps({'alg': 'HS256', 'typ': 'JWT'}).encode())}.{encode(json.dumps(claims).encode())}"
+    signature = hmac.new(key, signing_input.encode("ascii"), hashlib.sha256).digest()
+    return f"{signing_input}.{encode(signature)}"
+
+
 def test_hs256_token_is_rejected(db):
+    # 演算法混淆：以 HS256 冒充 RS256，HMAC 密鑰用共用字串或伺服器的公鑰。python-jose 3.5.0 會把不含 PEM 外框的
+    # DER 公鑰當成 HMAC 密鑰（CVE-2024-33663 的修正不完整）；驗證端只接受 RS256，這些權杖一律無效
     user = add_user(db, "member")
-    now = datetime.utcnow()
-    for key in ("your_jwt_secret_key_here", jwt_auth.RSA_PUBLIC_KEY):
-        try:
-            forged = jwt.encode(
-                {"sub": str(user.id), "type": "access", "is_admin": True, "iat": now, "exp": now + timedelta(minutes=5)},
-                key,
-                algorithm="HS256",
-            )
-        except Exception:
-            # jose 拒絕以 PEM 公鑰當 HMAC 密鑰時，本身就無法偽造
-            continue
-        assert_rejected(db, forged)
+    now = int(time.time())
+    claims = {"sub": str(user.id), "type": "access", "is_admin": True, "iat": now, "exp": now + 300}
+    public_pem = jwt_auth.RSA_PUBLIC_KEY.encode("ascii")
+    public_der = serialization.load_pem_public_key(public_pem).public_bytes(
+        serialization.Encoding.DER, serialization.PublicFormat.SubjectPublicKeyInfo
+    )
+    for key in (b"a-shared-secret-that-was-never-configured", public_pem, public_der):
+        assert_rejected(db, forge_hs256(claims, key))
 
 
 def test_admin_claim_comes_from_database(db):
@@ -151,11 +164,14 @@ def frozen_utcnow(moment):
 
 
 def test_password_change_revokes_previously_issued_tokens(db, monkeypatch):
+    # 時間都放在過去：簽發時間在未來的權杖本身就會被拒絕
     user = add_user(db, "member")
+    issued_at = datetime.utcnow() - timedelta(minutes=3)
+    monkeypatch.setattr(jwt_auth, "datetime", frozen_utcnow(issued_at))
     tokens = create_token_pair({"user_id": user.id, "username": user.username})
     assert authenticate(db, tokens["access_token"])["user_id"] == user.id
 
-    changed_at = datetime.utcnow() + timedelta(minutes=1)
+    changed_at = issued_at + timedelta(minutes=1)
     monkeypatch.setattr(crud_user, "datetime", frozen_utcnow(changed_at))
     crud_user.update_user_password(db, user.id, "NewSecret123")
     assert user.tokens_valid_after == changed_at
@@ -172,7 +188,7 @@ def test_password_change_revokes_previously_issued_tokens(db, monkeypatch):
 
 def test_tokens_from_the_same_second_as_a_password_change_are_revoked(db, monkeypatch):
     user = add_user(db, "member")
-    second = datetime.utcnow().replace(microsecond=0) + timedelta(minutes=1)
+    second = datetime.utcnow().replace(microsecond=0) - timedelta(minutes=1)
     monkeypatch.setattr(jwt_auth, "datetime", frozen_utcnow(second.replace(microsecond=100_000)))
     earlier = create_token_pair({"user_id": user.id, "username": user.username})
 

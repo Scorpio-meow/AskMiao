@@ -45,7 +45,7 @@ lxml
 PyYAML
 
 # 認證與密碼
-python-jose[cryptography]
+PyJWT
 passlib
 argon2-cffi
 bcrypt
