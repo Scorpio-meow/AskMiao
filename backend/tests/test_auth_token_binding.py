@@ -5,7 +5,7 @@
 2. 身分與管理員權限取自資料庫，不信任權杖內的 is_admin 等聲明
 3. 帳號刪除、停用，或權杖簽發早於帳號建立（id 被重用）時權杖立即失效
 4. SQLite 的 users 表以 AUTOINCREMENT 建立，刪除後的 id 不會配給新帳號
-5. 變更密碼後，先前簽發的存取與重新整理權杖一律失效；既有資料庫補上 tokens_valid_after
+5. 變更密碼後，先前簽發的存取與重新整理權杖一律失效（同一秒內稍早簽發的也是）；既有資料庫補上 tokens_valid_after
 """
 from datetime import datetime, timedelta
 
@@ -167,6 +167,25 @@ def test_password_change_revokes_previously_issued_tokens(db, monkeypatch):
     monkeypatch.setattr(jwt_auth, "datetime", frozen_utcnow(changed_at + timedelta(seconds=1)))
     fresh = create_token_pair({"user_id": user.id, "username": user.username})
     assert authenticate(db, fresh["access_token"])["user_id"] == user.id
+
+
+def test_tokens_from_the_same_second_as_a_password_change_are_revoked(db, monkeypatch):
+    user = add_user(db, "member")
+    second = datetime.utcnow().replace(microsecond=0) + timedelta(minutes=1)
+    monkeypatch.setattr(jwt_auth, "datetime", frozen_utcnow(second.replace(microsecond=100_000)))
+    earlier = create_token_pair({"user_id": user.id, "username": user.username})
+
+    monkeypatch.setattr(crud_user, "datetime", frozen_utcnow(second.replace(microsecond=600_000)))
+    crud_user.update_user_password(db, user.id, "NewSecret123")
+    assert_rejected(db, earlier["access_token"])
+    with pytest.raises(HTTPException) as exc_info:
+        resolve_token_user(db, verify_refresh_token(earlier["refresh_token"]))
+    assert exc_info.value.status_code == 401
+
+    # 同一秒內、變更之後簽發的權杖照常有效（例如立刻以新密碼重新登入）
+    monkeypatch.setattr(jwt_auth, "datetime", frozen_utcnow(second.replace(microsecond=900_000)))
+    later = create_token_pair({"user_id": user.id, "username": user.username})
+    assert authenticate(db, later["access_token"])["user_id"] == user.id
 
 
 def test_new_accounts_start_with_tokens_valid_after_creation(db):

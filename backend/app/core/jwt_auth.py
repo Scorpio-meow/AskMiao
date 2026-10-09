@@ -28,6 +28,13 @@ except Exception as e:
     print(f"Token 黑名單功能不可用: {e}")
 pwd_context = CryptContext(schemes=["argon2"], deprecated="auto")
 security = HTTPBearer()
+def _numeric_date(moment: datetime) -> float:
+    """UTC 時刻轉成 JWT 的 NumericDate 並保留微秒（RFC 7519 允許小數）。
+
+    撤銷以 tokens_valid_after 比對簽發時間；只取整秒時，與變更密碼同一秒內稍早簽發的權杖仍然有效，
+    持有外洩重新整理權杖的人每秒換發一次就能一直保住工作階段。
+    """
+    return calendar.timegm(moment.utctimetuple()) + moment.microsecond / 1_000_000
 def _normalize_legacy_bcrypt_password(password: str, max_bytes: int = 72) -> str:
     encoded_password = password.encode("utf-8")
     if len(encoded_password) <= max_bytes:
@@ -70,7 +77,7 @@ class TokenManager:
         to_encode.update({
             "exp": expire,
             "type": "access",
-            "iat": datetime.utcnow()
+            "iat": _numeric_date(datetime.utcnow())
         })
         
         return jwt.encode(to_encode, RSA_PRIVATE_KEY, algorithm=ALGORITHM)
@@ -90,7 +97,7 @@ class TokenManager:
         to_encode.update({
             "exp": expire,
             "type": "refresh",
-            "iat": datetime.utcnow()
+            "iat": _numeric_date(datetime.utcnow())
         })
         
         return jwt.encode(to_encode, RSA_PRIVATE_KEY, algorithm=ALGORITHM)
@@ -162,7 +169,7 @@ def resolve_token_user(db: Session, payload: Dict[str, Any]) -> User:
     user = db.query(User).filter(User.id == user_id).first()
     if user is None or not user.is_active or user.tokens_valid_after is None:
         raise invalid
-    if issued_at < calendar.timegm(user.tokens_valid_after.utctimetuple()):
+    if issued_at < _numeric_date(user.tokens_valid_after):
         raise invalid
     return user
 def get_current_user_from_token(
