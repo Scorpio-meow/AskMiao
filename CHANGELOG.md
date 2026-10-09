@@ -84,7 +84,7 @@
 - `GET /api/auth/registration` 回傳是否開放自行註冊；前端據此隱藏登入頁的註冊入口，註冊頁改為顯示說明。
 - `backend/scripts/create_user.py`：以互動方式輸入密碼建立帳號，套用與註冊相同的規則，`--admin` 建立管理員。
 - `backend/init-app-role.sh`（PostgreSQL 應用程式帳號，可重複執行）與 `backend/requirements.in`、`frontend/bun.lock`。
-- 管理 API 的工具與 MCP 伺服器回應新增 `credentials_unreadable`：無法以目前的金鑰解密時讓管理員重新輸入，而不是整頁失敗。
+- 管理 API 的工具與 MCP 伺服器回應新增 `credentials_unreadable`：無法以目前的金鑰解密時讓管理員重新輸入，而不是整頁失敗；此時工具測試與 MCP 探索端點回傳 `400` 說明需要重新輸入。
 - 新增後端測試 `test_admin_user_api.py`、`test_login_throttle.py`、`test_registration.py`、`test_tool_secrets.py`。
 - **介紹頁「工具核准」區段**：可操作的核准卡片示範（核准、拒絕、模擬逾時），同步顯示 `approval_required`、`approval_resolved` 等 SSE 事件；另依 HTTP 方法切換自訂 API 工具的預設核准規則，規則與 `tool_approval.py` 相同。
 - 介紹頁新增 4.0.0 版本標籤與數據列、安全區段的「每個入口都有上限」資源上限表，文件導覽補上 ADR-0006。

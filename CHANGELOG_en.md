@@ -84,7 +84,7 @@ This release addresses the findings of a second security audit: chat attachment 
 - `GET /api/auth/registration` reports whether self-registration is open; the frontend uses it to hide the sign-up link on the login page and shows an explanation on the sign-up page.
 - `backend/scripts/create_user.py` creates an account with an interactively entered password, applying the same rules as registration; `--admin` creates an admin.
 - `backend/init-app-role.sh` (the PostgreSQL application account, safe to rerun), `backend/requirements.in`, and `frontend/bun.lock`.
-- Tool and MCP server responses from the admin API gain `credentials_unreadable`, so credentials that cannot be decrypted with the current key can be re-entered instead of breaking the page.
+- Tool and MCP server responses from the admin API gain `credentials_unreadable`, so credentials that cannot be decrypted with the current key can be re-entered instead of breaking the page; meanwhile the tool test and MCP discover endpoints return `400` saying the credentials must be entered again.
 - New backend tests `test_admin_user_api.py`, `test_login_throttle.py`, `test_registration.py`, and `test_tool_secrets.py`.
 - **"Tool approval" section on the website**: an interactive approval card (approve, deny, simulate a timeout) that shows the resulting SSE events such as `approval_required` and `approval_resolved`, plus a switch between HTTP methods that shows a custom API tool's default approval rule, matching `tool_approval.py`.
 - The website gains a 4.0.0 release pill and stats row, a "Every entry point has a limit" resource-limit table in the security section, and ADR-0006 in the documentation list.
