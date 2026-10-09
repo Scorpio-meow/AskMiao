@@ -30,14 +30,16 @@ function restrictOpenInEditor() {
     },
   };
 }
+// 只在建置時讀取專案自己的 index.html，不用來過濾不可信的 HTML；仍比照瀏覽器的寬鬆規則：
+// 標籤名稱與屬性名稱不分大小寫，結束標籤可以帶空白或屬性（例如 </script >）
 const INLINE_ELEMENT_PATTERNS = {
-  script: /<script\b([^>]*)>([\s\S]*?)<\/script>/g,
-  style: /<style\b([^>]*)>([\s\S]*?)<\/style>/g,
+  script: /<script([^>]*)>([\s\S]*?)<\/script[^>]*>/gi,
+  style: /<style([^>]*)>([\s\S]*?)<\/style[^>]*>/gi,
 };
 // index.html 中內嵌的腳本或樣式（反框架守衛、主題初始化）以內容雜湊列入 CSP，其他內嵌程式碼都不會執行
 function inlineHashes(html, element) {
   return [...html.matchAll(INLINE_ELEMENT_PATTERNS[element])]
-    .filter(([, attributes, content]) => !/\ssrc=/.test(attributes) && content.trim())
+    .filter(([, attributes, content]) => !/\ssrc\s*=/i.test(attributes) && content.trim())
     .map(([, , content]) => `'sha256-${createHash('sha256').update(content).digest('base64')}'`);
 }
 // API 為絕對網址（前端與後端不同來源）時 connect-src 需要允許該來源；
