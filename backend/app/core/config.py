@@ -63,6 +63,8 @@ class Settings(BaseSettings):
     LLM_TAGS_TIMEOUT: float = 10.0
     ADD_NGROK_HEADER: bool = False
     ADMIN_API_KEY: str
+    # 是否開放自行註冊：所有帳號共用整個知識庫與已啟用的工具，關閉時改由管理員以 scripts/create_user.py 建立帳號
+    ALLOW_REGISTRATION: bool
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
     REFRESH_TOKEN_EXPIRE_DAYS: int = 7
     # 登入失敗節流：同一帳號或同一來源位址在視窗內失敗達門檻後，暫停該帳號或位址的登入

@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useNavigate, useLocation, Link } from 'react-router-dom';
 import { useAuth } from '../hooks/useAuth';
 import { useDocumentTitle } from '../hooks/useDocumentTitle';
+import { useRegistrationStatus } from '../hooks/useRegistrationStatus';
 import { APP_NAME, APP_TAGLINE } from '../config/brand';
 import { TextField, Button, Alert, IconButton, Icon } from '../components/ui';
 import styles from './Auth.module.css';
@@ -15,6 +16,7 @@ const LoginPage = () => {
   });
   const [showPassword, setShowPassword] = useState(false);
   const [localError, setLocalError] = useState('');
+  const registrationOpen = useRegistrationStatus();
   useDocumentTitle('登入');
   const from = location.state?.from?.pathname || '/';
   const notice = location.state?.notice;
@@ -100,12 +102,14 @@ const LoginPage = () => {
             登入
           </Button>
         </form>
-        <div className={styles.footer}>
-          還沒有帳號？
-          <Link to="/register" className={styles.link}>
-            立即註冊
-          </Link>
-        </div>
+        {registrationOpen && (
+          <div className={styles.footer}>
+            還沒有帳號？
+            <Link to="/register" className={styles.link}>
+              立即註冊
+            </Link>
+          </div>
+        )}
       </div>
       <p className={styles.copyright}>
         {APP_NAME} · {APP_TAGLINE}

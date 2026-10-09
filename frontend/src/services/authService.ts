@@ -192,6 +192,13 @@ class AuthService {
       };
     }
   }
+  async isRegistrationOpen(): Promise<boolean> {
+    const response = await withTimeout(
+      (signal) => api.get<{ enabled: boolean }>('/auth/registration', { signal }),
+      10000
+    );
+    return response.data.enabled;
+  }
   async validateToken(): Promise<boolean> {
     try {
       const response = await withTimeout(

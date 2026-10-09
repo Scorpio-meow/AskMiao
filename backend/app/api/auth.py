@@ -57,6 +57,10 @@ def _set_refresh_cookie(response: Response, refresh_token: str) -> None:
         max_age=settings.REFRESH_TOKEN_EXPIRE_DAYS * 86400,
         path=REFRESH_COOKIE_PATH,
     )
+@router.get("/registration")
+async def get_registration_status():
+    """是否開放自行註冊；前端據此顯示或隱藏註冊入口"""
+    return {"enabled": settings.ALLOW_REGISTRATION}
 @router.post("/register", response_model=LoginResponse, status_code=status.HTTP_201_CREATED)
 async def register(
     user_data: UserRegister,
@@ -64,6 +68,12 @@ async def register(
     response: Response,
     db: Session = Depends(get_db)
 ):
+    if not settings.ALLOW_REGISTRATION:
+        log_security_event("REGISTER_REJECTED", request=request, details={"reason": "未開放註冊"})
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="目前不開放註冊，請聯繫管理員建立帳號"
+        )
     username = sanitize_username(user_data.username)
     
     if get_user_by_username(db, username):

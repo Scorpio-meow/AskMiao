@@ -2,8 +2,9 @@ import { useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { useAuth } from '../hooks/useAuth';
 import { useDocumentTitle } from '../hooks/useDocumentTitle';
+import { useRegistrationStatus } from '../hooks/useRegistrationStatus';
 import { APP_NAME, APP_TAGLINE } from '../config/brand';
-import { TextField, Button, Alert, IconButton, Icon } from '../components/ui';
+import { TextField, Button, Alert, IconButton, Icon, Spinner } from '../components/ui';
 import styles from './Auth.module.css';
 const RegisterPage = () => {
   const navigate = useNavigate();
@@ -18,6 +19,7 @@ const RegisterPage = () => {
   const [localError, setLocalError] = useState('');
   const [submitAttempted, setSubmitAttempted] = useState(false);
   const [success, setSuccess] = useState(false);
+  const registrationOpen = useRegistrationStatus();
   useDocumentTitle('註冊');
   const passwordRequirements = [
     { key: 'length', label: '至少 8 個字元', met: formData.password.length >= 8 },
@@ -63,6 +65,38 @@ const RegisterPage = () => {
     }
   };
   const error = localError || authError;
+  if (registrationOpen !== true) {
+    return (
+      <div className={styles.container}>
+        <div className={styles.card}>
+          <div className={styles.header}>
+            <div className={styles.headerIcon}>
+              <Icon name="person-add" size={48} />
+            </div>
+            <h1 className={styles.title}>建立新帳號</h1>
+          </div>
+          {registrationOpen === null ? (
+            <div role="status" aria-label="正在確認是否開放註冊">
+              <Spinner size={24} color="var(--color-primary)" />
+            </div>
+          ) : (
+            <Alert severity="info" style={{ marginBottom: '16px' }}>
+              目前不開放註冊，請聯繫管理員建立帳號
+            </Alert>
+          )}
+          <div className={styles.footer}>
+            已有帳號？
+            <Link to="/login" className={styles.link}>
+              立即登入
+            </Link>
+          </div>
+        </div>
+        <p className={styles.copyright}>
+          {APP_NAME} · {APP_TAGLINE}
+        </p>
+      </div>
+    );
+  }
   if (success) {
     return (
       <div className={styles.container}>
