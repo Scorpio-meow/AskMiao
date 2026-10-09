@@ -2,7 +2,8 @@
 工具外送請求的安全邊界
 驗證：
 1. SSRF 檢查後連線固定到核可的 IP（DNS rebinding），DNS 解析有逾時
-2. 自訂 API 工具：路徑參數編碼、跨來源轉址不轉送憑證、回應與網址中的憑證遮蔽、回應大小上限
+2. 自訂 API 工具：路徑參數編碼、跨來源轉址不轉送憑證、回應與網址中的憑證遮蔽、回應大小上限；
+   只接受工具宣告的參數，工具網址中固定的查詢參數不可被覆寫
 3. web_fetch 與 SSRF 拒絕訊息不帶出伺服器端 DNS 解析結果
 4. HTTP MCP 回應大小上限
 5. MCP 範本不含網頁擷取、檔案系統範本不與資料目錄重疊且釘選版本
@@ -86,13 +87,85 @@ async def test_dns_resolution_times_out(monkeypatch):
 @pytest.mark.anyio
 async def test_path_parameters_cannot_change_request_target(public_dns, upstream):
     upstream["handler"] = lambda request: httpx.Response(200, json={}, request=request)
-    tool = {"name": "pets", "method": "GET", "url": "https://api.example.com/v1/pets/{petId}", "param_locations": {"petId": "path"}}
+    tool = {
+        "name": "pets",
+        "method": "GET",
+        "url": "https://api.example.com/v1/pets/{petId}",
+        "parameters_schema": {"type": "object", "properties": {"petId": {"type": "string"}}},
+        "param_locations": {"petId": "path"},
+    }
     await execute_http_api_tool(tool, {"petId": "../../admin/users?all=1#x"})
     assert upstream["sent"][0].url.raw_path == b"/v1/pets/..%2F..%2Fadmin%2Fusers%3Fall%3D1%23x"
 
     result = await execute_http_api_tool(tool, {"petId": ".."})
     assert result["status_code"] == 400
     assert len(upstream["sent"]) == 1
+
+
+@pytest.mark.anyio
+async def test_undeclared_arguments_are_rejected_before_sending(public_dns, upstream):
+    upstream["handler"] = lambda request: httpx.Response(200, json={}, request=request)
+    tool = {
+        "name": "records",
+        "method": "POST",
+        "url": "https://api.example.com/records",
+        "parameters_schema": {"type": "object", "properties": {"title": {"type": "string"}}},
+        "param_locations": {"title": "body"},
+    }
+    result = await execute_http_api_tool(tool, {"title": "t", "assignee": "admin", "_method": "DELETE"})
+    assert result["status_code"] == 400
+    assert "assignee" in result["error"] and "_method" in result["error"]
+    # 沒有宣告 request_body 時，不能以它整包替換本文
+    result = await execute_http_api_tool(tool, {"title": "t", "request_body": {"is_admin": True}})
+    assert result["status_code"] == 400
+    assert upstream["sent"] == []
+
+    await execute_http_api_tool(tool, {"title": "t"})
+    assert await upstream["sent"][0].aread() == b'{"title":"t"}'
+
+
+@pytest.mark.anyio
+async def test_request_body_fields_follow_the_declared_body_schema(public_dns, upstream):
+    upstream["handler"] = lambda request: httpx.Response(200, json={}, request=request)
+    declared_body = {
+        "name": "tickets",
+        "method": "POST",
+        "url": "https://api.example.com/tickets",
+        "parameters_schema": {"type": "object", "properties": {"request_body": {"type": "object"}}},
+        "request_body_schema": {"type": "object", "properties": {"subject": {"type": "string"}}},
+        "param_locations": {"request_body": "body"},
+    }
+    result = await execute_http_api_tool(declared_body, {"request_body": {"subject": "s", "priority": "urgent"}})
+    assert result["status_code"] == 400 and "request_body.priority" in result["error"]
+    await execute_http_api_tool(declared_body, {"request_body": {"subject": "s"}})
+    # 規格沒有描述本文欄位時，宣告的 request_body 照原樣送出
+    opaque = dict(declared_body, request_body_schema=None)
+    await execute_http_api_tool(opaque, {"request_body": {"anything": 1}})
+    assert [await request.aread() for request in upstream["sent"]] == [b'{"subject":"s"}', b'{"anything":1}']
+
+
+@pytest.mark.anyio
+async def test_fixed_query_parameters_cannot_be_overridden(public_dns, upstream):
+    upstream["handler"] = lambda request: httpx.Response(200, json={}, request=request)
+    tool = {
+        "name": "scoped",
+        "method": "GET",
+        "url": "https://api.example.com/records?project=public-docs&readonly=true",
+        "parameters_schema": {"type": "object", "properties": {
+            "q": {"type": "string"}, "project": {"type": "string"}, "tags": {"type": "array"},
+        }},
+        "param_locations": {"q": "query", "project": "query", "tags": "query"},
+        "auth_type": "api_key",
+        "auth_config": {"key_name": "key", "key_value": "query-secret-123", "key_in": "query"},
+    }
+    result = await execute_http_api_tool(tool, {"q": "x", "project": "hr-salaries"})
+    assert result["status_code"] == 400 and "project" in result["error"]
+    assert upstream["sent"] == []
+
+    await execute_http_api_tool(tool, {"q": "x", "tags": ["a", "b"]})
+    assert upstream["sent"][0].url.params.multi_items() == [
+        ("project", "public-docs"), ("readonly", "true"), ("q", "x"), ("tags", "a"), ("tags", "b"), ("key", "query-secret-123"),
+    ]
 
 
 @pytest.mark.anyio
@@ -135,6 +208,7 @@ async def test_credentials_are_redacted_from_result(public_dns, upstream):
         "name": "query_key",
         "method": "GET",
         "url": "https://api.example.com/search",
+        "parameters_schema": {"type": "object", "properties": {"q": {"type": "string"}}},
         "auth_type": "api_key",
         "auth_config": {"key_name": "key", "key_value": "query-secret-123", "key_in": "query"},
     }

@@ -141,6 +141,36 @@ def _same_origin(a: httpx.URL, b: httpx.URL) -> bool:
     return (a.scheme, a.host, a.port) == (b.scheme, b.host, b.port)
 
 
+def _declared_properties(schema: Any) -> Optional[Dict[str, Any]]:
+    if isinstance(schema, dict) and isinstance(schema.get("properties"), dict):
+        return schema["properties"]
+    return None
+
+
+def _undeclared_arguments(tool_dict: Dict[str, Any], arguments: Dict[str, Any]) -> List[str]:
+    """呼叫端（模型）只能使用工具宣告的參數，否則可夾帶管理員沒有開放的查詢參數或本文欄位，
+    以操作者的憑證改變上游的行為；request_body 有宣告欄位的 schema 時，其中的欄位也一併檢查"""
+    properties = _declared_properties(tool_dict.get("parameters_schema"))
+    declared = set(properties) if properties is not None else set()
+    undeclared = [name for name in arguments if name not in declared]
+    body = arguments.get("request_body")
+    body_schema = tool_dict.get("request_body_schema")
+    body_properties = _declared_properties(body_schema)
+    if isinstance(body, dict) and body_properties is not None and body_schema.get("additionalProperties") is not True:
+        undeclared += [f"request_body.{name}" for name in body if name not in body_properties]
+    return undeclared
+
+
+def _query_items(params: Dict[str, Any]) -> List[tuple]:
+    items = []
+    for name, value in params.items():
+        if isinstance(value, (list, tuple)):
+            items.extend((name, item) for item in value)
+        else:
+            items.append((name, value))
+    return items
+
+
 async def execute_http_api_tool(tool_dict: Dict[str, Any], arguments: Dict[str, Any]) -> Dict[str, Any]:
     """
     通用 HTTP API 工具非同步執行器
@@ -161,6 +191,15 @@ async def execute_http_api_tool(tool_dict: Dict[str, Any], arguments: Dict[str, 
         url = f"{base_url}/{path.lstrip('/')}"
     elif not url:
         url = path
+    undeclared = _undeclared_arguments(tool_dict, arguments)
+    if undeclared:
+        return {
+            "status_code": 400,
+            "is_success": False,
+            "duration_seconds": round(time.time() - start_time, 3),
+            "url": url,
+            "error": f"工具參數無效：未宣告的參數 {', '.join(undeclared)}",
+        }
     param_locations = tool_dict.get("param_locations") or {}
     configured_headers = dict(tool_dict.get("headers") or {})
     headers = dict(configured_headers)
@@ -231,6 +270,14 @@ async def execute_http_api_tool(tool_dict: Dict[str, Any], arguments: Dict[str, 
         template_url = httpx.URL(url.replace("{", "").replace("}", ""))
         if not _same_origin(original_url, template_url):
             raise SafeClientError("代入參數後的網址與工具設定的主機不符")
+        # 工具網址中的查詢參數由管理員固定，呼叫端不可覆寫；查詢字串一律在這裡組好，
+        # 不依賴 httpx 對既有查詢字串是合併還是取代（不同版本行為不同）
+        fixed_params = original_url.params
+        overridden = sorted(name for name in query_params if name in fixed_params and name != credential_query_key)
+        if overridden:
+            raise SafeClientError(f"工具參數無效：不可覆寫工具網址中固定的查詢參數 {', '.join(overridden)}")
+        request_params = [(name, value) for name, value in fixed_params.multi_items() if name != credential_query_key]
+        request_params += _query_items(query_params)
 
         async def strip_credentials_cross_origin(request: httpx.Request) -> None:
             # 轉址到其他來源時不轉送管理員設定的憑證標頭
@@ -249,9 +296,9 @@ async def execute_http_api_tool(tool_dict: Dict[str, Any], arguments: Dict[str, 
         ) as client:
             req_kwargs: Dict[str, Any] = {
                 "method": method,
-                "url": path_replaced_url,
+                "url": original_url.copy_with(query=None),
                 "headers": headers,
-                "params": query_params if query_params else None,
+                "params": request_params,
             }
             if method in ["POST", "PUT", "PATCH", "DELETE"]:
                 if body_data:
