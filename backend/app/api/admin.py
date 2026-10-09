@@ -8,6 +8,7 @@ from app.core.rag_manager import get_rag_system
 from app.core.jwt_auth import get_current_admin_user
 from app.core.cache import cache_response, invalidate_cache
 from app.rag.tools import invalidate_knowledge_base_description
+from app.schemas.auth import UserProfile
 from typing import List, Dict, Any
 from datetime import datetime, timedelta
 from pydantic import BaseModel
@@ -18,7 +19,11 @@ class UserUpdate(BaseModel):
     email: str = None
     is_active: bool = None
     is_admin: bool = None
-@router.get("/users")
+class AdminUserUpdateResponse(BaseModel):
+    message: str
+    user: UserProfile
+# 回應一律經 UserProfile 篩選欄位：直接序列化資料表會連同 hashed_password 一起送出
+@router.get("/users", response_model=List[UserProfile])
 async def get_users(
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_admin_user)
@@ -159,7 +164,7 @@ async def delete_document(
     await asyncio.to_thread(rag_system.remove_document_by_id, document_id)
 
     return {"message": "文件刪除成功"}
-@router.put("/users/{user_id}")
+@router.put("/users/{user_id}", response_model=AdminUserUpdateResponse)
 async def update_user(
     user_id: int,
     user_update: UserUpdate,
@@ -199,7 +204,7 @@ async def update_user(
     
     invalidate_cache("admin_stats")
     
-    return {"message": "使用者更新成功", "user": user}
+    return AdminUserUpdateResponse(message="使用者更新成功", user=UserProfile.model_validate(user))
 @router.delete("/users/{user_id}")
 async def delete_user(
     user_id: int,
