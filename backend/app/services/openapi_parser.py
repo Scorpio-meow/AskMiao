@@ -9,14 +9,14 @@ from app.core.error_response import SafeClientError, format_ssrf_rejection, log_
 logger = logging.getLogger(__name__)
 
 
-class NoAliasSafeLoader(yaml.SafeLoader):
+def load_yaml_without_aliases(text: str) -> Any:
     """OpenAPI 規格不需要 YAML 別名：別名在後續清理 schema 與序列化回應時會被逐一展開，
-    幾 KB 的規格就能產生上百 MB 的資料並阻塞事件迴圈，因此一律拒絕"""
-
-    def compose_node(self, parent, index):
-        if self.check_event(yaml.events.AliasEvent):
-            raise yaml.composer.ComposerError(None, None, "規格不可使用 YAML 別名（*alias）", self.peek_event().start_mark)
-        return super().compose_node(parent, index)
+    幾 KB 的規格就能產生上百 MB 的資料並阻塞事件迴圈，因此一律拒絕。
+    先以 SafeLoader 的事件串流檢查（只解析語法，不建立任何物件），沒有別名才以 yaml.safe_load 建立資料"""
+    for event in yaml.parse(text, Loader=yaml.SafeLoader):
+        if isinstance(event, yaml.AliasEvent):
+            raise SafeClientError("規格不可使用 YAML 別名（*alias）")
+    return yaml.safe_load(text)
 
 
 class OpenApiParser:
@@ -91,7 +91,7 @@ class OpenApiParser:
             except Exception:
                 pass
         try:
-            return yaml.load(text, Loader=NoAliasSafeLoader)
+            return load_yaml_without_aliases(text)
         except Exception as e:
             try:
                 return json.loads(text)
