@@ -27,7 +27,7 @@ This file is for AI agents: read "System constraints" before changing code, and 
 
 - [backend/app/core/config.py](backend/app/core/config.py): every environment variable, the required settings, and their validation
 - [backend/app/core/llm_client.py](backend/app/core/llm_client.py): the calling layer, model lists, and routing for five providers (Azure OpenAI, OpenAI, Claude, Gemini, Ollama)
-- [backend/app/core/jwt_auth.py](backend/app/core/jwt_auth.py): RSA JWT (RS256 only), `resolve_token_user` (maps tokens to database accounts; tokens issued before `users.tokens_valid_after` are invalid), Argon2 passwords, revocation checks, `get_current_admin_user`
+- [backend/app/core/jwt_auth.py](backend/app/core/jwt_auth.py): RSA JWT (PyJWT; decoding accepts RS256 only), `resolve_token_user` (maps tokens to database accounts; tokens issued before `users.tokens_valid_after` are invalid), Argon2 passwords, revocation checks, `get_current_admin_user`
 - [backend/app/core/login_throttle.py](backend/app/core/login_throttle.py): login failure throttling, counted per login identifier and per source address, returning `429` with `Retry-After` while paused (in process memory)
 - [backend/app/core/tool_secrets.py](backend/app/core/tool_secrets.py): tool credentials encrypted at rest with `TOOL_SECRETS_KEY` (Fernet), masking in admin API responses, and `merge_masked()` on update
 - [backend/app/core/ssrf_protection.py](backend/app/core/ssrf_protection.py): `validate_url_ssrf`, `SSRFSafeTransport` (per-hop validation with IP pinning), `send_following_redirects` (manual redirect following), `safe_fetch_text`, `DnsPool` (separate DNS thread pools for user-supplied URLs and admin-configured endpoints)
@@ -37,7 +37,7 @@ This file is for AI agents: read "System constraints" before changing code, and 
 - [backend/app/core/security_logging.py](backend/app/core/security_logging.py): two-layer log redaction
 - [backend/app/services/mcp_service.py](backend/app/services/mcp_service.py): MCP stdio / HTTP clients, `build_stdio_env`, `INHERITED_ENV_VARS`, built-in presets, and subprocess tree termination
 - [backend/app/models/database.py](backend/app/models/database.py): the engine and `upgrade_schema()` (adds and backfills columns on existing tables, then encrypts plaintext tool credentials)
-- [backend/app/services/openapi_parser.py](backend/app/services/openapi_parser.py): OpenAPI / Swagger parsing (YAML aliases rejected) and tool name generation
+- [backend/app/services/openapi_parser.py](backend/app/services/openapi_parser.py): OpenAPI / Swagger parsing (YAML aliases rejected, loaded with `yaml.safe_load`) and tool name generation
 - [backend/app/services/document_processor.py](backend/app/services/document_processor.py) and [backend/app/services/pdf_service.py](backend/app/services/pdf_service.py): text extraction, PDF OCR, AI summaries
 - [backend/app/api/](backend/app/api/): routers; `documents`, `api_tools`, `mcp`, and `admin` require an admin
 - [backend/app/api/auth.py](backend/app/api/auth.py): login (failure throttling), registration (`403` when `ALLOW_REGISTRATION=false`), `GET /api/auth/registration` (no login required, returns `{"enabled": bool}`), password change (clears the refresh token cookie), logout (signature check only)

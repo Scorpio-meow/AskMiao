@@ -55,7 +55,7 @@
 1. **停機並備份**：停止後端，備份資料庫（SQLite 直接複製 `.db` 檔，PostgreSQL 以 `pg_dump` 匯出）、`backend/data/`、`backend/keys/` 與 `backend/.env`。新版啟動後會把工具憑證改為加密存放，要回退到 4.0.0 就需要這份資料庫備份。
 2. **更新程式碼與相依套件**：
    - 4.0.0 沒有把 `frontend/bun.lock` 納入版本控制。以 git 更新時，先前 `bun install` 產生的這個檔案會讓 `git pull` 以「untracked working tree files would be overwritten by merge」中止，請先刪除它。
-   - 後端的 `requirements.txt` 改為鎖定版本並附上雜湊，pip 會自動進入雜湊檢查模式，任何套件與鎖定的雜湊不符就停止安裝。`pip install` 不會移除新版不再使用的套件（FlagEmbedding、waitress、docxtpl、XlsxWriter、PyJWT、langchain、langchain-community），建議建立新的虛擬環境再安裝，舊的保留到確定不需回退為止。
+   - 後端的 `requirements.txt` 改為鎖定版本並附上雜湊，pip 會自動進入雜湊檢查模式，任何套件與鎖定的雜湊不符就停止安裝。`pip install` 不會移除新版不再使用的套件（FlagEmbedding、waitress、docxtpl、XlsxWriter、langchain、langchain-community，以及改用 PyJWT 後不再需要的 python-jose、ecdsa、rsa、pyasn1、six），建議建立新的虛擬環境再安裝，舊的保留到確定不需回退為止。
    - 使用 NVIDIA GPU 時，先依 PyTorch 官網在新的虛擬環境安裝與 `requirements.txt` 中 `torch` 同版本的 CUDA 版，再安裝其餘套件；已安裝的同版本 torch 會被視為符合鎖定版本。
    - `frontend/bunfig.toml` 改為 `frozenLockfile = true`：`bun install` 只依 `bun.lock` 安裝，`bun.lock` 與 `package.json` 不一致時直接失敗。
 

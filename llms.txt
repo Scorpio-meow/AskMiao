@@ -27,7 +27,7 @@
 
 - [backend/app/core/config.py](backend/app/core/config.py): 所有環境變數、必填設定與驗證規則
 - [backend/app/core/llm_client.py](backend/app/core/llm_client.py): 五家供應商（Azure OpenAI、OpenAI、Claude、Gemini、Ollama）的呼叫層、模型清單與路由
-- [backend/app/core/jwt_auth.py](backend/app/core/jwt_auth.py): RSA JWT（只有 RS256）、`resolve_token_user`（權杖對應資料庫帳號，簽發時間早於 `users.tokens_valid_after` 的權杖無效）、Argon2 密碼、撤銷名單檢查、`get_current_admin_user`
+- [backend/app/core/jwt_auth.py](backend/app/core/jwt_auth.py): RSA JWT（PyJWT，解碼只接受 RS256）、`resolve_token_user`（權杖對應資料庫帳號，簽發時間早於 `users.tokens_valid_after` 的權杖無效）、Argon2 密碼、撤銷名單檢查、`get_current_admin_user`
 - [backend/app/core/login_throttle.py](backend/app/core/login_throttle.py): 登入失敗節流，依登入識別與來源位址分別計數，暫停期間回傳 `429` 與 `Retry-After`（行程記憶體）
 - [backend/app/core/tool_secrets.py](backend/app/core/tool_secrets.py): 工具憑證以 `TOOL_SECRETS_KEY`（Fernet）加密存放，管理 API 回應的遮蔽與更新時的 `merge_masked()`
 - [backend/app/core/ssrf_protection.py](backend/app/core/ssrf_protection.py): `validate_url_ssrf`、`SSRFSafeTransport`（逐跳驗證並固定連線 IP）、`send_following_redirects`（手動跟隨轉址）、`safe_fetch_text`、`DnsPool`（使用者網址與管理員設定的端點各用一個 DNS 執行緒池）
@@ -37,7 +37,7 @@
 - [backend/app/core/security_logging.py](backend/app/core/security_logging.py): 日誌雙層脫敏
 - [backend/app/services/mcp_service.py](backend/app/services/mcp_service.py): MCP stdio / HTTP 用戶端、`build_stdio_env`、`INHERITED_ENV_VARS`、內建範本與子行程樹終止
 - [backend/app/models/database.py](backend/app/models/database.py): 引擎與 `upgrade_schema()`（替既有資料表補欄位並回填，再加密明文的工具憑證）
-- [backend/app/services/openapi_parser.py](backend/app/services/openapi_parser.py): OpenAPI / Swagger 解析（拒絕 YAML 別名）與工具名稱產生
+- [backend/app/services/openapi_parser.py](backend/app/services/openapi_parser.py): OpenAPI / Swagger 解析（拒絕 YAML 別名，以 `yaml.safe_load` 載入）與工具名稱產生
 - [backend/app/services/document_processor.py](backend/app/services/document_processor.py) 與 [backend/app/services/pdf_service.py](backend/app/services/pdf_service.py): 文字擷取、PDF OCR、AI 摘要
 - [backend/app/api/](backend/app/api/): 路由；`documents`、`api_tools`、`mcp`、`admin` 需要管理員
 - [backend/app/api/auth.py](backend/app/api/auth.py): 登入（失敗節流）、註冊（`ALLOW_REGISTRATION=false` 時回傳 `403`）、`GET /api/auth/registration`（不需登入，回傳 `{"enabled": bool}`）、改密碼（清除重新整理權杖 Cookie）、登出（只驗簽章）

@@ -32,7 +32,7 @@
 > - 使用 `backend/docker-compose.yml` 時必須設定 `POSTGRES_APP_USER`、`POSTGRES_APP_PASSWORD`，`DATABASE_URL` 改用這組非超級使用者帳號；既有資料卷要先以新設定重建容器，再執行一次 `20-app-role.sh`。
 > - stdio MCP 子行程改在每次新建的空暫存目錄執行，`command`、`args` 中相對於後端工作目錄的路徑要改為絕對路徑。
 > - 沒有在 `parameters_schema` 宣告的工具參數一律回傳 `400`；`GET /api/external-tags`、WebSocket `/api/chat/ws/{user_id}` 已移除；`POST /api/api-tools/parse-spec` 的回應不再包含 `raw_spec`。
-> - 新增或升級後端套件改為修改 `requirements.in` 再重新產生 `requirements.txt`；`bun install` 在 `bun.lock` 與 `package.json` 不一致時會失敗。
+> - 新增或升級後端套件改為修改 `requirements.in` 再重新產生 `requirements.txt`；JWT 改用 PyJWT 取代 python-jose，請依新的 `requirements.txt` 重新安裝後端套件；`bun install` 在 `bun.lock` 與 `package.json` 不一致時會失敗。
 > - 變更密碼後，包含目前這一個在內的所有工作階段都需要以新密碼重新登入。
 
 ### 安全性 (Security)
@@ -43,6 +43,8 @@
 - **變更密碼撤銷所有權杖**：`users` 新增 `tokens_valid_after`，變更密碼時更新為當下，簽發時間早於它的存取與重新整理權杖一律無效；權杖的 `iat` 保留微秒，同一秒內稍早簽發的權杖也會失效，被盜的重新整理權杖不能在受害者改密碼後繼續換發。`POST /api/auth/change-password` 與帶新密碼的 `PUT /api/auth/me` 會清除重新整理權杖 Cookie；回退到舊版期間建立、此欄位為空的帳號會在每次啟動時以 `created_at` 補值（CWE-613）。
 - **可以關閉自行註冊**：新增必填設定 `ALLOW_REGISTRATION`，關閉時 `POST /api/auth/register` 回傳 `403` 並寫入安全日誌；帳號（含第一位管理員）改以 `scripts/create_user.py` 建立。原本任何能連到 API 的人都能註冊，查詢整個知識庫並以營運者的憑證呼叫已啟用的工具（CWE-284）。
 - **管理員使用者 API 不再回傳密碼雜湊**：`GET /api/admin/users` 與 `PUT /api/admin/users/{user_id}` 改以 `UserProfile` 篩選欄位，回應不再帶有 `hashed_password`（CWE-200）。
+- **以 PyJWT 取代 python-jose**：python-jose 3.5.0 以前會把不含 PEM 外框的 DER 公鑰當成 HMAC 密鑰，驗證端沒有限制演算法時可用伺服器公鑰偽造 HS256 權杖（CVE-2024-33663 的修正不完整）；它依賴的 ecdsa 在 P-256 上有 Minerva 時序攻擊（CVE-2024-23342）。兩者都沒有修補版本；本專案解碼時固定只接受 RS256、也不使用 ECDSA，無法實際利用，但套件會隨安裝帶入。改用 PyJWT 後，python-jose、ecdsa 與只有它們使用的 rsa、pyasn1、six 都不再安裝；以共用字串、PEM 或 DER 公鑰自行簽出的 HS256 權杖一律被拒絕。PyJWT 另會拒絕簽發時間在未來的權杖（CWE-347、CWE-208）。
+- **撤銷的權杖保留到原本的到期時間**：`revoke_token` 以 `exp - datetime.utcnow().timestamp()` 計算撤銷名單的保留秒數，naive datetime 的 `timestamp()` 會被當成本地時間：伺服器在 UTC 負時區（例如美洲）時算出 0，撤銷只維持 1 秒，登出或換發後撤銷的存取權杖隨即又能使用；在 UTC+8 時則多保留 8 小時。改以 `time.time()` 計算（CWE-613）。
 - **權杖過期也能登出**：`POST /api/auth/logout` 只驗存取權杖的簽章，權杖過期時仍會撤銷重新整理權杖並清除 Cookie；仍要求 `Authorization` 標頭，跨站表單無法觸發登出（CWE-613）。
 - 管理員變更帳號權限、狀態與刪除帳號時寫入安全日誌（`ADMIN_USER_UPDATED`、`ADMIN_USER_DELETED`），記錄操作者與變更內容（CWE-778）。
 - JWT 私鑰建立當下即為 `0600`，不再先以預設權限寫入再修改；新建立的 `backend/keys/` 為 `0700`（CWE-276）。
@@ -63,7 +65,7 @@
 - **MCP 子行程與錯誤**：stdio 子行程在每次新建的空暫存目錄執行，等待執行空位有時限，stderr 持續讀出，單行訊息上限 4 MiB；只保留名稱符合 `[A-Za-z0-9_.-]{1,128}` 的工具；工具失敗只回傳錯誤代碼，啟動失敗的訊息不含指令參數（CWE-400、CWE-209）。
 - 使用者網址（`web_fetch`）與管理員設定的端點各用一個 DNS 執行緒池，慢速網域不會拖垮工具與規格匯入的 SSRF 檢查；SSRF 拒絕清單明確列出 6to4（`2002::/16`）與 NAT64 local-use（`64:ff9b:1::/48`）（CWE-400、CWE-918）。
 - 工具網址中固定的查詢參數值（可能是寫在網址裡的金鑰）不出現在回傳給模型與使用者的網址中；`approval_required` 事件新增 `target`，標出實際送出的位置（CWE-200）。
-- OpenAPI 規格拒絕 YAML 別名，解析結果不再夾帶整份原始規格（CWE-776）。
+- OpenAPI 規格拒絕 YAML 別名：先以事件串流檢查（只解析語法、不建立物件），沒有別名才以 `yaml.safe_load` 載入；解析結果不再夾帶整份原始規格（CWE-776、CWE-502）。
 
 #### 資源上限
 
@@ -109,7 +111,8 @@
 - `GET /api/external-tags` 與 WebSocket `/api/chat/ws/{user_id}`。
 - 入侵偵測中從未被填入的 IP 封鎖名單。
 - 未使用、且缺少金鑰時會悄悄改用隨機金鑰的 `app/core/secret_manager.py`；未使用、且不固定連線 IP 的 `reject_unsafe_request`。
-- 沒有任何程式使用的後端套件：FlagEmbedding、waitress、docxtpl、XlsxWriter、PyJWT、langchain、langchain-community。
+- 沒有任何程式使用的後端套件：FlagEmbedding、waitress、docxtpl、XlsxWriter、langchain、langchain-community。
+- python-jose（改用 PyJWT），以及只有它使用的 ecdsa、rsa、pyasn1、six。
 
 ### 修正 (Fixed)
 

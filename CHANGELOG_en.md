@@ -32,7 +32,7 @@ This release addresses the findings of a second security audit: chat attachment 
 > - With `backend/docker-compose.yml`, `POSTGRES_APP_USER` and `POSTGRES_APP_PASSWORD` are required and `DATABASE_URL` must use that non-superuser account; for an existing data volume, recreate the container with the new settings and then run `20-app-role.sh` once.
 > - stdio MCP subprocesses now run in a fresh empty temporary directory, so paths in `command` and `args` that were relative to the backend's working directory must become absolute.
 > - Tool parameters not declared in `parameters_schema` return `400`; `GET /api/external-tags` and the WebSocket `/api/chat/ws/{user_id}` are removed; the `POST /api/api-tools/parse-spec` response no longer includes `raw_spec`.
-> - To add or upgrade a backend package, edit `requirements.in` and regenerate `requirements.txt`; `bun install` fails when `bun.lock` and `package.json` disagree.
+> - To add or upgrade a backend package, edit `requirements.in` and regenerate `requirements.txt`; JWT handling moved from python-jose to PyJWT, so reinstall the backend packages from the new `requirements.txt`; `bun install` fails when `bun.lock` and `package.json` disagree.
 > - After a password change, every session, including the current one, must sign in again with the new password.
 
 ### Security
@@ -43,6 +43,8 @@ This release addresses the findings of a second security audit: chat attachment 
 - **A password change revokes every token**: `users` gains `tokens_valid_after`, which is set to the current time on a password change; access and refresh tokens issued before it are rejected. Token `iat` values keep microseconds, so tokens issued earlier in the same second are rejected too, and a stolen refresh token cannot keep renewing after the victim changes their password. `POST /api/auth/change-password` and a `PUT /api/auth/me` that sets a new password clear the refresh token cookie; accounts created while an older version was running, which have no value in this column, are backfilled with `created_at` on every start (CWE-613).
 - **Self-registration can be turned off**: with the new required `ALLOW_REGISTRATION` set to false, `POST /api/auth/register` returns `403` and writes a security log entry, and accounts (including the first admin) are created with `scripts/create_user.py`. Previously anyone who could reach the API could register, query the whole knowledge base, and call the enabled tools with the operator's credentials (CWE-284).
 - **The admin user API no longer returns password hashes**: `GET /api/admin/users` and `PUT /api/admin/users/{user_id}` filter fields through `UserProfile`, so responses no longer contain `hashed_password` (CWE-200).
+- **PyJWT replaces python-jose**: python-jose up to 3.5.0 accepts a DER-encoded public key without PEM armor as an HMAC key, so a verifier that does not restrict algorithms accepts HS256 tokens forged with the server's public key (an incomplete fix for CVE-2024-33663); its dependency ecdsa is subject to the Minerva timing attack on P-256 (CVE-2024-23342). Neither has a patched release. This project already accepts only RS256 when decoding and does not use ECDSA, so neither was exploitable, but both packages came with the install. With PyJWT, python-jose, ecdsa, and rsa, pyasn1, and six (used only by them) are no longer installed, and HS256 tokens signed by hand with a shared string or the PEM or DER public key are all rejected. PyJWT also rejects tokens whose issue time is in the future (CWE-347, CWE-208).
+- **Revoked tokens stay revoked until they would have expired**: `revoke_token` computed how long to keep a revoked token as `exp - datetime.utcnow().timestamp()`, and `timestamp()` treats a naive datetime as local time: on a server in a negative UTC offset (for example in the Americas) the result was 0, so the revocation lasted 1 second and a logged-out or rotated access token became usable again; at UTC+8 tokens were kept 8 hours longer than needed. It now uses `time.time()` (CWE-613).
 - **Logout works with an expired access token**: `POST /api/auth/logout` verifies only the access token's signature, so it still revokes the refresh token and clears the cookie after the access token expires; the `Authorization` header is still required, so a cross-site form cannot trigger a logout (CWE-613).
 - Admin changes to an account's role or status and account deletions are written to the security log (`ADMIN_USER_UPDATED`, `ADMIN_USER_DELETED`) with the acting admin and the changes (CWE-778).
 - The JWT private key is created with mode `0600` from the start instead of being written with default permissions and changed afterwards; a newly created `backend/keys/` is `0700` (CWE-276).
@@ -63,7 +65,7 @@ This release addresses the findings of a second security audit: chat attachment 
 - **MCP subprocesses and errors**: stdio subprocesses run in a fresh empty temporary directory, waiting for a free slot has a timeout, stderr is drained continuously, and a single message line is capped at 4 MiB; only tools whose names match `[A-Za-z0-9_.-]{1,128}` are kept; tool failures return only an error ID, and startup failures no longer include the command's arguments (CWE-400, CWE-209).
 - User-supplied URLs (`web_fetch`) and admin-configured endpoints use separate DNS thread pools, so a slow domain cannot stall the SSRF checks for tools and spec imports; the SSRF deny list explicitly covers 6to4 (`2002::/16`) and NAT64 local-use (`64:ff9b:1::/48`) (CWE-400, CWE-918).
 - Fixed query parameter values in a tool URL (which may be keys written into the URL) no longer appear in URLs returned to the model and the user; the `approval_required` event gains `target`, which names where the request is actually sent (CWE-200).
-- OpenAPI specs with YAML aliases are rejected, and the parse result no longer carries the whole raw spec (CWE-776).
+- OpenAPI specs with YAML aliases are rejected: the event stream is checked first (syntax only, no objects are built), and only a spec without aliases is loaded with `yaml.safe_load`; the parse result no longer carries the whole raw spec (CWE-776, CWE-502).
 
 #### Resource limits
 
@@ -109,7 +111,8 @@ This release addresses the findings of a second security audit: chat attachment 
 - `GET /api/external-tags` and the WebSocket `/api/chat/ws/{user_id}`.
 - The intrusion detection IP blocklist, which was never populated.
 - The unused `app/core/secret_manager.py`, which silently fell back to a random key when its key was missing, and the unused `reject_unsafe_request`, which did not pin the connection IP.
-- Backend packages no code used: FlagEmbedding, waitress, docxtpl, XlsxWriter, PyJWT, langchain, and langchain-community.
+- Backend packages no code used: FlagEmbedding, waitress, docxtpl, XlsxWriter, langchain, and langchain-community.
+- python-jose (replaced by PyJWT), and ecdsa, rsa, pyasn1, and six, which only it used.
 
 ### Fixed
 

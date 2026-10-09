@@ -482,7 +482,7 @@ flowchart TB
 7. **呼叫前核准**：自訂 API 工具與 MCP 伺服器各有 `requires_approval` 旗標；Agent 呼叫這類工具前須由發問的使用者核准，見第 7 節「工具呼叫核准」與 [ADR-0006](adr/0006-tool-call-approval.md)。
 8. **管理權限**：工具由所有使用者的 Agent 共用，`stdio` 模式還會在主機上執行指令，因此 `/api/api-tools` 與 `/api/mcp` 的所有端點（含查詢）只開放管理員。一般使用者只能在對話中讓 Agent 使用已啟用的工具。詳見 [ADR-0002](adr/0002-external-tools-and-outbound-safety.md) 與 [ADR-0004](adr/0004-tool-admin-permissions-and-subprocess-isolation.md)。
 9. **憑證加密與遮蔽**：`app/core/tool_secrets.py` 在寫入資料庫前以 `TOOL_SECRETS_KEY`（Fernet）加密自訂 API 工具的 `headers`、`auth_config` 與 MCP 伺服器的 `env_vars`、`headers`，執行工具時才解密。管理 API 的回應以 `••••••••` 取代秘密值：`accept`、`accept-encoding`、`accept-language`、`cache-control`、`content-type`、`user-agent` 以外的標頭，`auth_config` 的 `token`、`key_value`、`password`，以及 MCP 的所有環境變數；`key_name`、`username` 等設定照常顯示。更新時仍為遮蔽字樣的欄位沿用已儲存的值，沒有已儲存的值時回傳 `400`。無法以目前的金鑰解密時（例如更換了 `TOOL_SECRETS_KEY`），回應帶 `credentials_unreadable: true`，由管理員重新輸入。
-10. **規格解析**：`OpenApiParser` 拒絕含 YAML 別名的規格（別名在後續處理時會被逐一展開），`POST /api/api-tools/parse-spec` 的回應不含原始規格；規格網址同樣經 SSRF 驗證。
+10. **規格解析**：`OpenApiParser` 拒絕含 YAML 別名的規格（別名在後續處理時會被逐一展開；先以事件串流檢查，沒有別名才以 `yaml.safe_load` 載入），`POST /api/api-tools/parse-spec` 的回應不含原始規格；規格網址同樣經 SSRF 驗證。
 
 ---
 
