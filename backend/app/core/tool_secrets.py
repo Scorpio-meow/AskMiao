@@ -38,15 +38,15 @@ def encrypt_json(value: Optional[Dict[str, Any]]) -> Optional[str]:
 
 
 def decrypt_json(stored: Optional[str]) -> Optional[Dict[str, Any]]:
-    """解密欄位；未加密或無法以目前的金鑰解密時拋出 ValueError"""
+    """解密欄位；未加密或無法以目前的金鑰解密時拋出 SafeClientError（訊息可直接告知管理員）"""
     if stored is None:
         return None
     if not is_encrypted(stored):
-        raise ValueError("工具憑證欄位未加密：重新啟動後端時會加密既有資料")
+        raise SafeClientError("工具憑證欄位未加密：重新啟動後端時會加密既有資料")
     try:
         plaintext = _fernet.decrypt(stored[len(ENCRYPTED_PREFIX):].encode("ascii"))
     except InvalidToken as e:
-        raise ValueError("無法以目前的 TOOL_SECRETS_KEY 解密工具憑證，請重新輸入") from e
+        raise SafeClientError("無法以目前的 TOOL_SECRETS_KEY 解密工具憑證，請重新輸入") from e
     return json.loads(plaintext)
 
 

@@ -687,7 +687,10 @@ async def test_api_tool(
     tool = db.query(CustomApiTool).filter(CustomApiTool.id == tool_id).first()
     if not tool:
         raise HTTPException(status_code=404, detail="找不到該自訂 API 工具")
-    tool_dict = _serialize_tool_model(tool)
+    try:
+        tool_dict = _serialize_tool_model(tool)
+    except SafeClientError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     result = await execute_http_api_tool(tool_dict, test_data.arguments or {})
     return {
         "status": "success",

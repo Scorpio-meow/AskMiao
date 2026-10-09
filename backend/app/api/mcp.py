@@ -230,7 +230,10 @@ async def discover_server_tools(
     server = db.query(McpServer).filter(McpServer.id == server_id).first()
     if not server:
         raise HTTPException(status_code=404, detail="找不到該 MCP 伺服器")
-    server_dict = _serialize_mcp_server(server)
+    try:
+        server_dict = _serialize_mcp_server(server)
+    except SafeClientError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     try:
         tools, init_info = await McpManager.discover_server_tools(server_dict)
         server.discovered_tools = json.dumps(tools, ensure_ascii=False)
@@ -289,7 +292,10 @@ async def test_mcp_tool(
     server = db.query(McpServer).filter(McpServer.id == server_id).first()
     if not server:
         raise HTTPException(status_code=404, detail="找不到該 MCP 伺服器")
-    server_dict = _serialize_mcp_server(server)
+    try:
+        server_dict = _serialize_mcp_server(server)
+    except SafeClientError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     result = await McpManager.execute_mcp_tool(server_dict, tool_name, test_data.arguments or {})
     return {
         "status": "success",

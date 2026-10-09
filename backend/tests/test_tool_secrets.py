@@ -6,10 +6,12 @@
 3. 更新時送回遮蔽字樣的欄位沿用原值，新值會取代；沒有原值卻送回遮蔽字樣時拒絕
 4. 執行工具時取得解密後的實際值；啟動時把舊版明文資料改為加密
 5. TOOL_SECRETS_KEY 必須是 Fernet 金鑰
+6. 以其他金鑰加密的憑證：回應標示 credentials_unreadable，測試與探索端點回傳 400 說明需重新輸入
 """
 from unittest.mock import AsyncMock, patch
 
 import pytest
+from cryptography.fernet import Fernet
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
@@ -125,6 +127,30 @@ def test_existing_plaintext_credentials_are_encrypted_at_startup(tmp_path):
     assert auth_config is None
     assert decrypt_json(env_vars) == {"TOKEN": "legacy-token"}
     old.dispose()
+
+
+def test_credentials_from_another_key_are_reported_instead_of_failing(client):
+    foreign = "fernet:" + Fernet(Fernet.generate_key()).encrypt(b'{"X-Key": "old-secret"}').decode("ascii")
+    with SessionLocal() as db:
+        tool = CustomApiTool(name=TOOL_NAME, display_name="d", description="d", method="GET",
+                             url="https://api.example.com/x", headers=foreign, requires_approval=False)
+        server = McpServer(name=SERVER_NAME, display_name="d", transport_type="stdio", command="mcp-server",
+                           env_vars=foreign, requires_approval=True)
+        db.add_all([tool, server])
+        db.commit()
+        tool_id, server_id = tool.id, server.id
+
+    shown = client.get(f"/api/api-tools/{tool_id}").json()["tool"]
+    assert shown["credentials_unreadable"] is True and shown["headers"] is None
+    assert client.get("/api/mcp/servers").json()["servers"][0]["credentials_unreadable"] is True
+
+    for response in (
+        client.post(f"/api/api-tools/{tool_id}/test", json={"arguments": {}}),
+        client.post(f"/api/mcp/servers/{server_id}/discover"),
+        client.post(f"/api/mcp/servers/{server_id}/tools/echo/test", json={"arguments": {}}),
+    ):
+        assert response.status_code == 400
+        assert "TOOL_SECRETS_KEY" in response.json()["detail"]
 
 
 @pytest.mark.parametrize("key", ["", "not-a-fernet-key", "a" * 44])
