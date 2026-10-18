@@ -1,0 +1,11 @@
+blank_issues_enabled: true
+contact_links:
+  - name: 安全漏洞通報 / Report a security vulnerability
+    url: https://github.com/Scorpio-meow/AskMiao/security/advisories/new
+    about: 請私下通報，不要開公開的 Issue / Report privately instead of opening a public issue
+  - name: 疑難排解（繁體中文）
+    url: https://github.com/Scorpio-meow/AskMiao/blob/HEAD/README.md#%E7%96%91%E9%9B%A3%E6%8E%92%E8%A7%A3
+    about: 後端啟動失敗、查無相關資料、CORS 錯誤、工具核准與 429 等常見問題
+  - name: Troubleshooting (English)
+    url: https://github.com/Scorpio-meow/AskMiao/blob/HEAD/README_en.md#troubleshooting
+    about: Common problems such as backend startup failures, no relevant results, CORS errors, tool approval, and 429 responses

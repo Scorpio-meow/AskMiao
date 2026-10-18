@@ -783,24 +783,11 @@ MCP 伺服器預設需要核准，自訂 API 工具則依 HTTP 方法決定。�
 
 ## 貢獻指南
 
-歡迎透過 Issue 與 Pull Request 參與改進：
+歡迎透過 Issue 與 Pull Request 參與改進。分支與 Commit 訊息、測試、相依套件、文件雙語與介紹頁同步的規則見 [貢獻指南](.github/CONTRIBUTING.md)，參與前請先閱讀 [行為準則](.github/CODE_OF_CONDUCT.md)。
 
-1. Fork 本專案並建立功能分支。
-2. Commit 訊息遵循 [Conventional Commits](https://www.conventionalcommits.org/zh-hant/v1.0.0/)（例如 `feat(rag): …`、`fix: …`，破壞性變更加上 `!` 並寫明 `BREAKING CHANGE`）。
-3. 提交前確認後端 `python -m pytest` 與前端 `bun run test --run`、`bun run lint`、`bun x tsc --noEmit` 皆通過。
-4. 文件採中英雙語：修改任何文件時，請同步更新對應的 `_en` 版本，並在 `CHANGELOG.md` 的 `[Unreleased]` 記下變更。
-5. 介紹頁的互動示範在瀏覽器端重現後端規則。修改下列檔案的規則時，請同步更新 `site/index.html` 與 `site/main.js`：
-   - `rag/research_session.py`：引用配號、網址來源限制
-   - `rag/retrievers/hybrid.py`：RRF 融合、混合分數、相關性門檻
-   - `rag/tools.py`、`core/config.py`：`WEB_FETCH_ALLOWED_DOMAINS`
-   - `core/ssrf_protection.py`：SSRF 檢查順序與封鎖清單
-   - `services/mcp_service.py`：`INHERITED_ENV_VARS`
-   - `rag/tool_approval.py`、`rag/agent.py`：預設需要核准的 HTTP 方法、核准逾時秒數與 SSE 事件
-   - `core/limits.py`：介紹頁「每個入口都有上限」的數值
-   - `core/login_throttle.py`、`api/auth.py`：登入失敗的門檻、時間視窗、鎖定秒數與 `429` 回應
-   - `core/jwt_auth.py`：以 `tokens_valid_after` 判斷權杖是否失效
-   - `core/tool_secrets.py`：工具憑證的加密格式與管理 API 的遮蔽規則
-6. 開啟 Pull Request，說明變更內容與驗證方式。
+- **回報問題**：錯誤、功能建議、文件問題與無障礙問題各有 [Issue 範本](https://github.com/Scorpio-meow/AskMiao/issues/new/choose)。
+- **安全漏洞**：請依 [安全政策](.github/SECURITY.md) 私下通報，不要開公開的 Issue。
+- **無障礙**：目前的做法、支援環境與已知限制見 [無障礙聲明](.github/ACCESSIBILITY.md)。
 
 ## 授權條款
 

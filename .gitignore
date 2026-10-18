@@ -1,0 +1,18 @@
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+node_modules/
+/frontend/build/
+.env
+/backend/keys/
+/backend/logs/
+/backend/data/
+/backend/mcp_filesystem_sandbox/
+*.db
+.vscode/
+.claude/
+.codegraph/
+modelcontextprotocol
+OpenAPI Specification
+~

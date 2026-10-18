@@ -1,0 +1,81 @@
+name: 錯誤回報 / Bug report
+description: 回報錯誤或非預期的行為 / Report a bug or unexpected behavior
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        感謝回報！送出前請先確認：
+
+        - 已搜尋 [既有的 Issue](https://github.com/Scorpio-meow/AskMiao/issues)，沒有重複。
+        - 已看過 README 的 [疑難排解](https://github.com/Scorpio-meow/AskMiao/blob/HEAD/README.md#疑難排解)；升級後才出現的問題，先對照 [升級指南](https://github.com/Scorpio-meow/AskMiao/blob/HEAD/docs/upgrading.md)。
+        - **安全漏洞請不要在這裡回報**，請依 [安全政策](https://github.com/Scorpio-meow/AskMiao/blob/HEAD/.github/SECURITY.md) 私下通報。
+        - 已遮蔽密碼、權杖、API 金鑰與個人資料。
+
+        Thanks for reporting! Before you submit, please search the [existing issues](https://github.com/Scorpio-meow/AskMiao/issues), check [Troubleshooting](https://github.com/Scorpio-meow/AskMiao/blob/HEAD/README_en.md#troubleshooting) and the [Upgrade Guide](https://github.com/Scorpio-meow/AskMiao/blob/HEAD/docs/upgrading_en.md), and redact passwords, tokens, API keys, and personal data. **Do not report security vulnerabilities here**; follow the [Security Policy](https://github.com/Scorpio-meow/AskMiao/blob/HEAD/.github/SECURITY_en.md) instead.
+  - type: input
+    id: version
+    attributes:
+      label: 版本 / Version
+      description: "`backend/app/__init__.py` 的 `__version__`，或 commit hash / `__version__` in `backend/app/__init__.py`, or the commit hash"
+      placeholder: "5.0.0"
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: 影響範圍 / Area
+      multiple: true
+      options:
+        - 檢索與研究 Agent / Retrieval and research agent
+        - 文件上傳與處理 / Document upload and processing
+        - 外部工具與 MCP / External tools and MCP
+        - 登入、帳號與權限 / Sign-in, accounts, and permissions
+        - 前端介面 / Web UI
+        - 介紹頁 / Intro site
+        - 安裝、設定與部署 / Installation, configuration, and deployment
+        - 其他 / Other
+    validations:
+      required: true
+  - type: textarea
+    id: description
+    attributes:
+      label: 問題描述 / What happened
+      description: 發生了什麼事？預期應該如何？ / What happened, and what did you expect instead?
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: 重現步驟 / Steps to reproduce
+      placeholder: |
+        1.
+        2.
+        3.
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: 環境 / Environment
+      description: 作業系統、Python 與 Bun 版本、資料庫、LLM 供應商與模型、瀏覽器 / Operating system, Python and Bun versions, database, LLM provider and model, browser
+      placeholder: |
+        - OS:
+        - Python:
+        - Bun:
+        - 資料庫 / Database: SQLite / PostgreSQL
+        - LLM 供應商與模型 / LLM provider and model:
+        - 瀏覽器 / Browser:
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: 錯誤代碼與日誌 / Error code and logs
+      description: 後端對外只回傳錯誤代碼，完整堆疊寫在伺服器日誌；請附上錯誤代碼與日誌中對應的片段，並先遮蔽敏感資訊 / The backend only returns an error code; the full stack trace is in the server log. Paste the error code and the matching log lines, with sensitive values redacted.
+      render: text
+  - type: textarea
+    id: context
+    attributes:
+      label: 其他資訊 / Additional context
+      description: 截圖、相關的 `.env` 設定（不含金鑰與密碼）等 / Screenshots, relevant `.env` settings (without secrets), and so on

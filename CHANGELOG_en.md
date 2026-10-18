@@ -23,6 +23,15 @@ All notable changes to AskMiao are documented in this file. The format is based 
 
 ## [Unreleased]
 
+### Added
+
+- Community files: [Contributing](.github/CONTRIBUTING_en.md), [Code of Conduct](.github/CODE_OF_CONDUCT_en.md), [Security Policy](.github/SECURITY_en.md), and [Accessibility Statement](.github/ACCESSIBILITY_en.md), each with a Traditional Chinese version. Security vulnerabilities are now reported through GitHub private vulnerability reporting, and only the latest major version receives security fixes.
+- Issue forms in `.github/ISSUE_TEMPLATE/` for bug reports, feature requests, documentation issues, and accessibility barriers, plus links to private security reporting and troubleshooting; a pull request template in `.github/pull_request_template.md` that lists the verification steps and the checks for documentation, the changelog, and intro site sync.
+
+### Changed
+
+- The README's Contributing section is now a summary; the full rules, including the intro site sync list, moved to `.github/CONTRIBUTING_en.md`.
+
 ---
 
 ## [5.0.0] - 2026-10-10

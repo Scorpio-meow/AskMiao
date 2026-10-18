@@ -1,0 +1,50 @@
+name: 無障礙問題 / Accessibility issue
+description: 回報使用鍵盤、讀螢幕軟體或其他輔助科技時遇到的障礙 / Report a barrier you hit with a keyboard, screen reader, or other assistive technology
+labels: ["accessibility"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        感謝回報！目前的做法、支援環境與已知限制見 [無障礙聲明](https://github.com/Scorpio-meow/AskMiao/blob/HEAD/.github/ACCESSIBILITY.md)。不方便使用這份表單時，也可以依聲明中的方式寄信回報。
+
+        Thanks for reporting! See the [Accessibility Statement](https://github.com/Scorpio-meow/AskMiao/blob/HEAD/.github/ACCESSIBILITY_en.md) for what is in place, supported environments, and known limitations. If this form is hard to use, you can also report by email as described there.
+  - type: input
+    id: location
+    attributes:
+      label: 頁面或功能 / Page or feature
+      placeholder: "聊天頁的引用來源 / Citations on the chat page"
+    validations:
+      required: true
+  - type: textarea
+    id: description
+    attributes:
+      label: 遇到的障礙 / Barrier
+      description: 你想完成什麼操作？實際發生了什麼？ / What were you trying to do, and what actually happened?
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: 重現步驟 / Steps to reproduce
+      placeholder: |
+        1.
+        2.
+        3.
+  - type: input
+    id: assistive-technology
+    attributes:
+      label: 輔助科技與版本 / Assistive technology and version
+      description: 例如讀螢幕軟體、放大鏡、語音控制，或只用鍵盤 / For example a screen reader, magnifier, voice control, or keyboard only
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: 瀏覽器與作業系統 / Browser and operating system
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: AskMiao 版本 / AskMiao version
+      placeholder: "5.0.0"

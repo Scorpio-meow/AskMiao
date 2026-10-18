@@ -1,0 +1,54 @@
+name: 功能建議 / Feature request
+description: 建議新功能或改進 / Suggest a new feature or an improvement
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        感謝提出建議！請先搜尋 [既有的 Issue](https://github.com/Scorpio-meow/AskMiao/issues)，避免重複。改變 API、資料表或索引格式的大變更，歡迎先在這裡討論方向再動手，見 [貢獻指南](https://github.com/Scorpio-meow/AskMiao/blob/HEAD/.github/CONTRIBUTING.md)。
+
+        Thanks for the suggestion! Please search the [existing issues](https://github.com/Scorpio-meow/AskMiao/issues) first. For large changes to the API, database tables, or index format, discuss the direction here before you start; see [Contributing](https://github.com/Scorpio-meow/AskMiao/blob/HEAD/.github/CONTRIBUTING_en.md).
+  - type: textarea
+    id: problem
+    attributes:
+      label: 想解決的問題 / Problem
+      description: 遇到了什麼困難或限制？誰會受影響？ / What difficulty or limitation do you run into, and who is affected?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: 建議的做法 / Proposed solution
+      description: 希望 AskMiao 怎麼做？ / What would you like AskMiao to do?
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: 考慮過的其他做法 / Alternatives considered
+      description: 其他做法或目前的變通方式 / Other approaches, or how you work around the problem today
+  - type: dropdown
+    id: area
+    attributes:
+      label: 影響範圍 / Area
+      multiple: true
+      options:
+        - 檢索與研究 Agent / Retrieval and research agent
+        - 文件上傳與處理 / Document upload and processing
+        - 外部工具與 MCP / External tools and MCP
+        - 登入、帳號與權限 / Sign-in, accounts, and permissions
+        - 前端介面 / Web UI
+        - 介紹頁 / Intro site
+        - 安裝、設定與部署 / Installation, configuration, and deployment
+        - 其他 / Other
+  - type: checkboxes
+    id: contribution
+    attributes:
+      label: 參與意願 / Contribution
+      options:
+        - label: 我願意提交實作這項建議的 Pull Request / I am willing to submit a pull request for this
+  - type: textarea
+    id: context
+    attributes:
+      label: 其他資訊 / Additional context
+      description: 畫面草稿、參考資料等 / Mockups, references, and so on

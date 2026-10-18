@@ -783,24 +783,11 @@ Once one login identifier (user name or email, case-insensitive) fails `LOGIN_MA
 
 ## Contributing
 
-Issues and pull requests are welcome:
+Issues and pull requests are welcome. See [Contributing](.github/CONTRIBUTING_en.md) for the rules on branches and commit messages, tests, dependencies, bilingual documentation, and keeping the intro site in sync, and read the [Code of Conduct](.github/CODE_OF_CONDUCT_en.md) before taking part.
 
-1. Fork the repository and create a feature branch.
-2. Write commit messages following [Conventional Commits](https://www.conventionalcommits.org/en/v1.0.0/) (for example `feat(rag): …` or `fix: …`; mark breaking changes with `!` and a `BREAKING CHANGE` footer).
-3. Make sure the backend `python -m pytest` and the frontend `bun run test --run`, `bun run lint`, and `bun x tsc --noEmit` all pass.
-4. Documentation is bilingual: whenever you change a document, update its `_en` counterpart and record the change under `[Unreleased]` in `CHANGELOG.md`.
-5. The intro site's interactive demos reproduce backend rules in the browser. When you change the rules in these files, update `site/index.html` and `site/main.js` as well:
-   - `rag/research_session.py`: citation numbering and URL provenance
-   - `rag/retrievers/hybrid.py`: RRF fusion, mixed score, relevance threshold
-   - `rag/tools.py`, `core/config.py`: `WEB_FETCH_ALLOWED_DOMAINS`
-   - `core/ssrf_protection.py`: SSRF check order and block lists
-   - `services/mcp_service.py`: `INHERITED_ENV_VARS`
-   - `rag/tool_approval.py`, `rag/agent.py`: HTTP methods that need no approval by default, the approval timeout, and the SSE events
-   - `core/limits.py`: the numbers in the site's resource-limit table
-   - `core/login_throttle.py`, `api/auth.py`: login-failure thresholds, time window, lockout seconds, and the `429` response
-   - `core/jwt_auth.py`: how `tokens_valid_after` decides whether a token is revoked
-   - `core/tool_secrets.py`: the encrypted format of tool credentials and how the admin API masks them
-6. Open a pull request describing the change and how you verified it.
+- **Reporting problems**: bugs, feature requests, documentation issues, and accessibility barriers each have an [issue template](https://github.com/Scorpio-meow/AskMiao/issues/new/choose).
+- **Security vulnerabilities**: report them privately as described in the [Security Policy](.github/SECURITY_en.md), not in a public issue.
+- **Accessibility**: see the [Accessibility Statement](.github/ACCESSIBILITY_en.md) for what is in place, supported environments, and known limitations.
 
 ## License
 

@@ -1,0 +1,37 @@
+name: 文件問題 / Documentation issue
+description: 回報文件錯誤、過時、說明不清或中英版本不一致 / Report documentation that is wrong, outdated, unclear, or mismatched between Chinese and English
+labels: ["documentation"]
+body:
+  - type: input
+    id: location
+    attributes:
+      label: 文件位置 / Location
+      description: 檔案路徑或網址，可附上章節 / File path or URL, optionally with the section
+      placeholder: "docs/configuration.md#資源上限"
+    validations:
+      required: true
+  - type: dropdown
+    id: kind
+    attributes:
+      label: 問題類型 / Kind of problem
+      multiple: true
+      options:
+        - 內容錯誤或與程式不符 / Wrong, or does not match the code
+        - 內容過時 / Outdated
+        - 說明不清楚 / Unclear
+        - 缺少內容 / Missing information
+        - 中英版本不一致 / Chinese and English versions differ
+        - 連結失效 / Broken link
+    validations:
+      required: true
+  - type: textarea
+    id: description
+    attributes:
+      label: 問題描述 / Description
+      description: 哪裡有問題？如果與程式不符，實際的行為是什麼？ / What is wrong? If it does not match the code, what is the actual behavior?
+    validations:
+      required: true
+  - type: textarea
+    id: suggestion
+    attributes:
+      label: 建議的修改 / Suggested change

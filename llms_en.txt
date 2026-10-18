@@ -77,7 +77,7 @@ This file is for AI agents: read "System constraints" before changing code, and 
 10. **Sources list cited entries only**: `sources_detail` comes from `ResearchSession.cited_sources()`, driven by the `[n]` markers in the answer.
 11. **SSE event contract**: `start` → `step_start` / (`approval_required` / `approval_resolved` when approval is needed) / `step_end` → `token` → `sources` → `done`, with `error` on exceptions. The backend `app/api/chat.py` and the frontend `useChat.ts` and `sse.ts` follow it, so change event names or fields in all three places.
 12. **Keep the intro site in sync**: when changing `rag/research_session.py`, `rag/retrievers/hybrid.py`, `WEB_FETCH_ALLOWED_DOMAINS` in `rag/tools.py` and `core/config.py`, `core/ssrf_protection.py`, `INHERITED_ENV_VARS` in `services/mcp_service.py`, `core/login_throttle.py`, the `tokens_valid_after` check in `core/jwt_auth.py`, or the masking rules in `core/tool_secrets.py`, update `site/index.html` and `site/main.js` too.
-13. **Bilingual documentation**: README, CHANGELOG, `docs/`, and the ADRs all have `_en` versions; update both and record changes under `[Unreleased]` in `CHANGELOG.md`.
+13. **Bilingual documentation**: README, CHANGELOG, `docs/`, the ADRs, and the community files in `.github/` (`CONTRIBUTING`, `CODE_OF_CONDUCT`, `SECURITY`, `ACCESSIBILITY`) all have `_en` versions; update both and record changes under `[Unreleased]` in `CHANGELOG.md`.
 14. **Bump versions together**: `__version__` in `backend/app/__init__.py`, `version` in `frontend/package.json`, and `CHANGELOG.md`; new required settings or changes to API permissions or the index format are breaking and bump the major version.
 15. **Taiwan Mandarin wording**: user-visible text uses Taiwan Traditional Chinese terms, such as 使用者名稱, 電子郵件, 權杖, and 字元.
 16. **Tools with side effects need approval first**: a new kind of tool that calls out must offer a `requires_approval` flag reported by `ResearchToolRegistry.approval_requirement()`, and must not run without an approver (`approval_user_id` is `None`). When a table gains a column, add the column and its backfill SQL to `COLUMN_UPGRADES` in `database.py`.
@@ -102,3 +102,5 @@ This file is for AI agents: read "System constraints" before changing code, and 
 - [Upgrade guide](docs/upgrading_en.md): upgrading from 2.x to 3.0.0, from 3.0.0 to 4.0.0, and from 4.0.0 to 5.0.0, and rolling back
 - [Architecture decision records](docs/adr/README_en.md): ADR-0001 to ADR-0006
 - [Changelog](CHANGELOG_en.md): changes in each release
+- [Contributing](.github/CONTRIBUTING_en.md): branches and commit messages, tests, dependencies, bilingual documentation, and intro site sync
+- [Security policy](.github/SECURITY_en.md): supported versions, private vulnerability reporting, and scope
