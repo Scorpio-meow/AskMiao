@@ -25,7 +25,7 @@
 
 ### 新增 (Added)
 
-- 社群檔案：[貢獻指南](.github/CONTRIBUTING.md)、[行為準則](.github/CODE_OF_CONDUCT.md)、[安全政策](.github/SECURITY.md) 與 [無障礙聲明](.github/ACCESSIBILITY.md)，皆附 `_en` 英文版。安全漏洞改以 GitHub 私人漏洞通報回報，只有最新主版本收到安全修正。
+- 社群檔案：[貢獻指南](.github/CONTRIBUTING.md)、[行為準則](.github/CODE_OF_CONDUCT.md)、[安全政策](.github/SECURITY.md) 與 [無障礙聲明](.github/ACCESSIBILITY.md)，皆附 `_en` 英文版。安全漏洞以 GitHub 私下回報或 Email 回報，14 天內首次回覆、最晚在回報後 90 天公開，只有最新主版本收到安全修正。
 - `.github/ISSUE_TEMPLATE/` 新增錯誤回報、功能建議、文件問題與無障礙問題的 Issue 表單，以及安全通報與疑難排解的連結；`.github/pull_request_template.md` 新增 Pull Request 範本，列出驗證方式與文件、CHANGELOG、介紹頁同步的檢查項目。
 
 ### 變更 (Changed)
