@@ -1,5 +1,6 @@
 import asyncio
 import contextlib
+import threading
 import time
 
 import pytest
@@ -311,3 +312,31 @@ async def test_search_knowledge_base_does_not_block_event_loop():
         await ticker_task
 
     assert ticks >= 10
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("arguments", [
+    {"query": "特休", "top_k": None},
+    {"query": "特休", "top_k": "3 筆"},
+    '["特休"]',
+])
+async def test_malformed_tool_arguments_do_not_abort_the_answer(monkeypatch, arguments):
+    agent, _ = make_agent(monkeypatch)
+    ScriptedLLM([tool_call("search_knowledge_base", arguments), answer("依年資計算")]).install(monkeypatch)
+
+    events = await collect(agent.stream_research("特休怎麼算", max_turns=3))
+
+    assert events[-1]["event"] == "done"
+    assert events[-1]["data"]["answer"] == "依年資計算"
+
+
+@pytest.mark.asyncio
+async def test_tool_definitions_are_loaded_off_the_event_loop(monkeypatch):
+    agent, registry = make_agent(monkeypatch)
+    loaded_in = []
+    monkeypatch.setattr(registry, "get_tool_definitions", lambda: loaded_in.append(threading.get_ident()) or [])
+    ScriptedLLM([answer("你好")]).install(monkeypatch)
+
+    await collect(agent.stream_research("你好", max_turns=1))
+
+    assert loaded_in and loaded_in[0] != threading.get_ident()

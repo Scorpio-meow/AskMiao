@@ -443,23 +443,8 @@ class DocumentProcessor:
         return cls._generate_fallback_summary(filename, content, file_type, extraction)
     @classmethod
     def generate_document_summary(cls, filename: str, content: str, file_type: str = "") -> str:
-        """
-        同步調用封裝（若無事件迴圈則執行 LLM 生成，否則安全使用啟發式解析避免阻塞）
-        """
-        if not content or not content.strip():
-            return f"收錄內部文件《{filename}》。"
-        try:
-            import asyncio
-            try:
-                loop = asyncio.get_running_loop()
-            except RuntimeError:
-                loop = None
-            if loop and loop.is_running():
-                return cls._generate_fallback_summary(filename, content, file_type)
-            else:
-                return asyncio.run(cls.generate_document_summary_async(filename, content, file_type))
-        except Exception:
-            return cls._generate_fallback_summary(filename, content, file_type)
+        """同步版只用規則摘要：呼叫端持有知識庫描述的快取鎖，等模型回應會讓等這把鎖的聊天請求一起卡住"""
+        return cls._generate_fallback_summary(filename, content, file_type)
     @classmethod
     def _generate_fallback_summary(
         cls, filename: str, content: str, file_type: str = "", extraction: Optional[ExtractionResult] = None

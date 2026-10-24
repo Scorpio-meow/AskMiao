@@ -93,7 +93,8 @@ class ResearchAgent:
         只有工具輪數（max_turns）用完或模型回了空內容時，才以串流再生成一次答案。
         approval_user_id：可以在對話內核准有副作用工具的使用者；None 時這類工具一律不執行"""
         start_time = time.time()
-        tools_def = self.tools.get_tool_definitions()
+        # 會讀資料庫並等待知識庫描述的快取鎖，移到執行緒以免阻塞事件迴圈
+        tools_def = await asyncio.to_thread(self.tools.get_tool_definitions)
 
         messages: List[Dict[str, Any]] = [
             {"role": "system", "content": SYSTEM_PROMPT}
@@ -201,6 +202,8 @@ class ResearchAgent:
                         args = {"query": raw_args}
                 else:
                     args = raw_args or {}
+                if not isinstance(args, dict):
+                    args = {}
 
                 step_num = len(research_trace) + 1
                 logger.info(f"🔍 [Agent Step {step_num}] 調用工具: {fn_name} 參數: {args}")
@@ -240,7 +243,12 @@ class ResearchAgent:
                             if not approved:
                                 tool_output = {"error": "使用者未核准執行此工具，請改以已取得的資料回答，不要再次呼叫同一工具"}
                 if tool_output is None:
-                    tool_output = await self.tools.execute_tool(fn_name, args)
+                    try:
+                        tool_output = await self.tools.execute_tool(fn_name, args)
+                    except Exception as e:
+                        # 模型給的參數型別不對（例如 top_k 為 null）時讓模型改正，不中斷整個回答
+                        error_id = log_and_get_error_id(logger, f"工具 {fn_name} 執行失敗", e)
+                        tool_output = {"error": f"工具執行失敗，請檢查參數格式後再試（錯誤代碼：{error_id}）"}
                     session.record_tool_output(fn_name, tool_output)
                 tool_duration = round(time.time() - tool_start, 2)
 
