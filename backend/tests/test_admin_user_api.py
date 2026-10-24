@@ -3,19 +3,20 @@
 驗證：
 1. 使用者清單與更新回應只含 UserProfile 欄位，不帶 hashed_password
 2. 變更權限、帳號狀態與刪除使用者時寫入安全日誌，記錄操作的管理員
+3. 刪除上傳過文件或建立過工具的帳號時，外鍵改為 NULL，文件與工具保留
 """
 from datetime import datetime
 
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, event
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app.api import admin as admin_api
 from app.core.jwt_auth import get_current_admin_user
-from app.models import User
+from app.models import CustomApiTool, Document, McpServer, User
 from app.models.database import Base, get_db
 
 
@@ -83,3 +84,41 @@ def test_admin_changes_are_audited(client, monkeypatch):
     event, kwargs = events[-1]
     assert event == "ADMIN_USER_DELETED"
     assert kwargs["details"] == {"target_user_id": user_id, "username": "member", "was_admin": True}
+
+
+def test_deleting_a_user_keeps_their_documents_and_tools():
+    engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    # SQLite 預設不檢查外鍵；打開後與 PostgreSQL 一樣會拒絕指向已刪除帳號的值
+    event.listen(engine, "connect", lambda connection, _: connection.execute("PRAGMA foreign_keys=ON"))
+    Base.metadata.create_all(engine)
+    Session = sessionmaker(bind=engine)
+    now = datetime.utcnow()
+    with Session() as session:
+        admin = User(username="former", email="former@example.com", hashed_password="x", is_admin=True,
+                     created_at=now, tokens_valid_after=now)
+        session.add(admin)
+        session.flush()
+        session.add_all([
+            Document(filename="policy.txt", content="內容", file_type="text/plain", uploaded_by=admin.id),
+            CustomApiTool(name="weather", display_name="天氣", description="d", url="https://api.example.com",
+                          requires_approval=False, created_by=admin.id),
+            McpServer(name="clock", display_name="時鐘", requires_approval=True, created_by=admin.id),
+        ])
+        session.commit()
+        admin_id = admin.id
+
+    def override_db():
+        with Session() as session:
+            yield session
+
+    app = FastAPI()
+    app.include_router(admin_api.router, prefix="/api/admin")
+    app.dependency_overrides[get_db] = override_db
+    app.dependency_overrides[get_current_admin_user] = lambda: {"user_id": 99, "username": "root", "is_admin": True}
+
+    assert TestClient(app).delete(f"/api/admin/users/{admin_id}").status_code == 200
+    with Session() as session:
+        assert session.query(Document).one().uploaded_by is None
+        assert session.query(CustomApiTool).one().created_by is None
+        assert session.query(McpServer).one().created_by is None
+    engine.dispose()

@@ -119,6 +119,8 @@ def test_admin_can_create_and_delete_mcp_server(monkeypatch, clean_test_servers)
     assert created.status_code == 200
     server = created.json()["server"]
     assert server["status"] == "connected"
+    with SessionLocal() as session:
+        assert session.get(McpServer, server["id"]).created_by == ADMIN_USER["user_id"]
     assert client.get("/api/mcp/servers").status_code == 200
     assert client.get("/api/api-tools").status_code == 200
     assert client.delete(f"/api/mcp/servers/{server['id']}").status_code == 200

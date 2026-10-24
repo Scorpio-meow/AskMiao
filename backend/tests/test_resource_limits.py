@@ -11,6 +11,7 @@
 import asyncio
 import base64
 import io
+import json
 import threading
 import time
 import zipfile
@@ -183,6 +184,37 @@ def test_attachment_storage_quota(monkeypatch, db):
         service.ensure_attachment_quota(db, 1, 101)
     # 其他使用者不受影響
     service.ensure_attachment_quota(db, 2, 1000)
+
+
+@pytest.mark.anyio
+async def test_concurrent_attachment_messages_cannot_exceed_the_quota(monkeypatch, tmp_path):
+    engine = create_engine(f"sqlite:///{tmp_path / 'quota.db'}", connect_args={"check_same_thread": False})
+    Base.metadata.create_all(engine)
+    Session = sessionmaker(bind=engine)
+    attachment = FileAttachment(filename="a.txt", file_type="text/plain", data_url="data:text/plain;base64,QUFBQQ==")
+    one_message = len(json.dumps({"attachments": [attachment.dict()]}, ensure_ascii=False))
+    monkeypatch.setattr(chat_service_module, "MAX_USER_ATTACHMENT_STORAGE_BYTES", one_message * 3 // 2)
+    real_check = chat_api.chat_service.ensure_attachment_quota
+
+    def slow_check(db, user_id, new_bytes):
+        real_check(db, user_id, new_bytes)
+        time.sleep(0.05)
+
+    monkeypatch.setattr(chat_api.chat_service, "ensure_attachment_quota", slow_check)
+
+    async def send():
+        try:
+            await chat_api.send_message(MessageCreate(content="看附件", attachments=[attachment]), db=Session(), user_id=1)
+            return 200
+        except HTTPException as exc:
+            return exc.status_code
+
+    statuses = await asyncio.gather(*(send() for _ in range(5)))
+
+    assert sorted(statuses) == [200, 413, 413, 413, 413]
+    with Session() as session:
+        assert session.query(Message).filter(Message.context_used.isnot(None)).count() == 1
+    engine.dispose()
 
 
 # ---------- 4. 對話清單 ----------

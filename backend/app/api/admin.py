@@ -3,7 +3,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import func
 from app.models.database import get_db
-from app.models import User, Conversation, Message, Document
+from app.models import User, Conversation, Message, Document, CustomApiTool, McpServer
 from app.core.rag_manager import get_rag_system
 from app.core.jwt_auth import get_current_admin_user
 from app.core.cache import cache_response, invalidate_cache
@@ -231,6 +231,9 @@ async def delete_user(
 
         db.delete(conv)
     
+    # 文件與工具留給其他管理員使用，只清掉指向這個帳號的欄位；PostgreSQL 的外鍵不允許指向已刪除的帳號
+    for column in (Document.uploaded_by, CustomApiTool.created_by, McpServer.created_by):
+        db.query(column.class_).filter(column == user_id).update({column: None}, synchronize_session=False)
     deleted = {"target_user_id": user_id, "username": user.username, "was_admin": bool(user.is_admin)}
     db.delete(user)
     db.commit()

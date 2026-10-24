@@ -117,7 +117,7 @@ async def create_server(
         requires_approval=server_data.requires_approval if server_data.requires_approval is not None else True,
         timeout=server_data.timeout or 30,
         status="disconnected",
-        created_by=current_user.get("id") if isinstance(current_user, dict) else getattr(current_user, "id", None)
+        created_by=current_user["user_id"]
     )
     db.add(new_server)
     db.commit()

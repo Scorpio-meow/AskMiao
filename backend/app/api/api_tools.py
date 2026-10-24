@@ -488,7 +488,7 @@ async def import_openapi_tools(
                 spec_version=item.spec_version,
                 is_enabled=True,
                 requires_approval=default_requires_approval(item.method),
-                created_by=current_user.get("id") if isinstance(current_user, dict) else getattr(current_user, "id", None)
+                created_by=current_user["user_id"]
             )
             db.add(new_tool)
             imported_count += 1
@@ -562,7 +562,7 @@ async def create_api_tool(
         ),
         timeout=tool_data.timeout or 15,
         spec_version=tool_data.spec_version or "manual",
-        created_by=current_user.get("id") if isinstance(current_user, dict) else getattr(current_user, "id", None)
+        created_by=current_user["user_id"]
     )
     db.add(new_tool)
     db.commit()

@@ -155,7 +155,7 @@ async def _openai_chat(
         url,
         json=_openai_payload(provider, messages, model, tools, reasoning_effort, stream=False),
         headers=headers,
-        timeout=httpx.Timeout(timeout)
+        timeout=httpx.Timeout(timeout, pool=LLM_POOL_ACQUIRE_TIMEOUT_SECONDS)
     )
     if response.status_code != 200:
         raise RuntimeError(f"{provider} API 錯誤 ({response.status_code}): {response.text[:500]}")
@@ -172,7 +172,8 @@ async def _openai_stream(
     url, headers = _openai_endpoint(provider)
     client = await get_llm_http_client()
     payload = _openai_payload(provider, messages, model, None, reasoning_effort, stream=True)
-    async with client.stream("POST", url, json=payload, headers=headers, timeout=httpx.Timeout(settings.LLM_TIMEOUT)) as response:
+    # 不另給 timeout：沿用連線池的設定，排隊等連線超過 LLM_POOL_ACQUIRE_TIMEOUT_SECONDS 即失敗
+    async with client.stream("POST", url, json=payload, headers=headers) as response:
         if response.status_code != 200:
             body = await response.aread()
             raise RuntimeError(f"{provider} 串流錯誤 ({response.status_code}): {body.decode('utf-8', 'replace')[:500]}")
@@ -260,7 +261,7 @@ async def _ollama_chat(
         f"{settings.LLM_API_BASE.rstrip('/')}/api/chat",
         json=_ollama_payload(messages, model, tools, stream=False),
         headers=OLLAMA_HEADERS,
-        timeout=httpx.Timeout(timeout)
+        timeout=httpx.Timeout(timeout, pool=LLM_POOL_ACQUIRE_TIMEOUT_SECONDS)
     )
     if response.status_code != 200:
         raise RuntimeError(f"Ollama API 錯誤 ({response.status_code}): {response.text[:500]}")
@@ -273,7 +274,6 @@ async def _ollama_stream(messages: List[Dict[str, Any]], model: str) -> AsyncIte
         f"{settings.LLM_API_BASE.rstrip('/')}/api/chat",
         json=payload,
         headers=OLLAMA_HEADERS,
-        timeout=httpx.Timeout(settings.LLM_TIMEOUT)
     ) as response:
         if response.status_code != 200:
             body = await response.aread()

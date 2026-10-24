@@ -2,6 +2,7 @@ import json
 import re
 from types import SimpleNamespace
 
+import httpx
 import pytest
 
 from app.core import llm_client
@@ -283,3 +284,28 @@ def test_openai_compatible_payload_strips_private_fields():
     assert payload["messages"] == [{"role": "assistant", "content": "hi"}]
     assert "reasoning_effort" not in payload
     assert "tools" not in payload
+
+
+@pytest.mark.asyncio
+async def test_llm_requests_keep_the_pool_acquire_timeout(monkeypatch):
+    pool_timeouts = []
+
+    def handler(request):
+        pool_timeouts.append(request.extensions["timeout"]["pool"])
+        if json.loads(request.content)["stream"]:
+            return httpx.Response(200, text='{"message": {"content": "好"}}\n')
+        return httpx.Response(200, json={"message": {"content": "好"}})
+
+    client = httpx.AsyncClient(
+        transport=httpx.MockTransport(handler),
+        timeout=httpx.Timeout(settings.LLM_TIMEOUT, pool=llm_client.LLM_POOL_ACQUIRE_TIMEOUT_SECONDS),
+    )
+    monkeypatch.setattr(llm_client, "_http_client", client)
+    messages = [{"role": "user", "content": "你好"}]
+
+    await llm_client.chat_completion(messages, model_name="local-model", timeout=18.0)
+    assert [chunk async for chunk in llm_client.stream_completion(messages, model_name="local-model")] == ["好"]
+
+    # 每次請求自帶的逾時不能把等待連線池名額的上限一起拉長到整個請求的逾時
+    assert pool_timeouts == [llm_client.LLM_POOL_ACQUIRE_TIMEOUT_SECONDS] * 2
+    await client.aclose()

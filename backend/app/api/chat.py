@@ -9,6 +9,7 @@ from app.core.user_context import get_current_user_id, get_default_user_id
 from app.core.error_response import build_error_payload
 from typing import Dict, List, Optional
 import asyncio
+import contextlib
 import logging
 logger = logging.getLogger(__name__)
 import json
@@ -21,6 +22,8 @@ router = APIRouter()
 chat_service = ChatService()
 # 每位使用者進行中的聊天串流數；行程內只有一個事件迴圈，不需要鎖
 _active_streams: Dict[int, int] = {}
+# 檢查附件配額與寫入訊息之間會讓出事件迴圈，同時送出的請求會看到同一個舊用量；含附件的訊息逐一檢查並寫入
+_attachment_quota_lock = asyncio.Lock()
 
 
 def _has_stream_slot(user_id: int) -> bool:
@@ -124,21 +127,23 @@ async def send_message(
         user_context = json.dumps({
             "attachments": [att.dict() for att in message_data.attachments]
         }, ensure_ascii=False)
-        try:
-            await asyncio.to_thread(chat_service.ensure_attachment_quota, db, user_id, len(user_context))
-        except AttachmentQuotaExceeded:
-            raise HTTPException(status_code=413, detail="附件儲存空間已達上限，請刪除部分含附件的對話後再試")
-    # 資料庫存取是同步的，移到執行緒以免阻塞事件迴圈
-    user_message = await asyncio.to_thread(
-        chat_service.save_message,
-        db,
-        user_id,
-        message_data.content,
-        True,
-        message_data.conversation_id,
-        context_used=user_context,
-        model_name=message_data.model_name,
-    )
+    async with (_attachment_quota_lock if user_context else contextlib.nullcontext()):
+        if user_context:
+            try:
+                await asyncio.to_thread(chat_service.ensure_attachment_quota, db, user_id, len(user_context))
+            except AttachmentQuotaExceeded:
+                raise HTTPException(status_code=413, detail="附件儲存空間已達上限，請刪除部分含附件的對話後再試")
+        # 資料庫存取是同步的，移到執行緒以免阻塞事件迴圈
+        user_message = await asyncio.to_thread(
+            chat_service.save_message,
+            db,
+            user_id,
+            message_data.content,
+            True,
+            message_data.conversation_id,
+            context_used=user_context,
+            model_name=message_data.model_name,
+        )
     conv_id = user_message.conversation_id
     user_message_id = user_message.id
     conversation_history = await asyncio.to_thread(
