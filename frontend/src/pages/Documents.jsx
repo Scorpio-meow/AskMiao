@@ -895,6 +895,8 @@ function Documents() {
           <ul className={styles.rebuildNotes}>
             <li>適用於調整切塊參數、索引毀損或檢索結果異常時</li>
             <li>文件越多，重建所需時間越長；完成前請勿關閉此視窗</li>
+            <li>重建期間知識庫會暫時查不到資料</li>
+            <li>已有的摘要（含手動修訂）會保留，只替缺少摘要的文件生成</li>
           </ul>
           {rebuildLoading && (
             <div className={styles.rebuildProgress} role="status">

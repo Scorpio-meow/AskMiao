@@ -1,3 +1,4 @@
+import asyncio
 import importlib.util
 import json
 import os
@@ -11,6 +12,7 @@ import faiss
 import numpy as np
 import pytest
 import torch
+from fastapi import HTTPException
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
@@ -253,6 +255,61 @@ async def test_rebuild_index_reextracts_structured_files_into_record_chunks(rag,
     metadata = sorted((doc.metadata["record_index"], doc.metadata["label"]) for doc in rag.documents)
     assert metadata == [(1, "加班規定"), (2, "請假規定")]
     assert_indices_match_database(rag, session_factory)
+
+
+@pytest.mark.asyncio
+async def test_rebuild_index_keeps_existing_summaries(rag, session_factory, monkeypatch):
+    db_documents = [
+        SimpleNamespace(id=1, filename="rag_test_missing_overtime.txt", content=OVERTIME,
+                        file_type="text/plain", description="管理員修訂過的摘要", uploaded_by=1),
+        SimpleNamespace(id=2, filename="rag_test_missing_leave.txt", content=LEAVE,
+                        file_type="text/plain", description="  ", uploaded_by=1),
+    ]
+
+    async def fake_summary(filename, content, file_type="", extraction=None):
+        return f"summary of {filename}"
+
+    for doc in db_documents:
+        add_db_document(session_factory, doc.id, doc.filename, doc.content)
+    monkeypatch.setattr(documents_api, "get_rag_system", lambda: rag)
+    monkeypatch.setattr(documents_api.DocumentProcessor, "generate_document_summary_async", fake_summary)
+
+    await documents_api.rebuild_index(db=FakeSession(db_documents), current_user={"username": "admin"})
+
+    assert [doc.description for doc in db_documents] == ["管理員修訂過的摘要", "summary of rag_test_missing_leave.txt"]
+
+
+@pytest.mark.asyncio
+async def test_second_rebuild_while_one_is_running_is_rejected(monkeypatch):
+    started, release = asyncio.Event(), asyncio.Event()
+
+    async def slow_rebuild(db, current_user):
+        started.set()
+        await release.wait()
+        return {"message": "done"}
+
+    monkeypatch.setattr(documents_api, "_rebuild_all_documents", slow_rebuild)
+    monkeypatch.setattr(documents_api, "_rebuild_lock", asyncio.Lock())
+    first = asyncio.create_task(documents_api.rebuild_index(db=None, current_user={"username": "admin"}))
+    await started.wait()
+
+    with pytest.raises(HTTPException) as rejected:
+        await documents_api.rebuild_index(db=None, current_user={"username": "admin"})
+
+    release.set()
+    assert rejected.value.status_code == 409
+    assert await first == {"message": "done"}
+
+
+def test_document_lists_leave_out_full_text(session_factory):
+    add_db_document(session_factory, 1, "overtime.txt", OVERTIME)
+    with session_factory() as session:
+        for listed in (
+            documents_api.get_documents(db=session, current_user={"username": "admin"}),
+            admin_api.get_documents(db=session, current_user={"username": "admin"}),
+        ):
+            assert [doc["filename"] for doc in listed] == ["overtime.txt"]
+            assert "content" not in listed[0]
 
 
 def test_startup_reconciles_indices_with_database(make_rag, session_factory):

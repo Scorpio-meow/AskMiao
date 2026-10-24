@@ -9,6 +9,7 @@ from app.core.jwt_auth import get_current_admin_user
 from app.core.cache import cache_response, invalidate_cache
 from app.core.security_logging import log_security_event
 from app.services.document_removal import remove_document
+from app.api.documents import DOCUMENT_LIST_COLUMNS
 from app.schemas.auth import UserProfile
 from typing import List, Dict, Any
 from datetime import datetime, timedelta
@@ -140,12 +141,12 @@ async def delete_conversation(
 
     return {"message": "對話刪除成功"}
 @router.get("/documents")
-async def get_documents(
+def get_documents(
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_admin_user)
 ):
-    documents = db.query(Document).order_by(Document.created_at.desc()).all()
-    return documents
+    rows = db.query(*DOCUMENT_LIST_COLUMNS).order_by(Document.created_at.desc()).all()
+    return [row._asdict() for row in rows]
 @router.delete("/documents/{document_id}")
 async def delete_document(
     document_id: int,

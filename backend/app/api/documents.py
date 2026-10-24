@@ -240,7 +240,9 @@ async def upload_document(
                 continue
             content = content.strip()
             try:
-                existing = db.query(DBDocument).filter(DBDocument.content == content).first()
+                existing = await asyncio.to_thread(
+                    lambda: db.query(DBDocument.id).filter(DBDocument.content == content).first()
+                )
             except Exception:
                 existing = None
             if existing:
@@ -323,26 +325,22 @@ async def upload_document(
                 "http_status": 500
             })
     return {"results": results}
+# 文件清單只送畫面需要的欄位：全文可能很大，清單頁與管理後台都用不到
+DOCUMENT_LIST_COLUMNS = (
+    DBDocument.id,
+    DBDocument.filename,
+    DBDocument.file_type,
+    DBDocument.description,
+    DBDocument.uploaded_by,
+    DBDocument.created_at,
+    DBDocument.is_processed,
+)
 @router.get("/")
-async def get_documents(
+def get_documents(
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_admin_user)
 ):
-    try:
-        documents = db.query(DBDocument).all()
-        updated = False
-        for doc in documents:
-            if (not doc.description or not doc.description.strip()) and doc.content:
-                doc.description = await DocumentProcessor.generate_document_summary_async(doc.filename, doc.content, doc.file_type or "")
-                db.add(doc)
-                updated = True
-        if updated:
-            db.commit()
-            invalidate_knowledge_base_description()
-        return documents
-    except Exception:
-        logger.exception("獲取文件列表失敗")
-        raise HTTPException(status_code=500, detail="Internal server error")
+    return [row._asdict() for row in db.query(*DOCUMENT_LIST_COLUMNS).all()]
 class DocumentSummaryUpdate(BaseModel):
     description: str
 @router.post("/{document_id}/regenerate-summary")
@@ -400,13 +398,20 @@ async def delete_document(
         raise HTTPException(status_code=404, detail="文件不存在")
     await remove_document(db, document)
     return {"message": "文件刪除成功"}
+# 重建會先清空索引再逐份寫回，同時跑兩次會讓每份文件的片段寫進兩份
+_rebuild_lock = asyncio.Lock()
 @router.post("/rebuild-index")
 async def rebuild_index(
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_admin_user)
 ):
+    if _rebuild_lock.locked():
+        raise HTTPException(status_code=409, detail="索引重建正在進行中，請等待完成後再試")
+    async with _rebuild_lock:
+        return await _rebuild_all_documents(db, current_user)
+async def _rebuild_all_documents(db: Session, current_user: dict):
     try:
-        logger.info(f"管理員 {current_user.get('username', 'unknown')} 觸發完整索引重建（含重新分塊與摘要升級）")
+        logger.info(f"管理員 {current_user.get('username', 'unknown')} 觸發完整索引重建（含重新分塊與補齊摘要）")
         rag_system = get_rag_system()
         logger.info("清空現有索引...")
         await asyncio.to_thread(rag_system.clear_indices)
@@ -431,10 +436,11 @@ async def rebuild_index(
         for doc in documents_from_db:
             try:
                 extraction = await reextract_or_stored(doc, missing_source_files)
-                content_to_process = extraction.text
-                doc.description = await DocumentProcessor.generate_document_summary_async(
-                    doc.filename, content_to_process, doc.file_type or "text/plain", extraction=extraction
-                )
+                # 只替沒有摘要的文件產生摘要：管理員手動修訂過的摘要不能被覆蓋
+                if not (doc.description or "").strip():
+                    doc.description = await DocumentProcessor.generate_document_summary_async(
+                        doc.filename, extraction.text, doc.file_type or "text/plain", extraction=extraction
+                    )
                 db.add(doc)
                 db.commit()
                 invalidate_knowledge_base_description()
@@ -468,7 +474,7 @@ async def rebuild_index(
         if missing_source_files:
             logger.warning(f"以下文件的原始檔已遺失，改以資料庫內容重建，請重新上傳: {missing_source_files}")
         return {
-            "message": "索引重建成功（已用新配置重新分塊，並重新生成 AI 智能大綱）",
+            "message": "索引重建成功（已用新配置重新分塊，並替缺少摘要的文件生成 AI 智能大綱）",
             "document_count": doc_count,
             "chunk_count": vector_count,
             "qa_pairs_detected": total_qa_pairs,
