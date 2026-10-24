@@ -171,7 +171,7 @@ python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().d
 | `JIEBA_DICTIONARY` | 空 | 註解範例 | 替換 jieba 主詞典，例如繁體較友善的 [`dict.txt.big`](https://raw.githubusercontent.com/fxsjy/jieba/master/extra_dict/dict.txt.big)；檔案不存在時無法啟動，變更後 BM25 索引自動重建 |
 
 > [!TIP]
-> Q&A 格式（`Q：…` / `A：…`）的文件會一問一答各成一個片段，結構化記錄與 JSON 資料會逐筆成為獨立片段，這兩種情況不受 `CHUNK_SIZE` 限制。
+> Q&A 格式（`Q：…` / `A：…`）的一般文件會一問一答各成一個片段，不受 `CHUNK_SIZE` 限制。JSON、JSONL、YAML、CSV、XLSX 與 JS 宣告的結構化記錄逐筆成為獨立片段；超過 `CHUNK_SIZE` 的記錄會以整行欄位為單位切成多段，每段重複記錄標頭。`CHUNK_SIZE` 至少要容納記錄標頭，否則該記錄無法入庫。
 
 ## 運算裝置
 
@@ -402,15 +402,17 @@ python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().d
 | `.docx`、`.pptx`、`.xlsx` 解壓後的總大小 | 200 MiB（`MAX_OOXML_UNCOMPRESSED_BYTES`） | 64 MiB（`MAX_ATTACHMENT_OOXML_UNCOMPRESSED_BYTES`） |
 | OOXML 的成員數（`MAX_OOXML_MEMBERS`） | 10,000 | 10,000 |
 | `.docx`、`.pptx` 會被建成 DOM 的 XML 總量 | 200 MiB（同解壓總大小） | 8 MiB（`MAX_ATTACHMENT_OOXML_XML_BYTES`） |
-| 交給 `json.loads` 做結構化降噪的 JSON 與程式碼長度 | 不限 | 2,000,000 字元（`MAX_ATTACHMENT_STRUCTURED_PARSE_CHARS`） |
+| 解析成結構化記錄的 JSON、JSONL、YAML 與 JS 宣告長度 | 不限 | 2,000,000 字元（`MAX_ATTACHMENT_STRUCTURED_PARSE_CHARS`） |
 
 | 常數 | 值 | 說明 |
 |---|---|---|
 | `MAX_OCR_PIXELS` | 25,000,000 像素 | OCR 時單頁點陣化的像素上限，超過時降低解析度 |
+| `MAX_RECORD_LABEL_CHARS` | 80 字元 | 結構化記錄標頭中識別欄位值的長度，超過時截斷並加上「…」；欄位本身的值不截斷 |
+| `MAX_SUMMARY_FIELD_NAMES` | 8 個 | 結構化資料的摘要最多列出的欄位名稱數 |
 | `MAX_OOXML_COMPRESSION_RATIO` | 100 | 解壓後超過 10 MiB（`OOXML_RATIO_CHECK_MIN_BYTES`）的單一成員或整個檔案，壓縮比不可超過此值；兩組預算相同 |
 | `MAX_CONCURRENT_ATTACHMENT_EXTRACTIONS` | 2 | 整個行程同時解析的聊天附件數；與單檔預算相乘即為附件解析的記憶體上界 |
 
-OOXML 的檢查在解析前進行，依 ZIP 成員宣告的大小計算。python-docx 與 python-pptx 會把 XML 部件整份建成 DOM（記憶體約為 XML 大小的 15 至 30 倍），哪些成員算進 XML 總量依 `[Content_Types].xml` 判定（另含 `.rels` 與該檔本身），改副檔名無法繞過；`.xlsx` 以串流讀取，不套用此項。超過任一項 OOXML 預算時，管理員上傳的該檔案上傳失敗；聊天附件則不解析，改告知模型附件超過解析上限、未讀取內容。超過長度的 JSON 與程式碼附件不做結構化降噪，只做線性的雜訊清除。
+OOXML 的檢查在解析前進行，依 ZIP 成員宣告的大小計算。python-docx 與 python-pptx 會把 XML 部件整份建成 DOM（記憶體約為 XML 大小的 15 至 30 倍），哪些成員算進 XML 總量依 `[Content_Types].xml` 判定（另含 `.rels` 與該檔本身），改副檔名無法繞過；`.xlsx` 以串流讀取，不套用此項。超過任一項 OOXML 預算時，管理員上傳的該檔案上傳失敗；聊天附件則不解析，改告知模型附件超過解析上限、未讀取內容。超過長度的 JSON、JSONL、YAML 與 JS 宣告附件不解析成結構化記錄，只做線性的雜訊清除。CSV 與 XLSX 不套用這個長度上限；YAML 的別名展開後節點數超過原始文字長度時一律放棄解析，改以純文字處理。
 
 **帳號、日誌與偵測**
 
@@ -457,6 +459,8 @@ OOXML 的檢查在解析前進行，依 ZIP 成員宣告的大小計算。python
 {
   "domain_words": ["補休", "育嬰留停", "免刷卡"],
   "record_date_fields": ["timestamp", "timestampTitle"],
+  "record_label_fields": ["title", "name", "author", "id"],
+  "record_ignore_fields": ["embedcode", "svg", "icon", "rawhtml", "path", "base64", "style", "imagedata", "svgdata"],
   "summary_fallback": {
     "chat_member_noise_words": ["All", "收到", "好的"],
     "chat_topic_keywords": ["Agent", "部署", "會議"],
@@ -469,6 +473,8 @@ OOXML 的檢查在解析前進行，依 ZIP 成員宣告的大小計算。python
 |---|---|
 | `domain_words` | 加入 jieba 詞典的領域詞，讓 BM25 不會把專有名詞切碎；變更後 BM25 索引自動重建 |
 | `record_date_fields` | 結構化記錄中代表發布日期的欄位名稱（內容格式為「欄位: 日期」）；`filter_and_count_records` 依日期篩選時只比對這些欄位，記錄沒有這些欄位時才比對全文 |
+| `record_label_fields` | 結構化記錄的識別欄位，依序取第一個有值的頂層欄位接在記錄標頭後，並寫入片段 metadata 的 `label`；可以是空陣列，此時標頭不帶識別值 |
+| `record_ignore_fields` | 解析結構化記錄時整個略過的欄位名稱（不分大小寫），例如內嵌 HTML、圖示或樣式；值中的 Base64 圖片與 SVG 不必列在這裡，一律換成佔位字 |
 | `summary_fallback.chat_member_noise_words` | LLM 摘要失敗、改用規則摘要時，通訊紀錄中不應當成成員名稱的雜訊詞 |
 | `summary_fallback.chat_topic_keywords` | 規則摘要偵測通訊紀錄主題時使用的關鍵字 |
 | `summary_fallback.boilerplate_line_prefixes` | 以這些字首開頭（不分大小寫）的行視為頁尾、版權等雜訊 |

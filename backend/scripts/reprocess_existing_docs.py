@@ -6,14 +6,13 @@ from app.models.database import SessionLocal
 from app.rag.tools import invalidate_knowledge_base_description
 from app.models import Document as DBDocument
 from app.services.document_processor import DocumentProcessor
-from app.core.limits import ADMIN_UPLOAD_EXTRACTION_LIMITS
 from app.core.rag_manager import get_rag_system
-from app.api.documents import process_document_for_rag
+from app.api.documents import process_document_for_rag, reextract_or_stored
 import asyncio
 async def reprocess_all():
     db = SessionLocal()
     rag_system = get_rag_system()
-    
+
     print("=== 開始重新處理現有文件庫 ===")
     docs = db.query(DBDocument).all()
     if not docs:
@@ -21,28 +20,20 @@ async def reprocess_all():
         db.close()
         return
     print("清空現有 RAG 片段、向量與 BM25 索引...")
-    from app.core.config import settings
     rag_system.clear_indices()
-    upload_dir = settings.UPLOAD_DIR
     total_chunks = 0
+    total_records = 0
+    missing_source_files = []
     for doc in docs:
-        file_path = os.path.join(upload_dir, doc.filename)
         print(f"\n--- 處理文檔: {doc.filename} (ID: {doc.id}) ---")
-        
-        content = doc.content
-        if os.path.exists(file_path):
-            try:
-                print(f"正在從實體檔案重新提取文字 (含 OCR)...")
-                fresh_content = DocumentProcessor.extract_text_from_file(
-                    file_path, doc.file_type or "text/plain", ADMIN_UPLOAD_EXTRACTION_LIMITS
-                )
-                if fresh_content and fresh_content.strip():
-                    content = fresh_content.strip()
-                    doc.content = content
-            except Exception as e:
-                print(f"提取失敗，使用現有內容: {e}")
-        
-        summary = await DocumentProcessor.generate_document_summary_async(doc.filename, content, doc.file_type or "text/plain")
+        extraction = await reextract_or_stored(doc, missing_source_files)
+        if extraction.warning:
+            print(f"注意: {extraction.warning}")
+        content = extraction.text
+
+        summary = await DocumentProcessor.generate_document_summary_async(
+            doc.filename, content, doc.file_type or "text/plain", extraction=extraction
+        )
         doc.description = summary
         db.add(doc)
         db.commit()
@@ -56,11 +47,14 @@ async def reprocess_all():
             "content_type": doc.file_type,
             "original_filename": doc.filename
         }
-        langchain_docs, qa_count = process_document_for_rag(content, base_metadata, rag_system)
+        langchain_docs, qa_count, record_count = process_document_for_rag(extraction, base_metadata, rag_system)
         chunks_added = rag_system.add_documents(langchain_docs)
         total_chunks += (chunks_added or 0)
-        print(f"已建立向量分塊: {chunks_added} 塊")
+        total_records += record_count
+        print(f"已建立向量分塊: {chunks_added} 塊（{qa_count} 個 Q&A 對、{record_count} 筆記錄）")
     db.close()
-    print(f"\n=== 重建完成！共處理 {len(docs)} 份文檔，建立 {total_chunks} 個向量塊 ===")
+    print(f"\n=== 重建完成！共處理 {len(docs)} 份文檔，建立 {total_chunks} 個向量塊、{total_records} 筆結構化記錄 ===")
+    if missing_source_files:
+        print(f"以下文件的原始檔已遺失，改以資料庫內容重建，請重新上傳: {', '.join(missing_source_files)}")
 if __name__ == "__main__":
     asyncio.run(reprocess_all())

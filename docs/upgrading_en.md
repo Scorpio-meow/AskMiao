@@ -4,6 +4,11 @@
 
 > How to upgrade an existing deployment to a new release, with rollback steps and troubleshooting. See the [CHANGELOG](../CHANGELOG_en.md) for the full list of changes in each version.
 
+- [Upgrading from 5.0.0 to the next release](#upgrading-from-500-to-the-next-release)
+  - [Next release changes and required actions](#next-release-changes-and-required-actions)
+  - [Upgrade steps for the next release](#upgrade-steps-for-the-next-release)
+  - [Rolling back to 5.0.0](#rolling-back-to-500)
+  - [After upgrading to the next release](#after-upgrading-to-the-next-release)
 - [Upgrading from 4.0.0 to 5.0.0](#upgrading-from-400-to-500)
   - [5.0.0 changes and required actions](#500-changes-and-required-actions)
   - [Upgrade steps for 5.0.0](#upgrade-steps-for-500)
@@ -24,6 +29,74 @@
   - [Step 5: verify the upgrade](#step-5-verify-the-upgrade)
   - [Rolling back to 2.2.x](#rolling-back-to-22x)
   - [Troubleshooting](#troubleshooting)
+
+---
+
+## Upgrading from 5.0.0 to the next release
+
+For upgrading from 5.0.0 to the upcoming, not yet released version; see the [CHANGELOG](../CHANGELOG_en.md#unreleased) for the changes. This release reworks how structured data is parsed and chunked. The database schema and dependencies are unchanged; what you need to do is add two new required fields to the domain profile and rebuild the index once after upgrading.
+
+### Next release changes and required actions
+
+| Item | 5.0.0 | Next release | Action |
+|---|---|---|---|
+| Domain profile | `domain_words`, `record_date_fields`, `summary_fallback` | Adds the required `record_label_fields` and `record_ignore_fields` | Add both fields, or the backend will not start |
+| Structured records | `【記錄 N】` with Chinese labels for author, content, link, and tags; nested data dropped; one chunk per record regardless of length | Original field names and dotted paths; long records split into parts that repeat the header | Rebuild the index once |
+| CSV, XLSX, YAML | Chunked as plain text | CSV and XLSX rows become records; YAML is parsed into records | Rebuild the index once |
+| `.jsonl` | Cannot be uploaded | Can be uploaded, one record per line | None |
+| `filter_and_count_records` results | `author`, `link` | `label`, `links` | Integrations that read tool results use the new fields |
+| Upload and rebuild-index responses | Structured record counts were included in `qa_pairs` | `qa_pairs` counts Q&A only; adds `record_count`, `warning`, `records_detected`, and `missing_source_files` | Read the new fields as needed |
+
+### Upgrade steps for the next release
+
+1. Stop the backend and back up the database and `backend/data/`.
+2. Update the code. Backend dependencies are unchanged; run `bun run build` for the frontend again.
+3. Add both fields to the domain profile that `DOMAIN_PROFILE_PATH` points to. The bundled `backend/config/domain_profile.json` already has them; deployments with their own profile add them, for example:
+
+   ```json
+   "record_label_fields": ["title", "name", "author", "id"],
+   "record_ignore_fields": ["embedcode", "svg", "icon", "rawhtml", "path", "base64", "style", "imagedata", "svgdata"]
+   ```
+
+   Either may be an empty array. `record_ignore_fields` holds exactly the noise fields that 5.0.0 hard-coded; if your data has a real `path` field, remove `path` from the list.
+4. Start the backend and, as an admin, run "Rebuild index" on the knowledge base page. Documents whose uploaded file is still in `UPLOAD_DIR` are re-extracted into the new format; `missing_source_files` in the response lists documents whose uploaded file is gone, which are chunked from the stored content as plain text and should be uploaded again.
+5. Upload a JSON or CSV file to confirm: the upload result shows how many structured records it produced.
+
+### Rolling back to 5.0.0
+
+1. Stop the backend, switch the code back to 5.0.0, and rebuild the frontend.
+2. Remove `record_label_fields` and `record_ignore_fields` from the domain profile: 5.0.0 rejects unknown fields and will not start with them.
+3. Rebuild the index once so the chunks return to the 5.0.0 format. Documents whose uploaded file is gone keep content in the new format, which 5.0.0 chunks as plain text.
+
+### After upgrading to the next release
+
+<details>
+<summary><b>Startup fails with an error naming <code>record_label_fields</code> or <code>record_ignore_fields</code></b></summary>
+
+The domain profile is missing a new required field; add it as in step 3 of the [upgrade steps](#upgrade-steps-for-the-next-release).
+
+</details>
+
+<details>
+<summary><b>Uploading the same file again is not reported as a duplicate</b></summary>
+
+Until the index is rebuilt, existing documents still hold `documents.content` in the 5.0.0 format, which differs from the new format, so they are not matched as duplicates. Rebuilding the index fixes this.
+
+</details>
+
+<details>
+<summary><b>The upload result says 「結構化解析失敗，已改用純文字處理」 (structured parsing failed, handled as plain text)</b></summary>
+
+The file is not valid JSON, JSONL, or YAML: for example a JSON trailing comma, a JSONL line that does not parse, or YAML whose aliases expand too far. The file is still stored as plain text; fix it, then delete and upload it again to get one record per entry.
+
+</details>
+
+<details>
+<summary><b>The log says 「CHUNK_SIZE 太小，容納不下結構化記錄的標頭」 (CHUNK_SIZE too small for the record header)</b></summary>
+
+`CHUNK_SIZE` is too small to hold a record header and its part number, so that document cannot be indexed. Raise `CHUNK_SIZE`, then upload again or rebuild the index.
+
+</details>
 
 ---
 

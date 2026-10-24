@@ -152,9 +152,9 @@ flowchart LR
 
 ### 知識庫與文件處理
 
-- 支援 27 種副檔名：`.txt`、`.md`、`.markdown`、`.pdf`、`.docx`、`.pptx`、`.xlsx`、`.csv`、`.json`、`.yaml`、`.yml`、`.xml`、`.html`、`.htm`、`.log`、`.py`、`.js`、`.ts`、`.tsx`、`.jsx`、`.java`、`.cpp`、`.c`、`.sql`、`.sh`、`.ini`、`.env`。
+- 支援 28 種副檔名：`.txt`、`.md`、`.markdown`、`.pdf`、`.docx`、`.pptx`、`.xlsx`、`.csv`、`.json`、`.jsonl`、`.yaml`、`.yml`、`.xml`、`.html`、`.htm`、`.log`、`.py`、`.js`、`.ts`、`.tsx`、`.jsx`、`.java`、`.cpp`、`.c`、`.sql`、`.sh`、`.ini`、`.env`。
 - **PDF 強化擷取**：PyMuPDF 擷取並修復缺少 ToUnicode 的內嵌字型；空白或亂碼頁改以視覺模型 OCR（Azure OpenAI、OpenAI 或 Gemini），最後以 pypdf 備援。
-- **智慧切塊**：Q&A 文件一問一答成一個片段，結構化記錄與 JSON 逐筆成為獨立片段，其餘依中文標點遞迴切塊。
+- **智慧切塊**：JSON、JSONL、YAML、CSV、XLSX 解析成結構化記錄逐筆成為片段（保留巢狀欄位，過長的記錄分段並重複標頭），Q&A 文件一問一答成一個片段，其餘依中文標點遞迴切塊。
 - **AI 大綱與摘要**：上傳時自動生成文件摘要，可重新生成或手動修訂；LLM 失敗時改用規則摘要。摘要也會組成知識庫目錄，幫助 Agent 判斷該查哪份文件。
 
 ### 外部工具與 MCP

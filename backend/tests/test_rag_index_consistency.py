@@ -201,7 +201,7 @@ async def test_rebuild_index_endpoint_regenerates_chunks(rag, session_factory, m
                         file_type="text/plain", description=None, uploaded_by=1),
     ]
 
-    async def fake_summary(filename, content, file_type=""):
+    async def fake_summary(filename, content, file_type="", extraction=None):
         return f"summary of {filename}"
 
     for doc in db_documents:
@@ -209,11 +209,47 @@ async def test_rebuild_index_endpoint_regenerates_chunks(rag, session_factory, m
     monkeypatch.setattr(documents_api, "get_rag_system", lambda: rag)
     monkeypatch.setattr(documents_api.DocumentProcessor, "generate_document_summary_async", fake_summary)
 
-    await documents_api.rebuild_index(db=FakeSession(db_documents), current_user={"username": "admin"})
+    result = await documents_api.rebuild_index(db=FakeSession(db_documents), current_user={"username": "admin"})
 
     assert len(rag.documents) == 2
     assert bm25_sources(rag, "parking") == []
     assert bm25_sources(rag, "seniority") == ["rag_test_missing_leave.txt"]
+    assert result["missing_source_files"] == ["rag_test_missing_overtime.txt", "rag_test_missing_leave.txt"]
+    assert result["records_detected"] == 0
+    assert_indices_match_database(rag, session_factory)
+
+
+@pytest.mark.asyncio
+async def test_rebuild_index_reextracts_structured_files_into_record_chunks(rag, session_factory, tmp_path, monkeypatch):
+    upload_dir = tmp_path / "uploads"
+    upload_dir.mkdir()
+    posts = [{"title": "加班規定", "body": "overtime approval"}, {"title": "請假規定", "body": "leave seniority"}]
+    (upload_dir / "posts.json").write_text(json.dumps(posts, ensure_ascii=False), encoding="utf-8")
+    db_documents = [
+        SimpleNamespace(id=1, filename="posts.json", content="舊格式內容", file_type="application/json",
+                        description=None, uploaded_by=1),
+    ]
+    summaries = []
+
+    async def fake_summary(filename, content, file_type="", extraction=None):
+        summaries.append(extraction)
+        return f"summary of {filename}"
+
+    for doc in db_documents:
+        add_db_document(session_factory, doc.id, doc.filename, doc.content)
+    monkeypatch.setattr(documents_api, "UPLOAD_DIR", str(upload_dir))
+    monkeypatch.setattr(documents_api, "get_rag_system", lambda: rag)
+    monkeypatch.setattr(documents_api.DocumentProcessor, "generate_document_summary_async", fake_summary)
+    monkeypatch.setattr(domain_profile, "record_label_fields", ["title"])
+
+    result = await documents_api.rebuild_index(db=FakeSession(db_documents), current_user={"username": "admin"})
+
+    assert result["records_detected"] == 2
+    assert result["missing_source_files"] == []
+    assert db_documents[0].content.startswith("【記錄 1】加班規定\ntitle: 加班規定")
+    assert len(summaries[0].records) == 2
+    metadata = sorted((doc.metadata["record_index"], doc.metadata["label"]) for doc in rag.documents)
+    assert metadata == [(1, "加班規定"), (2, "請假規定")]
     assert_indices_match_database(rag, session_factory)
 
 

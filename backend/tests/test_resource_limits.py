@@ -50,11 +50,12 @@ from app.rag.tools import ResearchToolRegistry, extract_html_text
 from app.services import chat_service as chat_service_module
 from app.services import pdf_service
 from app.services.chat_service import AttachmentQuotaExceeded, ChatService
-from app.services.document_processor import (
-    DocumentLimitExceeded,
-    DocumentProcessor,
+from app.services.document_processor import DocumentLimitExceeded, DocumentProcessor
+from app.services.structured_data import (
     _extract_declared_json,
     _replace_svg_blocks,
+    count_rendered_records,
+    merge_record_parts,
 )
 from app.services.pdf_service import PDFService
 
@@ -412,10 +413,11 @@ def test_split_faq_is_linear_and_keeps_semantics():
     assert assert_fast(split_faq, "Q: x\n" * 100_000) == []
 
 
-def test_structured_record_split_is_linear():
-    records = DocumentProcessor.split_structured_records("【記錄 1】\n作者: a\n\n---\n\n【記錄 2】\n作者: b")
-    assert [meta["author"] for _, meta in records] == ["a", "b"]
-    assert_fast(DocumentProcessor.split_structured_records, "【記錄 1】---" + "\n" * 200_000 + "x")
+def test_rendered_record_scans_are_linear():
+    assert count_rendered_records("【記錄 1】a\nauthor: a\n\n---\n\n【data 記錄 2】b\nauthor: b") == 2
+    assert_fast(count_rendered_records, "【" + "a " * 200_000)
+    assert_fast(count_rendered_records, "【記錄 1】---" + "\n" * 200_000 + "x")
+    assert_fast(merge_record_parts, ["【記錄 1】（1/2）" + "（" * 200_000, "【記錄 1】（2/2）\nx"])
 
 
 def test_fallback_summary_toc_cleanup_is_linear():

@@ -219,7 +219,7 @@ erDiagram
     }
 ```
 
-- **`rag_chunks` 是片段的權威來源**：`id` 就是 chunk_id，FAISS 與 BM25 都以它為鍵。`chunk_metadata` 保存 `source`、`document_id`、`chunk_index`、`original_filename`、`content_type`，Q&A 片段另有 `question`，結構化記錄另有 `record_index`、`author`、`link`。
+- **`rag_chunks` 是片段的權威來源**：`id` 就是 chunk_id，FAISS 與 BM25 都以它為鍵。`chunk_metadata` 保存 `source`、`document_id`、`chunk_index`、`original_filename`、`content_type`，Q&A 片段另有 `question`，結構化記錄另有 `record_index`、`part`、`part_count`，以及視來源而定的 `label`、`links`、`group`、`sheet`、`row`（見第 4 節）。
 - **`messages.context_used`**：助理訊息存 `sources`、`sources_detail`、`research_trace`；使用者訊息存 `attachments`（含附件的 base64，每位使用者合計上限 200 MiB）。`/api/chat` 的回應只提供解析後的欄位，`context_used` 一律為 `null`。
 - **`requires_approval`**：自訂 API 工具與 MCP 伺服器的呼叫前核准旗標，見第 9 節。
 - **`users.tokens_valid_after`**：簽發時間早於此時刻的存取與重新整理權杖一律無效。建立帳號時等於 `created_at`（帳號刪除後 id 被重用時，舊權杖不會對應到新帳號），變更密碼時更新為當下，見第 10 節。
@@ -234,16 +234,16 @@ erDiagram
 
 ```mermaid
 flowchart TB
-    Up["POST /api/documents/upload<br/>單次最多 10 個檔案"] --> Name["檔名與副檔名檢查<br/>27 種副檔名、危險字元"]
+    Up["POST /api/documents/upload<br/>單次最多 10 個檔案"] --> Name["檔名與副檔名檢查<br/>28 種副檔名、危險字元"]
     Name --> Size["大小檢查<br/>MAX_FILE_SIZE_MB"]
-    Size --> Ext["擷取文字<br/>依副檔名分派"]
+    Size --> Ext["擷取文字與結構化記錄<br/>依副檔名分派，只解析一次"]
     Ext --> Dup{"內容與既有文件相同？"}
     Dup -->|是| Skip["回報 duplicate"]
     Dup -->|否| Sum["AI 摘要<br/>LLM 失敗時改用規則摘要"]
     Sum --> Save["寫入 documents"]
     Save --> Split{"切塊策略"}
-    Split -->|Q：/A： 格式| QA["一問一答一個片段"]
-    Split -->|【記錄 N】結構化記錄| Rec["每筆記錄一個片段<br/>附作者、連結、序號"]
+    Split -->|解析出結構化記錄| Rec["每筆記錄一個片段<br/>過長時切成多段並重複標頭"]
+    Split -->|非結構化格式且為 Q：/A：| QA["一問一答一個片段"]
     Split -->|其他| Rcs["遞迴切塊<br/>CHUNK_SIZE / CHUNK_OVERLAP"]
     QA & Rec & Rcs --> Index["寫入 rag_chunks、FAISS、BM25"]
 ```
@@ -255,21 +255,36 @@ flowchart TB
 | PDF | PyMuPDF 擷取並修復缺少 ToUnicode 對照表的內嵌字型；空白或判定為亂碼的頁面，以 150 DPI 轉成圖片交給視覺模型 OCR（依序使用 Azure OpenAI、OpenAI 或 Gemini）。點陣化在文件執行緒上逐頁進行、每頁最多 25 MP（超過時降低解析度），只有視覺模型呼叫最多 4 頁平行；聊天附件最多 OCR 20 頁，管理員上傳不限。最後以 pypdf 備援 |
 | DOCX | 段落文字加上表格（每列以 `\|` 串接） |
 | PPTX | 逐頁投影片文字 |
-| XLSX | 以唯讀模式逐工作表、逐列以 `\|` 串接 |
-| CSV | 逐列以 `\|` 串接 |
-| JSON、YAML、INI、ENV、SQL 與程式碼 | 以文字讀取；JS / JSON 中的物件陣列（例如 `const posts = [...]`）整理成「【記錄 N】」格式的結構化記錄，Base64 圖片與 SVG 以佔位字取代 |
+| XLSX | 以唯讀模式逐工作表讀取，每個工作表的第一個非空列為表頭，其後每列成為一筆結構化記錄；沒有資料列時逐列以 `\|` 串接 |
+| CSV | 第一個非空列為表頭，其後每列成為一筆結構化記錄；沒有資料列時逐列以 `\|` 串接 |
+| JSON、JSONL、YAML | 解析成結構化記錄（見下方「結構化資料」） |
+| JS、TS、JSX、TSX | 含 `const x = [...]`、`module.exports = {...}` 這類宣告且右側是嚴格 JSON 時解析成結構化記錄；否則以程式碼文字讀取 |
+| INI、ENV、SQL 與其他程式碼 | 以文字讀取，Base64 圖片與 SVG 以佔位字取代 |
 | HTML | 以 `app/core/html_text.py` 單次線性掃描去除標籤、`script`、`style` 與 `noscript` 後的文字 |
 | 其他文字檔 | 依序嘗試 UTF-8、UTF-8 BOM、Big5、GBK、GB2312、Latin-1 編碼讀取 |
 
-擷取前會依宣告的類型檢查檔頭特徵。管理員上傳與聊天附件各用一組資源預算（`app/core/limits.py` 的 `ExtractionLimits`，呼叫端必須指定）：OOXML（DOCX、PPTX、XLSX）先檢查 ZIP 的成員數（≤ 10,000）、成員宣告的解壓大小合計（管理員上傳 ≤ 200 MiB、聊天附件 ≤ 64 MiB）與壓縮比（解壓後超過 10 MiB 的單一成員或整個檔案 ≤ 100），擋下壓縮炸彈；聊天附件的 DOCX、PPTX 另依 `[Content_Types].xml` 加總會被建成 DOM 的 XML 部件（另含 `.rels`），上限 8 MiB，改副檔名無法繞過。聊天附件的 JSON 與程式碼超過 2,000,000 字時不交給 `json.loads`，只做線性的雜訊清除；整個行程同時最多解析 2 個聊天附件，超過預算的附件不讀取內容，改以一段說明告知模型。擷取不出文字的檔案回報失敗並刪除暫存檔。SVG 去除、JSON 宣告抽取、Q&A 切分與目錄行清理都改為線性時間的實作，惡意構造的輸入不會觸發二次時間的正規式回溯。
+擷取前會依宣告的類型檢查檔頭特徵。管理員上傳與聊天附件各用一組資源預算（`app/core/limits.py` 的 `ExtractionLimits`，呼叫端必須指定）：OOXML（DOCX、PPTX、XLSX）先檢查 ZIP 的成員數（≤ 10,000）、成員宣告的解壓大小合計（管理員上傳 ≤ 200 MiB、聊天附件 ≤ 64 MiB）與壓縮比（解壓後超過 10 MiB 的單一成員或整個檔案 ≤ 100），擋下壓縮炸彈；聊天附件的 DOCX、PPTX 另依 `[Content_Types].xml` 加總會被建成 DOM 的 XML 部件（另含 `.rels`），上限 8 MiB，改副檔名無法繞過。聊天附件的 JSON、JSONL、YAML 與 JS 宣告超過 2,000,000 字時不解析，改以純文字處理並只做線性的雜訊清除；整個行程同時最多解析 2 個聊天附件，超過預算的附件不讀取內容，改以一段說明告知模型。擷取不出文字的檔案回報失敗並刪除暫存檔。SVG 去除、JSON 宣告抽取、Q&A 切分與目錄行清理都改為線性時間的實作，惡意構造的輸入不會觸發二次時間的正規式回溯。
+
+### 結構化資料
+
+JSON、JSONL、YAML、JS 宣告、CSV 與 XLSX 由 `app/services/structured_data/` 解析一次，產生 `ExtractionResult`（渲染後的文字、記錄清單、格式與警告）。渲染後的文字存入 `documents.content`，供摘要與重複檢查使用；記錄清單直接交給切塊，不再從文字解析回來。聊天附件只使用渲染後的文字。
+
+- **記錄的界定**：根層級是陣列時每個元素一筆（JSONL 每行一筆，空白行略過）；根層級是物件時，每個「物件陣列」屬性各自是一組記錄，其餘頂層欄位合成一筆 `【上下文】` 記錄；沒有物件陣列時整個物件是一筆。陣列中的純量元素各自成為一筆只有值的記錄；根層級就是純量時當作一般文字。YAML 有多份文件時視為陣列。
+- **欄位**：一律使用原始欄位名，以 `key: 值` 逐行輸出。巢狀物件攤平成點路徑（`contact.email`），物件陣列寫成 `items[0].name`，純量陣列以逗號串接；`null` 與空字串不輸出。日期輸出為 ISO 格式（午夜時只輸出日期），整數值的浮點數輸出為整數，布林值輸出為 `true` / `false`。
+- **表格**：表頭的空白名稱，XLSX 以欄位字母、CSV 以從 1 起算的欄序號代替，重複名稱加上 `_2`、`_3`；空白儲存格不輸出；列號與試算表上看到的一致。
+- **雜訊**：值中的 Base64 圖片與 SVG 換成佔位字但保留欄位；領域設定檔 `record_ignore_fields` 列出的欄位（不分大小寫）整個略過。
+- **標頭與識別欄位**：每筆記錄的第一行是標頭，例如 `【記錄 3】`、`【data 記錄 3】`、`【第 5 列】`、`【工作表1 第 5 列】`，後面接上 `record_label_fields` 中第一個有值的欄位，依 `MAX_RECORD_LABEL_CHARS` 截斷；記錄之間以 `\n\n---\n\n` 分隔。以 `http://`、`https://` 開頭的值收進 `links`。
+- **解析失敗**：JSON、JSONL、YAML 解析失敗、超過解析上限，或 YAML 別名展開後的節點數超過原始文字長度時，改以純文字切塊並在上傳結果附上 `warning`；JS 宣告解析失敗時視為一般程式碼，不提示。結構化格式不做 Q&A 偵測。
 
 ### AI 摘要
 
-上傳、重新生成摘要與重建索引時，以預設模型生成 70 到 150 字的繁體中文「文件主題與大綱摘要」（逾時 18 秒）。長文件取開頭、中段與結尾各一段作為樣本。LLM 失敗時改用規則摘要，並依領域設定檔的 `summary_fallback` 過濾雜訊。摘要也會組成 `search_knowledge_base` 工具說明中的知識庫目錄，幫助 Agent 判斷該查哪份文件。
+上傳、重新生成摘要與重建索引時，以預設模型生成 70 到 150 字的繁體中文「文件主題與大綱摘要」（逾時 18 秒）。長文件取開頭、中段與結尾各一段作為樣本；結構化資料另附上記錄數、格式與欄位名稱。LLM 失敗時改用規則摘要，並依領域設定檔的 `summary_fallback` 過濾雜訊；結構化資料的規則摘要直接使用記錄數與欄位名稱（最多 `MAX_SUMMARY_FIELD_NAMES` 個），只有資料庫內容可用時（重新生成摘要、列表補摘要、知識庫目錄）改為計數記錄標頭。摘要也會組成 `search_knowledge_base` 工具說明中的知識庫目錄，幫助 Agent 判斷該查哪份文件。
 
 ### 切塊策略
 
-一般文件以 `RecursiveCharacterTextSplitter` 切塊，分隔符號依序為段落分隔線、空行、換行、中文句末與句中標點（`。！？；：，`）、英文標點與空白。Q&A 與結構化記錄則標記為 `preserve_whole`，不再切分，確保一問一答與逐筆統計不被切斷。
+一般文件以 `RecursiveCharacterTextSplitter` 切塊，分隔符號依序為段落分隔線、空行、換行、中文句末與句中標點（`。！？；：，`）、英文標點與空白。Q&A（只在非結構化格式中偵測）一問一答一個片段。結構化記錄不超過 `CHUNK_SIZE` 時整筆一個片段；過長時以整行欄位為單位切成多段，單一欄位的值本身過長時再以上述切塊器切開，每段都重複標頭並加上 `（2/3）`，段落之間不重疊。兩者都標記為 `preserve_whole`，不再交給一般切塊。
+
+重建索引時，原始檔還在 `UPLOAD_DIR` 的文件會重新擷取並覆寫 `documents.content`；原始檔已遺失的文件改以資料庫內容當一般文字切塊，並列在回應的 `missing_source_files`。
 
 ---
 
@@ -368,7 +383,7 @@ flowchart TB
 | 工具 | 行為 |
 |---|---|
 | `search_knowledge_base` | 依第 6 節檢索，回傳 `chunk_id`、`source`、`chunk_index`、`score` 與片段全文；精確比對的片段全部回傳，其餘依 `top_k`（預設 3） |
-| `filter_and_count_records` | 在執行緒中掃描所有片段，依日期（優先比對領域設定檔的日期欄位）、作者、關鍵字與文件精確篩選，回傳總數與前 `limit` 筆（預設 50，也是上限）；`date_range` 最多 200 字元、展開後最多 93 天 |
+| `filter_and_count_records` | 在執行緒中掃描所有片段，同一筆結構化記錄的分段依 `(document_id, record_index)` 合併後再篩選，每筆記錄只計一次；依日期（優先比對領域設定檔的日期欄位）、作者、關鍵字與文件精確篩選，回傳總數與前 `limit` 筆（預設 50，也是上限），每筆附 `label` 與 `links`；`date_range` 最多 200 字元、展開後最多 93 天 |
 | `web_search` | 有 `OLLAMA_API_KEY` 時先用 Ollama Web Search，失敗或未設定時改用 DuckDuckGo |
 | `web_fetch` | 先檢查網域白名單與 SSRF；有 `OLLAMA_API_KEY` 時先用 Ollama Web Fetch，否則以安全抓取讀取 HTML，並在執行緒中以線性掃描轉成純文字（前 3500 字） |
 | 自訂 API 工具 | 依工具設定組裝 HTTP 請求，見第 9 節；`requires_approval` 為 `true` 時先經使用者核准 |

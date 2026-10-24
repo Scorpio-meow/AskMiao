@@ -14,6 +14,7 @@ from app.core.error_response import format_ssrf_rejection, log_and_get_error_id
 from app.core.html_text import extract_text_and_title
 from app.core.limits import MAX_TEXT_CLEANUP_CHARS
 from app.rag.retrievers.hybrid import matches_target_document
+from app.services.structured_data import merge_record_parts
 logger = logging.getLogger(__name__)
 WEB_TOOL_NAMES = ("web_search", "web_fetch")
 BUILTIN_TOOL_NAMES = ("search_knowledge_base", "filter_and_count_records") + WEB_TOOL_NAMES
@@ -172,10 +173,20 @@ class ResearchToolRegistry:
         dates_alternation = "|".join(re.escape(td) for td in target_dates)
         field_patterns: Dict[str, "re.Pattern[str]"] = {}
         matched_records = []
+        record_parts: Dict[Tuple[Any, ...], List[Any]] = {}
         for doc in docs:
             if target_document and not matches_target_document(doc, target_document):
                 continue
-            content = doc.page_content
+            record_index = doc.metadata.get("record_index")
+            if record_index is None:
+                key = ("chunk", doc.metadata["chunk_id"])
+            else:
+                key = ("record", doc.metadata.get("document_id"), record_index)
+            record_parts.setdefault(key, []).append(doc)
+        for parts in record_parts.values():
+            parts.sort(key=lambda part: part.metadata.get("part", 1))
+            first = parts[0]
+            content = first.page_content if len(parts) == 1 else merge_record_parts([part.page_content for part in parts])
             c_lower = content.lower()
 
             if target_dates:
@@ -202,11 +213,11 @@ class ResearchToolRegistry:
                 if keyword.lower() not in c_lower:
                     continue
             matched_records.append({
-                "chunk_id": doc.metadata["chunk_id"],
-                "source": doc.metadata.get("source", "未知文件"),
-                "record_index": doc.metadata.get("record_index"),
-                "author": doc.metadata.get("author"),
-                "link": doc.metadata.get("link"),
+                "chunk_id": first.metadata["chunk_id"],
+                "source": first.metadata.get("source", "未知文件"),
+                "record_index": first.metadata.get("record_index"),
+                "label": first.metadata.get("label"),
+                "links": first.metadata.get("links", []),
                 "content": content.strip()
             })
         total_count = len(matched_records)

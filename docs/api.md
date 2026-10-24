@@ -501,14 +501,14 @@ data: {"message_id": 108, "conversation_id": 42, "answer": "特休假需先在�
 
 **請求**：`multipart/form-data`，欄位名稱為 `file`，可重複帶入，單次最多 10 個檔案。
 
-- 支援副檔名：`.txt`、`.md`、`.markdown`、`.pdf`、`.docx`、`.pptx`、`.xlsx`、`.csv`、`.json`、`.yaml`、`.yml`、`.xml`、`.html`、`.htm`、`.log`、`.py`、`.js`、`.ts`、`.tsx`、`.jsx`、`.java`、`.cpp`、`.c`、`.sql`、`.sh`、`.ini`、`.env`。
+- 支援副檔名：`.txt`、`.md`、`.markdown`、`.pdf`、`.docx`、`.pptx`、`.xlsx`、`.csv`、`.json`、`.jsonl`、`.yaml`、`.yml`、`.xml`、`.html`、`.htm`、`.log`、`.py`、`.js`、`.ts`、`.tsx`、`.jsx`、`.java`、`.cpp`、`.c`、`.sql`、`.sh`、`.ini`、`.env`。
 - 單檔上限為 `MAX_FILE_SIZE_MB`（範本 10 MB）；整個請求本文上限為 10 × `MAX_FILE_SIZE_MB` MiB + 1 MiB，而且只有存取權杖有效且其 `is_admin` 聲明為 `true` 時才適用（否則為 1 MiB），超過回傳 `413`。本文上限在解析請求前依權杖內的聲明決定；是否為管理員仍以資料庫為準，已被取消管理員身分的帳號會收到 `403`。
 - `.docx`、`.pptx`、`.xlsx` 解壓後總大小超過 200 MiB、內含超過 10,000 個檔案，或壓縮比超過 100（解壓後超過 10 MiB 的單一成員與整個檔案都檢查）時拒絕解析；PDF 掃描頁點陣化時每頁最多 25 MP。
 - 檔名中的空白會換成底線；與既有檔名相同時自動加上 `_1`、`_2` 等後綴；含 `/`、`\`、`..`、`<`、`>`、`:`、`"`、`|`、`?`、`*` 的檔名會被拒絕。
-- 擷取出的文字與既有文件完全相同時視為重複，不會重複建立。
-- 切塊方式：Q&A 格式一問一答成一個片段；結構化記錄與 JSON 逐筆成為片段；其餘依 `CHUNK_SIZE` / `CHUNK_OVERLAP` 遞迴切塊。
+- 擷取出的文字（去除前後空白後）與既有文件完全相同時視為重複，不會重複建立。
+- 切塊方式：JSON、JSONL、YAML、CSV、XLSX 與 JS 宣告解析成結構化記錄，逐筆成為片段，過長的記錄切成多段；其他格式的 Q&A 一問一答成一個片段；其餘依 `CHUNK_SIZE` / `CHUNK_OVERLAP` 遞迴切塊。記錄的格式見 [系統架構](architecture.md#結構化資料)。
 
-**回應**：`200 OK`，逐檔回報結果，每筆以 `http_status` 標示該檔的處理狀態：
+**回應**：`200 OK`，逐檔回報結果，每筆以 `http_status` 標示該檔的處理狀態。成功的項目中，`qa_pairs` 是 Q&A 對的數量，`record_count` 是結構化記錄數，`warning` 在結構化格式解析失敗或超過解析上限、改以純文字處理時提供說明，其他時候為 `null`：
 
 ```json
 {
@@ -521,6 +521,20 @@ data: {"message_id": 108, "conversation_id": 42, "answer": "特休假需先在�
       "content_type": "application/pdf",
       "qa_detected": false,
       "qa_pairs": 0,
+      "record_count": 0,
+      "warning": null,
+      "http_status": 201
+    },
+    {
+      "filename": "posts.json",
+      "status": "success",
+      "document_id": 102,
+      "content_length": 5120,
+      "content_type": "application/json",
+      "qa_detected": false,
+      "qa_pairs": 0,
+      "record_count": 42,
+      "warning": null,
       "http_status": 201
     },
     {
@@ -570,7 +584,7 @@ data: {"message_id": 108, "conversation_id": 42, "answer": "特休假需先在�
 
 ### 3.6 POST /api/documents/rebuild-index
 
-以資料庫中的文件完整重建索引：清空片段與索引後，逐份文件重新擷取文字（上傳原檔存在時優先使用）、重新生成 AI 摘要，並依目前的切塊設定重新切塊與建立向量。從 2.x 升級後需要執行一次，文件越多耗時越久。
+以資料庫中的文件完整重建索引：清空片段與索引後，逐份文件重新擷取文字（上傳原檔存在時優先使用，並覆寫 `documents.content`）、重新生成 AI 摘要，並依目前的切塊設定重新切塊與建立向量。原檔已遺失的文件改以資料庫內容當一般文字切塊，檔名列在 `missing_source_files`，建議重新上傳。從 2.x 升級後需要執行一次，文件越多耗時越久。
 
 ```json
 {
@@ -578,13 +592,15 @@ data: {"message_id": 108, "conversation_id": 42, "answer": "特休假需先在�
   "document_count": 6,
   "chunk_count": 214,
   "qa_pairs_detected": 0,
+  "records_detected": 42,
+  "missing_source_files": [],
   "chunk_size": 300,
   "chunk_overlap": 100,
   "timestamp": "2026-09-25T10:00:00.000000"
 }
 ```
 
-資料庫沒有文件時回傳 `{"message": "索引重建完成（沒有文件）", "document_count": 0, "chunk_count": 0, "timestamp": "..."}`。
+資料庫沒有文件時回傳 `{"message": "索引重建完成（沒有文件）", "document_count": 0, "chunk_count": 0, "qa_pairs_detected": 0, "records_detected": 0, "missing_source_files": [], "timestamp": "..."}`。
 
 ---
 

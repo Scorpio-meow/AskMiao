@@ -171,7 +171,7 @@ Each search runs: `TOP_K` candidates from vector search and from BM25 → RRF fu
 | `JIEBA_DICTIONARY` | empty | commented example | Replacement jieba main dictionary, such as the Traditional-Chinese-friendly [`dict.txt.big`](https://raw.githubusercontent.com/fxsjy/jieba/master/extra_dict/dict.txt.big); a missing file stops startup, and changing it rebuilds BM25 automatically |
 
 > [!TIP]
-> Q&A documents (`Q：…` / `A：…`) become one chunk per question-answer pair, and structured records and JSON data become one chunk per record; neither case is limited by `CHUNK_SIZE`.
+> Ordinary Q&A documents (`Q：…` / `A：…`) become one chunk per question-answer pair, not limited by `CHUNK_SIZE`. Structured records from JSON, JSONL, YAML, CSV, XLSX, and JS declarations become one chunk per record; a record longer than `CHUNK_SIZE` is split on whole field lines into several parts that each repeat the record header. `CHUNK_SIZE` must at least fit a record header, or that record cannot be indexed.
 
 ## Compute devices
 
@@ -402,15 +402,17 @@ Admin uploads to the knowledge base and chat attachments each use their own `Ext
 | Total uncompressed size of a `.docx`, `.pptx`, or `.xlsx` | 200 MiB (`MAX_OOXML_UNCOMPRESSED_BYTES`) | 64 MiB (`MAX_ATTACHMENT_OOXML_UNCOMPRESSED_BYTES`) |
 | OOXML members (`MAX_OOXML_MEMBERS`) | 10,000 | 10,000 |
 | XML in a `.docx` or `.pptx` that is built into a DOM | 200 MiB (same as the uncompressed total) | 8 MiB (`MAX_ATTACHMENT_OOXML_XML_BYTES`) |
-| Length of JSON and code passed to `json.loads` for structured cleanup | unlimited | 2,000,000 characters (`MAX_ATTACHMENT_STRUCTURED_PARSE_CHARS`) |
+| Length of JSON, JSONL, YAML, and JS declarations parsed into structured records | unlimited | 2,000,000 characters (`MAX_ATTACHMENT_STRUCTURED_PARSE_CHARS`) |
 
 | Constant | Value | Description |
 |---|---|---|
 | `MAX_OCR_PIXELS` | 25,000,000 pixels | Pixel budget for rasterizing one page for OCR; larger pages are rendered at a lower resolution |
+| `MAX_RECORD_LABEL_CHARS` | 80 characters | Length of the label value in a structured record header; longer values are cut and get "…", while the field value itself is never cut |
+| `MAX_SUMMARY_FIELD_NAMES` | 8 | Most field names listed in the summary of structured data |
 | `MAX_OOXML_COMPRESSION_RATIO` | 100 | Maximum compression ratio for a single member, or the whole file, larger than 10 MiB uncompressed (`OOXML_RATIO_CHECK_MIN_BYTES`); the same in both budgets |
 | `MAX_CONCURRENT_ATTACHMENT_EXTRACTIONS` | 2 | Chat attachments parsed at once across the whole process; multiplied by the per-file budget, this bounds the memory used for attachment parsing |
 
-The OOXML checks run before parsing and use the sizes the ZIP members declare. python-docx and python-pptx build whole XML parts into a DOM (about 15 to 30 times the XML size in memory); which members count toward the XML total is decided from `[Content_Types].xml` (plus `.rels` files and `[Content_Types].xml` itself), so changing a part's file extension does not get around it. `.xlsx` files are read as a stream, so this item does not apply to them. When a file exceeds any OOXML budget, an admin upload of that file fails; a chat attachment is not parsed, and the model is told that the attachment exceeded the parsing limits and was not read. JSON and code attachments over the length limit skip the structured cleanup and get only the linear noise cleanup.
+The OOXML checks run before parsing and use the sizes the ZIP members declare. python-docx and python-pptx build whole XML parts into a DOM (about 15 to 30 times the XML size in memory); which members count toward the XML total is decided from `[Content_Types].xml` (plus `.rels` files and `[Content_Types].xml` itself), so changing a part's file extension does not get around it. `.xlsx` files are read as a stream, so this item does not apply to them. When a file exceeds any OOXML budget, an admin upload of that file fails; a chat attachment is not parsed, and the model is told that the attachment exceeded the parsing limits and was not read. JSON, JSONL, YAML, and JS declaration attachments over the length limit are not parsed into structured records and get only the linear noise cleanup. CSV and XLSX are not subject to this length limit; YAML whose aliases expand to more nodes than the source has characters is never parsed and is handled as plain text.
 
 **Accounts, logs, and detection**
 
@@ -457,6 +459,8 @@ The JSON file at `DOMAIN_PROFILE_PATH` (default `backend/config/domain_profile.j
 {
   "domain_words": ["補休", "育嬰留停", "免刷卡"],
   "record_date_fields": ["timestamp", "timestampTitle"],
+  "record_label_fields": ["title", "name", "author", "id"],
+  "record_ignore_fields": ["embedcode", "svg", "icon", "rawhtml", "path", "base64", "style", "imagedata", "svgdata"],
   "summary_fallback": {
     "chat_member_noise_words": ["All", "收到", "好的"],
     "chat_topic_keywords": ["Agent", "部署", "會議"],
@@ -469,6 +473,8 @@ The JSON file at `DOMAIN_PROFILE_PATH` (default `backend/config/domain_profile.j
 |---|---|
 | `domain_words` | Domain terms added to the jieba dictionary so BM25 keeps them whole; changing them rebuilds BM25 automatically |
 | `record_date_fields` | Field names that hold the publish date in structured records (content formatted as "field: date"); `filter_and_count_records` matches dates only in these fields, falling back to the full text for records without them |
+| `record_label_fields` | Label fields for structured records: the first top-level field with a value is appended to the record header and stored as `label` in the chunk metadata; may be an empty array, in which case headers carry no label |
+| `record_ignore_fields` | Field names (case-insensitive) dropped entirely when parsing structured records, such as embedded HTML, icons, or styles; Base64 images and SVGs inside values need not be listed, since they are always replaced by placeholders |
 | `summary_fallback.chat_member_noise_words` | When the LLM summary fails and rule-based summaries take over, words in chat logs that are not member names |
 | `summary_fallback.chat_topic_keywords` | Keywords the rule-based summary uses to detect chat log topics |
 | `summary_fallback.boilerplate_line_prefixes` | Lines starting with these prefixes (case-insensitive) are treated as footer or copyright noise |

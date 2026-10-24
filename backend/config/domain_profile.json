@@ -345,6 +345,23 @@
     "timestamp",
     "timestampTitle"
   ],
+  "record_label_fields": [
+    "title",
+    "name",
+    "author",
+    "id"
+  ],
+  "record_ignore_fields": [
+    "embedcode",
+    "svg",
+    "icon",
+    "rawhtml",
+    "path",
+    "base64",
+    "style",
+    "imagedata",
+    "svgdata"
+  ],
   "summary_fallback": {
     "chat_member_noise_words": [
       "All",

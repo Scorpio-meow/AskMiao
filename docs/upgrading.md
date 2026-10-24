@@ -4,6 +4,11 @@
 
 > 本文件說明如何把既有部署升級到新版本，並附上回退步驟與常見問題。每個版本的完整變更見 [CHANGELOG](../CHANGELOG.md)。
 
+- [從 5.0.0 升級到下一版](#從-500-升級到下一版)
+  - [下一版的變更與需要的動作](#下一版的變更與需要的動作)
+  - [升級到下一版的步驟](#升級到下一版的步驟)
+  - [回退到 5.0.0](#回退到-500)
+  - [升級到下一版後的常見狀況](#升級到下一版後的常見狀況)
 - [從 4.0.0 升級到 5.0.0](#從-400-升級到-500)
   - [5.0.0 的變更與需要的動作](#500-的變更與需要的動作)
   - [升級到 5.0.0 的步驟](#升級到-500-的步驟)
@@ -24,6 +29,74 @@
   - [步驟 5：驗證升級結果](#步驟-5驗證升級結果)
   - [回退到 2.2.x](#回退到-22x)
   - [常見問題](#常見問題)
+
+---
+
+## 從 5.0.0 升級到下一版
+
+適用於從 5.0.0 升級到尚未發行的下一版，變更見 [CHANGELOG](../CHANGELOG.md#unreleased)。這一版重做結構化資料的解析與切塊，資料庫結構與相依套件都沒有變更；需要動手的是領域設定檔的兩個新必填欄位，以及升級後執行一次重建索引。
+
+### 下一版的變更與需要的動作
+
+| 項目 | 5.0.0 | 下一版 | 需要的動作 |
+|---|---|---|---|
+| 領域設定檔 | `domain_words`、`record_date_fields`、`summary_fallback` | 新增必填的 `record_label_fields`、`record_ignore_fields` | 補上兩個欄位，否則後端無法啟動 |
+| 結構化記錄 | `【記錄 N】` 加上「作者 / 內容 / 連結 / 標籤」等中文標籤，巢狀資料被丟棄，每筆一個片段不論長短 | 原始欄位名與點路徑，過長的記錄切成多段並重複標頭 | 執行一次重建索引 |
+| CSV、XLSX、YAML | 整份當純文字切塊 | CSV、XLSX 逐列成為記錄，YAML 解析成記錄 | 執行一次重建索引 |
+| `.jsonl` | 無法上傳 | 可以上傳，每行一筆記錄 | 無 |
+| `filter_and_count_records` 的結果 | `author`、`link` | `label`、`links` | 自行讀取工具結果的整合改用新欄位 |
+| 上傳與重建索引的回應 | 結構化記錄數算在 `qa_pairs` 中 | `qa_pairs` 只算 Q&A，另有 `record_count`、`warning`、`records_detected`、`missing_source_files` | 依需要讀取新欄位 |
+
+### 升級到下一版的步驟
+
+1. 停止後端，備份資料庫與 `backend/data/`。
+2. 更新程式碼。後端相依套件沒有變更；前端重新執行 `bun run build`。
+3. 在 `DOMAIN_PROFILE_PATH` 指向的領域設定檔補上兩個欄位。內建的 `backend/config/domain_profile.json` 已經包含；使用自己設定檔的部署請加上，例如：
+
+   ```json
+   "record_label_fields": ["title", "name", "author", "id"],
+   "record_ignore_fields": ["embedcode", "svg", "icon", "rawhtml", "path", "base64", "style", "imagedata", "svgdata"]
+   ```
+
+   兩者都可以是空陣列。`record_ignore_fields` 的內容就是 5.0.0 寫死在程式中的雜訊欄位；資料中有真正的 `path` 欄位時，可以把 `path` 移除。
+4. 啟動後端，以管理員帳號在知識庫頁面執行「重建索引」。原始檔仍在 `UPLOAD_DIR` 的文件會重新擷取並改用新格式；回應的 `missing_source_files` 列出原始檔已遺失的文件，這些文件改以資料庫內容當一般文字切塊，建議重新上傳。
+5. 上傳一份 JSON 或 CSV 確認：上傳結果會顯示切出的結構化記錄數。
+
+### 回退到 5.0.0
+
+1. 停止後端，把程式碼切回 5.0.0，重新建置前端。
+2. 從領域設定檔移除 `record_label_fields` 與 `record_ignore_fields`：5.0.0 不允許未知欄位，留著會無法啟動。
+3. 執行一次重建索引，讓片段回到 5.0.0 的格式。原始檔已遺失的文件會保留新格式的內容，5.0.0 會把它當一般文字切塊。
+
+### 升級到下一版後的常見狀況
+
+<details>
+<summary><b>後端啟動失敗，錯誤訊息提到 <code>record_label_fields</code> 或 <code>record_ignore_fields</code></b></summary>
+
+領域設定檔缺少新的必填欄位，依 [升級步驟](#升級到下一版的步驟) 第 3 點補上。
+
+</details>
+
+<details>
+<summary><b>重新上傳同一個檔案沒有被判定為重複</b></summary>
+
+重建索引之前，既有文件的 `documents.content` 仍是 5.0.0 的格式，與新格式不同，因此不會被判定為重複。執行重建索引後即恢復正常。
+
+</details>
+
+<details>
+<summary><b>上傳結果出現「結構化解析失敗，已改用純文字處理」</b></summary>
+
+檔案內容不是合法的 JSON、JSONL 或 YAML，例如 JSON 有尾逗號、JSONL 有任何一行無法解析，或 YAML 的別名展開後過大。檔案仍會以純文字入庫；修正內容後刪除並重新上傳，即可改為逐筆記錄。
+
+</details>
+
+<details>
+<summary><b>日誌出現「CHUNK_SIZE 太小，容納不下結構化記錄的標頭」</b></summary>
+
+`CHUNK_SIZE` 小到放不下記錄標頭與分段編號，該文件無法入庫。調大 `CHUNK_SIZE` 後重新上傳或重建索引。
+
+</details>
 
 ---
 

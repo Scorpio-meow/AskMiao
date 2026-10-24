@@ -219,7 +219,7 @@ erDiagram
     }
 ```
 
-- **`rag_chunks` is the source of truth for chunks**: its `id` is the chunk_id that keys both FAISS and BM25. `chunk_metadata` holds `source`, `document_id`, `chunk_index`, `original_filename`, and `content_type`, plus `question` for Q&A chunks and `record_index`, `author`, and `link` for structured records.
+- **`rag_chunks` is the source of truth for chunks**: its `id` is the chunk_id that keys both FAISS and BM25. `chunk_metadata` holds `source`, `document_id`, `chunk_index`, `original_filename`, and `content_type`, plus `question` for Q&A chunks and, for structured records, `record_index`, `part`, and `part_count`, along with `label`, `links`, `group`, `sheet`, and `row` depending on the source (see section 4).
 - **`messages.context_used`**: assistant messages store `sources`, `sources_detail`, and `research_trace`; user messages store `attachments` (including the attachments' base64, capped at 200 MiB per user). `/api/chat` responses carry only the parsed fields, and `context_used` is always `null`.
 - **`requires_approval`**: the approval-before-call flag of custom API tools and MCP servers; see section 9.
 - **`users.tokens_valid_after`**: access and refresh tokens issued before this moment are rejected. It equals `created_at` when the account is created (so old tokens never map to a new account that reuses a deleted account's id) and is set to the current time on a password change; see section 10.
@@ -234,16 +234,16 @@ Tables are created at startup with SQLAlchemy `create_all`, after which `upgrade
 
 ```mermaid
 flowchart TB
-    Up["POST /api/documents/upload<br/>up to 10 files"] --> Name["Name and extension checks<br/>27 extensions, dangerous characters"]
+    Up["POST /api/documents/upload<br/>up to 10 files"] --> Name["Name and extension checks<br/>28 extensions, dangerous characters"]
     Name --> Size["Size check<br/>MAX_FILE_SIZE_MB"]
-    Size --> Ext["Extract text<br/>dispatched by extension"]
+    Size --> Ext["Extract text and structured records<br/>dispatched by extension, parsed once"]
     Ext --> Dup{"Same content as an existing document?"}
     Dup -->|yes| Skip["Report duplicate"]
     Dup -->|no| Sum["AI summary<br/>rule-based when the LLM fails"]
     Sum --> Save["Save to documents"]
     Save --> Split{"Chunking strategy"}
-    Split -->|Q：/A： format| QA["One chunk per Q&A pair"]
-    Split -->|【記錄 N】 structured records| Rec["One chunk per record<br/>with author, link, index"]
+    Split -->|Structured records parsed| Rec["One chunk per record<br/>long records split with a repeated header"]
+    Split -->|Unstructured format in Q：/A： form| QA["One chunk per Q&A pair"]
     Split -->|Everything else| Rcs["Recursive splitting<br/>CHUNK_SIZE / CHUNK_OVERLAP"]
     QA & Rec & Rcs --> Index["Write rag_chunks, FAISS, BM25"]
 ```
@@ -255,21 +255,36 @@ flowchart TB
 | PDF | PyMuPDF extraction with repair of embedded fonts missing ToUnicode maps; blank or garbled pages are rendered at 150 DPI and OCR'd by a vision model (Azure OpenAI, OpenAI, or Gemini, in that order). Pages are rasterized one at a time on the document's thread, at most 25 MP each (larger pages get a lower resolution), and only the vision calls run up to 4 pages in parallel; chat attachments are OCR'd for at most 20 pages, admin uploads without a limit. pypdf is the last fallback |
 | DOCX | Paragraph text plus tables (cells of each row joined with `\|`) |
 | PPTX | Text of each slide |
-| XLSX | Opened read-only; each sheet, row by row, cells joined with `\|` |
-| CSV | Row by row, cells joined with `\|` |
-| JSON, YAML, INI, ENV, SQL, and code | Read as text; arrays of objects in JS / JSON (such as `const posts = [...]`) are restructured into "【記錄 N】" records, and Base64 images and SVGs are replaced by placeholders |
+| XLSX | Opened read-only, sheet by sheet; the first non-empty row of each sheet is the header and every later row becomes a structured record; a sheet with no data rows is joined row by row with `\|` |
+| CSV | The first non-empty row is the header and every later row becomes a structured record; a file with no data rows is joined row by row with `\|` |
+| JSON, JSONL, YAML | Parsed into structured records (see "Structured data" below) |
+| JS, TS, JSX, TSX | A declaration such as `const x = [...]` or `module.exports = {...}` whose right-hand side is strict JSON is parsed into structured records; otherwise read as code |
+| INI, ENV, SQL, and other code | Read as text, with Base64 images and SVGs replaced by placeholders |
 | HTML | Text left after a single linear scan by `app/core/html_text.py` removes tags, `script`, `style`, and `noscript` |
 | Other text files | Tried as UTF-8, UTF-8 with BOM, Big5, GBK, GB2312, and Latin-1 in order |
 
-Before extraction the file header is checked against the declared type. Admin uploads and chat attachments each use their own resource budget (`ExtractionLimits` in `app/core/limits.py`, which every caller must pass): OOXML files (DOCX, PPTX, XLSX) first have their ZIP member count (≤ 10,000), the total of their members' declared uncompressed sizes (≤ 200 MiB for admin uploads, ≤ 64 MiB for chat attachments), and their compression ratio (≤ 100 for any member, or the whole file, over 10 MiB uncompressed) checked to stop zip bombs; for chat attachments, the XML parts of a DOCX or PPTX that are built into a DOM (counted from `[Content_Types].xml`, plus `.rels`, so renaming does not bypass the check) are capped at 8 MiB. Chat attachment JSON and code over 2,000,000 characters are not passed to `json.loads` and only get linear noise cleanup; at most 2 chat attachments are parsed at a time per process, and an attachment over budget is not read, with a note telling the model so. Files that yield no text are reported as failures and removed. SVG stripping, JSON declaration extraction, Q&A splitting, and table-of-contents cleanup now run in linear time, so crafted input cannot trigger quadratic regex backtracking.
+Before extraction the file header is checked against the declared type. Admin uploads and chat attachments each use their own resource budget (`ExtractionLimits` in `app/core/limits.py`, which every caller must pass): OOXML files (DOCX, PPTX, XLSX) first have their ZIP member count (≤ 10,000), the total of their members' declared uncompressed sizes (≤ 200 MiB for admin uploads, ≤ 64 MiB for chat attachments), and their compression ratio (≤ 100 for any member, or the whole file, over 10 MiB uncompressed) checked to stop zip bombs; for chat attachments, the XML parts of a DOCX or PPTX that are built into a DOM (counted from `[Content_Types].xml`, plus `.rels`, so renaming does not bypass the check) are capped at 8 MiB. Chat attachment JSON, JSONL, YAML, and JS declarations over 2,000,000 characters are not parsed; they are handled as plain text and only get linear noise cleanup; at most 2 chat attachments are parsed at a time per process, and an attachment over budget is not read, with a note telling the model so. Files that yield no text are reported as failures and removed. SVG stripping, JSON declaration extraction, Q&A splitting, and table-of-contents cleanup now run in linear time, so crafted input cannot trigger quadratic regex backtracking.
+
+### Structured data
+
+JSON, JSONL, YAML, JS declarations, CSV, and XLSX are parsed once by `app/services/structured_data/` into an `ExtractionResult` (rendered text, record list, format, and warning). The rendered text is stored in `documents.content` for summaries and duplicate checks; the record list goes straight to chunking and is never parsed back out of the text. Chat attachments use only the rendered text.
+
+- **What a record is**: when the root is an array, each element is a record (each JSONL line is one, blank lines are skipped). When the root is an object, each "array of objects" property is its own group of records, and the remaining top-level fields form one `【上下文】` (context) record; an object with no array of objects is a single record. Scalar array elements each become a record holding just the value; a scalar root is treated as plain text. A YAML stream with several documents is treated as an array.
+- **Fields**: original field names are always used, one `key: value` per line. Nested objects are flattened into dotted paths (`contact.email`), arrays of objects are written as `items[0].name`, and arrays of scalars are joined with commas; `null` and empty strings are left out. Dates are written in ISO format (date only at midnight), integral floats as integers, and booleans as `true` / `false`.
+- **Tables**: a blank header name becomes the column letter (XLSX) or the 1-based column number (CSV), repeated names get `_2`, `_3`; empty cells are left out; row numbers match what the spreadsheet shows.
+- **Noise**: Base64 images and SVGs inside values are replaced by placeholders and the field is kept; fields listed in the domain profile's `record_ignore_fields` (case-insensitive) are dropped entirely.
+- **Header and label**: the first line of each record is a header such as `【記錄 3】`, `【data 記錄 3】`, `【第 5 列】`, or `【工作表1 第 5 列】`, followed by the first non-empty field from `record_label_fields`, truncated to `MAX_RECORD_LABEL_CHARS`; records are separated by `\n\n---\n\n`. Values starting with `http://` or `https://` are collected into `links`.
+- **When parsing fails**: if JSON, JSONL, or YAML fails to parse, exceeds the parse limit, or expands (through YAML aliases) to more nodes than the source has characters, the file is chunked as plain text and the upload result carries a `warning`; a JS declaration that fails to parse is treated as ordinary code without a warning. Structured formats skip Q&A detection.
 
 ### AI summaries
 
-On upload, summary regeneration, and index rebuilds, the default model writes a 70 to 150 character Traditional Chinese "topic and outline" summary (18-second timeout). Long documents are sampled from the beginning, middle, and end. When the LLM fails, a rule-based summary filters noise using `summary_fallback` from the domain profile. The summaries also form the knowledge-base catalog inside the `search_knowledge_base` tool description, helping the agent choose which document to search.
+On upload, summary regeneration, and index rebuilds, the default model writes a 70 to 150 character Traditional Chinese "topic and outline" summary (18-second timeout). Long documents are sampled from the beginning, middle, and end; structured data also passes the record count, format, and field names. When the LLM fails, a rule-based summary filters noise using `summary_fallback` from the domain profile; for structured data it uses the record count and field names directly (at most `MAX_SUMMARY_FIELD_NAMES`), and where only the stored content is available (summary regeneration, filling in missing summaries in the list, the knowledge-base catalog) it counts record headers instead. The summaries also form the knowledge-base catalog inside the `search_knowledge_base` tool description, helping the agent choose which document to search.
 
 ### Chunking strategy
 
-Ordinary documents are split with `RecursiveCharacterTextSplitter`, whose separators are, in order: section rules, blank lines, line breaks, Chinese sentence and clause punctuation (`。！？；：，`), English punctuation, and spaces. Q&A pairs and structured records are marked `preserve_whole` and never split further, so a question stays with its answer and record counts stay exact.
+Ordinary documents are split with `RecursiveCharacterTextSplitter`, whose separators are, in order: section rules, blank lines, line breaks, Chinese sentence and clause punctuation (`。！？；：，`), English punctuation, and spaces. Q&A pairs (detected only in unstructured formats) get one chunk each. A structured record that fits in `CHUNK_SIZE` is one chunk; a longer record is split on whole field lines, a single field value that is itself too long is split further with the splitter above, and every part repeats the header with a `（2/3）` suffix, with no overlap between parts. Both are marked `preserve_whole` and never go through ordinary splitting.
+
+During an index rebuild, documents whose original file is still in `UPLOAD_DIR` are re-extracted and `documents.content` is overwritten; documents whose original file is gone are chunked from the stored content as plain text and listed in the response's `missing_source_files`.
 
 ---
 
@@ -368,7 +383,7 @@ flowchart TB
 | Tool | Behavior |
 |---|---|
 | `search_knowledge_base` | Searches as in section 6 and returns `chunk_id`, `source`, `chunk_index`, `score`, and the full chunk text; all exact matches are returned, the rest limited by `top_k` (default 3) |
-| `filter_and_count_records` | Scans every chunk in a worker thread and filters precisely by date (checking the domain profile's date fields first), author, keyword, and document, returning the total count and the first `limit` records (default 50, also the maximum); `date_range` is at most 200 characters and may expand to at most 93 days |
+| `filter_and_count_records` | Scans every chunk in a worker thread, merging the parts of each structured record by `(document_id, record_index)` before filtering so every record counts once; filters precisely by date (checking the domain profile's date fields first), author, keyword, and document, returning the total count and the first `limit` records (default 50, also the maximum), each with `label` and `links`; `date_range` is at most 200 characters and may expand to at most 93 days |
 | `web_search` | Uses Ollama Web Search when `OLLAMA_API_KEY` is set, falling back to DuckDuckGo |
 | `web_fetch` | Checks the domain allowlist and SSRF first; with `OLLAMA_API_KEY` it tries Ollama Web Fetch, otherwise it fetches the HTML safely and converts it to plain text with a linear scan in a worker thread (first 3500 characters) |
 | Custom API tools | Build an HTTP request from the tool settings; see section 9. When `requires_approval` is `true`, the user approves first |

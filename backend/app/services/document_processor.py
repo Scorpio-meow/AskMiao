@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 import os
-import json
 import csv
 import logging
 import hashlib
@@ -15,7 +14,19 @@ import openpyxl
 from app.core.config import settings
 from app.core.domain_profile import domain_profile
 from app.core.html_text import extract_text_and_title
-from app.core.limits import MAX_OOXML_COMPRESSION_RATIO, OOXML_RATIO_CHECK_MIN_BYTES, ExtractionLimits
+from app.core.limits import MAX_OOXML_COMPRESSION_RATIO, MAX_SUMMARY_FIELD_NAMES, OOXML_RATIO_CHECK_MIN_BYTES, ExtractionLimits
+from app.services.structured_data import (
+    KIND_LABELS,
+    TREE_TEXT_EXTENSIONS,
+    ExtractionResult,
+    clean_noise,
+    count_rendered_records,
+    extract_csv,
+    extract_tree_text,
+    extract_xlsx,
+    is_data_format,
+    plain_result,
+)
 logger = logging.getLogger(__name__)
 # 摘要啟發式只看每行開頭的這些字元
 MAX_TOC_LINE_CHARS = 300
@@ -73,42 +84,9 @@ def _ooxml_xml_bytes(archive: zipfile.ZipFile, members: list, max_xml_bytes: int
     return total
 
 
-RECORD_SEPARATOR_PATTERN = re.compile(r'(?<!\n)\n+(?:---|___|\*\*\*)\n+')
-JSON_DECLARATION_PATTERN = re.compile(r'(?:\b(?:const|let|var)\s+\w+\s*=|module\.exports\s*=)\s*')
-SVG_OPEN = "<svg"
-SVG_CLOSE = "</svg>"
+CODE_OR_DATA_EXTENSIONS = (".js", ".ts", ".jsx", ".tsx", ".json", ".jsonl", ".py", ".yaml", ".yml", ".ini", ".env", ".sql")
 
 
-def _extract_declared_json(text: str) -> str:
-    """取出 `const x = [...]`、`module.exports = {...}` 右側的 JSON 本體；找不到宣告時回傳整段文字。
-    以線性掃描（第一個開頭括號到最後一個對應的結尾括號）取代含多個無界 [\s\S]* 的正規式，避免回溯爆炸"""
-    match = JSON_DECLARATION_PATTERN.search(text)
-    if not match:
-        return text.strip()
-    rest = text[match.end():]
-    closing = {"[": "]", "{": "}"}.get(rest[:1])
-    if closing is None:
-        return text.strip()
-    end = rest.rfind(closing)
-    return rest[:end + 1] if end >= 0 else text.strip()
-
-
-def _replace_svg_blocks(text: str) -> str:
-    """把完整的 <svg ...>...</svg> 區塊換成佔位字；沒有結尾標籤的 <svg 保留原樣。線性時間"""
-    parts = []
-    position = 0
-    while True:
-        start = text.find(SVG_OPEN, position)
-        if start < 0:
-            break
-        end = text.find(SVG_CLOSE, start)
-        if end < 0:
-            break
-        parts.append(text[position:start])
-        parts.append("[SVG_ICON_OMITTED]")
-        position = end + len(SVG_CLOSE)
-    parts.append(text[position:])
-    return "".join(parts)
 class DocumentProcessor:
     
     FILE_SIGNATURES = {
@@ -130,7 +108,7 @@ class DocumentProcessor:
     }
     SUPPORTED_EXTENSIONS = {
         '.txt', '.md', '.markdown', '.pdf', '.docx', '.pptx', '.xlsx',
-        '.csv', '.json', '.yaml', '.yml', '.xml', '.html', '.htm', '.log',
+        '.csv', '.json', '.jsonl', '.yaml', '.yml', '.xml', '.html', '.htm', '.log',
         '.py', '.js', '.ts', '.tsx', '.jsx', '.java', '.cpp', '.c', '.sql',
         '.sh', '.ini', '.env'
     }
@@ -170,6 +148,14 @@ class DocumentProcessor:
     @staticmethod
     def extract_text_from_file(file_path: str, content_type: str, limits: ExtractionLimits) -> Optional[str]:
         """limits：本次抽取的資源預算，管理員上傳與聊天附件各用 app.core.limits 中的一組"""
+        return DocumentProcessor.extract_document(file_path, content_type, limits).text
+
+    @staticmethod
+    def stored_text_extraction(filename: str, content: str) -> ExtractionResult:
+        return plain_result(content, is_data_format(filename), None)
+
+    @staticmethod
+    def extract_document(file_path: str, content_type: str, limits: ExtractionLimits) -> ExtractionResult:
         try:
             ext = os.path.splitext(file_path)[1].lower()
             
@@ -195,25 +181,40 @@ class DocumentProcessor:
             if file_size > max_size:
                 raise ValueError(f"檔案大小 ({file_size} bytes) 超過限制")
             if ext == ".pdf" or content_type == "application/pdf":
-                return DocumentProcessor._extract_from_pdf(file_path, limits.max_ocr_pages)
+                return plain_result(DocumentProcessor._extract_from_pdf(file_path, limits.max_ocr_pages), False, None)
             elif ext == ".docx" or content_type == "application/vnd.openxmlformats-officedocument.wordprocessingml.document":
                 DocumentProcessor._check_ooxml_archive(file_path, limits, builds_dom=True)
-                return DocumentProcessor._extract_from_docx(file_path)
+                return plain_result(DocumentProcessor._extract_from_docx(file_path), False, None)
             elif ext == ".pptx" or content_type == "application/vnd.openxmlformats-officedocument.presentationml.presentation":
                 DocumentProcessor._check_ooxml_archive(file_path, limits, builds_dom=True)
-                return DocumentProcessor._extract_from_pptx(file_path)
+                return plain_result(DocumentProcessor._extract_from_pptx(file_path), False, None)
             elif ext == ".xlsx" or content_type == "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet":
                 # openpyxl 以 read_only 串流讀取工作表，不會整份建成 DOM
                 DocumentProcessor._check_ooxml_archive(file_path, limits, builds_dom=False)
-                return DocumentProcessor._extract_from_xlsx(file_path)
+                return extract_xlsx(
+                    file_path, domain_profile.record_label_fields, lambda: DocumentProcessor._extract_from_xlsx(file_path)
+                )
             elif ext == ".csv" or content_type == "text/csv":
-                return DocumentProcessor._extract_from_csv(file_path)
-            elif ext in (".js", ".ts", ".jsx", ".tsx", ".json", ".jsonl", ".py", ".yaml", ".yml", ".ini", ".env", ".sql"):
-                return DocumentProcessor._extract_from_code_or_data(file_path, limits.max_structured_parse_chars)
+                return extract_csv(
+                    file_path,
+                    domain_profile.record_label_fields,
+                    lambda: DocumentProcessor._extract_from_csv(file_path),
+                    lambda: DocumentProcessor._extract_from_txt(file_path),
+                )
+            elif ext in TREE_TEXT_EXTENSIONS:
+                return extract_tree_text(
+                    ext,
+                    DocumentProcessor._extract_from_txt(file_path),
+                    limits.max_structured_parse_chars,
+                    domain_profile.record_label_fields,
+                    domain_profile.record_ignore_fields,
+                )
+            elif ext in CODE_OR_DATA_EXTENSIONS:
+                return plain_result(clean_noise(DocumentProcessor._extract_from_txt(file_path)), False, None)
             elif ext in (".html", ".htm") or content_type == "text/html":
-                return DocumentProcessor._extract_from_html(file_path)
+                return plain_result(DocumentProcessor._extract_from_html(file_path), False, None)
             else:
-                return DocumentProcessor._extract_from_txt(file_path)
+                return plain_result(DocumentProcessor._extract_from_txt(file_path), False, None)
         except Exception as e:
             logger.error(f"提取文本時發生錯誤: {e}")
             raise
@@ -278,168 +279,6 @@ class DocumentProcessor:
             except Exception:
                 continue
         return DocumentProcessor._extract_from_txt(file_path)
-    @staticmethod
-    def _clean_structured_data(text: str) -> Optional[str]:
-        """
-        智慧識別並清洗 JS/JSON 格式的設定或資料清單 (如 const posts = [...])，
-        過濾掉巨大 SVG、HTML 樣式與 Base64 等干擾噪音，重構為高密度語意文字。
-        """
-        raw_json = _extract_declared_json(text)
-        
-        try:
-            data = json.loads(raw_json)
-        except Exception:
-            return None
-        if isinstance(data, list):
-            clean_lines = []
-            noise_keys = {'embedcode', 'svg', 'icon', 'rawhtml', 'path', 'base64', 'style', 'imagedata', 'svgdata'}
-            
-            for idx, item in enumerate(data):
-                if isinstance(item, dict):
-                    parts = []
-                    author = item.get('author') or item.get('user') or item.get('name') or item.get('title')
-                    content = item.get('content') or item.get('text') or item.get('message') or item.get('desc') or item.get('description')
-                    link = item.get('postLink') or item.get('link') or item.get('url')
-                    tags = item.get('tags') or item.get('categories')
-                    if author:
-                        parts.append(f"作者: {author}")
-                    if content:
-                        parts.append(f"內容: {content}")
-                    if link:
-                        parts.append(f"連結: {link}")
-                    if tags:
-                        tags_str = ', '.join(tags) if isinstance(tags, list) else str(tags)
-                        parts.append(f"標籤: {tags_str}")
-                    
-                    for k, v in item.items():
-                        if k.lower() in noise_keys:
-                            continue
-                        if k in ('author', 'user', 'name', 'title', 'content', 'text', 'message', 'desc', 'description', 'postLink', 'link', 'url', 'tags', 'categories'):
-                            continue
-                        if isinstance(v, str):
-                            if v.startswith('<blockquote') or v.startswith('<svg') or (len(v) > 500 and ('<path' in v or 'data:image' in v)):
-                                continue
-                            if v.strip():
-                                parts.append(f"{k}: {v.strip()}")
-                        elif v is not None and not isinstance(v, (dict, list)):
-                            parts.append(f"{k}: {v}")
-                    if parts:
-                        clean_lines.append(f"【記錄 {idx + 1}】\n" + "\n".join(parts))
-                elif isinstance(item, str) and item.strip():
-                    clean_lines.append(item.strip())
-            if clean_lines:
-                logger.info(f"結構化資料降噪解析成功: 從陣列提取出 {len(clean_lines)} 條語意記錄")
-                return "\n\n---\n\n".join(clean_lines)
-        elif isinstance(data, dict):
-            clean_lines = []
-            for k, v in data.items():
-                if isinstance(v, str) and len(v) < 2000 and not v.startswith('<svg'):
-                    clean_lines.append(f"{k}: {v}")
-                elif isinstance(v, (int, float, bool)):
-                    clean_lines.append(f"{k}: {v}")
-            if clean_lines:
-                return "\n".join(clean_lines)
-        return None
-    @staticmethod
-    def split_structured_records(content: str) -> list:
-        import re
-        if not content or not content.strip():
-            return []
-        if "【記錄 " in content and "---" in content:
-            # (?<!\n) 讓比對只能從一串換行的第一個字元開始；少了它，沒有分隔線的長串換行會讓每個起點都重新回溯（二次方時間）
-            raw_records = RECORD_SEPARATOR_PATTERN.split(content)
-            records = []
-            for rc in raw_records:
-                rc_clean = rc.strip()
-                if not rc_clean:
-                    continue
-                meta = {}
-                author_m = re.search(r'作者:\s*(@?[^\n]+)', rc_clean)
-                if author_m:
-                    meta["author"] = author_m.group(1).strip()
-                link_m = re.search(r'連結:\s*(https?://[^\s\n]+)', rc_clean)
-                if link_m:
-                    meta["link"] = link_m.group(1).strip()
-                rec_m = re.search(r'【記錄\s*(\d+)】', rc_clean)
-                if rec_m:
-                    meta["record_index"] = int(rec_m.group(1))
-                tags_m = re.search(r'標籤:\s*([^\n]+)', rc_clean)
-                if tags_m:
-                    meta["tags"] = tags_m.group(1).strip()
-                records.append((rc_clean, meta))
-            if records:
-                return records
-        trimmed = content.strip()
-        if (trimmed.startswith("[") and trimmed.endswith("]")) or (trimmed.startswith("{") and trimmed.endswith("}")):
-            try:
-                data = json.loads(trimmed)
-                if isinstance(data, list):
-                    records = []
-                    noise_keys = {'embedcode', 'svg', 'icon', 'rawhtml', 'path', 'base64', 'style', 'imagedata', 'svgdata'}
-                    for idx, item in enumerate(data):
-                        if isinstance(item, dict):
-                            parts = []
-                            meta = {"record_index": idx + 1}
-                            author = item.get('author') or item.get('user') or item.get('name') or item.get('title')
-                            text_body = item.get('content') or item.get('text') or item.get('message') or item.get('desc') or item.get('description')
-                            link = item.get('postLink') or item.get('link') or item.get('url')
-                            tags = item.get('tags') or item.get('categories')
-                            if author:
-                                parts.append(f"作者: {author}")
-                                meta["author"] = str(author)
-                            if text_body:
-                                parts.append(f"內容: {text_body}")
-                            if link:
-                                parts.append(f"連結: {link}")
-                                meta["link"] = str(link)
-                            if tags:
-                                tags_str = ', '.join(tags) if isinstance(tags, list) else str(tags)
-                                parts.append(f"標籤: {tags_str}")
-                                meta["tags"] = tags_str
-                            for k, v in item.items():
-                                if k.lower() in noise_keys:
-                                    continue
-                                if k in ('author', 'user', 'name', 'title', 'content', 'text', 'message', 'desc', 'description', 'postLink', 'link', 'url', 'tags', 'categories'):
-                                    continue
-                                if isinstance(v, str):
-                                    if v.startswith('<blockquote') or v.startswith('<svg') or (len(v) > 500 and ('<path' in v or 'data:image' in v)):
-                                        continue
-                                    if v.strip():
-                                        parts.append(f"{k}: {v.strip()}")
-                                elif v is not None and not isinstance(v, (dict, list)):
-                                    parts.append(f"{k}: {v}")
-                            if parts:
-                                chunk_text = f"【記錄 {idx + 1}】\n" + "\n".join(parts)
-                                records.append((chunk_text, meta))
-                    if records:
-                        return records
-                elif isinstance(data, dict):
-                    records = []
-                    for k, v in data.items():
-                        if isinstance(v, (dict, list)):
-                            val_str = json.dumps(v, ensure_ascii=False, indent=2)
-                        else:
-                            val_str = str(v)
-                        chunk_text = f"【設定模組: {k}】\n{val_str}"
-                        records.append((chunk_text, {"json_key": str(k)}))
-                    if records:
-                        return records
-            except Exception:
-                pass
-        return []
-    @staticmethod
-    def _extract_from_code_or_data(file_path: str, max_structured_parse_chars: Optional[int]) -> str:
-        """max_structured_parse_chars：超過此長度不交給 json.loads（解析後的物件約為文字的二十多倍）；None 表示不限"""
-        raw_text = DocumentProcessor._extract_from_txt(file_path)
-
-        if max_structured_parse_chars is None or len(raw_text) <= max_structured_parse_chars:
-            cleaned = DocumentProcessor._clean_structured_data(raw_text)
-            if cleaned:
-                return cleaned
-
-        import re
-        cleaned_code = re.sub(r'data:image\/[a-zA-Z]+;base64,[a-zA-Z0-9+/=]{100,}', '[BASE64_IMAGE_OMITTED]', raw_text)
-        return _replace_svg_blocks(cleaned_code)
     @staticmethod
     def _extract_from_html(file_path: str) -> str:
         raw_text = DocumentProcessor._extract_from_txt(file_path)
@@ -545,14 +384,26 @@ class DocumentProcessor:
         except Exception as e:
             logger.error(f"獲取文件信息時發生錯誤: {e}")
             return {"error": str(e)}
+    @staticmethod
+    def _records_overview(extraction: Optional[ExtractionResult]) -> Optional[str]:
+        if extraction is None or not extraction.records:
+            return None
+        overview = f"{len(extraction.records)} 筆 {KIND_LABELS[extraction.kind]} 結構化記錄"
+        fields = extraction.field_names[:MAX_SUMMARY_FIELD_NAMES]
+        if fields:
+            overview += f"，欄位包括：{'、'.join(fields)}"
+        return overview
     @classmethod
-    async def generate_document_summary_async(cls, filename: str, content: str, file_type: str = "") -> str:
+    async def generate_document_summary_async(
+        cls, filename: str, content: str, file_type: str = "", extraction: Optional[ExtractionResult] = None
+    ) -> str:
         """
         使用 LLM 智能生成專業、結構化、流暢且具高資訊密度的繁體中文「文件主題與大綱摘要」。
         若 LLM 呼叫超時或發生異常，自動降級調用高品質的啟發式規則分析器。
         """
         if not content or not content.strip():
             return f"收錄內部文件《{filename}》。"
+        overview = cls._records_overview(extraction)
         stripped = content.strip()
         if len(stripped) <= 2800:
             sample_content = stripped
@@ -572,7 +423,8 @@ class DocumentProcessor:
             "4. 輸出要求：請直接輸出摘要文字本身，語句通順精煉，嚴禁客套話或前言標籤。\n\n"
             f"【文件檔名】{filename}\n"
             f"【文件類型】{file_type}\n"
-            f"【內容摘錄】\n{sample_content}"
+            + (f"【結構化資料】{overview}\n" if overview else "")
+            + f"【內容摘錄】\n{sample_content}"
         )
         try:
             from app.core.llm_client import call_llm
@@ -588,7 +440,7 @@ class DocumentProcessor:
                 return cleaned
         except Exception as e:
             logger.warning(f"使用 LLM 生成文件大綱摘要失敗 ({e})，切換至規則解析器降級處理")
-        return cls._generate_fallback_summary(filename, content, file_type)
+        return cls._generate_fallback_summary(filename, content, file_type, extraction)
     @classmethod
     def generate_document_summary(cls, filename: str, content: str, file_type: str = "") -> str:
         """
@@ -609,7 +461,9 @@ class DocumentProcessor:
         except Exception:
             return cls._generate_fallback_summary(filename, content, file_type)
     @classmethod
-    def _generate_fallback_summary(cls, filename: str, content: str, file_type: str = "") -> str:
+    def _generate_fallback_summary(
+        cls, filename: str, content: str, file_type: str = "", extraction: Optional[ExtractionResult] = None
+    ) -> str:
         """高品質啟發式規則分析器"""
         import re
         if not content or not content.strip():
@@ -617,15 +471,12 @@ class DocumentProcessor:
         raw_lines = [line.strip() for line in content.strip().splitlines() if line.strip()]
         if not raw_lines:
             return f"收錄內部文件《{filename}》。"
-        record_count = content.count("【記錄 ")
+        overview = cls._records_overview(extraction)
+        if overview:
+            return f"收錄 {overview}。"
+        record_count = count_rendered_records(content)
         if record_count > 0:
-            first_block = content[:1500]
-            fields = []
-            for field_name in ["作者", "內容", "連結", "標籤", "時間", "標題", "狀態", "金額", "說明"]:
-                if f"{field_name}:" in first_block or f"{field_name}：" in first_block:
-                    fields.append(field_name)
-            fields_str = "、".join(fields) if fields else "多項屬性欄位"
-            return f"收錄約 {record_count} 筆結構化社群/資料記錄（包含欄位：{fields_str}），支援依據作者帳號、內容文字、特定網址 URL 與主題標籤進行精準檢索。"
+            return f"收錄約 {record_count} 筆結構化記錄。"
         header_preview = content[:2500]
         is_line_file = filename.startswith('[LINE]') or '對話' in filename or '通訊' in filename
         line_date_matches = len(re.findall(r'\d{4}[./-]\d{2}[./-]\d{2}\s+(?:星期|週|Mon|Tue|Wed|Thu|Fri|Sat|Sun)', header_preview))

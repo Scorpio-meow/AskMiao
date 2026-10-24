@@ -152,9 +152,9 @@ flowchart LR
 
 ### Knowledge base and document processing
 
-- 27 file extensions: `.txt`, `.md`, `.markdown`, `.pdf`, `.docx`, `.pptx`, `.xlsx`, `.csv`, `.json`, `.yaml`, `.yml`, `.xml`, `.html`, `.htm`, `.log`, `.py`, `.js`, `.ts`, `.tsx`, `.jsx`, `.java`, `.cpp`, `.c`, `.sql`, `.sh`, `.ini`, `.env`.
+- 28 file extensions: `.txt`, `.md`, `.markdown`, `.pdf`, `.docx`, `.pptx`, `.xlsx`, `.csv`, `.json`, `.jsonl`, `.yaml`, `.yml`, `.xml`, `.html`, `.htm`, `.log`, `.py`, `.js`, `.ts`, `.tsx`, `.jsx`, `.java`, `.cpp`, `.c`, `.sql`, `.sh`, `.ini`, `.env`.
 - **Robust PDF extraction**: PyMuPDF extracts text and repairs embedded fonts missing ToUnicode maps; blank or garbled pages go through vision-model OCR (Azure OpenAI, OpenAI, or Gemini), with pypdf as the last fallback.
-- **Smart chunking**: Q&A documents become one chunk per question-answer pair, structured records and JSON become one chunk per record, and everything else is split recursively on Chinese punctuation.
+- **Smart chunking**: JSON, JSONL, YAML, CSV, and XLSX are parsed into structured records that become one chunk each (nested fields kept, long records split into parts that repeat the header), Q&A documents become one chunk per question-answer pair, and everything else is split recursively on Chinese punctuation.
 - **AI outlines and summaries**: uploads get an AI summary that can be regenerated or edited; rule-based summaries take over when the LLM fails. The summaries also form the knowledge-base catalog the agent uses to decide which document to search.
 
 ### External tools and MCP

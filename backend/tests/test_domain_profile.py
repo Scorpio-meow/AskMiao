@@ -12,6 +12,8 @@ def test_shipped_profile_is_valid_without_duplicate_domain_words():
     assert profile.domain_words
     assert len(profile.domain_words) == len(set(profile.domain_words))
     assert profile.record_date_fields == ["timestamp", "timestampTitle"]
+    assert profile.record_label_fields == ["title", "name", "author", "id"]
+    assert "embedcode" in profile.record_ignore_fields
 
 
 def test_profile_with_missing_field_is_rejected(tmp_path):

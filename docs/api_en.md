@@ -503,14 +503,14 @@ Upload documents to the knowledge base. Each file goes through: name and extensi
 
 **Request**: `multipart/form-data` with the field name `file`, repeatable, up to 10 files per request.
 
-- Supported extensions: `.txt`, `.md`, `.markdown`, `.pdf`, `.docx`, `.pptx`, `.xlsx`, `.csv`, `.json`, `.yaml`, `.yml`, `.xml`, `.html`, `.htm`, `.log`, `.py`, `.js`, `.ts`, `.tsx`, `.jsx`, `.java`, `.cpp`, `.c`, `.sql`, `.sh`, `.ini`, `.env`.
+- Supported extensions: `.txt`, `.md`, `.markdown`, `.pdf`, `.docx`, `.pptx`, `.xlsx`, `.csv`, `.json`, `.jsonl`, `.yaml`, `.yml`, `.xml`, `.html`, `.htm`, `.log`, `.py`, `.js`, `.ts`, `.tsx`, `.jsx`, `.java`, `.cpp`, `.c`, `.sql`, `.sh`, `.ini`, `.env`.
 - Per-file limit: `MAX_FILE_SIZE_MB` (10 MB in the template). The whole request body may be 10 × `MAX_FILE_SIZE_MB` MiB + 1 MiB, but only with a valid access token whose `is_admin` claim is `true` (1 MiB otherwise); larger bodies get `413`. The limit is chosen from the token's claims before the request is parsed; admin status itself still comes from the database, so an account that has lost admin rights gets `403`.
 - A `.docx`, `.pptx`, or `.xlsx` whose total uncompressed size exceeds 200 MiB, that contains more than 10,000 files, or that compresses more than 100:1 (checked for each member and for the whole file once they exceed 10 MiB uncompressed) is rejected before parsing; scanned PDF pages are rasterized at no more than 25 MP each.
 - Spaces in file names become underscores; a name that already exists gets a `_1`, `_2`, … suffix; names containing `/`, `\`, `..`, `<`, `>`, `:`, `"`, `|`, `?`, or `*` are rejected.
-- A file whose extracted text is identical to an existing document's is a duplicate and is not stored again.
-- Chunking: Q&A documents become one chunk per pair, structured records and JSON become one chunk per record, and everything else is split recursively by `CHUNK_SIZE` / `CHUNK_OVERLAP`.
+- A file whose extracted text (with surrounding whitespace removed) is identical to an existing document's is a duplicate and is not stored again.
+- Chunking: JSON, JSONL, YAML, CSV, XLSX, and JS declarations are parsed into structured records that become one chunk each, with long records split into parts; Q&A in other formats becomes one chunk per pair; everything else is split recursively by `CHUNK_SIZE` / `CHUNK_OVERLAP`. The record format is described in [Architecture](architecture_en.md#structured-data).
 
-**Response**: `200 OK` with one result per file; `http_status` reports each file's outcome:
+**Response**: `200 OK` with one result per file; `http_status` reports each file's outcome. In a successful item, `qa_pairs` is the number of Q&A pairs, `record_count` the number of structured records, and `warning` explains when a structured format failed to parse or exceeded the parse limit and was handled as plain text, and is `null` otherwise:
 
 ```json
 {
@@ -523,6 +523,20 @@ Upload documents to the knowledge base. Each file goes through: name and extensi
       "content_type": "application/pdf",
       "qa_detected": false,
       "qa_pairs": 0,
+      "record_count": 0,
+      "warning": null,
+      "http_status": 201
+    },
+    {
+      "filename": "posts.json",
+      "status": "success",
+      "document_id": 102,
+      "content_length": 5120,
+      "content_type": "application/json",
+      "qa_detected": false,
+      "qa_pairs": 0,
+      "record_count": 42,
+      "warning": null,
       "http_status": 201
     },
     {
@@ -572,7 +586,7 @@ Delete a document: delete the database record first, then remove its chunks, vec
 
 ### 3.6 POST /api/documents/rebuild-index
 
-Rebuild the index from the documents in the database: after clearing chunks and indexes, every document is re-extracted (from the uploaded file when it still exists), gets a new AI summary, and is re-chunked and re-embedded with the current settings. Run it once after upgrading from 2.x; it takes longer the more documents you have.
+Rebuild the index from the documents in the database: after clearing chunks and indexes, every document is re-extracted (from the uploaded file when it still exists, overwriting `documents.content`), gets a new AI summary, and is re-chunked and re-embedded with the current settings. A document whose uploaded file is gone is chunked from the stored content as plain text and listed in `missing_source_files`; re-upload it. Run it once after upgrading from 2.x; it takes longer the more documents you have.
 
 ```json
 {
@@ -580,13 +594,15 @@ Rebuild the index from the documents in the database: after clearing chunks and 
   "document_count": 6,
   "chunk_count": 214,
   "qa_pairs_detected": 0,
+  "records_detected": 42,
+  "missing_source_files": [],
   "chunk_size": 300,
   "chunk_overlap": 100,
   "timestamp": "2026-09-25T10:00:00.000000"
 }
 ```
 
-With no documents in the database it returns `{"message": "索引重建完成（沒有文件）", "document_count": 0, "chunk_count": 0, "timestamp": "..."}`.
+With no documents in the database it returns `{"message": "索引重建完成（沒有文件）", "document_count": 0, "chunk_count": 0, "qa_pairs_detected": 0, "records_detected": 0, "missing_source_files": [], "timestamp": "..."}`.
 
 ---
 

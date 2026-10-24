@@ -27,10 +27,34 @@
 
 - 社群檔案：[貢獻指南](.github/CONTRIBUTING.md)、[行為準則](.github/CODE_OF_CONDUCT.md)、[安全政策](.github/SECURITY.md) 與 [無障礙聲明](.github/ACCESSIBILITY.md)，皆附 `_en` 英文版。安全漏洞以 GitHub 私下回報或 Email 回報，14 天內首次回覆、最晚在回報後 90 天公開，只有最新主版本收到安全修正。
 - `.github/ISSUE_TEMPLATE/` 新增錯誤回報、功能建議、文件問題與無障礙問題的 Issue 表單，以及安全通報與疑難排解的連結；`.github/pull_request_template.md` 新增 Pull Request 範本，列出驗證方式與文件、CHANGELOG、介紹頁同步的檢查項目。
+- 結構化資料改由新的 `app/services/structured_data/` 解析一次，產生渲染後的文字與記錄清單，切塊直接使用記錄，不再以正規式從文字解析回來。
+  - 支援上傳 `.jsonl`（每行一筆記錄）；YAML 改以 `yaml.safe_load` 真正解析；CSV 與 XLSX 以第一個非空列為表頭，每列成為一筆記錄，列號與試算表一致。
+  - 根層級是物件時，每個物件陣列屬性各自是一組記錄，其餘頂層欄位合成一筆 `【上下文】` 記錄。
+  - 超過 `CHUNK_SIZE` 的記錄以整行欄位為單位切成多段，每段重複記錄標頭並加上 `（2/3）`，metadata 帶 `part`、`part_count`。
+- 領域設定檔新增必填欄位 `record_label_fields`（記錄標頭與 `label` 使用的識別欄位）與 `record_ignore_fields`（解析時略過的欄位）。
+- 上傳結果新增 `record_count` 與 `warning`（結構化格式解析失敗或超過上限、改以純文字處理時的說明）；重建索引的回應新增 `records_detected` 與 `missing_source_files`（原始檔已遺失、改用資料庫內容重建的文件）。前端上傳對話框與重建索引訊息會顯示這些資訊。
 
 ### 變更 (Changed)
 
 - README 的「貢獻指南」改為摘要，完整規則（含介紹頁同步清單）移到 `.github/CONTRIBUTING.md`。
+- 結構化記錄的文字一律使用原始欄位名，以 `key: 值` 逐行輸出，巢狀物件攤平成點路徑（`contact.email`、`items[0].name`），不再把欄位翻成「作者 / 內容 / 連結 / 標籤」；日期輸出為 ISO 格式。標頭依來源寫成 `【記錄 3】`、`【data 記錄 3】`、`【第 5 列】` 或 `【工作表1 第 5 列】`，後面接上識別欄位的值。
+- 結構化格式（JSON、JSONL、YAML、CSV、XLSX）不再做 Q&A 偵測；`qa_pairs` 與 `qa_pairs_detected` 只計算真正的 Q&A 對。
+- `filter_and_count_records` 依 `(document_id, record_index)` 合併同一筆記錄的分段後再篩選，每筆記錄只計一次；結果欄位 `author`、`link` 改為 `label`、`links`，`links` 中的網址都可以交給 `web_fetch` 讀取。
+- 結構化資料的 AI 摘要附上記錄數、格式與欄位名稱；規則摘要不再依賴中文欄位標籤。
+- 值中的 Base64 圖片與 SVG 換成佔位字但保留欄位；依欄位名略過的雜訊清單從程式碼移到 `record_ignore_fields`。
+
+### 修正 (Fixed)
+
+- 結構化資料中的巢狀物件與陣列不再被丟棄；JSON 物件不再只保留頂層字串、數字與布林值。
+- 上傳時存入資料庫的內容改為去除前後空白後的版本，與重複檢查比對的值一致。
+- 管理員上傳的 JSON 在清理失敗時，第二次解析不再繞過解析上限。
+
+### 移除 (Removed)
+
+- `DocumentProcessor.split_structured_records`、`_clean_structured_data`、`_extract_from_code_or_data`，以及 `【設定模組: key】` 片段與 `json_key`、`tags` metadata。
+
+> [!IMPORTANT]
+> 升級前請在領域設定檔補上 `record_label_fields` 與 `record_ignore_fields`，否則後端無法啟動；升級後由管理員執行一次「重建索引」，既有文件才會改用新的記錄格式。詳見 [升級指南](docs/upgrading.md#從-500-升級到下一版)。
 
 ---
 

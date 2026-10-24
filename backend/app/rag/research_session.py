@@ -107,7 +107,7 @@ class ResearchSession:
                     "source": record.get("source"),
                     "snippet": content[:SNIPPET_LENGTH],
                 })
-                self._add_url_source(content, record.get("link"))
+                self._add_url_source(content, *(record.get("links") or []))
         elif name == "web_search":
             for result in output.get("results") or []:
                 url = result.get("url")

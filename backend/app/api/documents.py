@@ -9,13 +9,14 @@ from app.core.jwt_auth import get_current_admin_user
 from app.core.limits import ADMIN_UPLOAD_EXTRACTION_LIMITS, MAX_FILES_PER_UPLOAD
 from app.rag.tools import invalidate_knowledge_base_description
 from app.services.document_processor import DocumentProcessor
+from app.services.structured_data import ExtractionResult, record_chunks
 from app.core.input_validator import InputValidator
 from pydantic import BaseModel
 import re
 import asyncio
 from langchain_core.documents import Document as LangChainDocument
 import os
-from typing import List
+from typing import List, Tuple
 import logging
 from datetime import datetime
 from app.core.config import settings
@@ -71,11 +72,24 @@ def split_faq(text: str):
             answer.append(line)
     flush()
     return pairs
-def process_document_for_rag(content: str, metadata: dict, rag_system) -> tuple:
-    try:
-        qa_pairs = split_faq(content)
-    except Exception:
-        qa_pairs = []
+def process_document_for_rag(
+    extraction: ExtractionResult, metadata: dict, rag_system
+) -> Tuple[List[LangChainDocument], int, int]:
+    if extraction.records:
+        langchain_docs = [
+            LangChainDocument(page_content=text, metadata={**metadata, **record_metadata})
+            for record in extraction.records
+            for text, record_metadata in record_chunks(record, rag_system.chunk_size)
+        ]
+        logger.info(f"檢測到 {len(extraction.records)} 筆結構化記錄，切成 {len(langchain_docs)} 個片段")
+        return langchain_docs, 0, len(extraction.records)
+    content = extraction.text
+    qa_pairs = []
+    if not extraction.structured_format:
+        try:
+            qa_pairs = split_faq(content)
+        except Exception:
+            qa_pairs = []
     if qa_pairs:
         langchain_docs = []
         for i, (q, a) in enumerate(qa_pairs):
@@ -91,32 +105,28 @@ def process_document_for_rag(content: str, metadata: dict, rag_system) -> tuple:
                 metadata=qa_metadata
             ))
         logger.info(f"檢測到 {len(qa_pairs)} 個 Q&A 對，將作為完整塊處理")
-        return langchain_docs, len(qa_pairs)
-    try:
-        structured_records = DocumentProcessor.split_structured_records(content)
-    except Exception as e:
-        logger.warning(f"結構化切分檢測失敗: {e}")
-        structured_records = []
-    if structured_records:
-        langchain_docs = []
-        for i, (chunk_text, extra_meta) in enumerate(structured_records):
-            doc_meta = {
-                **metadata,
-                **extra_meta,
-                "record_index": extra_meta.get("record_index", i + 1),
-                "preserve_whole": True
-            }
-            langchain_docs.append(LangChainDocument(
-                page_content=chunk_text,
-                metadata=doc_meta
-            ))
-        logger.info(f"檢測到 {len(structured_records)} 條結構化/JSON 記錄，已建立為獨立原子分塊 (Atomic Record Chunks)")
-        return langchain_docs, len(structured_records)
+        return langchain_docs, len(qa_pairs), 0
     langchain_docs = [LangChainDocument(
         page_content=content,
         metadata=metadata
     )]
-    return langchain_docs, 0
+    return langchain_docs, 0, 0
+async def reextract_or_stored(doc, missing_source_files: List[str]) -> ExtractionResult:
+    file_path = os.path.join(UPLOAD_DIR, doc.filename)
+    if not os.path.exists(file_path):
+        missing_source_files.append(doc.filename)
+        return DocumentProcessor.stored_text_extraction(doc.filename, doc.content)
+    try:
+        extraction = await asyncio.to_thread(
+            DocumentProcessor.extract_document, file_path, doc.file_type or "text/plain", ADMIN_UPLOAD_EXTRACTION_LIMITS
+        )
+    except Exception as e:
+        logger.warning(f"重新提取檔案 {doc.filename} 失敗，使用資料庫快取: {e}")
+        return DocumentProcessor.stored_text_extraction(doc.filename, doc.content)
+    if not extraction.text or not extraction.text.strip():
+        return DocumentProcessor.stored_text_extraction(doc.filename, doc.content)
+    doc.content = extraction.text.strip()
+    return extraction
 @router.post("/upload")
 async def upload_document(
     file: List[UploadFile] = File(...),
@@ -192,9 +202,10 @@ async def upload_document(
             file_hash = DocumentProcessor.calculate_file_hash(file_path)
             logger.info(f"Uploaded file hash: {file_hash}")
             try:
-                content = await asyncio.to_thread(
-                    DocumentProcessor.extract_text_from_file, file_path, up.content_type, ADMIN_UPLOAD_EXTRACTION_LIMITS
+                extraction = await asyncio.to_thread(
+                    DocumentProcessor.extract_document, file_path, up.content_type, ADMIN_UPLOAD_EXTRACTION_LIMITS
                 )
+                content = extraction.text
             except ValueError as ve:
                 if os.path.exists(file_path):
                     os.remove(file_path)
@@ -227,9 +238,9 @@ async def upload_document(
                     "http_status": 400
                 })
                 continue
+            content = content.strip()
             try:
-                normalized_content = content.strip()
-                existing = db.query(DBDocument).filter(DBDocument.content == normalized_content).first()
+                existing = db.query(DBDocument).filter(DBDocument.content == content).first()
             except Exception:
                 existing = None
             if existing:
@@ -247,7 +258,9 @@ async def upload_document(
                     "http_status": 409
                 })
                 continue
-            doc_desc = await DocumentProcessor.generate_document_summary_async(safe_filename, content, up.content_type or "")
+            doc_desc = await DocumentProcessor.generate_document_summary_async(
+                safe_filename, content, up.content_type or "", extraction=extraction
+            )
             document = DBDocument(
                 filename=safe_filename,
                 content=content,
@@ -269,8 +282,8 @@ async def upload_document(
                 "original_filename": up.filename
             }
             logger.info(f"正在對文件 {safe_filename} ({len(content)} 字元) 進行分塊處理...")
-            langchain_docs, qa_count = await asyncio.to_thread(
-                process_document_for_rag, content, base_metadata, rag_system
+            langchain_docs, qa_count, record_count = await asyncio.to_thread(
+                process_document_for_rag, extraction, base_metadata, rag_system
             )
             logger.info(f"正在將文件 {safe_filename} 提交至 RAG 引擎進行分塊與向量化...")
             added_chunks = await asyncio.to_thread(rag_system.add_documents, langchain_docs)
@@ -286,6 +299,8 @@ async def upload_document(
                 "content_type": up.content_type,
                 "qa_detected": qa_count > 0,
                 "qa_pairs": qa_count,
+                "record_count": record_count,
+                "warning": extraction.warning,
                 "http_status": 201
             })
         except Exception as e:
@@ -403,30 +418,22 @@ async def rebuild_index(
                 "message": "索引重建完成（沒有文件）",
                 "document_count": 0,
                 "chunk_count": 0,
+                "qa_pairs_detected": 0,
+                "records_detected": 0,
+                "missing_source_files": [],
                 "timestamp": datetime.now().isoformat()
             }
         logger.info(f"用新配置重新處理 {len(documents_from_db)} 個文檔（chunk_size={rag_system.chunk_size}, chunk_overlap={rag_system.chunk_overlap}）...")
         total_chunks = 0
         total_qa_pairs = 0
+        total_records = 0
+        missing_source_files = []
         for doc in documents_from_db:
             try:
- 
-                file_path = os.path.join(UPLOAD_DIR, doc.filename)
-                content_to_process = doc.content
-                if os.path.exists(file_path):
-                    try:
-                        fresh_content = await asyncio.to_thread(
-                            DocumentProcessor.extract_text_from_file, file_path, doc.file_type or "text/plain",
-                            ADMIN_UPLOAD_EXTRACTION_LIMITS
-                        )
-                        if fresh_content and fresh_content.strip():
-                            content_to_process = fresh_content.strip()
-                            doc.content = content_to_process
-                    except Exception as e:
-                        logger.warning(f"重新提取檔案 {doc.filename} 失敗，使用資料庫快取: {e}")
- 
+                extraction = await reextract_or_stored(doc, missing_source_files)
+                content_to_process = extraction.text
                 doc.description = await DocumentProcessor.generate_document_summary_async(
-                    doc.filename, content_to_process, doc.file_type or "text/plain"
+                    doc.filename, content_to_process, doc.file_type or "text/plain", extraction=extraction
                 )
                 db.add(doc)
                 db.commit()
@@ -438,28 +445,35 @@ async def rebuild_index(
                     "content_type": doc.file_type,
                     "original_filename": doc.filename
                 }
-                langchain_docs, qa_count = await asyncio.to_thread(
-                    process_document_for_rag, content_to_process, base_metadata, rag_system
+                langchain_docs, qa_count, record_count = await asyncio.to_thread(
+                    process_document_for_rag, extraction, base_metadata, rag_system
                 )
                 chunks_added = await asyncio.to_thread(rag_system.add_documents, langchain_docs)
-                
+
                 total_chunks += chunks_added or 0
-                if qa_count > 0:
-                    total_qa_pairs += qa_count
-                    logger.info(f"處理文檔 {doc.id} ({doc.filename}): {qa_count} 個 Q&A 對")
-                else:
-                    logger.info(f"處理文檔 {doc.id} ({doc.filename}): {chunks_added} 個分塊")
+                total_qa_pairs += qa_count
+                total_records += record_count
+                logger.info(
+                    f"處理文檔 {doc.id} ({doc.filename}): {chunks_added} 個分塊（{qa_count} 個 Q&A 對、{record_count} 筆記錄）"
+                )
             except Exception as e:
                 logger.exception(f"處理文檔 {doc.id} ({doc.filename}) 失敗")
                 continue
         doc_count = len(documents_from_db)
         vector_count = rag_system.index.ntotal
-        logger.info(f"索引重建完成: {doc_count} 個文檔 -> {vector_count} 個向量塊 (含 {total_qa_pairs} 個 Q&A 對)")
+        logger.info(
+            f"索引重建完成: {doc_count} 個文檔 -> {vector_count} 個向量塊 "
+            f"(含 {total_qa_pairs} 個 Q&A 對、{total_records} 筆結構化記錄)"
+        )
+        if missing_source_files:
+            logger.warning(f"以下文件的原始檔已遺失，改以資料庫內容重建，請重新上傳: {missing_source_files}")
         return {
             "message": "索引重建成功（已用新配置重新分塊，並重新生成 AI 智能大綱）",
             "document_count": doc_count,
             "chunk_count": vector_count,
             "qa_pairs_detected": total_qa_pairs,
+            "records_detected": total_records,
+            "missing_source_files": missing_source_files,
             "chunk_size": rag_system.chunk_size,
             "chunk_overlap": rag_system.chunk_overlap,
             "timestamp": datetime.now().isoformat()

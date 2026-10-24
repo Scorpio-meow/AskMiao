@@ -515,6 +515,18 @@
   overflow-wrap: anywhere;
 }
 
+.fileNote {
+  font-size: var(--font-size-xs);
+  color: var(--text-tertiary);
+  overflow-wrap: anywhere;
+}
+
+.fileWarning {
+  font-size: var(--font-size-xs);
+  color: var(--color-warning-text);
+  overflow-wrap: anywhere;
+}
+
 .uploadActions {
   justify-content: space-between;
 }

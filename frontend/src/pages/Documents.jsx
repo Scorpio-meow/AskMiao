@@ -72,7 +72,7 @@ function Documents() {
     if (!files || !files.length) return;
     const allowedExtensions = [
       '.txt', '.md', '.markdown', '.pdf', '.docx', '.pptx', '.xlsx',
-      '.csv', '.json', '.yaml', '.yml', '.xml', '.html', '.htm', '.log',
+      '.csv', '.json', '.jsonl', '.yaml', '.yml', '.xml', '.html', '.htm', '.log',
       '.py', '.js', '.ts', '.tsx', '.jsx', '.java', '.cpp', '.c', '.sql',
       '.sh', '.ini', '.env'
     ];
@@ -169,15 +169,21 @@ function Documents() {
     if (e === 'docx' || e === 'doc') return styles.fileBadgeDocx;
     if (e === 'pptx' || e === 'ppt') return styles.fileBadgePptx;
     if (e === 'xlsx' || e === 'xls' || e === 'csv') return styles.fileBadgeXlsx;
-    if (['py', 'js', 'ts', 'tsx', 'jsx', 'json', 'html', 'sql', 'sh', 'css'].includes(e)) return styles.fileBadgeCode;
+    if (['py', 'js', 'ts', 'tsx', 'jsx', 'json', 'jsonl', 'html', 'sql', 'sh', 'css'].includes(e)) return styles.fileBadgeCode;
     return styles.fileBadgeText;
   };
-  const uploadSingle = async (item, index) => {
+  const describeUploadResult = (res) => {
+    const parts = [];
+    if (res.record_count > 0) parts.push(`${res.record_count} 筆結構化記錄`);
+    if (res.qa_pairs > 0) parts.push(`${res.qa_pairs} 組 Q&A`);
+    return parts.length > 0 ? `已切分為 ${parts.join('、')}` : null;
+  };
+  const uploadSingle = async (item, index, warnings) => {
     if (!item) return 'skipped';
     const controller = new AbortController();
     setUploadItems((prev) => {
       const next = prev.slice();
-      next[index] = { ...next[index], status: 'uploading', controller, progress: 0, detail: null };
+      next[index] = { ...next[index], status: 'uploading', controller, progress: 0, detail: null, warning: null };
       return next;
     });
     const formData = new FormData();
@@ -199,9 +205,16 @@ function Documents() {
       });
       const res = response.data?.results?.[0];
       if (res && res.status === 'success') {
+        if (res.warning) warnings.push(`${res.filename}：${res.warning}`);
         setUploadItems((prev) => {
           const next = prev.slice();
-          next[index] = { ...next[index], status: 'success', progress: 100, detail: null };
+          next[index] = {
+            ...next[index],
+            status: 'success',
+            progress: 100,
+            detail: describeUploadResult(res),
+            warning: res.warning || null
+          };
           return next;
         });
         return 'success';
@@ -253,6 +266,7 @@ function Documents() {
     setSuccess('');
     cancelAllRef.current = false;
     const itemsToUpload = uploadItems.slice();
+    const warnings = [];
     let successCount = 0;
     let unfinishedCount = 0;
     for (let i = 0; i < itemsToUpload.length; i++) {
@@ -263,7 +277,7 @@ function Documents() {
         unfinishedCount += 1;
         continue;
       }
-      const result = await uploadSingle(it, i);
+      const result = await uploadSingle(it, i, warnings);
       if (result === 'success') successCount += 1;
       else unfinishedCount += 1;
     }
@@ -271,6 +285,10 @@ function Documents() {
     documentsCache.data = null;
     documentsCache.timestamp = 0;
     fetchDocuments();
+    if (unfinishedCount === 0 && warnings.length > 0) {
+      setUploadFinished(true);
+      return;
+    }
     if (unfinishedCount === 0) {
       resetUploadQueue();
       setUploadDialog(false);
@@ -354,6 +372,7 @@ function Documents() {
     if (ext === '.xlsx' || contentType === 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet') return 'XLSX';
     if (ext === '.md' || ext === '.markdown' || contentType?.includes('markdown')) return 'MD';
     if (ext === '.csv' || contentType?.includes('csv')) return 'CSV';
+    if (ext === '.jsonl') return 'JSONL';
     if (ext === '.json' || contentType?.includes('json')) return 'JSON';
     if (ext === '.html' || ext === '.htm' || contentType?.includes('html')) return 'HTML';
     if (['.py', '.js', '.ts', '.tsx', '.jsx', '.java', '.cpp', '.c', '.sql', '.sh'].includes(ext)) return ext.slice(1).toUpperCase();
@@ -377,7 +396,15 @@ function Documents() {
       if (data.qa_pairs_detected && data.qa_pairs_detected > 0) {
         messageParts.push(`Q&A對: ${data.qa_pairs_detected}`);
       }
+      if (data.records_detected && data.records_detected > 0) {
+        messageParts.push(`結構化記錄: ${data.records_detected}`);
+      }
       setSuccess(messageParts.join(' | '));
+      if (data.missing_source_files && data.missing_source_files.length > 0) {
+        setLocalError(
+          `以下文件的原始檔已遺失，已改用資料庫內容重建，建議重新上傳：${data.missing_source_files.join('、')}`
+        );
+      }
       setRebuildDialog(false);
       fetchDocuments();
     } catch (err) {
@@ -433,6 +460,7 @@ function Documents() {
   };
   const failedItems = uploadItems.filter((it) => it.status === 'failed');
   const pendingUploadCount = uploadItems.filter((it) => it.status !== 'success').length;
+  const warnedItems = uploadItems.filter((it) => it.status === 'success' && it.warning);
   // 只有第一次載入時顯示整頁載入；之後重新整理保留目前內容與捲動位置
   if (!loaded) {
     return (
@@ -634,7 +662,7 @@ function Documents() {
         <DialogContent>
           <input
             ref={fileInputRef}
-            accept=".txt,.md,.markdown,.pdf,.docx,.pptx,.xlsx,.csv,.json,.yaml,.yml,.xml,.html,.htm,.log,.py,.js,.ts,.tsx,.jsx,.java,.cpp,.c,.sql,.sh,.ini,.env"
+            accept=".txt,.md,.markdown,.pdf,.docx,.pptx,.xlsx,.csv,.json,.jsonl,.yaml,.yml,.xml,.html,.htm,.log,.py,.js,.ts,.tsx,.jsx,.java,.cpp,.c,.sql,.sh,.ini,.env"
             className={styles.hiddenFileInput}
             type="file"
             multiple
@@ -666,7 +694,7 @@ function Documents() {
               <span className={styles.formatTag}>PPT (PPTX)</span>
               <span className={styles.formatTag}>Excel (XLSX/CSV)</span>
               <span className={styles.formatTag}>Markdown</span>
-              <span className={styles.formatTag}>JSON</span>
+              <span className={styles.formatTag}>JSON / JSONL / YAML</span>
               <span className={styles.formatTag}>HTML</span>
               <span className={styles.formatTag}>Code (.py, .js, .ts...)</span>
             </span>
@@ -676,6 +704,11 @@ function Documents() {
               {failedItems.length > 0
                 ? `有 ${failedItems.length} 個檔案沒有成功入庫，原因列在各檔案下方。可以修正後重新上傳。`
                 : `已取消 ${pendingUploadCount} 個檔案的上傳，可以再次開始上傳。`}
+            </Alert>
+          )}
+          {uploadFinished && pendingUploadCount === 0 && warnedItems.length > 0 && (
+            <Alert severity="warning" className={styles.uploadSummary}>
+              {`檔案都已入庫，但有 ${warnedItems.length} 個檔案未能以結構化資料切分，原因列在各檔案下方。`}
             </Alert>
           )}
           {/* 已選擇檔案佇列 */}
@@ -744,6 +777,12 @@ function Documents() {
                       </div>
                       {item.status === 'failed' && item.detail && (
                         <p className={styles.fileError}>{item.detail}</p>
+                      )}
+                      {item.status === 'success' && item.detail && (
+                        <p className={styles.fileNote}>{item.detail}</p>
+                      )}
+                      {item.status === 'success' && item.warning && (
+                        <p className={styles.fileWarning}>{item.warning}</p>
                       )}
                       {/* 進度條 */}
                       {item.status === 'uploading' && (

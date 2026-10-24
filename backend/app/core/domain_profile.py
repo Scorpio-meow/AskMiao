@@ -20,13 +20,15 @@ class SummaryFallbackProfile(BaseModel):
 
 
 class DomainProfile(BaseModel):
-    """部署領域專屬資料：領域詞、結構化記錄的日期欄位與摘要備援規則"""
+    """部署領域專屬資料：領域詞、結構化記錄的日期、識別與略過欄位，以及摘要備援規則"""
     model_config = ConfigDict(extra="forbid")
 
     # 加入 jieba 詞典的領域詞
     domain_words: List[NonEmptyStr]
     # 結構化記錄中代表發布日期的欄位名稱（內容格式為「欄位: 日期」）
     record_date_fields: List[NonEmptyStr]
+    record_label_fields: List[NonEmptyStr]
+    record_ignore_fields: List[NonEmptyStr]
     summary_fallback: SummaryFallbackProfile
 
 

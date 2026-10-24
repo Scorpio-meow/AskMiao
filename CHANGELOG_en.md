@@ -27,10 +27,34 @@ All notable changes to AskMiao are documented in this file. The format is based 
 
 - Community files: [Contributing](.github/CONTRIBUTING_en.md), [Code of Conduct](.github/CODE_OF_CONDUCT_en.md), [Security Policy](.github/SECURITY_en.md), and [Accessibility Statement](.github/ACCESSIBILITY_en.md), each with a Traditional Chinese version. Security vulnerabilities are reported through GitHub private vulnerability reporting or email, with a first reply within 14 days and public disclosure no later than 90 days after the report; only the latest major version receives security fixes.
 - Issue forms in `.github/ISSUE_TEMPLATE/` for bug reports, feature requests, documentation issues, and accessibility barriers, plus links to private security reporting and troubleshooting; a pull request template in `.github/pull_request_template.md` that lists the verification steps and the checks for documentation, the changelog, and intro site sync.
+- Structured data is now parsed once by the new `app/services/structured_data/` into rendered text plus a record list; chunking uses the records directly instead of parsing them back out of the text with regular expressions.
+  - `.jsonl` uploads are supported (one record per line); YAML is actually parsed with `yaml.safe_load`; CSV and XLSX use the first non-empty row as the header and turn every later row into a record, with row numbers matching the spreadsheet.
+  - When the root is an object, each array-of-objects property becomes its own group of records, and the remaining top-level fields form one `【上下文】` (context) record.
+  - Records longer than `CHUNK_SIZE` are split on whole field lines into parts that each repeat the record header with a `（2/3）` suffix, with `part` and `part_count` in the metadata.
+- The domain profile has two new required fields: `record_label_fields` (label fields for record headers and `label`) and `record_ignore_fields` (fields dropped while parsing).
+- Upload results gain `record_count` and `warning` (explaining when a structured format failed to parse or exceeded the limit and was handled as plain text); the rebuild-index response gains `records_detected` and `missing_source_files` (documents whose uploaded file is gone and that were rebuilt from the stored content). The frontend upload dialog and rebuild message show them.
 
 ### Changed
 
 - The README's Contributing section is now a summary; the full rules, including the intro site sync list, moved to `.github/CONTRIBUTING_en.md`.
+- Structured record text always uses the original field names, one `key: value` per line, with nested objects flattened into dotted paths (`contact.email`, `items[0].name`) instead of translating fields into Chinese labels for author, content, link, and tags; dates are written in ISO format. Headers read `【記錄 3】`, `【data 記錄 3】`, `【第 5 列】`, or `【工作表1 第 5 列】` depending on the source, followed by the label value.
+- Structured formats (JSON, JSONL, YAML, CSV, XLSX) no longer go through Q&A detection; `qa_pairs` and `qa_pairs_detected` count only real Q&A pairs.
+- `filter_and_count_records` merges the parts of each record by `(document_id, record_index)` before filtering, so every record counts once; the result fields `author` and `link` became `label` and `links`, and every URL in `links` may be read with `web_fetch`.
+- AI summaries of structured data include the record count, format, and field names; rule-based summaries no longer depend on Chinese field labels.
+- Base64 images and SVGs inside values are replaced by placeholders while the field is kept; the list of noise fields dropped by name moved from the code to `record_ignore_fields`.
+
+### Fixed
+
+- Nested objects and arrays in structured data are no longer dropped; JSON objects no longer keep only top-level strings, numbers, and booleans.
+- Uploads store the content with surrounding whitespace removed, matching the value the duplicate check compares.
+- When cleanup of an admin-uploaded JSON file failed, the second parse no longer bypasses the parse limit.
+
+### Removed
+
+- `DocumentProcessor.split_structured_records`, `_clean_structured_data`, and `_extract_from_code_or_data`, along with the `【設定模組: key】` chunks and the `json_key` and `tags` metadata.
+
+> [!IMPORTANT]
+> Before upgrading, add `record_label_fields` and `record_ignore_fields` to the domain profile, or the backend will not start; after upgrading, have an admin run "Rebuild index" once so existing documents switch to the new record format. See the [upgrade guide](docs/upgrading_en.md#upgrading-from-500-to-the-next-release).
 
 ---
 
