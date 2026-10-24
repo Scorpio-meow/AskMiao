@@ -6,7 +6,8 @@ from typing import Optional, Dict, Any
 import logging
 import bcrypt as bcrypt_lib
 import jwt
-from passlib.context import CryptContext
+from argon2 import PasswordHasher
+from argon2.exceptions import InvalidHashError, VerificationError
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from sqlalchemy.orm import Session
@@ -27,7 +28,7 @@ try:
 except Exception as e:
     USE_BLACKLIST = False
     print(f"Token 黑名單功能不可用: {e}")
-pwd_context = CryptContext(schemes=["argon2"], deprecated="auto")
+password_hasher = PasswordHasher()
 security = HTTPBearer()
 def _numeric_date(moment: datetime) -> float:
     """UTC 時刻轉成 JWT 的 NumericDate 並保留微秒（RFC 7519 允許小數）。
@@ -45,7 +46,7 @@ class PasswordManager:
     
     @staticmethod
     def hash_password(password: str) -> str:
-        return pwd_context.hash(password)
+        return password_hasher.hash(password)
     @staticmethod
     def verify_password(plain_password: str, hashed_password: str) -> bool:
         if hashed_password.startswith("$2"):
@@ -57,10 +58,13 @@ class PasswordManager:
                 )
             except ValueError:
                 return False
-        return pwd_context.verify(plain_password, hashed_password)
+        try:
+            return password_hasher.verify(hashed_password, plain_password)
+        except (VerificationError, InvalidHashError):
+            return False
     @staticmethod
     def needs_rehash(hashed_password: str) -> bool:
-        return hashed_password.startswith("$2") or pwd_context.needs_update(hashed_password)
+        return hashed_password.startswith("$2") or password_hasher.check_needs_rehash(hashed_password)
 class TokenManager:
     
     @staticmethod

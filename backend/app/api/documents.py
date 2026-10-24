@@ -4,13 +4,12 @@ from app.models.database import get_db
 from app.models import Document as DBDocument
 from app.core.rag_manager import get_rag_system
 from app.services.document_removal import remove_document
-from app.core.user_context import get_current_user_id, get_default_user_id
+from app.core.user_context import get_current_user_id
 from app.core.jwt_auth import get_current_admin_user
 from app.core.limits import ADMIN_UPLOAD_EXTRACTION_LIMITS, MAX_FILES_PER_UPLOAD
 from app.rag.tools import invalidate_knowledge_base_description
 from app.services.document_processor import DocumentProcessor
 from app.services.structured_data import ExtractionResult, record_chunks
-from app.core.input_validator import InputValidator
 from pydantic import BaseModel
 import re
 import asyncio
@@ -149,10 +148,7 @@ async def upload_document(
         stored_document = None
         try:
             try:
-                is_valid, error_msg = InputValidator.validate_filename(up.filename)
-                if not is_valid:
-                    raise ValueError(error_msg)
-                safe_filename = validate_filename(up.filename)
+                safe_filename = validate_filename(up.filename or "")
             except ValueError as e:
                 logger.warning(f"檔名驗證失敗: {up.filename} - {str(e)}")
                 results.append({

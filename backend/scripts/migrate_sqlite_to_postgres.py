@@ -66,21 +66,6 @@ TABLE_CONFIGS: Sequence[Dict[str, Any]] = (
         "bool_fields": {"is_processed"},
         "json_fields": set(),
     },
-    {
-        "name": "custom_agents",
-        "columns": [
-            "id",
-            "name",
-            "role",
-            "expertise",
-            "prompt",
-            "tools",
-            "is_public",
-            "created_by",
-        ],
-        "bool_fields": {"is_public"},
-        "json_fields": {"tools"},
-    },
 )
 def _normalize_bool(value: Any) -> Any:
     if value is None:
@@ -155,7 +140,6 @@ def ensure_target_schema() -> None:
         conn.execute(text("CREATE INDEX IF NOT EXISTS ix_conversations_user_id ON conversations (user_id)"))
         conn.execute(text("CREATE INDEX IF NOT EXISTS ix_messages_conversation_id ON messages (conversation_id)"))
         conn.execute(text("CREATE INDEX IF NOT EXISTS ix_documents_uploaded_by ON documents (uploaded_by)"))
-        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_custom_agents_created_by ON custom_agents (created_by)"))
 def _upsert_many(
     table_name: str,
     columns: Sequence[str],

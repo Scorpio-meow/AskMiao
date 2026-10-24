@@ -521,8 +521,7 @@ if __name__ == '__main__':
                     return {
                         "is_success": not res.get("isError", False),
                         "duration_seconds": duration,
-                        "content": res.get("content", []),
-                        "raw_result": res
+                        "content": res.get("content", [])
                     }
                 finally:
                     await client.close()
@@ -545,8 +544,7 @@ if __name__ == '__main__':
                 return {
                     "is_success": not res.get("isError", False),
                     "duration_seconds": duration,
-                    "content": res.get("content", []),
-                    "raw_result": res
+                    "content": res.get("content", [])
                 }
             else:
                 raise ValueError(f"不支援的傳輸模式: {transport_type}")

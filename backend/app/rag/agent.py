@@ -320,35 +320,3 @@ class ResearchAgent:
                 "retrieval_strategy": "agentic_react"
             }
         }
-
-    async def run_research(
-        self,
-        query: str,
-        model_name: Optional[str] = None,
-        conversation_history: Optional[List[Dict[str, str]]] = None,
-        reasoning_effort: Optional[str] = "medium",
-        attachments: Optional[List[Any]] = None,
-        *,
-        max_turns: int
-    ) -> Dict[str, Any]:
-        """非串流封裝（向後相容）"""
-        result: Dict[str, Any] = {
-            "answer": "",
-            "sources": [],
-            "sources_detail": [],
-            "research_trace": [],
-            "turns_used": 0,
-            "total_time": 0.0,
-            "retrieval_strategy": "agentic_react"
-        }
-        async for item in self.stream_research(
-            query,
-            model_name=model_name,
-            conversation_history=conversation_history,
-            reasoning_effort=reasoning_effort,
-            attachments=attachments,
-            max_turns=max_turns
-        ):
-            if item.get("event") == "done":
-                result.update(item.get("data", {}))
-        return result

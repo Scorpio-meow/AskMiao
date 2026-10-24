@@ -4,7 +4,7 @@ from fastapi import APIRouter
 import logging
 from collections.abc import Iterable, Mapping, Sequence
 from typing import Optional
-import requests
+import httpx
 from app.core.config import settings
 from app.core.llm_client import get_available_models
 logger = logging.getLogger(__name__)
@@ -30,40 +30,26 @@ async def fetch_remote_models_cached() -> tuple[list[str], Optional[str]]:
     if error is not None:
         raise error
     return result
+async def models_and_default() -> tuple[list[str], str]:
+    """可用模型與預設模型，/api/tags 與 /api/chat/models 共用。
+    有設定模型來源時用設定的清單，否則查詢遠端清單；預設模型依序取 MODEL_NAME、第一個 Azure 部署、遠端預設，
+    不在清單內時改用清單第一個"""
+    models = get_available_models()
+    remote_default: Optional[str] = None
+    if not models:
+        try:
+            models, remote_default = await fetch_remote_models_cached()
+        except Exception:
+            logger.exception("Failed to load models from LLM_API_BASE")
+    azure_dep = settings.AZURE_OPENAI_DEPLOYMENT.split(',')[0].strip() if settings.AZURE_OPENAI_DEPLOYMENT else None
+    default_model = settings.MODEL_NAME or azure_dep or remote_default or (models[0] if models else "")
+    if models and default_model not in models:
+        default_model = models[0]
+    return models, default_model
 @router.get("/tags")
 async def get_tags():
-    configured_models = get_available_models()
-    if configured_models:
-        azure_dep = settings.AZURE_OPENAI_DEPLOYMENT.split(',')[0].strip() if settings.AZURE_OPENAI_DEPLOYMENT else None
-        default_model = settings.MODEL_NAME or azure_dep or configured_models[0]
-        if default_model not in configured_models:
-            default_model = configured_models[0]
-        return {"tags": configured_models, "default": default_model}
-    fallback_models = _load_fallback_models()
-    configured_default = settings.MODEL_NAME
-    default_model: Optional[str] = configured_default
-    models: list[str] = []
-    try:
-        remote_models, remote_default = await fetch_remote_models_cached()
-        if remote_models:
-            models = remote_models
-            if remote_default:
-                default_model = remote_default
-        else:
-            models = []
-    except Exception as exc:
-        logger.exception("Failed to load models from LLM_API_BASE")
-    if not models:
-        models = fallback_models
-        if not default_model:
-            default_model = fallback_models[0] if fallback_models else None
-    if default_model and default_model not in models and models:
-        default_model = models[0]
+    models, default_model = await models_and_default()
     return {"tags": models, "default": default_model}
-def _load_fallback_models() -> list[str]:
-    available = settings.AVAILABLE_MODELS or ""
-    models = [m.strip() for m in available.split(",") if m.strip()]
-    return models
 def _fetch_remote_models() -> tuple[list[str], Optional[str]]:
     custom_url = (settings.EXTERNAL_TAGS_URL or "").strip()
     base = (settings.LLM_API_BASE or "").strip()
@@ -79,7 +65,7 @@ def _fetch_remote_models() -> tuple[list[str], Optional[str]]:
     headers: dict[str, str] = {}
     if "ngrok-free.app" in url or settings.ADD_NGROK_HEADER:
         headers["ngrok-skip-browser-warning"] = "true"
-    response = requests.get(url, headers=headers, timeout=timeout)
+    response = httpx.get(url, headers=headers, timeout=timeout, follow_redirects=True)
     response.raise_for_status()
     payload = response.json()
     models, default_model = _parse_model_payload(payload)

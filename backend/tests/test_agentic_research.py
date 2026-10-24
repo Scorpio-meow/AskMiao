@@ -36,16 +36,19 @@ async def test_research_tool_registry(monkeypatch):
     assert len(res["documents"]) == 2
     assert res["documents"][0]["source"] == "勞工休假辦法.pdf"
     assert res["documents"][0]["score"] == 0.95
+async def final_result(events):
+    """stream_research 最後的 done 事件內容"""
+    return [event async for event in events if event["event"] == "done"][-1]["data"]
 @pytest.mark.asyncio
 async def test_research_agent_run():
     retriever = MockRetriever()
     registry = ResearchToolRegistry(retriever=retriever)
     agent = ResearchAgent(tool_registry=registry)
-    result = await agent.run_research(
+    result = await final_result(agent.stream_research(
         query="請幫我查詢特休規定",
         model_name="gpt-5.6-luna",
         max_turns=2
-    )
+    ))
     assert "answer" in result
     assert "sources" in result
     assert "sources_detail" in result

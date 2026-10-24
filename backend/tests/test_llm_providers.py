@@ -176,6 +176,11 @@ def claude_agent(monkeypatch):
     return ResearchAgent(tool_registry=registry)
 
 
+async def final_result(events):
+    """stream_research 最後的 done 事件內容"""
+    return [event async for event in events if event["event"] == "done"][-1]["data"]
+
+
 @pytest.mark.asyncio
 async def test_agent_tool_round_trip_with_claude_preserves_raw_content(claude, monkeypatch):
     fake_messages = claude(responses=[
@@ -183,7 +188,7 @@ async def test_agent_tool_round_trip_with_claude_preserves_raw_content(claude, m
         SimpleNamespace(stop_reason="end_turn", stop_details=None, content=[SimpleNamespace(type="text", text="特休依年資計算 [1]")]),
     ])
 
-    result = await claude_agent(monkeypatch).run_research("特休怎麼算？", model_name="claude-opus-5", max_turns=3)
+    result = await final_result(claude_agent(monkeypatch).stream_research("特休怎麼算？", model_name="claude-opus-5", max_turns=3))
 
     first_call, second_call = fake_messages.create_calls
     assert first_call["model"] == "claude-opus-5"
@@ -204,7 +209,7 @@ async def test_claude_streams_final_answer_when_turn_limit_is_reached(claude, mo
         stream_chunks=["特休", "依年資計算"],
     )
 
-    result = await claude_agent(monkeypatch).run_research("特休怎麼算？", model_name="claude-opus-5", max_turns=1)
+    result = await final_result(claude_agent(monkeypatch).stream_research("特休怎麼算？", model_name="claude-opus-5", max_turns=1))
 
     (first_call,) = fake_messages.create_calls
     (stream_call,) = fake_messages.stream_calls

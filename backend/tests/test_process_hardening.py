@@ -25,7 +25,6 @@ from app.api import auth as auth_api
 from app.api import chat as chat_api
 from app.core import redis_client
 from app.core import security as security_module
-from app.core.intrusion_detection import IntrusionDetector
 from app.core.rsa_keys import RSAKeyManager
 from app.core.limits import MAX_LOG_FIELD_CHARS, MAX_LOGIN_IDENTIFIER_CHARS
 from app.core.redis_client import TokenBlacklist
@@ -64,24 +63,6 @@ def test_expired_tokens_leave_the_blacklist(empty_blacklist, monkeypatch):
     assert not TokenBlacklist.is_blacklisted("short")
     assert TokenBlacklist.is_blacklisted("long")
     assert len(TokenBlacklist._blacklist) == 1
-
-
-def test_intrusion_detector_state_is_bounded(tmp_path, monkeypatch):
-    from app.core import intrusion_detection
-
-    monkeypatch.setattr(intrusion_detection, "MAX_TRACKED_ADDRESSES", 100)
-    detector = IntrusionDetector(str(tmp_path / "ids.log"))
-    alerts = []
-    monkeypatch.setattr(detector, "_trigger_alert", lambda *args: alerts.append(args))
-    started = time.monotonic()
-    for _ in range(20_000):
-        detector.record_event("api_request", "203.0.113.9")
-    assert time.monotonic() - started < 2
-    assert len(detector.ip_events["203.0.113.9"]["api_request"]) <= detector.thresholds["api_requests_max"] + 1
-    assert len(alerts) == 1
-    for index in range(500):
-        detector.record_event("api_request", f"198.51.100.{index % 250}-{index}")
-    assert len(detector.ip_events) <= 100
 
 
 def test_security_log_fields_are_truncated_and_not_duplicated():

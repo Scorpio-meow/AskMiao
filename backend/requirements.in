@@ -11,7 +11,6 @@ pydantic
 pydantic-settings
 python-multipart
 python-dotenv
-websockets
 
 # 資料庫
 sqlalchemy
@@ -32,7 +31,6 @@ langchain-text-splitters
 # 模型供應商與出站請求
 anthropic
 httpx
-requests
 
 # 文件解析
 pypdf
@@ -46,7 +44,6 @@ PyYAML
 
 # 認證與密碼
 PyJWT
-passlib
 argon2-cffi
 bcrypt
 email-validator

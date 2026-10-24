@@ -63,7 +63,6 @@ class Settings(BaseSettings):
     EXTERNAL_TAGS_URL: str = ""
     LLM_TAGS_TIMEOUT: float = 10.0
     ADD_NGROK_HEADER: bool = False
-    ADMIN_API_KEY: str
     # 是否開放自行註冊：所有帳號共用整個知識庫與已啟用的工具，關閉時改由管理員以 scripts/create_user.py 建立帳號
     ALLOW_REGISTRATION: bool
     # 加密自訂 API 工具與 MCP 伺服器憑證（headers、auth_config、env_vars）的 Fernet 金鑰；更換後既有憑證需重新輸入
@@ -132,9 +131,6 @@ class Settings(BaseSettings):
     # 未設定時一律以實際連線對端作為速率限制的來源，不採信用戶端可偽造的標頭
     FORWARDED_ALLOW_IPS: Optional[str] = None
     UPLOADS_WATCHER_INTERVAL: int = 30
-    ENABLE_BATCH_ACCUMULATION: bool = False
-    BATCH_ACCUMULATOR_SIZE: int = 32
-    BASE_URL: str = "http://backend:8001"
     @field_validator(*PATH_SETTING_KEYS)
     @classmethod
     def _resolve_backend_relative_path(cls, value: Optional[str]) -> Optional[str]:

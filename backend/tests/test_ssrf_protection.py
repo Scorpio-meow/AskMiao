@@ -7,7 +7,7 @@ SSRF 防護單元測試與整合測試
 4. 危險通訊協定與危險連接埠檢測
 5. 轉址 (Redirect) SSRF 攻擊防禦 (轉址到內部 IP 自動中斷)
 6. 回應本文大小上限限制 (防止 Memory Bomb / DoS)
-7. OpenApiParser 與 InputValidator 整合驗證
+7. OpenApiParser 整合驗證
 """
 
 import ipaddress
@@ -24,7 +24,6 @@ from app.core.ssrf_protection import (
     SSRFProtectionError,
 )
 from app.services.openapi_parser import OpenApiParser
-from app.core.input_validator import InputValidator
 
 
 # ==========================================
@@ -312,21 +311,3 @@ paths:
     assert res["version"] == "openapi_3.0"
     assert len(res["endpoints"]) == 1
 
-
-# ==========================================
-# 5. InputValidator 工具測試
-# ==========================================
-
-def test_input_validator_ssrf_helper():
-    """測試 InputValidator 中的 SSRF 驗證函式"""
-    is_safe_bad, reason_bad = InputValidator.validate_url_for_ssrf("http://127.0.0.1:9000/api")
-    assert is_safe_bad is False
-
-    is_safe_bad2, reason_bad2 = InputValidator.validate_url_for_ssrf("http://localhost/test")
-    assert is_safe_bad2 is False
-
-    clean_url = InputValidator.sanitize_url("https://api.example.com/v1/users")
-    assert clean_url == "https://api.example.com/v1/users"
-
-    dirty_url = InputValidator.sanitize_url("javascript:alert(1)")
-    assert dirty_url is None

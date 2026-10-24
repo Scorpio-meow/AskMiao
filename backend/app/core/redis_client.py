@@ -3,7 +3,7 @@ import heapq
 import time
 import logging
 import threading
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Tuple
 from app.core.limits import MAX_REVOKED_TOKENS
 logger = logging.getLogger(__name__)
 class TokenBlacklist:
@@ -58,22 +58,3 @@ class TokenBlacklist:
         except Exception as e:
             logger.error(f"檢查黑名單失敗: {e}")
             return False
-    @classmethod
-    def remove_token(cls, token: str) -> bool:
-        try:
-            with cls._lock:
-                cls._blacklist.pop(cls._key(token), None)
-            return True
-        except Exception as e:
-            logger.error(f"移除黑名單失敗: {e}")
-            return False
-def init_redis():
-    """向下相容保留，直接回傳 True"""
-    logger.info("Token 黑名單已採用記憶體模式運行 (無需 Redis)")
-    return True
-def get_redis() -> Optional[object]:
-    """向下相容保留"""
-    return None
-def close_redis():
-    """向下相容保留"""
-    pass

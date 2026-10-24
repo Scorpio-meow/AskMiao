@@ -5,7 +5,7 @@ from app.models.database import get_db
 from app.models import MessageCreate, MessageResponse, ChatResponse, ConversationResponse
 from app.services.chat_service import AttachmentQuotaExceeded, ChatService
 from app.core.rag_manager import get_rag_system
-from app.core.user_context import get_current_user_id, get_default_user_id
+from app.core.user_context import get_current_user_id
 from app.core.error_response import build_error_payload
 from typing import Dict, List, Optional
 import asyncio
@@ -68,34 +68,14 @@ async def _ensure_model_allowed(model_name: Optional[str]) -> None:
         raise HTTPException(status_code=400, detail="不支援的模型")
 @router.get("/models")
 async def get_available_models():
-    from app.core.llm_client import get_available_models as get_configured_models
-    configured_models = get_configured_models()
-    if not configured_models:
-        from app.api.tags import fetch_remote_models_cached
-        try:
-            remote_models, _ = await fetch_remote_models_cached()
-            if remote_models:
-                configured_models = remote_models
-        except Exception:
-            pass
-    azure_dep = settings.AZURE_OPENAI_DEPLOYMENT.split(',')[0].strip() if settings.AZURE_OPENAI_DEPLOYMENT else None
-    default_model = settings.MODEL_NAME or azure_dep or (configured_models[0] if configured_models else "")
-    if default_model and configured_models and default_model not in configured_models:
-        default_model = configured_models[0]
-    return {
-        "models": configured_models or [],
-        "default": default_model
-    }
+    from app.api.tags import models_and_default
+    models, default_model = await models_and_default()
+    return {"models": models, "default": default_model}
 @router.get("/tools")
 def get_available_tools(user_id: int = Depends(get_current_user_id)):
     """獲取 AI 系統當前已註冊並啟用的所有工具定義清單與說明（需登入；同步函式在執行緒池執行）"""
     try:
-        rag_system = get_rag_system()
-        if hasattr(rag_system, "agent_coordinator") and rag_system.agent_coordinator:
-            tool_defs = rag_system.agent_coordinator.tool_registry.get_tool_definitions()
-        else:
-            from app.rag.tools import ResearchToolRegistry
-            tool_defs = ResearchToolRegistry(getattr(rag_system, "retriever", None)).get_tool_definitions()
+        tool_defs = get_rag_system().pipeline.tool_registry.get_tool_definitions()
         return {
             "status": "success",
             "tools": tool_defs
