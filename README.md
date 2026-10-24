@@ -582,7 +582,7 @@ AskMiao/
 │   └── .env.example                  # 後端設定範本
 ├── frontend/                         # React 19 + TypeScript + Vite 8
 │   ├── src/
-│   │   ├── pages/                    # Chat/、Documents、AiTools、AdminDashboard、登入、註冊、個人資料
+│   │   ├── pages/                    # Chat/、AiTools/、Documents、AdminDashboard、登入、註冊、個人資料
 │   │   ├── components/               # Layout、路由守衛與 ui/ 元件庫
 │   │   ├── hooks/                    # useChat（串流、停止與重送）、useAuth、useDocuments
 │   │   ├── services/                 # api.ts（Axios 與權杖更新）、sse.ts（SSE 解析器）

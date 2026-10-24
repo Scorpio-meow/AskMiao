@@ -58,6 +58,7 @@
 - 刪除帳號時，該帳號上傳的文件與建立的工具保留，`uploaded_by`、`created_by` 改為空值。
 - 密碼雜湊改用 `argon2-cffi` 的 `PasswordHasher`，雜湊格式與參數不變。
 - 前端換發存取權杖改為同一時間只送一個請求，axios 與聊天送出共用；權杖已過期時直接換發，不再先清除登入狀態。
+- 「AI 工具」頁拆成 `frontend/src/pages/AiTools/`：工具清單留在 `index.jsx`，OpenAPI 匯入、自訂 API 工具表單與測試、MCP 伺服器表單與 MCP 工具測試五個對話框各自一個元件，只在開啟時掛載；表單與 API 資料的轉換移到 `forms.js` 並補上測試。畫面與行為不變。
 
 ### 修正 (Fixed)
 

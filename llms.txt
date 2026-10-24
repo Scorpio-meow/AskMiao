@@ -57,7 +57,7 @@
 - [frontend/src/pages/Chat/](frontend/src/pages/Chat/): 聊天頁、研究歷程（`ResearchTraceBlock`）、引用來源（`SourceBadges`）、工具核准卡片（`ToolApprovalCard`）與 `remarkGfmSafe`（自動連結轉換有掃描量上限的 remark-gfm）
 - [frontend/vite.config.js](frontend/vite.config.js): 開發與預覽伺服器只監聽 `localhost`、反框架標頭、`/__open-in-editor` 只限本機；`bun run build` 時把 CSP `<meta>` 寫入 `index.html`（內嵌腳本以雜湊列入，`connect-src` 依 `VITE_API_BASE`／`VITE_API_URL`）
 - [frontend/bun.lock](frontend/bun.lock): 鎖定的前端相依套件；`frontend/bunfig.toml` 設定 `frozenLockfile = true`
-- [frontend/src/pages/AiTools.jsx](frontend/src/pages/AiTools.jsx): 自訂 API 工具、OpenAPI 匯入與 MCP 伺服器管理
+- [frontend/src/pages/AiTools/](frontend/src/pages/AiTools/): 自訂 API 工具、OpenAPI 匯入與 MCP 伺服器管理；`index.jsx` 是工具清單，五個對話框各自一個元件（開啟時才掛載），表單與 API 資料的轉換在 `forms.js`
 - [frontend/src/components/ui/](frontend/src/components/ui/): 以原生 `<dialog>` 與 ARIA 實作的元件庫
 
 ### 介紹頁

@@ -58,6 +58,7 @@ All notable changes to AskMiao are documented in this file. The format is based 
 - Deleting an account keeps the documents it uploaded and the tools it created, setting `uploaded_by` and `created_by` to null.
 - Password hashing uses `argon2-cffi`'s `PasswordHasher`; the hash format and parameters are unchanged.
 - The frontend sends only one access token refresh at a time, shared by axios and chat sends; an expired token is refreshed directly instead of the sign-in state being cleared first.
+- The AI Tools page is split into `frontend/src/pages/AiTools/`: the tool lists stay in `index.jsx`, and the five dialogs (OpenAPI import, custom API tool form and test, MCP server form, MCP tool test) are each their own component, mounted only while open; converting between form fields and API data moved to `forms.js`, now with tests. The UI and behavior are unchanged.
 
 ### Fixed
 

@@ -582,7 +582,7 @@ AskMiao/
 │   └── .env.example                  # Backend settings template
 ├── frontend/                         # React 19 + TypeScript + Vite 8
 │   ├── src/
-│   │   ├── pages/                    # Chat/, Documents, AiTools, AdminDashboard, login, register, profile
+│   │   ├── pages/                    # Chat/, AiTools/, Documents, AdminDashboard, login, register, profile
 │   │   ├── components/               # Layout, route guards, and the ui/ component library
 │   │   ├── hooks/                    # useChat (streaming, stop, retry), useAuth, useDocuments
 │   │   ├── services/                 # api.ts (Axios and token refresh), sse.ts (SSE parser)

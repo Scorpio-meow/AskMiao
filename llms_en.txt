@@ -57,7 +57,7 @@ This file is for AI agents: read "System constraints" before changing code, and 
 - [frontend/src/pages/Chat/](frontend/src/pages/Chat/): the chat page, research trace (`ResearchTraceBlock`), citations (`SourceBadges`), the tool approval card (`ToolApprovalCard`), and `remarkGfmSafe` (remark-gfm with a scan-cost limit on the autolink transform)
 - [frontend/vite.config.js](frontend/vite.config.js): dev and preview servers on `localhost` only, anti-framing headers, `/__open-in-editor` for loopback only; `bun run build` writes a CSP `<meta>` into `index.html` (inline scripts listed by hash, `connect-src` from `VITE_API_BASE`/`VITE_API_URL`)
 - [frontend/bun.lock](frontend/bun.lock): the pinned frontend dependencies; `frontend/bunfig.toml` sets `frozenLockfile = true`
-- [frontend/src/pages/AiTools.jsx](frontend/src/pages/AiTools.jsx): custom API tools, OpenAPI import, and MCP server management
+- [frontend/src/pages/AiTools/](frontend/src/pages/AiTools/): custom API tools, OpenAPI import, and MCP server management; `index.jsx` holds the tool lists, each of the five dialogs is its own component (mounted only while open), and `forms.js` converts between form fields and API data
 - [frontend/src/components/ui/](frontend/src/components/ui/): the component library built on the native `<dialog>` and ARIA
 
 ### Intro site
