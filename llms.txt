@@ -52,7 +52,8 @@
 - [frontend/src/App.jsx](frontend/src/App.jsx): 路由與 `PrivateRoute` / `AdminRoute` 守衛
 - [frontend/src/hooks/useChat.ts](frontend/src/hooks/useChat.ts): 送出訊息、串流、停止與重新傳送
 - [frontend/src/services/sse.ts](frontend/src/services/sse.ts): SSE 解析器（附 Vitest 測試）
-- [frontend/src/services/api.ts](frontend/src/services/api.ts): Axios、權杖換發與各模組 API
+- [frontend/src/services/api.ts](frontend/src/services/api.ts): Axios、權杖換發（axios 與聊天送出的 `fetch` 共用，同一時間只送一個換發請求）與各模組 API
+- [frontend/src/utils/serverDate.ts](frontend/src/utils/serverDate.ts): `parseServerDate()`，後端回傳不帶時區的 UTC 時間，前端顯示時間一律經它解讀
 - [frontend/src/pages/Chat/](frontend/src/pages/Chat/): 聊天頁、研究歷程（`ResearchTraceBlock`）、引用來源（`SourceBadges`）、工具核准卡片（`ToolApprovalCard`）與 `remarkGfmSafe`（自動連結轉換有掃描量上限的 remark-gfm）
 - [frontend/vite.config.js](frontend/vite.config.js): 開發與預覽伺服器只監聽 `localhost`、反框架標頭、`/__open-in-editor` 只限本機；`bun run build` 時把 CSP `<meta>` 寫入 `index.html`（內嵌腳本以雜湊列入，`connect-src` 依 `VITE_API_BASE`／`VITE_API_URL`）
 - [frontend/bun.lock](frontend/bun.lock): 鎖定的前端相依套件；`frontend/bunfig.toml` 設定 `frozenLockfile = true`
@@ -65,7 +66,7 @@
 
 ## 系統約束
 
-1. **chunk_id 是片段唯一的鍵**：`rag_chunks`、FAISS 與 BM25 一律以 chunk_id 對應。新增、刪除片段都經由 `HybridContextualRAG` 的方法，在 `vector_store.lock` 內同步更新三者；檢索與寫入以 `asyncio.to_thread` 在背景執行緒執行。
+1. **chunk_id 是片段唯一的鍵**：`rag_chunks`、FAISS 與 BM25 一律以 chunk_id 對應。新增、刪除片段都經由 `HybridContextualRAG` 的方法，在 `vector_store.lock` 內同步更新三者；計算向量在鎖外進行，不要在持鎖時做耗時的工作；檢索與寫入以 `asyncio.to_thread` 在背景執行緒執行。
 2. **斷詞規則改變時遞增 `TOKENIZER_RULES_VERSION`**：簽章不符會觸發 BM25 自動重建，唯讀評估則拒絕執行。
 3. **新設定沒有寫死的預設值**：新增的設定以必填為原則，範例值寫在 `backend/.env.example`，並同步更新 `docs/configuration.md`（中英）、README 設定表與下方「驗證」的環境變數清單。
 4. **工具結果是不可信資料**：交給模型前一律經 `ResearchSession.wrap_tool_output()` 包裝；新增內建工具時，在 `ResearchSession.record_tool_output()` 決定是否配引用編號、是否記為網址來源。
@@ -89,7 +90,7 @@
 
 ## 驗證
 
-- **後端測試**：在 `backend/` 執行 `python -m pytest`。版本庫沒有 `backend/.env`，必填設定需以環境變數提供：`ENABLE_WEB_SEARCH=true`、`AGENT_MAX_TURNS=5`、`CONVERSATION_HISTORY_MESSAGES=6`、`ADMIN_API_KEY`、`DATABASE_URL`（SQLite，Windows 請用 `sqlite:///C:/...` 形式）、`RRF_K=60`、`RERANK_RELEVANCE_THRESHOLD=0.2`、`WEB_FETCH_ALLOWED_DOMAINS=*`、`BLOCK_WEB_TOOLS_AFTER_KB=true`、`DOMAIN_PROFILE_PATH=config/domain_profile.json`、`ALLOW_REGISTRATION=false`、`LOGIN_MAX_FAILURES_PER_ACCOUNT=5`、`LOGIN_MAX_FAILURES_PER_ADDRESS=20`、`LOGIN_FAILURE_WINDOW_SECONDS=900`、`LOGIN_LOCKOUT_SECONDS=900`、`HOST=127.0.0.1`、`RELOAD=false`、`COOKIE_SECURE=false`、`ENABLE_API_DOCS=false`，以及有效的 Fernet 金鑰 `TOOL_SECRETS_KEY`（以 `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"` 產生）。匯入 `jwt_auth.py` 時會載入 `backend/keys/` 的 RSA 金鑰（不存在時自動產生），該目錄必須可寫入。以舊版結構建立的 SQLite 測試資料庫請先刪除，避免缺少新欄位。部分測試會載入實際的嵌入與重排模型；Windows 使用者目錄含非 ASCII 字元時加上 `--basetemp=<ASCII 路徑>`，否則 FAISS 寫檔失敗。
+- **後端測試**：在 `backend/` 執行 `python -m pytest`。版本庫沒有 `backend/.env`，必填設定需以環境變數提供：`ENABLE_WEB_SEARCH=true`、`AGENT_MAX_TURNS=5`、`CONVERSATION_HISTORY_MESSAGES=6`、`DATABASE_URL`（SQLite，Windows 請用 `sqlite:///C:/...` 形式）、`RRF_K=60`、`RERANK_RELEVANCE_THRESHOLD=0.2`、`WEB_FETCH_ALLOWED_DOMAINS=*`、`BLOCK_WEB_TOOLS_AFTER_KB=true`、`DOMAIN_PROFILE_PATH=config/domain_profile.json`、`ALLOW_REGISTRATION=false`、`LOGIN_MAX_FAILURES_PER_ACCOUNT=5`、`LOGIN_MAX_FAILURES_PER_ADDRESS=20`、`LOGIN_FAILURE_WINDOW_SECONDS=900`、`LOGIN_LOCKOUT_SECONDS=900`、`HOST=127.0.0.1`、`RELOAD=false`、`COOKIE_SECURE=false`、`ENABLE_API_DOCS=false`，以及有效的 Fernet 金鑰 `TOOL_SECRETS_KEY`（以 `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"` 產生）。匯入 `jwt_auth.py` 時會載入 `backend/keys/` 的 RSA 金鑰（不存在時自動產生），該目錄必須可寫入。以舊版結構建立的 SQLite 測試資料庫請先刪除，避免缺少新欄位。部分測試會載入實際的嵌入與重排模型；Windows 使用者目錄含非 ASCII 字元時加上 `--basetemp=<ASCII 路徑>`，否則 FAISS 寫檔失敗。
 - **前端檢查**：在 `frontend/` 執行 `bun run test --run`（Vitest）、`bun run lint`（只涵蓋 JS / JSX）與 `bun x tsc --noEmit`。
 - **檢索品質**：`python scripts/evaluate_retrieval.py --golden <問答集> --k 1 3 5 --relevance-thresholds 0.1 0.2 0.3`（唯讀，可與後端同時執行）。
 

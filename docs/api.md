@@ -558,7 +558,7 @@ data: {"message_id": 108, "conversation_id": 42, "answer": "特休假需先在�
 
 ### 3.2 GET /api/documents/
 
-列出所有文件（`id`、`filename`、`content`、`file_type`、`description`、`uploaded_by`、`created_at`、`is_processed`）。`content` 是擷取出的完整文字，資料量可能很大。尚未有摘要的文件會在這次請求中補生成並寫回，因此可能較慢。
+列出所有文件（`id`、`filename`、`file_type`、`description`、`uploaded_by`、`created_at`、`is_processed`）。不含擷取出的完整文字，也不會在這次請求中補生成摘要；沒有摘要的文件可用 3.3 重新生成，或在重建索引時補上。
 
 ### 3.3 POST /api/documents/{document_id}/regenerate-summary
 
@@ -584,11 +584,11 @@ data: {"message_id": 108, "conversation_id": 42, "answer": "特休假需先在�
 
 ### 3.6 POST /api/documents/rebuild-index
 
-以資料庫中的文件完整重建索引：清空片段與索引後，逐份文件重新擷取文字（上傳原檔存在時優先使用，並覆寫 `documents.content`）、重新生成 AI 摘要，並依目前的切塊設定重新切塊與建立向量。原檔已遺失的文件改以資料庫內容當一般文字切塊，檔名列在 `missing_source_files`，建議重新上傳。從 2.x 升級後需要執行一次，文件越多耗時越久。
+以資料庫中的文件完整重建索引：清空片段與索引後，逐份文件重新擷取文字（上傳原檔存在時優先使用，並覆寫 `documents.content`），依目前的切塊設定重新切塊與建立向量，並替沒有摘要的文件生成 AI 摘要；既有摘要（含手動修訂的）保留。重建完成前知識庫暫時查不到資料；重建進行中再次呼叫回傳 `409` `索引重建正在進行中，請等待完成後再試`。原檔已遺失的文件改以資料庫內容當一般文字切塊，檔名列在 `missing_source_files`，建議重新上傳。從 2.x 升級後需要執行一次，文件越多耗時越久。
 
 ```json
 {
-  "message": "索引重建成功（已用新配置重新分塊，並重新生成 AI 智能大綱）",
+  "message": "索引重建成功（已用新配置重新分塊，並替缺少摘要的文件生成 AI 智能大綱）",
   "document_count": 6,
   "chunk_count": 214,
   "qa_pairs_detected": 0,
@@ -900,8 +900,7 @@ data: {"message_id": 108, "conversation_id": 42, "answer": "特休假需先在�
   "result": {
     "is_success": true,
     "duration_seconds": 0.35,
-    "content": [{"type": "text", "text": "當前時間: 2026-09-25 10:00:00 CST"}],
-    "raw_result": {"content": [...], "isError": false}
+    "content": [{"type": "text", "text": "當前時間: 2026-09-25 10:00:00 CST"}]
   }
 }
 ```
@@ -916,7 +915,7 @@ data: {"message_id": 108, "conversation_id": 42, "answer": "特休假需先在�
 
 ### 6.1 GET /api/tags
 
-設定了任何模型來源（`AVAILABLE_MODELS` 或雲端金鑰）時，回傳 `{"tags": [...], "default": "..."}`，預設模型規則與 `GET /api/chat/models` 相同。都沒有設定時，向 `EXTERNAL_TAGS_URL`（或 `{LLM_API_BASE}/api/tags`）查詢遠端清單；查詢失敗時回傳空清單。遠端查詢在執行緒中進行，結果（含失敗）快取 30 秒，同一時間只有一個查詢在進行，匿名請求不會每次都觸發對外連線。
+回傳與 `GET /api/chat/models` 相同的清單與預設模型（兩者共用同一套規則，見 [設定參考：模型清單](configuration.md#模型清單)），欄位名稱為 `tags`。沒有設定任何模型來源（`AVAILABLE_MODELS` 或雲端金鑰）時，向 `EXTERNAL_TAGS_URL`（或 `{LLM_API_BASE}/api/tags`）查詢遠端清單；查詢失敗時回傳空清單。遠端查詢在執行緒中進行，結果（含失敗）快取 30 秒，同一時間只有一個查詢在進行，匿名請求不會每次都觸發對外連線。
 
 ```json
 {"tags": ["gpt-6-sol", "gpt-6-luna"], "default": "gpt-6-sol"}
@@ -934,7 +933,7 @@ data: {"message_id": 108, "conversation_id": 42, "answer": "特休假需先在�
 |---|---|---|
 | GET | `/api/admin/users` | 所有使用者，每筆為 `UserProfile`（`id`、`username`、`email`、`role`、`is_active`、`is_admin`、`created_at`、`last_login`），不含 `hashed_password` |
 | PUT | `/api/admin/users/{user_id}` | 更新 `username`、`email`、`is_active`、`is_admin`（只需帶入要變更的欄位）；名稱或電子郵件重複時回傳 `400`（`使用者名稱已存在`、`電子郵件已存在`） |
-| DELETE | `/api/admin/users/{user_id}` | 刪除使用者與其所有對話 |
+| DELETE | `/api/admin/users/{user_id}` | 刪除使用者與其所有對話；該帳號上傳的文件與建立的工具保留，建立者欄位改為空值 |
 
 `PUT` 回傳 `{"message": "使用者更新成功", "user": {...}}`，`user` 是更新後的 `UserProfile`；`DELETE` 回傳 `{"message": "使用者刪除成功"}`。兩者找不到使用者時回傳 `404` `使用者不存在`，成功時都會清除統計快取。停用、刪除帳號或取消管理員身分在下一個請求立即生效：停用或刪除的帳號已簽發的權杖隨即失效，也無法再登入；取消管理員身分後，管理端點回傳 `403`。
 
@@ -963,8 +962,8 @@ data: {"message_id": 108, "conversation_id": 42, "answer": "特休假需先在�
 | GET | `/api/admin/conversations` | 全系統最近更新的 50 段對話 |
 | GET | `/api/admin/conversations/{conversation_id}/messages` | 任一對話的全部訊息（依時間先後）；直接序列化資料表，含原始 `context_used` |
 | DELETE | `/api/admin/conversations/{conversation_id}` | 刪除任一對話與其訊息 |
-| GET | `/api/admin/documents` | 全部文件（新到舊，含完整 `content`） |
-| DELETE | `/api/admin/documents/{document_id}` | 移除文件的片段與索引並刪除資料庫紀錄（不刪除上傳原檔；需要一併刪除原檔時請用 `DELETE /api/documents/{document_id}`） |
+| GET | `/api/admin/documents` | 全部文件（新到舊），欄位與 `GET /api/documents/` 相同，不含完整文字 |
+| DELETE | `/api/admin/documents/{document_id}` | 與 `DELETE /api/documents/{document_id}` 相同：刪除資料庫紀錄、片段與索引，以及上傳原檔 |
 
 ### 7.4 檢索與索引維運
 
@@ -1082,7 +1081,6 @@ data: {"message_id": 108, "conversation_id": 42, "answer": "特休假需先在�
 以下是目前的現況，整合時請留意：
 
 - `GET /api/chat/models` 與 `GET /api/tags` 不需要登入（`GET /api/chat/tools` 已改為需要登入）。部署在公開網路時，請在反向代理層限制存取。
-- `GET /api/documents/` 與 `GET /api/admin/documents` 回傳每份文件的完整文字 `content`。
 - 存取權杖回應的 `expires_in` 固定為 `1800`，不隨 `ACCESS_TOKEN_EXPIRE_MINUTES` 變動。
 - 權杖撤銷名單、速率限制計數、登入失敗節流的計數與暫停狀態、每位使用者的同時串流數與待核准的工具呼叫都存在單一後端行程的記憶體中；多行程或多台部署時彼此不共享，後端重啟後清空（暫停中的登入隨即解除）。速率限制追蹤的來源 IP 最多 10,000 個，最久未活動的先淘汰；登入節流追蹤的登入識別與來源 IP 也各最多 10,000 個，最久沒有新失敗的先淘汰。
 - 速率限制與登入節流都依來源 IP 計算：未設定 `FORWARDED_ALLOW_IPS` 時，經由 Vite 開發代理或反向代理連線的所有使用者共用同一個來源 IP，除了共用速率限制的額度，依位址的登入失敗次數也一起累計，達到門檻時經由該代理的所有登入都會暫停。

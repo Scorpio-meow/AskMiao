@@ -18,7 +18,6 @@
 - [網路存取控制](#網路存取控制)
 - [伺服器與執行環境](#伺服器與執行環境)
 - [資源上限](#資源上限)
-- [保留設定](#保留設定)
 - [已移除的設定](#已移除的設定)
 - [領域設定檔](#領域設定檔)
 - [校準相關性門檻](#校準相關性門檻)
@@ -42,7 +41,6 @@
 | 變數 | 範本值 | 說明 |
 |---|---|---|
 | `DATABASE_URL` | `postgresql+psycopg2://askmiao_app:your_app_db_password_here@localhost:5432/chatbot` | 資料庫連線字串，詳見 [資料庫](#資料庫) |
-| `ADMIN_API_KEY` | `your_admin_api_key_here` | 管理用 API 金鑰（設定驗證要求此值，目前沒有路由使用），請換成隨機字串 |
 | `TOOL_SECRETS_KEY` | `your_tool_secrets_key_here` | 加密工具憑證的 Fernet 金鑰，啟動時驗證格式；範本值不是有效的金鑰，必須換成自行產生的金鑰（指令見下方），詳見 [工具憑證加密](#工具憑證加密) |
 | `ALLOW_REGISTRATION` | `false` | 是否開放自行註冊，詳見 [註冊與建立帳號](#註冊與建立帳號) |
 | `LOGIN_MAX_FAILURES_PER_ACCOUNT` | `5` | 同一登入識別的登入失敗門檻（≥ 1），詳見 [登入失敗節流](#登入失敗節流) |
@@ -103,6 +101,8 @@ python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().d
 1. 設定了 `AVAILABLE_MODELS`：直接使用這份清單。
 2. 否則依序合併：Azure 部署（未設定部署時為 `gpt-6-sol`）、有 `OPENAI_API_KEY` 時的 OpenAI 內建清單、有 `ANTHROPIC_API_KEY` 時的 Claude 內建清單、有 `GEMINI_API_KEY` 時的 Gemini 內建清單。
 3. 以上皆為空：向 `EXTERNAL_TAGS_URL`（或 `{LLM_API_BASE}/api/tags`）查詢遠端清單，例如本機 Ollama 已下載的模型。遠端查詢在執行緒中進行，結果（含失敗）快取 30 秒，同一時間只有一個查詢在進行。
+
+預設模型依序取 `MODEL_NAME`、第一個 Azure 部署、遠端清單回報的預設模型，不在清單內時改用清單第一個；兩個端點共用同一套規則。
 
 `POST /api/chat/send` 指定的 `model_name` 必須在這份清單內（或等於 `MODEL_NAME`），否則回傳 `400`，避免以操作者的金鑰呼叫清單外的模型。
 
@@ -256,7 +256,6 @@ docker compose exec postgres bash /docker-entrypoint-initdb.d/20-app-role.sh
 
 | 變數 | 程式預設值 | 範本值 | 說明 |
 |---|---|---|---|
-| `ADMIN_API_KEY` | —（必填） | 佔位字串 | 設定驗證要求此值；目前沒有路由使用 `X-API-Key` 驗證，管理端點一律依資料庫中該帳號的 `is_admin` 判斷 |
 | `ALLOW_REGISTRATION` | —（必填） | `false` | 是否開放以 `POST /api/auth/register` 自行註冊；`false` 時註冊回傳 `403`，帳號改以 `scripts/create_user.py` 建立，見 [註冊與建立帳號](#註冊與建立帳號) |
 | `ACCESS_TOKEN_EXPIRE_MINUTES` | `30` | `30` | 存取權杖有效分鐘數 |
 | `REFRESH_TOKEN_EXPIRE_DAYS` | `7` | `7` | 重新整理權杖有效天數，也是 Cookie 的 `max-age` |
@@ -335,7 +334,7 @@ python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().d
 >
 > 只有在後端前方的反向代理會「覆寫」`X-Forwarded-For`（例如 nginx 的 `proxy_set_header X-Forwarded-For $remote_addr;`）時，才把該代理的位址設為 `FORWARDED_ALLOW_IPS`，速率限制與登入失敗節流才會以真實用戶端 IP 計算。Vite 開發代理會原樣轉送用戶端自帶的標頭，**不可**為它設定此值，否則任何人都能偽造來源 IP 繞過速率限制與依位址的登入失敗節流。此設定只在以 `python main.py` 啟動時生效。
 
-速率限制在每個後端行程的記憶體中計數，追蹤的位址數有上限（見 [資源上限](#資源上限)）。入侵偵測只寫入警報、不封鎖任何位址，速率限制超過時一律回傳 `429`，不會以 `403` 拒絕位址（舊版從未被填入的 IP 封鎖名單已移除）。
+速率限制在每個後端行程的記憶體中計數，追蹤的位址數有上限（見 [資源上限](#資源上限)）。速率限制超過時一律回傳 `429` 並寫入警告日誌，不會以 `403` 拒絕位址（舊版從未被填入的 IP 封鎖名單已移除）。
 
 ## 伺服器與執行環境
 
@@ -347,7 +346,6 @@ python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().d
 | `RELOAD` | —（必填） | `false` | 程式碼變更時自動重新載入，只在開發時設為 `true`（可用 `--reload` 或 `--no-reload` 覆寫） |
 | `ENABLE_API_DOCS` | —（必填） | `false` | 是否提供 `/docs`、`/redoc` 與 `/openapi.json` 互動式文件；這些頁面列出所有端點與參數，對外服務時請保持 `false`，此時三個路徑都不提供 |
 | `LOG_LEVEL` | `INFO` | `INFO` | 日誌層級；應用程式日誌寫入 `backend/logs/app.log`，安全事件只寫入 `backend/logs/security.log`（兩者都依大小輪替）。`httpx` 與 `httpcore` 固定為 `WARNING`，完整請求網址（可能含查詢字串型 API 金鑰）不會寫進日誌 |
-| `BASE_URL` | `http://backend:8001` | `http://localhost:8001` | 只有 `healthcheck.py` 使用，而且它讀的是行程環境變數，不會讀取 `.env` |
 
 `HOST`、`PORT`、`RELOAD` 與 `FORWARDED_ALLOW_IPS` 只在以 `python main.py` 啟動時套用；以其他方式啟動（例如直接執行 `uvicorn main:app`）時不會套用，但 `HOST` 與 `RELOAD` 仍是必填。`python main.py` 啟動的 uvicorn 只在設定 `FORWARDED_ALLOW_IPS` 時處理代理標頭（`proxy_headers`），見 [網路存取控制](#網路存取控制)。
 
@@ -379,6 +377,7 @@ python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().d
 | 常數 | 值 | 說明 |
 |---|---|---|
 | `MAX_TOOL_RESULT_CHARS` | 20,000 字元 | 每次工具呼叫的結果放進模型脈絡前的上限，超過的部分截斷 |
+| `MAX_KB_CATALOG_CHARS` | 4,000 字元 | `search_knowledge_base` 工具說明中文件目錄（檔名與摘要）的長度；每次呼叫模型都會送出，超過時只列出前面的文件並告知其餘份數 |
 | `MAX_TEXT_CLEANUP_CHARS` | 2,000,000 字元 | `web_fetch` 抽取文字前先截斷 HTML 的長度 |
 | `MAX_DATE_RANGE_CHARS`、`MAX_TARGET_DATES`、`MAX_FILTER_RECORDS`（`rag/tools.py`） | 200 字元、93 天、50 筆 | `filter_and_count_records` 的 `date_range` 長度、展開後的日期數與回傳筆數（`limit` 超過時夾到 50） |
 | `MAX_API_TOOL_RESPONSE_BYTES`（`api/api_tools.py`） | 1 MiB | 自訂 API 工具的回應本文上限，超過即中止讀取並回傳 `502` |
@@ -414,7 +413,7 @@ python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().d
 
 OOXML 的檢查在解析前進行，依 ZIP 成員宣告的大小計算。python-docx 與 python-pptx 會把 XML 部件整份建成 DOM（記憶體約為 XML 大小的 15 至 30 倍），哪些成員算進 XML 總量依 `[Content_Types].xml` 判定（另含 `.rels` 與該檔本身），改副檔名無法繞過；`.xlsx` 以串流讀取，不套用此項。超過任一項 OOXML 預算時，管理員上傳的該檔案上傳失敗；聊天附件則不解析，改告知模型附件超過解析上限、未讀取內容。超過長度的 JSON、JSONL、YAML 與 JS 宣告附件不解析成結構化記錄，只做線性的雜訊清除。CSV 與 XLSX 不套用這個長度上限；YAML 的別名展開後節點數超過原始文字長度時一律放棄解析，改以純文字處理。
 
-**帳號、日誌與偵測**
+**帳號、日誌與速率限制**
 
 | 常數 | 值 | 說明 |
 |---|---|---|
@@ -425,17 +424,7 @@ OOXML 的檢查在解析前進行，依 ZIP 成員宣告的大小計算。python
 | `MAX_REVOKED_TOKENS` | 100,000 | 行程內權杖撤銷名單的條目上限，滿了以後先淘汰最早到期的條目 |
 | `MAX_LOG_FIELD_CHARS` | 200 字元 | 安全日誌中單一字串欄位（例如帳號名稱、User-Agent）的長度上限 |
 | `LOG_FILE_MAX_BYTES`、`LOG_FILE_BACKUP_COUNT` | 10 MiB、5 份 | `app.log` 與 `security.log` 的輪替大小與保留份數 |
-| `MAX_EVENTS_PER_ADDRESS` | 200 | 入侵偵測對未列入規則的事件類型，每個位址保留的事件數 |
-| `MAX_TRACKED_ADDRESSES` | 10,000 | 入侵偵測、速率限制與登入失敗節流各自同時追蹤的位址數，最久未活動的先淘汰 |
-
-## 保留設定
-
-下列設定可以寫進 `.env`，但目前沒有任何程式路徑使用：
-
-| 變數 | 程式預設值 | 說明 |
-|---|---|---|
-| `ENABLE_BATCH_ACCUMULATION` | `false` | 嵌入批次累積器的開關，目前未接上上傳流程 |
-| `BATCH_ACCUMULATOR_SIZE` | `32` | 同上 |
+| `MAX_TRACKED_ADDRESSES` | 10,000 | 速率限制與登入失敗節流各自同時追蹤的位址數，最久未活動的先淘汰 |
 
 ## 已移除的設定
 
@@ -443,6 +432,9 @@ OOXML 的檢查在解析前進行，依 ZIP 成員宣告的大小計算。python
 
 | 變數 | 移除版本 | 替代方式 |
 |---|---|---|
+| `ADMIN_API_KEY` | 未發行 | 沒有任何路由使用；管理端點一律依資料庫中該帳號的 `is_admin` 判斷 |
+| `ENABLE_BATCH_ACCUMULATION`、`BATCH_ACCUMULATOR_SIZE` | 未發行 | 嵌入批次累積器從未接上上傳流程，已刪除 |
+| `BASE_URL` | 未發行 | 只有已刪除的 `healthcheck.py` 使用；健康檢查請直接請求 `GET /health` |
 | `JWT_SECRET_KEY`、`JWT_ALGORITHM` | 4.0.0 | 權杖一律以 `backend/keys/` 的 RSA 金鑰簽署 RS256，不再有 HS256 退路 |
 | `HYBRID_ALPHA`、`NORMALIZATION` | 3.0.0 | 改用 `RRF_K` 的標準 RRF 融合 |
 | `FINAL_THRESHOLD` | 3.0.0 | 改用 `RERANK_RELEVANCE_THRESHOLD` |

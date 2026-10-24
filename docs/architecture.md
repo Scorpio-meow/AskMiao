@@ -278,13 +278,13 @@ JSON、JSONL、YAML、JS 宣告、CSV 與 XLSX 由 `app/services/structured_data
 
 ### AI 摘要
 
-上傳、重新生成摘要與重建索引時，以預設模型生成 70 到 150 字的繁體中文「文件主題與大綱摘要」（逾時 18 秒）。長文件取開頭、中段與結尾各一段作為樣本；結構化資料另附上記錄數、格式與欄位名稱。LLM 失敗時改用規則摘要，並依領域設定檔的 `summary_fallback` 過濾雜訊；結構化資料的規則摘要直接使用記錄數與欄位名稱（最多 `MAX_SUMMARY_FIELD_NAMES` 個），只有資料庫內容可用時（重新生成摘要、列表補摘要、知識庫目錄）改為計數記錄標頭。摘要也會組成 `search_knowledge_base` 工具說明中的知識庫目錄，幫助 Agent 判斷該查哪份文件。
+上傳、重新生成摘要，以及重建索引遇到沒有摘要的文件時，以預設模型生成 70 到 150 字的繁體中文「文件主題與大綱摘要」（逾時 18 秒）。長文件取開頭、中段與結尾各一段作為樣本；結構化資料另附上記錄數、格式與欄位名稱。LLM 失敗時改用規則摘要，並依領域設定檔的 `summary_fallback` 過濾雜訊；結構化資料的規則摘要直接使用記錄數與欄位名稱（最多 `MAX_SUMMARY_FIELD_NAMES` 個），只有資料庫內容可用時（重新生成摘要、知識庫目錄）改為計數記錄標頭。摘要也會組成 `search_knowledge_base` 工具說明中的知識庫目錄，幫助 Agent 判斷該查哪份文件；目錄每次呼叫模型都會送出，長度以 `MAX_KB_CATALOG_CHARS`（4,000 字）為上限，超過時只列出前面的文件並告知其餘份數。組目錄時遇到沒有摘要的文件只用規則摘要，不呼叫模型。
 
 ### 切塊策略
 
 一般文件以 `RecursiveCharacterTextSplitter` 切塊，分隔符號依序為段落分隔線、空行、換行、中文句末與句中標點（`。！？；：，`）、英文標點與空白。Q&A（只在非結構化格式中偵測）一問一答一個片段。結構化記錄不超過 `CHUNK_SIZE` 時整筆一個片段；過長時以整行欄位為單位切成多段，單一欄位的值本身過長時再以上述切塊器切開，每段都重複標頭並加上 `（2/3）`，段落之間不重疊。兩者都標記為 `preserve_whole`，不再交給一般切塊。
 
-重建索引時，原始檔還在 `UPLOAD_DIR` 的文件會重新擷取並覆寫 `documents.content`；原始檔已遺失的文件改以資料庫內容當一般文字切塊，並列在回應的 `missing_source_files`。
+重建索引時，原始檔還在 `UPLOAD_DIR` 的文件會重新擷取並覆寫 `documents.content`；原始檔已遺失的文件改以資料庫內容當一般文字切塊，並列在回應的 `missing_source_files`。既有摘要（含管理員手動修訂的）會保留，只替沒有摘要的文件生成；重建先清空索引再逐份寫回，期間知識庫暫時查不到資料，重建進行中再次呼叫回傳 `409`。
 
 ---
 
@@ -294,15 +294,15 @@ JSON、JSONL、YAML、JS 宣告、CSV 與 XLSX 由 `app/services/structured_data
 
 ### 寫入順序
 
-新增文件時，在同一把鎖（`vector_store.lock`）內依序：
+新增文件時先在鎖外計算所有片段的向量（可能需要數分鐘，期間檢索不必等待），再於同一把鎖（`vector_store.lock`）內依序：
 
-1. 計算所有片段的向量。
+1. 確認片段所屬的文件仍存在，略過已刪除文件的片段與其向量。
 2. 寫入 `rag_chunks` 並 flush 取得 chunk_id（尚未 commit）。
 3. 以 chunk_id 加入 FAISS。
 4. commit 資料庫交易；失敗時從 FAISS 移除剛加入的向量並拋出例外。
 5. 加入 BM25，最後把 FAISS 與中繼資料寫回檔案（先寫暫存檔再取代）。
 
-檢索與寫入都持有同一把鎖，並在背景執行緒中執行，不會阻塞事件迴圈。寫入時持鎖後會先確認片段所屬的文件仍存在於 `documents`，略過已刪除文件的片段；刪除文件則先刪除 `documents` 紀錄再移除片段，兩者搭配，確保與刪除同時進行的索引寫入不會把片段寫回知識庫。
+檢索與寫入都持有同一把鎖，並在背景執行緒中執行，不會阻塞事件迴圈。寫入時持鎖後才確認片段所屬的文件仍存在於 `documents`；刪除文件則先刪除 `documents` 紀錄再移除片段，兩者搭配，確保與刪除同時進行的索引寫入不會把片段寫回知識庫。
 
 ### 啟動時校正
 
@@ -322,7 +322,7 @@ JSON、JSONL、YAML、JS 宣告、CSV 與 XLSX 由 `app/services/structured_data
 |---|---|---|---|
 | 重新啟動後端 | 只補齊差異 | 否 | 索引檔遺失或與資料庫不一致 |
 | `POST /api/admin/vector-store/reindex` | 以現有片段重算全部向量、重建 BM25 | 否 | 懷疑向量損毀 |
-| `POST /api/documents/rebuild-index` | 清空後重新擷取、摘要、切塊與建立索引 | 是（每份文件一次摘要） | 從 2.x 升級、修改切塊設定 |
+| `POST /api/documents/rebuild-index` | 清空後重新擷取、切塊與建立索引，並替沒有摘要的文件生成摘要 | 只對沒有摘要的文件 | 從 2.x 升級、修改切塊設定 |
 
 刪除文件時只移除該文件的片段與向量；`DELETE /api/admin/vector-store/clear` 會清空全部片段與索引，但保留文件紀錄。
 
@@ -389,7 +389,7 @@ flowchart TB
 | 自訂 API 工具 | 依工具設定組裝 HTTP 請求，見第 9 節；`requires_approval` 為 `true` 時先經使用者核准 |
 | `mcp_<伺服器>_<工具>` | 透過 `tools/call` 呼叫 MCP 伺服器；伺服器的 `requires_approval` 為 `true` 時先經使用者核准 |
 
-每次工具結果放進模型脈絡前最多 20,000 字元，附件抽出的文字每個最多 50,000 字元，超過的部分截斷。
+每次工具結果放進模型脈絡前最多 20,000 字元，附件抽出的文字每個最多 50,000 字元，超過的部分截斷。模型給的參數不是物件時當成空物件；工具執行時拋出例外（例如 `top_k` 為 `null`）會轉成錯誤代碼交給模型，不會中斷整個回答。工具清單（含知識庫目錄、自訂 API 工具與 MCP 工具）在執行緒中組成。
 
 ### 系統提示的規則
 
@@ -447,7 +447,7 @@ flowchart TB
 - **路由**：依模型名稱決定供應商（Azure 部署 → `claude-` → `gemini-` → `gpt-` / `o1` / `o3` / `o4` → Ollama），完整規則見 [設定參考：供應商路由](configuration.md#供應商路由)。
 - **推理程度**：`reasoning_effort` 只傳給 OpenAI 與 Azure OpenAI；名稱含 `gpt-5` 的模型帶工具時一律送 `none`。
 - **兩種呼叫**：`chat_completion` 用於研究迴圈的每一輪（非串流，回傳 `content` 與 `tool_calls`）；`stream_completion` 只在需要重新生成最終答案時使用，Claude 串流時以 `tool_choice: none` 避免再觸發工具。
-- **逾時**：共用的 httpx 用戶端以 `LLM_TIMEOUT` 為逾時，等待連線池名額另以 15 秒為上限（池被占滿時很快失敗）；文件摘要另以 18 秒為上限。
+- **逾時**：共用的 httpx 用戶端以 `LLM_TIMEOUT` 為逾時，等待連線池名額另以 15 秒為上限（池被占滿時很快失敗），每次請求自帶的逾時也保留這個上限；文件摘要另以 18 秒為上限。
 - **影像輸入**：只接受內嵌的 `data:` URL，遠端圖片網址一律拒絕，避免模型供應商代為擷取使用者指定的任意位址。
 - **模型清單**：遠端模型清單在執行緒中查詢並快取 30 秒（含失敗結果）；送出訊息時指定的模型必須在可用清單內或等於 `MODEL_NAME`。
 
@@ -538,7 +538,7 @@ sequenceDiagram
 | 重新整理權杖 | 有效 `REFRESH_TOKEN_EXPIRE_DAYS` 天，只含 `sub` 與 `type: refresh`，存於 HttpOnly Cookie（路徑 `/api/auth`，`Secure` 由必填的 `COOKIE_SECURE` 決定，不再依 `ENVIRONMENT` 推導，`SameSite` 預設 `lax`）；只能使用一次，換發時撤銷舊權杖並重設 Cookie |
 | 密碼 | Argon2 雜湊；舊的 bcrypt 雜湊仍可驗證，登入成功時自動改存 Argon2。註冊與改密碼要求 8 至 256 字元並包含大小寫字母與數字；雜湊與驗證在執行緒中進行，同時最多 4 個 |
 | 變更密碼 | `POST /api/auth/change-password` 與帶新密碼的 `PUT /api/auth/me` 把 `tokens_valid_after` 更新為當下並清除重新整理權杖 Cookie：該帳號先前簽發的權杖（含其他裝置、可能已外洩者與目前這一個）全部失效，前端隨即清除登入狀態並導回登入頁 |
-| 登入節流 | `app/core/login_throttle.py` 對登入識別（不分大小寫、忽略前後空白）與來源位址分別計數：`LOGIN_FAILURE_WINDOW_SECONDS` 內失敗達 `LOGIN_MAX_FAILURES_PER_ACCOUNT` 或 `LOGIN_MAX_FAILURES_PER_ADDRESS` 次，該識別或位址的登入暫停 `LOGIN_LOCKOUT_SECONDS` 秒，期間不驗證密碼，直接回傳 `429` 與 `Retry-After`（`LOGIN_THROTTLED` 寫入安全日誌）。不存在的帳號同樣計數，回應與存在的帳號相同；登入成功只清除該識別的紀錄。計數在行程記憶體中，追蹤的識別與位址各最多 10,000 個，最久沒有新失敗者先淘汰 |
+| 登入節流 | `app/core/login_throttle.py` 對登入識別（不分大小寫、忽略前後空白）與來源位址分別計數：`LOGIN_FAILURE_WINDOW_SECONDS` 內失敗達 `LOGIN_MAX_FAILURES_PER_ACCOUNT` 或 `LOGIN_MAX_FAILURES_PER_ADDRESS` 次，該識別或位址的登入暫停 `LOGIN_LOCKOUT_SECONDS` 秒，期間不驗證密碼，直接回傳 `429` 與 `Retry-After`（`LOGIN_THROTTLED` 寫入安全日誌）。拿到密碼雜湊名額後會再檢查一次是否鎖定，失敗也在釋放名額前記錄，同時送出的大量請求在鎖定後最多只有已在驗證中的 4 個會完成。不存在或已停用的帳號同樣計數，並對假雜湊驗一次密碼，回應內容與時間都與存在的帳號相同；登入成功只清除該識別的紀錄。計數在行程記憶體中，追蹤的識別與位址各最多 10,000 個，最久沒有新失敗者先淘汰 |
 | 註冊 | `ALLOW_REGISTRATION=false` 時 `POST /api/auth/register` 回傳 `403` 並寫入安全日誌（`REGISTER_REJECTED`）；`GET /api/auth/registration`（不需登入）回傳 `{"enabled": bool}`，前端據此顯示或隱藏註冊入口。帳號（含第一位管理員）由 `backend/scripts/create_user.py` 建立，套用與註冊相同的規則，`--admin` 建立管理員，密碼以互動方式輸入 |
 | 授權 | 管理員端點依資料庫中該帳號的 `is_admin` 判斷，變更後下一個請求就生效。`GET /api/admin/users` 與 `PUT /api/admin/users/{user_id}` 的回應只含 `UserProfile` 欄位，不含密碼雜湊；變更帳號權限、狀態與刪除帳號時寫入安全日誌（`ADMIN_USER_UPDATED`、`ADMIN_USER_DELETED`） |
 | 撤銷 | 登出時把權杖字串寫入行程內撤銷名單，保留到權杖到期，並自動清理過期項目；名單最多 100,000 筆，滿了先淘汰最早到期者。登出只驗存取權杖的簽章，存取權杖過期時仍能撤銷重新整理權杖並清除 Cookie，但仍要求 `Authorization` 標頭，跨站表單無法觸發登出 |
@@ -614,7 +614,6 @@ flowchart LR
 | 安全回應標頭 | `X-Content-Type-Options: nosniff`、`X-Frame-Options: DENY`、`X-XSS-Protection: 1; mode=block`、`Referrer-Policy: strict-origin-when-cross-origin`、`Permissions-Policy: geolocation=(), microphone=(), camera=()`，並移除 `Server` 標頭 |
 | 請求本文上限 | `RequestBodyLimitMiddleware`（純 ASGI，位於最外層）在 FastAPI 讀取本文前檢查：一般請求 1 MiB；聊天送出只有帶著簽章有效、未撤銷的存取權杖時才放寬，文件上傳另要求權杖帶有 `is_admin` 聲明（只用來決定本文上限，路由本身仍以資料庫判定是否為管理員）；`Content-Length` 超過即回 `413`，分塊傳輸邊讀邊計數 |
 | 速率限制 | 每個來源 IP 在 60 秒滑動視窗內最多 `RATE_LIMIT_PER_MINUTE` 次，超過回傳 `429` 與 `Retry-After`；追蹤的位址最多 10,000 個，最久未活動者先淘汰。來源 IP 預設是實際連線對端（uvicorn 的 `proxy_headers` 只在設定 `FORWARDED_ALLOW_IPS` 時開啟），用戶端自帶的 `X-Forwarded-For` 不會被採信 |
-| 入侵偵測 | 依位址與事件類型保留有長度上限的滑動視窗，最多追蹤 10,000 個位址（最久未活動者先淘汰），單次記錄的成本與歷史事件數無關。只發出警報（寫入 `logs/intrusion_detection.log`），不封鎖任何位址；登入失敗由第 10 節的登入節流處理 |
 | 部署設定 | `HOST`、`RELOAD`、`COOKIE_SECURE`、`ENABLE_API_DOCS` 都是必填設定，沒有預設值；列出所有端點與參數的互動式文件（`/docs`、`/redoc`、`/openapi.json`）只在 `ENABLE_API_DOCS=true` 時提供 |
 | 資料庫帳號 | compose 的 PostgreSQL 由 `backend/init-app-role.sh` 建立後端連線用的 `POSTGRES_APP_USER`（`NOSUPERUSER`、`NOCREATEDB`、`NOCREATEROLE`），只授予資料庫的 `CONNECT` 與 `public` schema 的 `USAGE`、`CREATE`，並把資料表交給它擁有；SQL 注入無法以 `COPY ... TO PROGRAM` 執行系統指令或讀取伺服器檔案 |
 | 相依套件 | `backend/requirements.txt` 由 `requirements.in` 以 `uv pip compile --universal --generate-hashes` 產生，安裝時驗證雜湊；`frontend/bun.lock` 隨版本庫提交，`frontend/bunfig.toml` 設定 `frozenLockfile = true` |
@@ -640,19 +639,20 @@ flowchart LR
 | `/admin` | 管理後台 | 管理員 |
 
 - **路由守衛**：`PrivateRoute` 未登入時導向登入頁；`AdminRoute` 對非管理員顯示「沒有權限」頁面；`PublicRoute` 讓已登入者離開登入與註冊頁。頁面以 `React.lazy` 延遲載入。
-- **API 用戶端**（`services/api.ts`）：Axios 實例自動附上存取權杖；權杖剩不到 5 分鐘時先換發，收到 `401` 時換發後重試一次；登入、註冊與換發端點本身的 `401` 不會觸發換發。請求失敗時主控台只記錄狀態碼與錯誤訊息（`utils/secureLogger.ts`），不記錄帶有密碼、API 金鑰與存取權杖的 axios 錯誤物件。
+- **API 用戶端**（`services/api.ts`）：Axios 實例自動附上存取權杖；權杖剩不到 5 分鐘或已過期時先換發，收到 `401` 時換發後重試一次；換發同一時間只送一個請求（重新整理權杖只能用一次），聊天送出的 `fetch` 也共用同一套換發，收到 `401` 時換發後重送一次；登入、註冊與換發端點本身的 `401` 不會觸發換發。請求失敗時主控台只記錄狀態碼與錯誤訊息（`utils/secureLogger.ts`），不記錄帶有密碼、API 金鑰與存取權杖的 axios 錯誤物件。
 - **登入狀態**：登入頁依 `GET /api/auth/registration` 決定是否顯示註冊入口（查詢失敗時視為未開放）；變更密碼成功後清除登入狀態並導回登入頁；登出請求失敗時在登入頁提示伺服器沒有撤銷重新整理權杖。
 - **SSE**（`services/sse.ts`、`hooks/useChat.ts`）：以 `fetch` 讀取串流，依規格解析事件（可處理跨讀取切段、CRLF 與多行資料）；支援停止產生、重新傳送與串流中切換對話。送出失敗且回應是 `422` 欄位驗證錯誤時，取出每一項的說明顯示（例如附件過大）。
 - **工具核准卡片**（`pages/Chat/ToolApprovalCard`）：收到 `approval_required` 時在該則回答中顯示工具名稱、實際送出的位置（`target`）與每一個參數，不放在需要捲動的區域，控制字元與格式字元（雙向文字控制、零寬字元、Unicode 標籤字元等）以 `⟦U+…⟧` 標示；按下核准或拒絕後呼叫 `POST /api/chat/approvals/{approval_id}`；收到 `approval_resolved` 或停止串流時收起。「AI 工具」頁的自訂 API 工具與 MCP 伺服器表單各有「需使用者確認」核取方塊，API 工具依 HTTP 方法預設勾選。
 - **外觀**：`ThemeContext` 提供淺色、深色與跟隨系統，設定存於 `localStorage` 的 `askmiao_theme_mode`；`index.html` 的內嵌腳本在第一次繪製前套用，避免閃白。
 - **元件庫**（`components/ui/`）：Dialog、Menu、Tooltip、Snackbar 等以原生 `<dialog>` 與 ARIA 規範實作，支援鍵盤操作與焦點管理；設計 token 集中在 `styles/tokens.css`。
 - **模型清單**：聊天頁呼叫 `GET /api/chat/models`，結果快取在 `localStorage` 5 分鐘。
+- **時間**：後端以 UTC 存放時間，回傳的字串不帶時區；前端一律經 `utils/serverDate.ts` 的 `parseServerDate()` 以 UTC 解讀，再依瀏覽器時區顯示。
 
 ---
 
 ## 13. 部署與維運
 
-- **單一行程**：權杖撤銷名單、速率限制與登入失敗計數、入侵偵測的事件視窗、每位使用者的同時串流數、待核准的工具呼叫與統計快取都存在後端行程的記憶體中。以多個 worker 或多台主機部署時，這些狀態不會共享（登入節流在每個行程各自計數），撤銷名單與登入失敗計數在重啟後也會清空。
+- **單一行程**：權杖撤銷名單、速率限制與登入失敗計數、每位使用者的同時串流數、待核准的工具呼叫與統計快取都存在後端行程的記憶體中。以多個 worker 或多台主機部署時，這些狀態不會共享（登入節流在每個行程各自計數），撤銷名單與登入失敗計數在重啟後也會清空。
 - **對外提供**：後端以 `python main.py` 啟動時監聽 `HOST`（範本為 `127.0.0.1`），只有容器或其他主機上的反向代理需要連入時才改為 `0.0.0.0`；以 HTTPS 提供服務時 `COOKIE_SECURE` 必須為 `true`。Vite 開發與預覽伺服器只監聽 `localhost`。讓其他裝置使用時，請以 `bun run build` 建置，由正式的網頁伺服器提供 `frontend/build/`、送出反框架標頭並反向代理 `/api`；該代理會覆寫 `X-Forwarded-For` 時，可把它的位址設為 `FORWARDED_ALLOW_IPS`，速率限制與依位址的登入節流才會以真實用戶端 IP 計算。
 - **PostgreSQL 容器**：`backend/docker-compose.yml` 需要 `POSTGRES_PASSWORD`（超級使用者，只供管理用途）與 `POSTGRES_APP_USER`、`POSTGRES_APP_PASSWORD`（後端連線用的非超級使用者，`DATABASE_URL` 使用這組帳號），且只綁定 `127.0.0.1:7690`。資料卷第一次初始化時依序執行 `10-init.sql`（`backend/init.sql`）與 `20-app-role.sh`（`backend/init-app-role.sh`）；以舊版初始化的資料卷要執行一次 `docker compose exec postgres bash /docker-entrypoint-initdb.d/20-app-role.sh`（可重複執行）。
 - **資料與備份**：需要備份的是資料庫與 `backend/data/`（索引、上傳檔、模型快取）；索引可由資料庫重建，上傳原檔則用於重新擷取文字。`backend/keys/` 遺失時會產生新金鑰，所有既有權杖隨之失效；目錄無法寫入或金鑰損毀時後端無法啟動。`TOOL_SECRETS_KEY` 遺失或更換時，資料庫中已加密的工具憑證無法解密，需要重新輸入。

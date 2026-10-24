@@ -34,7 +34,7 @@
 
 ## Upgrading from 5.0.0 to the next release
 
-For upgrading from 5.0.0 to the upcoming, not yet released version; see the [CHANGELOG](../CHANGELOG_en.md#unreleased) for the changes. This release reworks how structured data is parsed and chunked. The database schema and dependencies are unchanged; what you need to do is add two new required fields to the domain profile and rebuild the index once after upgrading. Index metadata is now stored as JSON, so update `METADATA_PATH` as well.
+For upgrading from 5.0.0 to the upcoming, not yet released version; see the [CHANGELOG](../CHANGELOG_en.md#unreleased) for the changes. This release reworks how structured data is parsed and chunked. The database schema is unchanged, and the backend drops the `passlib` dependency; what you need to do is add two new required fields to the domain profile, reinstall the backend packages from the new `requirements.txt`, and rebuild the index once after upgrading. Index metadata is now stored as JSON, so update `METADATA_PATH` as well.
 
 ### Next release changes and required actions
 
@@ -47,11 +47,16 @@ For upgrading from 5.0.0 to the upcoming, not yet released version; see the [CHA
 | `filter_and_count_records` results | `author`, `link` | `label`, `links` | Integrations that read tool results use the new fields |
 | Upload and rebuild-index responses | Structured record counts were included in `qa_pairs` | `qa_pairs` counts Q&A only; adds `record_count`, `warning`, `records_detected`, and `missing_source_files` | Read the new fields as needed |
 | Index metadata | `METADATA_PATH` defaults to `data/index_metadata.pkl`, read and written with pickle | Defaults to `data/index_metadata.json`, read and written as JSON | Point `METADATA_PATH` in `.env` at the new name; the old name still works |
+| Settings that did nothing | `ADMIN_API_KEY` is required, and `ENABLE_BATCH_ACCUMULATION`, `BATCH_ACCUMULATOR_SIZE`, and `BASE_URL` can be set, but no code uses them | Removed; ignored if left in `.env` | Delete them from `.env` if you like |
+| Document lists | `GET /api/documents/` and `GET /api/admin/documents` return each document's full text in `content`, and the former calls the model for documents without a summary during the request | Only the fields the lists need, without `content`, and no summaries generated during the request | Integrations that read `content` query the database directly |
+| Rebuild index | Regenerates every document's AI summary, overwriting hand edits | Summarizes only documents without a summary; a second call while one is running returns `409` | To regenerate every summary, use "Regenerate" on each document in the knowledge base page |
+| MCP tool results | Both `content` and a duplicate `raw_result` | `content` only | Integrations that read `raw_result` read `content` |
+| Password hashing package | `passlib` calling argon2 | `argon2-cffi` directly, with the same hash format and parameters | Reinstall from the new `requirements.txt`; existing passwords keep working |
 
 ### Upgrade steps for the next release
 
 1. Stop the backend and back up the database and `backend/data/`.
-2. Update the code. Backend dependencies are unchanged; run `bun run build` for the frontend again.
+2. Update the code, run `pip install -r requirements.txt` in `backend/` to reinstall the backend packages (`passlib` is no longer needed; remove it with `pip uninstall passlib` if you like), and run `bun run build` for the frontend again. `ADMIN_API_KEY`, `ENABLE_BATCH_ACCUMULATION`, `BATCH_ACCUMULATOR_SIZE`, and `BASE_URL` can be deleted from `.env`.
 3. Add both fields to the domain profile that `DOMAIN_PROFILE_PATH` points to. The bundled `backend/config/domain_profile.json` already has them; deployments with their own profile add them, for example:
 
    ```json
@@ -70,6 +75,7 @@ For upgrading from 5.0.0 to the upcoming, not yet released version; see the [CHA
 2. Remove `record_label_fields` and `record_ignore_fields` from the domain profile: 5.0.0 rejects unknown fields and will not start with them.
 3. Rebuild the index once so the chunks return to the 5.0.0 format. Documents whose uploaded file is gone keep content in the new format, which 5.0.0 chunks as plain text.
 4. `METADATA_PATH` can go back to `data/index_metadata.pkl` or stay as it is; 5.0.0 cannot read JSON metadata, so the last rebuild time shows as empty until its next index write.
+5. `ADMIN_API_KEY` is required in 5.0.0: if you deleted it from `.env`, add it back (any random string), and reinstall the backend packages from the 5.0.0 `requirements.txt` (which includes `passlib`).
 
 ### After upgrading to the next release
 

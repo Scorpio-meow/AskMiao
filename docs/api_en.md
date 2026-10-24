@@ -560,7 +560,7 @@ A request with no files or more than 10 files returns `400` as a whole.
 
 ### 3.2 GET /api/documents/
 
-List every document (`id`, `filename`, `content`, `file_type`, `description`, `uploaded_by`, `created_at`, `is_processed`). `content` is the full extracted text and can be large. Documents without a summary get one generated and saved during this request, so it can be slow.
+List every document (`id`, `filename`, `file_type`, `description`, `uploaded_by`, `created_at`, `is_processed`). The full extracted text is not included, and no summaries are generated during this request; give a document without a summary one with 3.3, or let an index rebuild fill it in.
 
 ### 3.3 POST /api/documents/{document_id}/regenerate-summary
 
@@ -586,11 +586,11 @@ Delete a document: delete the database record first, then remove its chunks, vec
 
 ### 3.6 POST /api/documents/rebuild-index
 
-Rebuild the index from the documents in the database: after clearing chunks and indexes, every document is re-extracted (from the uploaded file when it still exists, overwriting `documents.content`), gets a new AI summary, and is re-chunked and re-embedded with the current settings. A document whose uploaded file is gone is chunked from the stored content as plain text and listed in `missing_source_files`; re-upload it. Run it once after upgrading from 2.x; it takes longer the more documents you have.
+Rebuild the index from the documents in the database: after clearing chunks and indexes, every document is re-extracted (from the uploaded file when it still exists, overwriting `documents.content`) and re-chunked and re-embedded with the current settings; documents without a summary get an AI summary, and existing summaries, including hand-edited ones, are kept. The knowledge base returns nothing until the rebuild finishes, and a second call while one is running returns `409` `索引重建正在進行中，請等待完成後再試` (a rebuild is already running). A document whose uploaded file is gone is chunked from the stored content as plain text and listed in `missing_source_files`; re-upload it. Run it once after upgrading from 2.x; it takes longer the more documents you have.
 
 ```json
 {
-  "message": "索引重建成功（已用新配置重新分塊，並重新生成 AI 智能大綱）",
+  "message": "索引重建成功（已用新配置重新分塊，並替缺少摘要的文件生成 AI 智能大綱）",
   "document_count": 6,
   "chunk_count": 214,
   "qa_pairs_detected": 0,
@@ -902,8 +902,7 @@ Call a tool once (`tools/call`). `tool_name` is the tool's original name on the 
   "result": {
     "is_success": true,
     "duration_seconds": 0.35,
-    "content": [{"type": "text", "text": "當前時間: 2026-09-25 10:00:00 CST"}],
-    "raw_result": {"content": [...], "isError": false}
+    "content": [{"type": "text", "text": "當前時間: 2026-09-25 10:00:00 CST"}]
   }
 }
 ```
@@ -918,7 +917,7 @@ A model list in the Ollama `tags` format; no sign-in is required. The former `GE
 
 ### 6.1 GET /api/tags
 
-When any model source is configured (`AVAILABLE_MODELS` or a cloud key), returns `{"tags": [...], "default": "..."}` with the same default rule as `GET /api/chat/models`. Otherwise it queries the remote list at `EXTERNAL_TAGS_URL` (or `{LLM_API_BASE}/api/tags`) and returns an empty list if that fails. The remote query runs in a worker thread, its result (failures included) is cached for 30 seconds, and only one query runs at a time, so anonymous requests do not trigger an outbound call each time.
+Returns the same list and default model as `GET /api/chat/models` (both share one rule; see [Configuration: model list](configuration_en.md#model-list)), under the field `tags`. With no model source configured (`AVAILABLE_MODELS` or a cloud key), it queries the remote list at `EXTERNAL_TAGS_URL` (or `{LLM_API_BASE}/api/tags`) and returns an empty list if that fails. The remote query runs in a worker thread, its result (failures included) is cached for 30 seconds, and only one query runs at a time, so anonymous requests do not trigger an outbound call each time.
 
 ```json
 {"tags": ["gpt-6-sol", "gpt-6-luna"], "default": "gpt-6-sol"}
@@ -936,7 +935,7 @@ When any model source is configured (`AVAILABLE_MODELS` or a cloud key), returns
 |---|---|---|
 | GET | `/api/admin/users` | All users, each as a `UserProfile` (`id`, `username`, `email`, `role`, `is_active`, `is_admin`, `created_at`, `last_login`) without `hashed_password` |
 | PUT | `/api/admin/users/{user_id}` | Update `username`, `email`, `is_active`, or `is_admin` (send only what changes); duplicate names or emails return `400` (`使用者名稱已存在`, `電子郵件已存在`) |
-| DELETE | `/api/admin/users/{user_id}` | Delete a user and all their conversations |
+| DELETE | `/api/admin/users/{user_id}` | Delete a user and all their conversations; documents they uploaded and tools they created stay, with the creator field set to null |
 
 `PUT` returns `{"message": "使用者更新成功", "user": {...}}`, where `user` is the updated `UserProfile`, and `DELETE` returns `{"message": "使用者刪除成功"}`. Both return `404` `使用者不存在` (user not found) for an unknown user and clear the statistics cache on success. Deactivation, deletion, and removal of admin rights apply from the next request: tokens already issued to a deactivated or deleted account stop working and the account can no longer sign in, and an account that lost admin rights gets `403` from admin endpoints.
 
@@ -965,8 +964,8 @@ Account changes and deletions are written to the security log along with the act
 | GET | `/api/admin/conversations` | The 50 most recently updated conversations system-wide |
 | GET | `/api/admin/conversations/{conversation_id}/messages` | All messages of any conversation, oldest first; the table is serialized directly, including the raw `context_used` |
 | DELETE | `/api/admin/conversations/{conversation_id}` | Delete any conversation and its messages |
-| GET | `/api/admin/documents` | All documents, newest first, including the full `content` |
-| DELETE | `/api/admin/documents/{document_id}` | Remove a document's chunks and indexes and delete its record (the uploaded file stays; use `DELETE /api/documents/{document_id}` to remove it too) |
+| GET | `/api/admin/documents` | All documents, newest first, with the same fields as `GET /api/documents/` and no full text |
+| DELETE | `/api/admin/documents/{document_id}` | Same as `DELETE /api/documents/{document_id}`: deletes the record, its chunks and indexes, and the uploaded file |
 
 ### 7.4 Retrieval and index maintenance
 
@@ -1084,7 +1083,6 @@ Every response carries `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY
 The current state, worth knowing when integrating:
 
 - `GET /api/chat/models` and `GET /api/tags` require no sign-in (`GET /api/chat/tools` now does). Restrict them at the reverse proxy when deploying on a public network.
-- `GET /api/documents/` and `GET /api/admin/documents` return each document's full text in `content`.
 - `expires_in` in token responses is always `1800`, regardless of `ACCESS_TOKEN_EXPIRE_MINUTES`.
 - The token revocation list, rate limit counters, login throttling counts and pauses, per-user concurrent streams, and pending tool approvals live in one backend process's memory; they are not shared across processes or hosts and are cleared on restart (which also lifts any login pause). Rate limiting tracks at most 10,000 source IPs and evicts the least recently active first; login throttling likewise tracks at most 10,000 login identifiers and 10,000 source IPs and evicts those that have gone longest without a new failure first.
 - Rate limiting and login throttling both work per source IP: without `FORWARDED_ALLOW_IPS`, every user who connects through the Vite dev proxy or a reverse proxy shares one source IP, so they share the rate limit and their failed logins add up toward the per-address threshold; once it is reached, every login through that proxy is paused.

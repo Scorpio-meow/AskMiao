@@ -405,7 +405,7 @@ cp .env.example .env
 啟動前先編輯 `backend/.env`：
 
 1. **資料庫**：範本的 `DATABASE_URL` 指向 PostgreSQL；零依賴啟動請改為 `DATABASE_URL=sqlite:///./chatbot.db`。
-2. **金鑰**：把 `ADMIN_API_KEY` 換成隨機字串，可用 `python -c "import secrets; print(secrets.token_urlsafe(32))"` 產生。`TOOL_SECRETS_KEY` 要換成每個部署自行產生的 Fernet 金鑰（範本值不是有效的金鑰，沒換掉時後端拒絕啟動）：
+2. **金鑰**：`TOOL_SECRETS_KEY` 要換成每個部署自行產生的 Fernet 金鑰（範本值不是有效的金鑰，沒換掉時後端拒絕啟動）：
 
    ```bash
    python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
@@ -499,7 +499,6 @@ docker compose up -d
 | 變數 | 範本值 | 說明 |
 |---|---|---|
 | `DATABASE_URL` | PostgreSQL 範例 | 資料庫連線字串；SQLite 用 `sqlite:///./chatbot.db` |
-| `ADMIN_API_KEY` | 佔位字串 | 管理用 API 金鑰（目前沒有路由使用，但設定驗證要求此值） |
 | `TOOL_SECRETS_KEY` | 佔位字串（不是有效的金鑰） | 加密工具憑證的 Fernet 金鑰，啟動時驗證格式；更換後已儲存的工具憑證需要重新輸入 |
 | `ALLOW_REGISTRATION` | `false` | 是否開放自行註冊；關閉時帳號以 `scripts/create_user.py` 建立 |
 | `LOGIN_MAX_FAILURES_PER_ACCOUNT` | `5` | 同一登入識別（不分大小寫）在視窗內失敗達此次數即暫停登入（≥ 1） |

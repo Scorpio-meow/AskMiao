@@ -405,7 +405,7 @@ cp .env.example .env
 Edit `backend/.env` before starting:
 
 1. **Database**: the template's `DATABASE_URL` points to PostgreSQL; for a zero-dependency start use `DATABASE_URL=sqlite:///./chatbot.db`.
-2. **Keys**: replace `ADMIN_API_KEY` with a random string, for example from `python -c "import secrets; print(secrets.token_urlsafe(32))"`. Replace `TOOL_SECRETS_KEY` with a Fernet key generated for this deployment (the template value is not a valid key, and the backend refuses to start until it is replaced):
+2. **Keys**: replace `TOOL_SECRETS_KEY` with a Fernet key generated for this deployment (the template value is not a valid key, and the backend refuses to start until it is replaced):
 
    ```bash
    python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
@@ -499,7 +499,6 @@ Backend settings live in `backend/.env`. These 20 have no defaults, and the back
 | Variable | Template | Description |
 |---|---|---|
 | `DATABASE_URL` | PostgreSQL example | Connection string; use `sqlite:///./chatbot.db` for SQLite |
-| `ADMIN_API_KEY` | placeholder | Admin API key (unused by routes today, but required by settings validation) |
 | `TOOL_SECRETS_KEY` | placeholder (not a valid key) | Fernet key that encrypts tool credentials, validated at startup; after changing it, stored tool credentials must be entered again |
 | `ALLOW_REGISTRATION` | `false` | Whether self-registration is open; when closed, accounts are created with `scripts/create_user.py` |
 | `LOGIN_MAX_FAILURES_PER_ACCOUNT` | `5` | Failures of one login identifier (case-insensitive) within the window that pause its logins (≥ 1) |

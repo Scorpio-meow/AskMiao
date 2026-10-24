@@ -1684,7 +1684,7 @@ AZURE_OPENAI_DEPLOYMENT=gpt-6-sol,gpt-6-luna</pre>
                   <td><span class="yes">繼承</span></td>
                 </tr>
                 <tr>
-                  <th scope="row">ADMIN_API_KEY</th>
+                  <th scope="row">TOOL_SECRETS_KEY</th>
                   <td><span class="yes">有</span></td>
                   <td><span class="no">不傳入</span></td>
                 </tr>
@@ -1995,7 +1995,7 @@ AZURE_OPENAI_DEPLOYMENT=gpt-6-sol,gpt-6-luna</pre>
                   <use href="#i-warning-circle"></use>
                 </svg>
                 <span><b>先改 .env：</b><span class="mono">.env.example</span> 的 DATABASE_URL 指向 PostgreSQL，零依賴啟動請改成 <span
-                    class="mono">sqlite:///./chatbot.db</span>，並把 ADMIN_API_KEY 換成隨機字串。TOOL_SECRETS_KEY 必須換成自行產生的 Fernet
+                    class="mono">sqlite:///./chatbot.db</span>。TOOL_SECRETS_KEY 必須換成自行產生的 Fernet
                   金鑰（程式碼中的 <span class="mono">py -c</span> 指令會印出一組），範本值不是有效的金鑰，沒換掉時後端不會啟動。LLM 提供商金鑰擇一設定即可。JWT 一律以 <span
                     class="mono">backend/keys/</span> 的 RSA 金鑰簽署，第一次啟動自動產生，該目錄須可寫入。</span>
               </div>
@@ -2063,7 +2063,6 @@ AZURE_OPENAI_DEPLOYMENT=gpt-6-sol,gpt-6-luna</pre>
             <div class="codebox">
               <pre class="code" id="code-env"><span class="c"># 資料庫與安全</span>
 <span data-cmd>DATABASE_URL=sqlite:///./chatbot.db</span>
-<span data-cmd>ADMIN_API_KEY=請換成隨機字串</span>
 <span data-cmd>TOOL_SECRETS_KEY=請換成自行產生的 Fernet 金鑰</span>
 <span data-cmd>ALLOW_REGISTRATION=false</span>
 <span class="c"># 登入失敗節流</span>

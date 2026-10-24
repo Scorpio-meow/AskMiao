@@ -26,6 +26,9 @@ All notable changes to AskMiao are documented in this file. The format is based 
 ### Security
 
 - **Index metadata is stored as JSON**: the index metadata at `METADATA_PATH` (the last rebuild time and similar) is read and written as JSON, the default file name is now `data/index_metadata.json`, and the backend no longer reads this file with `pickle.load`, so tampering with it cannot run code in the backend (CWE-502). An existing `index_metadata.pkl` is no longer read; the last rebuild time shows as empty until the next index write. The BM25 index directory is still pickled by Whoosh, so `DATA_DIR` must still be writable only by the backend account.
+- **Concurrent login requests no longer bypass the failure lockout**: the lockout is checked again after a password-hashing slot is acquired, and failures are recorded before the slot is released. Previously 40 wrong passwords sent at once were all verified, making the threshold useless; now, once locked, at most the 4 requests already being verified complete.
+- **Login response time no longer reveals whether an account exists**: unknown and deactivated accounts verify the password against a dummy hash. Previously an existing account took about 76 ms and an unknown one 0.3 ms, so accounts could be listed even with registration closed.
+- **The attachment quota can no longer be bypassed with concurrent sends**: messages with attachments check the quota and are written one at a time. Previously concurrent requests all saw the same old usage, so any signed-in account could exceed the 200 MiB limit.
 
 ### Added
 
@@ -37,6 +40,8 @@ All notable changes to AskMiao are documented in this file. The format is based 
   - Records longer than `CHUNK_SIZE` are split on whole field lines into parts that each repeat the record header with a `（2/3）` suffix, with `part` and `part_count` in the metadata.
 - The domain profile has two new required fields: `record_label_fields` (label fields for record headers and `label`) and `record_ignore_fields` (fields dropped while parsing).
 - Upload results gain `record_count` and `warning` (explaining when a structured format failed to parse or exceeded the limit and was handled as plain text); the rebuild-index response gains `records_detected` and `missing_source_files` (documents whose uploaded file is gone and that were rebuilt from the stored content). The frontend upload dialog and rebuild message show them.
+- `MAX_KB_CATALOG_CHARS` (4,000 characters): caps the document catalog (file names and summaries) in the `search_knowledge_base` tool description; past it, only the first documents are listed and the rest are counted.
+- `POST /api/documents/rebuild-index` returns `409` when called while a rebuild is running.
 
 ### Changed
 
@@ -46,6 +51,13 @@ All notable changes to AskMiao are documented in this file. The format is based 
 - `filter_and_count_records` merges the parts of each record by `(document_id, record_index)` before filtering, so every record counts once; the result fields `author` and `link` became `label` and `links`, and every URL in `links` may be read with `web_fetch`.
 - AI summaries of structured data include the record count, format, and field names; rule-based summaries no longer depend on Chinese field labels.
 - Base64 images and SVGs inside values are replaced by placeholders while the field is kept; the list of noise fields dropped by name moved from the code to `record_ignore_fields`.
+- Rebuilding the index summarizes only documents without a summary and keeps existing summaries, including hand-edited ones; the confirmation dialog now says the knowledge base returns nothing during a rebuild.
+- `GET /api/documents/` and `GET /api/admin/documents` return only the fields the lists need (no `content`), run as sync routes in the thread pool, and no longer call the model for documents without a summary during the request.
+- Adding documents and `POST /api/admin/vector-store/reindex` compute embeddings outside the index lock, so other people's searches no longer wait while a large file is uploaded or vectors are recomputed.
+- `/api/tags` and `/api/chat/models` share one model list and default model rule (`MODEL_NAME`, then the first Azure deployment, then the remote list's default); the remote list is fetched with httpx.
+- Deleting an account keeps the documents it uploaded and the tools it created, setting `uploaded_by` and `created_by` to null.
+- Password hashing uses `argon2-cffi`'s `PasswordHasher`; the hash format and parameters are unchanged.
+- The frontend sends only one access token refresh at a time, shared by axios and chat sends; an expired token is refreshed directly instead of the sign-in state being cleared first.
 
 ### Fixed
 
@@ -53,13 +65,28 @@ All notable changes to AskMiao are documented in this file. The format is based 
 - Uploads store the content with surrounding whitespace removed, matching the value the duplicate check compares.
 - When cleanup of an admin-uploaded JSON file failed, the second parse no longer bypasses the parse limit.
 - The `--uploads` and `--out` defaults of `scripts/docx_to_txt.py` use `/` separators, so on Linux and macOS they are no longer read as a single file name that reports a missing directory.
+- The first message sent after staying idle past the access token lifetime no longer fails: chat sends use `fetch`, which never refreshed the token, so they got `401` (or `413` with attachments over 1 MiB) until the page was reloaded.
+- Times of conversations, accounts, and documents are no longer 8 hours early: the backend returns times without a time zone, and the frontend now parses them as UTC (`utils/serverDate.ts`).
+- A wrong tool argument from the model (such as a `null` or text `top_k`, or arguments that are not an object) no longer ends the whole answer; the model gets an error code instead.
+- Rebuilding the index no longer overwrites hand-edited summaries, and two tabs rebuilding at once no longer write every chunk twice.
+- With many documents, the knowledge-base catalog no longer adds tens of thousands of characters to every model call or exceeds the model's context window.
+- The tool list at the start of a chat is assembled in a worker thread, and the sync document summary no longer calls the model while holding a lock, which could stall the whole backend waiting for it.
+- `created_by` of custom API tools and MCP servers was always null; it now records the admin who created them, and deleting an account that created tools or uploaded documents no longer fails on PostgreSQL foreign keys.
+- Per-request timeouts on model calls no longer stretch the wait for a connection pool slot from 15 seconds to 18 to 120 seconds.
+- `requirements.txt` is regenerated with the command in CONTRIBUTING: Dependabot updates had stripped the platform and Python version markers, so Windows and macOS tried to install Linux-only nvidia packages and Python 3.10 and 3.11 could not install the locked numpy.
+- The API reference for `DELETE /api/admin/documents/{document_id}` now matches the behavior: the uploaded file is deleted too.
 
 ### Removed
 
 - `DocumentProcessor.split_structured_records`, `_clean_structured_data`, and `_extract_from_code_or_data`, along with the `【設定模組: key】` chunks and the `json_key` and `tags` metadata.
+- Code with no callers: `security_monitor.py`, `audit_logger.py`, `batch_processor.py`, `models/payloads.py`, `healthcheck.py` (which checked a nonexistent `/api/admin/stats`), `intrusion_detection.py` (rate-limit `429` responses now just log a warning), `input_validator.py` (its file name check duplicated `documents.py`, and its SSRF check was used only by tests), `ResearchAgent.run_research`, `RAGManager.reset_instance`, the compatibility functions in `redis_client`, unused `security_logging` helpers, and in the frontend `pages/Chat.jsx` (empty), `authService.refreshAccessToken`, `validateToken`, `chatService.sendMessage`, and `networkMonitor.pingServer`.
+- The settings `ADMIN_API_KEY` (required, yet no route used it), `ENABLE_BATCH_ACCUMULATION`, `BATCH_ACCUMULATOR_SIZE`, and `BASE_URL`; they are ignored if left in `.env`.
+- The direct backend dependencies `passlib`, `websockets`, and `requests` (the last two remain indirect dependencies of other packages).
+- `raw_result` in MCP tool results, which duplicated `content`.
+- The `custom_agents` table, which no feature used, from `init.sql` and the migration script (an existing table in your database is not dropped).
 
 > [!IMPORTANT]
-> Before upgrading, add `record_label_fields` and `record_ignore_fields` to the domain profile, or the backend will not start; after upgrading, have an admin run "Rebuild index" once so existing documents switch to the new record format. See the [upgrade guide](docs/upgrading_en.md#upgrading-from-500-to-the-next-release).
+> Before upgrading, add `record_label_fields` and `record_ignore_fields` to the domain profile, or the backend will not start, and reinstall the backend packages from the new `requirements.txt`; after upgrading, have an admin run "Rebuild index" once so existing documents switch to the new record format. See the [upgrade guide](docs/upgrading_en.md#upgrading-from-500-to-the-next-release).
 
 ---
 

@@ -18,7 +18,6 @@
 - [Network access control](#network-access-control)
 - [Server and runtime](#server-and-runtime)
 - [Resource limits](#resource-limits)
-- [Reserved settings](#reserved-settings)
 - [Removed settings](#removed-settings)
 - [Domain profile](#domain-profile)
 - [Calibrating the relevance threshold](#calibrating-the-relevance-threshold)
@@ -42,7 +41,6 @@ These 20 settings have no default; the backend does not start if any is missing.
 | Variable | Template | Description |
 |---|---|---|
 | `DATABASE_URL` | `postgresql+psycopg2://askmiao_app:your_app_db_password_here@localhost:5432/chatbot` | Database connection string; see [Database](#database) |
-| `ADMIN_API_KEY` | `your_admin_api_key_here` | Admin API key (required by settings validation, currently unused by any route); replace with a random string |
 | `TOOL_SECRETS_KEY` | `your_tool_secrets_key_here` | Fernet key that encrypts tool credentials, validated at startup; the template value is not a valid key and must be replaced with one you generate (command below); see [Tool credential encryption](#tool-credential-encryption) |
 | `ALLOW_REGISTRATION` | `false` | Allow self-registration; see [Registration and account creation](#registration-and-account-creation) |
 | `LOGIN_MAX_FAILURES_PER_ACCOUNT` | `5` | Login failure threshold per login identifier (≥ 1); see [Login throttling](#login-throttling) |
@@ -103,6 +101,8 @@ Claude models also require `ANTHROPIC_MAX_TOKENS` (without it Claude calls fail,
 1. `AVAILABLE_MODELS` is set: use it as is.
 2. Otherwise merge, in order: the Azure deployments (`gpt-6-sol` when none is set), the built-in OpenAI list if `OPENAI_API_KEY` is set, the built-in Claude list if `ANTHROPIC_API_KEY` is set, and the built-in Gemini list if `GEMINI_API_KEY` is set.
 3. Still empty: query the remote list at `EXTERNAL_TAGS_URL` (or `{LLM_API_BASE}/api/tags`), such as the models pulled into a local Ollama. The remote query runs in a worker thread, its result (failures included) is cached for 30 seconds, and only one query runs at a time.
+
+The default model is `MODEL_NAME`, then the first Azure deployment, then the default the remote list reports; if it is not in the list, the first model in the list is used. Both endpoints share this rule.
 
 The `model_name` given to `POST /api/chat/send` must be in this list (or equal `MODEL_NAME`); otherwise the request fails with `400`, so nobody can call an unlisted model with the operator's keys.
 
@@ -256,7 +256,6 @@ For your own PostgreSQL, follow `backend/init-app-role.sh` as well and connect t
 
 | Variable | Code default | Template | Description |
 |---|---|---|---|
-| `ADMIN_API_KEY` | — (required) | placeholder | Required by settings validation; no route currently checks `X-API-Key`, and admin endpoints rely on the account's `is_admin` flag in the database |
 | `ALLOW_REGISTRATION` | — (required) | `false` | Allow self-registration through `POST /api/auth/register`; with `false`, registration returns `403` and accounts are created with `scripts/create_user.py`; see [Registration and account creation](#registration-and-account-creation) |
 | `ACCESS_TOKEN_EXPIRE_MINUTES` | `30` | `30` | Access token lifetime in minutes |
 | `REFRESH_TOKEN_EXPIRE_DAYS` | `7` | `7` | Refresh token lifetime in days, also the cookie `max-age` |
@@ -335,7 +334,7 @@ python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().d
 >
 > Set `FORWARDED_ALLOW_IPS` to the proxy's address only when the reverse proxy in front of the backend *overwrites* `X-Forwarded-For` (for example nginx with `proxy_set_header X-Forwarded-For $remote_addr;`); rate limiting and login throttling then count real client IPs. The Vite dev proxy forwards client-supplied headers unchanged, so **never** set it for Vite, or anyone could forge their source IP to evade rate limiting and per-address login throttling. The setting only takes effect when the backend is started with `python main.py`.
 
-Rate limiting counts in each backend process's memory, and the number of tracked addresses is capped (see [Resource limits](#resource-limits)). Intrusion detection only raises alerts and never blocks an address; exceeding the rate limit always returns `429`, never a `403` that blocks the address (the IP blocklist of earlier versions, which was never populated, has been removed).
+Rate limiting counts in each backend process's memory, and the number of tracked addresses is capped (see [Resource limits](#resource-limits)). Exceeding the rate limit always returns `429` and writes a warning to the log, never a `403` that blocks the address (the IP blocklist of earlier versions, which was never populated, has been removed).
 
 ## Server and runtime
 
@@ -347,7 +346,6 @@ Rate limiting counts in each backend process's memory, and the number of tracked
 | `RELOAD` | — (required) | `false` | Reload on code changes; set `true` only for development (override with `--reload` or `--no-reload`) |
 | `ENABLE_API_DOCS` | — (required) | `false` | Serve the interactive documentation at `/docs`, `/redoc`, and `/openapi.json`. These pages list every endpoint and parameter, so keep `false` for public deployments; with `false`, none of the three paths is served |
 | `LOG_LEVEL` | `INFO` | `INFO` | Log level; application logs go to `backend/logs/app.log` and security events only to `backend/logs/security.log` (both rotate by size). `httpx` and `httpcore` are pinned to `WARNING`, so full request URLs (which may carry query-string API keys) are not logged |
-| `BASE_URL` | `http://backend:8001` | `http://localhost:8001` | Used only by `healthcheck.py`, which reads the process environment and not `.env` |
 
 `HOST`, `PORT`, `RELOAD`, and `FORWARDED_ALLOW_IPS` apply only when the backend is started with `python main.py`; started any other way (for example by running `uvicorn main:app` directly), they are not applied, although `HOST` and `RELOAD` are still required. The uvicorn server started by `python main.py` processes proxy headers (`proxy_headers`) only when `FORWARDED_ALLOW_IPS` is set; see [Network access control](#network-access-control).
 
@@ -379,6 +377,7 @@ The limits below protect a single backend process and the operator's paid usage.
 | Constant | Value | Description |
 |---|---|---|
 | `MAX_TOOL_RESULT_CHARS` | 20,000 characters | Each tool call's result is truncated to this length before it enters the model context |
+| `MAX_KB_CATALOG_CHARS` | 4,000 characters | Length of the document catalog (file names and summaries) in the `search_knowledge_base` tool description; it is sent on every model call, so past this length only the first documents are listed and the rest are counted |
 | `MAX_TEXT_CLEANUP_CHARS` | 2,000,000 characters | HTML is truncated to this length before `web_fetch` extracts text |
 | `MAX_DATE_RANGE_CHARS`, `MAX_TARGET_DATES`, `MAX_FILTER_RECORDS` (`rag/tools.py`) | 200 characters, 93 days, 50 records | Length of `filter_and_count_records`' `date_range`, the number of dates it may expand to, and the records returned (a larger `limit` is clamped to 50) |
 | `MAX_API_TOOL_RESPONSE_BYTES` (`api/api_tools.py`) | 1 MiB | Response body limit of custom API tools; reading stops and the call returns `502` |
@@ -414,7 +413,7 @@ Admin uploads to the knowledge base and chat attachments each use their own `Ext
 
 The OOXML checks run before parsing and use the sizes the ZIP members declare. python-docx and python-pptx build whole XML parts into a DOM (about 15 to 30 times the XML size in memory); which members count toward the XML total is decided from `[Content_Types].xml` (plus `.rels` files and `[Content_Types].xml` itself), so changing a part's file extension does not get around it. `.xlsx` files are read as a stream, so this item does not apply to them. When a file exceeds any OOXML budget, an admin upload of that file fails; a chat attachment is not parsed, and the model is told that the attachment exceeded the parsing limits and was not read. JSON, JSONL, YAML, and JS declaration attachments over the length limit are not parsed into structured records and get only the linear noise cleanup. CSV and XLSX are not subject to this length limit; YAML whose aliases expand to more nodes than the source has characters is never parsed and is handled as plain text.
 
-**Accounts, logs, and detection**
+**Accounts, logs, and rate limiting**
 
 | Constant | Value | Description |
 |---|---|---|
@@ -425,17 +424,7 @@ The OOXML checks run before parsing and use the sizes the ZIP members declare. p
 | `MAX_REVOKED_TOKENS` | 100,000 | Entries in the in-process token revocation list; when full, the entries expiring soonest are evicted first |
 | `MAX_LOG_FIELD_CHARS` | 200 characters | Length limit of one string field in the security log (such as the account name or User-Agent) |
 | `LOG_FILE_MAX_BYTES`, `LOG_FILE_BACKUP_COUNT` | 10 MiB, 5 files | Rotation size and retained backups of `app.log` and `security.log` |
-| `MAX_EVENTS_PER_ADDRESS` | 200 | Events kept per address by the intrusion detector for event types without a rule |
-| `MAX_TRACKED_ADDRESSES` | 10,000 | Addresses tracked at once by each of intrusion detection, rate limiting, and login throttling; the least recently active are evicted first |
-
-## Reserved settings
-
-These settings can appear in `.env`, but no code path currently uses them:
-
-| Variable | Code default | Description |
-|---|---|---|
-| `ENABLE_BATCH_ACCUMULATION` | `false` | Switch for the embedding batch accumulator, which is not wired into the upload flow |
-| `BATCH_ACCUMULATOR_SIZE` | `32` | Same as above |
+| `MAX_TRACKED_ADDRESSES` | 10,000 | Addresses tracked at once by each of rate limiting and login throttling; the least recently active are evicted first |
 
 ## Removed settings
 
@@ -443,6 +432,9 @@ Ignored if left in `.env`; safe to delete:
 
 | Variable | Removed in | Replacement |
 |---|---|---|
+| `ADMIN_API_KEY` | Unreleased | No route ever used it; admin endpoints rely on the account's `is_admin` flag in the database |
+| `ENABLE_BATCH_ACCUMULATION`, `BATCH_ACCUMULATOR_SIZE` | Unreleased | The embedding batch accumulator was never wired into the upload flow and has been deleted |
+| `BASE_URL` | Unreleased | Used only by the deleted `healthcheck.py`; for health checks, request `GET /health` directly |
 | `JWT_SECRET_KEY`, `JWT_ALGORITHM` | 4.0.0 | Tokens are always signed RS256 with the RSA keys in `backend/keys/`; the HS256 fallback is gone |
 | `HYBRID_ALPHA`, `NORMALIZATION` | 3.0.0 | Standard RRF fusion with `RRF_K` |
 | `FINAL_THRESHOLD` | 3.0.0 | `RERANK_RELEVANCE_THRESHOLD` |

@@ -34,7 +34,7 @@
 
 ## 從 5.0.0 升級到下一版
 
-適用於從 5.0.0 升級到尚未發行的下一版，變更見 [CHANGELOG](../CHANGELOG.md#unreleased)。這一版重做結構化資料的解析與切塊，資料庫結構與相依套件都沒有變更；需要動手的是領域設定檔的兩個新必填欄位，以及升級後執行一次重建索引。索引中繼資料改以 JSON 保存，建議一併更新 `METADATA_PATH`。
+適用於從 5.0.0 升級到尚未發行的下一版，變更見 [CHANGELOG](../CHANGELOG.md#unreleased)。這一版重做結構化資料的解析與切塊，資料庫結構沒有變更，後端相依套件移除 `passlib`；需要動手的是領域設定檔的兩個新必填欄位、依新的 `requirements.txt` 重新安裝後端套件，以及升級後執行一次重建索引。索引中繼資料改以 JSON 保存，建議一併更新 `METADATA_PATH`。
 
 ### 下一版的變更與需要的動作
 
@@ -47,11 +47,16 @@
 | `filter_and_count_records` 的結果 | `author`、`link` | `label`、`links` | 自行讀取工具結果的整合改用新欄位 |
 | 上傳與重建索引的回應 | 結構化記錄數算在 `qa_pairs` 中 | `qa_pairs` 只算 Q&A，另有 `record_count`、`warning`、`records_detected`、`missing_source_files` | 依需要讀取新欄位 |
 | 索引中繼資料 | `METADATA_PATH` 預設 `data/index_metadata.pkl`，以 pickle 讀寫 | 預設 `data/index_metadata.json`，以 JSON 讀寫 | 把 `.env` 的 `METADATA_PATH` 改為新檔名；沿用舊檔名也能運作 |
+| 沒有作用的設定 | `ADMIN_API_KEY` 必填，`ENABLE_BATCH_ACCUMULATION`、`BATCH_ACCUMULATOR_SIZE`、`BASE_URL` 可設定，但沒有程式使用 | 已移除，留在 `.env` 中會被忽略 | 可從 `.env` 刪除 |
+| 文件清單 | `GET /api/documents/` 與 `GET /api/admin/documents` 回傳每份文件的完整文字 `content`，並在請求中替缺少摘要的文件呼叫模型 | 只回傳清單需要的欄位，不含 `content`，也不在請求中生成摘要 | 讀取 `content` 的整合需改為直接查詢資料庫 |
+| 重建索引 | 每份文件都重新生成 AI 摘要，覆蓋手動修訂 | 只替沒有摘要的文件生成；重建進行中再次呼叫回傳 `409` | 需要全部重新生成時，在知識庫頁逐份按「重新生成」 |
+| MCP 工具結果 | 同時有 `content` 與重複內容的 `raw_result` | 只有 `content` | 讀取 `raw_result` 的整合改讀 `content` |
+| 密碼雜湊套件 | `passlib` 呼叫 argon2 | 直接使用 `argon2-cffi`，雜湊格式與參數相同 | 依新的 `requirements.txt` 重新安裝；既有密碼不需重設 |
 
 ### 升級到下一版的步驟
 
 1. 停止後端，備份資料庫與 `backend/data/`。
-2. 更新程式碼。後端相依套件沒有變更；前端重新執行 `bun run build`。
+2. 更新程式碼，在 `backend/` 執行 `pip install -r requirements.txt` 重新安裝後端套件（`passlib` 已不再需要，可以 `pip uninstall passlib` 移除），前端重新執行 `bun run build`。`.env` 中的 `ADMIN_API_KEY`、`ENABLE_BATCH_ACCUMULATION`、`BATCH_ACCUMULATOR_SIZE`、`BASE_URL` 可以刪除。
 3. 在 `DOMAIN_PROFILE_PATH` 指向的領域設定檔補上兩個欄位。內建的 `backend/config/domain_profile.json` 已經包含；使用自己設定檔的部署請加上，例如：
 
    ```json
@@ -70,6 +75,7 @@
 2. 從領域設定檔移除 `record_label_fields` 與 `record_ignore_fields`：5.0.0 不允許未知欄位，留著會無法啟動。
 3. 執行一次重建索引，讓片段回到 5.0.0 的格式。原始檔已遺失的文件會保留新格式的內容，5.0.0 會把它當一般文字切塊。
 4. `METADATA_PATH` 可以改回 `data/index_metadata.pkl`，也可以保留；5.0.0 讀不懂 JSON 格式的中繼資料，最後重建時間會在它下一次寫入索引前顯示為空。
+5. 5.0.0 的 `ADMIN_API_KEY` 是必填設定：已從 `.env` 刪除時要加回（任意隨機字串），並以 5.0.0 的 `requirements.txt` 重新安裝後端套件（含 `passlib`）。
 
 ### 升級到下一版後的常見狀況
 

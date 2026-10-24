@@ -26,6 +26,9 @@
 ### 安全性 (Security)
 
 - **索引中繼資料改用 JSON**：`METADATA_PATH` 指向的索引中繼資料（最後重建時間等）改以 JSON 讀寫，預設檔名改為 `data/index_metadata.json`，後端不再以 `pickle.load` 讀取這個檔案，竄改它無法在後端執行程式碼（CWE-502）。既有的 `index_metadata.pkl` 不再讀取，最後重建時間在下一次寫入索引前顯示為空。BM25 索引目錄仍由 Whoosh 以 pickle 保存，`DATA_DIR` 依然只能讓後端帳號寫入。
+- **同時送出的登入請求不再繞過失敗鎖定**：拿到密碼雜湊名額後會再檢查一次是否鎖定，失敗也在釋放名額前記錄。先前同時送出 40 個錯誤密碼會全部被驗證，門檻形同虛設；現在鎖定後最多只有已在驗證中的 4 個請求會完成。
+- **登入回應時間不再透露帳號是否存在**：帳號不存在或已停用時也對假雜湊驗一次密碼。先前存在的帳號約需 76 毫秒、不存在的只要 0.3 毫秒，關閉註冊時仍可藉此列出帳號。
+- **附件配額不再能以同時送出繞過**：含附件的訊息逐一檢查配額並寫入資料庫。先前同時送出的請求都看到同一個舊用量，任何登入的帳號都能超過 200 MiB 的上限。
 
 ### 新增 (Added)
 
@@ -37,6 +40,8 @@
   - 超過 `CHUNK_SIZE` 的記錄以整行欄位為單位切成多段，每段重複記錄標頭並加上 `（2/3）`，metadata 帶 `part`、`part_count`。
 - 領域設定檔新增必填欄位 `record_label_fields`（記錄標頭與 `label` 使用的識別欄位）與 `record_ignore_fields`（解析時略過的欄位）。
 - 上傳結果新增 `record_count` 與 `warning`（結構化格式解析失敗或超過上限、改以純文字處理時的說明）；重建索引的回應新增 `records_detected` 與 `missing_source_files`（原始檔已遺失、改用資料庫內容重建的文件）。前端上傳對話框與重建索引訊息會顯示這些資訊。
+- `MAX_KB_CATALOG_CHARS`（4,000 字）：`search_knowledge_base` 工具說明中的文件目錄（檔名與摘要）以此為上限，超過時只列出前面的文件並告知其餘份數。
+- `POST /api/documents/rebuild-index` 在重建進行中再次呼叫時回傳 `409`。
 
 ### 變更 (Changed)
 
@@ -46,6 +51,13 @@
 - `filter_and_count_records` 依 `(document_id, record_index)` 合併同一筆記錄的分段後再篩選，每筆記錄只計一次；結果欄位 `author`、`link` 改為 `label`、`links`，`links` 中的網址都可以交給 `web_fetch` 讀取。
 - 結構化資料的 AI 摘要附上記錄數、格式與欄位名稱；規則摘要不再依賴中文欄位標籤。
 - 值中的 Base64 圖片與 SVG 換成佔位字但保留欄位；依欄位名略過的雜訊清單從程式碼移到 `record_ignore_fields`。
+- 重建索引只替沒有摘要的文件生成 AI 摘要，既有摘要（含手動修訂的）保留；確認視窗補充重建期間知識庫暫時查不到資料。
+- `GET /api/documents/` 與 `GET /api/admin/documents` 只回傳清單需要的欄位（不含 `content`），改為同步路由交給執行緒池，也不再於請求中替缺少摘要的文件呼叫模型。
+- 新增文件與 `POST /api/admin/vector-store/reindex` 改在索引鎖外計算向量，上傳大檔或重算向量時其他人的檢索不必等待。
+- `/api/tags` 與 `/api/chat/models` 共用同一套模型清單與預設模型規則（`MODEL_NAME`、第一個 Azure 部署、遠端清單的預設模型）；遠端清單改以 httpx 查詢。
+- 刪除帳號時，該帳號上傳的文件與建立的工具保留，`uploaded_by`、`created_by` 改為空值。
+- 密碼雜湊改用 `argon2-cffi` 的 `PasswordHasher`，雜湊格式與參數不變。
+- 前端換發存取權杖改為同一時間只送一個請求，axios 與聊天送出共用；權杖已過期時直接換發，不再先清除登入狀態。
 
 ### 修正 (Fixed)
 
@@ -53,13 +65,28 @@
 - 上傳時存入資料庫的內容改為去除前後空白後的版本，與重複檢查比對的值一致。
 - 管理員上傳的 JSON 在清理失敗時，第二次解析不再繞過解析上限。
 - `scripts/docx_to_txt.py` 的 `--uploads`、`--out` 預設值改用 `/` 分隔，在 Linux 與 macOS 上不再被當成單一檔名而回報目錄不存在。
+- 閒置超過存取權杖效期後送出的第一則訊息不再失敗：聊天送出走 `fetch`，先前不會換發權杖，回傳 `401`（附件超過 1 MiB 時是 `413`），要重新整理頁面才能再用。
+- 對話、帳號與文件的時間不再早 8 小時：後端回傳的時間不帶時區，前端改以 UTC 解讀（`utils/serverDate.ts`）。
+- 模型給錯工具參數（例如 `top_k` 為 `null` 或文字、參數不是物件）時不再中斷整個回答，改把錯誤代碼交給模型。
+- 重建索引不再覆蓋手動修訂的摘要；兩個分頁同時重建不再讓片段寫進兩份。
+- 文件數多時，知識庫目錄不再讓每次呼叫模型多出數萬字、甚至超過模型的上下文上限。
+- 聊天開始時組工具清單改在執行緒中進行；同步版文件摘要不再於持鎖時呼叫模型，避免整個後端在等這把鎖時停住。
+- 自訂 API 工具與 MCP 伺服器的 `created_by` 先前一律為空值，現在記錄建立的管理員；刪除建立過工具或上傳過文件的帳號，在 PostgreSQL 上不再因外鍵失敗。
+- 呼叫模型時，每次請求自帶的逾時不再把等待連線池名額的上限從 15 秒拉長到 18～120 秒。
+- `requirements.txt` 依 CONTRIBUTING 的指令重新產生：Dependabot 更新時移除了平台與 Python 版本標記，Windows 與 macOS 會嘗試安裝 Linux 專用的 nvidia 套件，Python 3.10、3.11 也裝不起鎖定的 numpy。
+- API 參考中 `DELETE /api/admin/documents/{document_id}` 的說明改為與實際行為一致：上傳原檔也會一併刪除。
 
 ### 移除 (Removed)
 
 - `DocumentProcessor.split_structured_records`、`_clean_structured_data`、`_extract_from_code_or_data`，以及 `【設定模組: key】` 片段與 `json_key`、`tags` metadata。
+- 沒有任何呼叫端的程式碼：`security_monitor.py`、`audit_logger.py`、`batch_processor.py`、`models/payloads.py`、`healthcheck.py`（檢查不存在的 `/api/admin/stats`）、`intrusion_detection.py`（速率限制回 `429` 時改為只寫警告日誌）、`input_validator.py`（檔名檢查與 `documents.py` 重複，其中的 SSRF 檢查只有測試使用）、`ResearchAgent.run_research`、`RAGManager.reset_instance`、`redis_client` 的相容函式、`security_logging` 未使用的函式，以及前端的 `pages/Chat.jsx`（空檔）、`authService.refreshAccessToken`、`validateToken`、`chatService.sendMessage` 與 `networkMonitor.pingServer`。
+- 設定 `ADMIN_API_KEY`（必填卻沒有任何路由使用）、`ENABLE_BATCH_ACCUMULATION`、`BATCH_ACCUMULATOR_SIZE`、`BASE_URL`；留在 `.env` 中會被忽略。
+- 後端直接依賴 `passlib`、`websockets`、`requests`（後兩者仍是其他套件的間接依賴）。
+- MCP 工具結果中與 `content` 重複的 `raw_result`。
+- `init.sql` 與遷移腳本中已無對應功能的 `custom_agents` 資料表（既有資料庫中的資料表不會被刪除）。
 
 > [!IMPORTANT]
-> 升級前請在領域設定檔補上 `record_label_fields` 與 `record_ignore_fields`，否則後端無法啟動；升級後由管理員執行一次「重建索引」，既有文件才會改用新的記錄格式。詳見 [升級指南](docs/upgrading.md#從-500-升級到下一版)。
+> 升級前請在領域設定檔補上 `record_label_fields` 與 `record_ignore_fields`，否則後端無法啟動；依新的 `requirements.txt` 重新安裝後端套件；升級後由管理員執行一次「重建索引」，既有文件才會改用新的記錄格式。詳見 [升級指南](docs/upgrading.md#從-500-升級到下一版)。
 
 ---
 
