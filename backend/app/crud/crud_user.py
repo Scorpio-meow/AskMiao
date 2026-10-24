@@ -1,10 +1,15 @@
 
+import secrets
+from functools import lru_cache
 from sqlalchemy.orm import Session
 from sqlalchemy import or_
 from typing import Optional, List
 from datetime import datetime
 from app.models import User
 from app.core.jwt_auth import PasswordManager
+@lru_cache(maxsize=1)
+def _dummy_password_hash() -> str:
+    return PasswordManager.hash_password(secrets.token_urlsafe(16))
 def get_user_by_id(db: Session, user_id: int) -> Optional[User]:
     return db.query(User).filter(User.id == user_id).first()
 def get_user_by_username(db: Session, username: str) -> Optional[User]:
@@ -60,13 +65,12 @@ def authenticate_user(
     password: str
 ) -> Optional[User]:
     user = get_user_by_username_or_email(db, username_or_email)
-    
-    if not user:
+
+    if user is None or not user.is_active:
+        # 帳號不存在或已停用時也驗一次密碼，回應時間才不會透露帳號是否存在
+        PasswordManager.verify_password(password, _dummy_password_hash())
         return None
-    
-    if not user.is_active:
-        return None
-    
+
     if not PasswordManager.verify_password(password, user.hashed_password):
         return None
     if PasswordManager.needs_rehash(user.hashed_password):

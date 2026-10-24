@@ -6,9 +6,13 @@
 3. 登入路由在鎖定期間回傳 429 與 Retry-After，正確密碼也不會被接受，不洩漏密碼是否正確
 4. 追蹤的鍵數有上限
 5. 存取權杖過期時仍能登出並撤銷重新整理權杖；沒有 Authorization 標頭時不受理
+6. 同時送出的錯誤密碼在鎖定後不再驗證；帳號不存在時也會驗一次密碼，回應時間不透露帳號是否存在
 """
+import asyncio
+import time
 from datetime import datetime
 
+import httpx
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -18,6 +22,7 @@ from sqlalchemy.pool import StaticPool
 
 from app.api import auth as auth_api
 from app.core import login_throttle as throttle_module
+from app.core.limits import MAX_CONCURRENT_PASSWORD_HASHES
 from app.core.login_throttle import LoginThrottle
 from app.crud import crud_user
 from app.models.database import Base, get_db
@@ -174,3 +179,42 @@ def test_logout_with_an_expired_access_token_revokes_the_refresh_cookie(client):
     assert response.status_code == 200
     assert 'refresh_token=""' in response.headers["set-cookie"]
     assert TokenBlacklist.is_blacklisted(refresh_cookie)
+
+
+@pytest.mark.asyncio
+async def test_concurrent_wrong_passwords_stop_at_the_lockout(client, monkeypatch):
+    http, _ = client
+
+    def slow_wrong_password(db, username, password):
+        time.sleep(0.02)
+        return None
+
+    monkeypatch.setattr(auth_api, "authenticate_user", slow_wrong_password)
+    monkeypatch.setattr(auth_api, "_password_hash_slots", asyncio.Semaphore(MAX_CONCURRENT_PASSWORD_HASHES))
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=http.app), base_url="http://test") as concurrent:
+        responses = await asyncio.gather(*(
+            concurrent.post("/api/auth/login", json={"username": "member", "password": f"wrong-{index}"})
+            for index in range(30)
+        ))
+    checked = sum(response.status_code == 401 for response in responses)
+    # 門檻是 3 次；鎖定時已在驗證中的請求最多再完成 MAX_CONCURRENT_PASSWORD_HASHES 個
+    assert checked <= 3 + MAX_CONCURRENT_PASSWORD_HASHES
+    assert sum(response.status_code == 429 for response in responses) == 30 - checked
+
+
+def test_missing_and_inactive_accounts_still_verify_a_password(client, monkeypatch):
+    calls = []
+    original = crud_user.PasswordManager.verify_password
+    monkeypatch.setattr(crud_user.PasswordManager, "verify_password", staticmethod(
+        lambda plain, hashed: calls.append(hashed) or original(plain, hashed)
+    ))
+    engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    Base.metadata.create_all(engine)
+    with sessionmaker(bind=engine)() as session:
+        inactive = crud_user.create_user(session, "former", "former@example.com", "Secret123")
+        inactive.is_active = False
+        session.commit()
+        assert crud_user.authenticate_user(session, "nobody", "Secret123") is None
+        assert crud_user.authenticate_user(session, "former", "Secret123") is None
+    assert len(calls) == 2
+    engine.dispose()

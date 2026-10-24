@@ -41,6 +41,18 @@ def _get_cookie_samesite() -> str:
     return settings.COOKIE_SAMESITE or "lax"
 def _client_address(request: Request) -> Optional[str]:
     return request.client.host if request.client else None
+def _reject_if_throttled(request: Request, username: str, address: Optional[str]) -> None:
+    retry_after = login_throttle.retry_after(username, address)
+    if retry_after:
+        log_security_event("LOGIN_THROTTLED", request=request, details={
+            "username": username,
+            "retry_after": retry_after
+        }, severity="WARNING")
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="登入失敗次數過多，請稍後再試",
+            headers={"Retry-After": str(retry_after)},
+        )
 def _clear_refresh_cookie(response: Response) -> None:
     response.delete_cookie(key=REFRESH_COOKIE_NAME, path=REFRESH_COOKIE_PATH)
 def _set_refresh_cookie(response: Response, refresh_token: str) -> None:
@@ -146,33 +158,25 @@ async def login(
     db: Session = Depends(get_db)
 ):
     address = _client_address(request)
-    retry_after = login_throttle.retry_after(credentials.username, address)
-    if retry_after:
-        log_security_event("LOGIN_THROTTLED", request=request, details={
-            "username": credentials.username,
-            "retry_after": retry_after
-        }, severity="WARNING")
-        raise HTTPException(
-            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-            detail="登入失敗次數過多，請稍後再試",
-            headers={"Retry-After": str(retry_after)},
-        )
+    _reject_if_throttled(request, credentials.username, address)
+    async with _password_hash_slots:
+        # 同時送出的請求都會通過上面的檢查：拿到雜湊名額後再檢查一次，失敗也在釋放名額前記下，
+        # 進入鎖定後最多只有已在驗證中的 MAX_CONCURRENT_PASSWORD_HASHES 個請求會完成
+        _reject_if_throttled(request, credentials.username, address)
+        user = await asyncio.to_thread(authenticate_user, db, credentials.username, credentials.password)
+        if not user:
+            locked = login_throttle.record_failure(credentials.username, address)
+            log_security_event("LOGIN_FAILED", request=request, details={
+                "username": credentials.username,
+                "reason": "無效的憑證",
+                "locked": locked
+            }, severity="WARNING" if locked else "INFO")
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="使用者名稱或密碼錯誤",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
 
-    user = await _run_password_work(authenticate_user, db, credentials.username, credentials.password)
-    
-    if not user:
-        locked = login_throttle.record_failure(credentials.username, address)
-        log_security_event("LOGIN_FAILED", request=request, details={
-            "username": credentials.username,
-            "reason": "無效的憑證",
-            "locked": locked
-        }, severity="WARNING" if locked else "INFO")
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="使用者名稱或密碼錯誤",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
-    
     login_throttle.record_success(credentials.username)
     update_user_last_login(db, user.id)
     
