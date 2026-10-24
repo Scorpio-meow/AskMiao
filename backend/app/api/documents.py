@@ -3,6 +3,7 @@ from sqlalchemy.orm import Session
 from app.models.database import get_db
 from app.models import Document as DBDocument
 from app.core.rag_manager import get_rag_system
+from app.services.document_removal import remove_document
 from app.core.user_context import get_current_user_id, get_default_user_id
 from app.core.jwt_auth import get_current_admin_user
 from app.core.limits import ADMIN_UPLOAD_EXTRACTION_LIMITS, MAX_FILES_PER_UPLOAD
@@ -134,6 +135,8 @@ async def upload_document(
     os.makedirs(upload_dir, exist_ok=True)
     results = []
     for up in file:
+        file_path = None
+        stored_document = None
         try:
             try:
                 is_valid, error_msg = InputValidator.validate_filename(up.filename)
@@ -254,6 +257,7 @@ async def upload_document(
             )
             db.add(document)
             db.commit()
+            stored_document = document
             invalidate_knowledge_base_description()
             db.refresh(document)
             rag_system = get_rag_system()
@@ -286,8 +290,14 @@ async def upload_document(
             })
         except Exception as e:
             logger.exception("處理文件 %s 失敗", up.filename)
+            if stored_document is not None:
+                try:
+                    db.rollback()
+                    await remove_document(db, stored_document)
+                except Exception:
+                    logger.exception("清除上傳失敗的文件 %s 失敗", up.filename)
             try:
-                if 'file_path' in locals() and os.path.exists(file_path):
+                if file_path and os.path.exists(file_path):
                     os.remove(file_path)
             except:
                 pass
@@ -373,24 +383,7 @@ async def delete_document(
     document = db.query(DBDocument).filter(DBDocument.id == document_id).first()
     if not document:
         raise HTTPException(status_code=404, detail="文件不存在")
-    filename = document.filename
-    # 先刪除文件列再移除索引片段：進行中的索引寫入持鎖後會確認文件仍存在，
-    # 順序反過來的話，刪除片段之後才完成的寫入會把片段寫回知識庫
-    db.delete(document)
-    db.commit()
-    invalidate_knowledge_base_description()
-    try:
-        rag_system = get_rag_system()
-        await asyncio.to_thread(rag_system.remove_document_by_id, document_id)
-    except Exception as e:
-        logger.warning("Failed to remove document from RAG system: %s", str(e))
-    try:
-        upload_dir = UPLOAD_DIR
-        file_path = os.path.join(upload_dir, filename)
-        if os.path.exists(file_path):
-            os.remove(file_path)
-    except Exception as e:
-        logger.warning("Failed to remove physical file: %s", str(e))
+    await remove_document(db, document)
     return {"message": "文件刪除成功"}
 @router.post("/rebuild-index")
 async def rebuild_index(

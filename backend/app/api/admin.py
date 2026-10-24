@@ -8,7 +8,7 @@ from app.core.rag_manager import get_rag_system
 from app.core.jwt_auth import get_current_admin_user
 from app.core.cache import cache_response, invalidate_cache
 from app.core.security_logging import log_security_event
-from app.rag.tools import invalidate_knowledge_base_description
+from app.services.document_removal import remove_document
 from app.schemas.auth import UserProfile
 from typing import List, Dict, Any
 from datetime import datetime, timedelta
@@ -156,13 +156,7 @@ async def delete_document(
     if not document:
         raise HTTPException(status_code=404, detail="文件不存在")
 
-    # 先刪除文件列再移除索引片段，理由同 documents.py 的 delete_document
-    db.delete(document)
-    db.commit()
-    invalidate_knowledge_base_description()
-
-    rag_system = get_rag_system()
-    await asyncio.to_thread(rag_system.remove_document_by_id, document_id)
+    await remove_document(db, document)
 
     return {"message": "文件刪除成功"}
 @router.put("/users/{user_id}", response_model=AdminUserUpdateResponse)

@@ -25,6 +25,7 @@ from app.rag.indices.bm25_store import SIGNATURE_FILENAME
 from app.rag.indices.vector_store import VectorStoreManager
 from app.rag.retrievers import hybrid as hybrid_module
 from app.rag.types import Document
+from app.services import document_removal
 
 
 class FakeEmbedder:
@@ -158,7 +159,7 @@ def assert_indices_match_database(rag, session_factory):
 async def test_delete_document_endpoint_removes_chunks_without_reembedding(rag, session_factory, monkeypatch):
     add_indexed_document(rag, session_factory, 1, "overtime.txt", OVERTIME)
     add_indexed_document(rag, session_factory, 2, "leave.txt", LEAVE)
-    monkeypatch.setattr(documents_api, "get_rag_system", lambda: rag)
+    monkeypatch.setattr(document_removal, "get_rag_system", lambda: rag)
     encoded_before = rag.vector_store.local_embeddings.encoded_texts
 
     await documents_api.delete_document(
@@ -178,9 +179,13 @@ async def test_delete_document_endpoint_removes_chunks_without_reembedding(rag, 
 async def test_admin_delete_document_endpoint_also_removes_chunks(rag, session_factory, monkeypatch):
     add_indexed_document(rag, session_factory, 1, "overtime.txt", OVERTIME)
     add_indexed_document(rag, session_factory, 2, "leave.txt", LEAVE)
-    monkeypatch.setattr(admin_api, "get_rag_system", lambda: rag)
+    monkeypatch.setattr(document_removal, "get_rag_system", lambda: rag)
 
-    await admin_api.delete_document(1, db=FakeSession(SimpleNamespace(id=1)), current_user={"username": "admin"})
+    await admin_api.delete_document(
+        1,
+        db=FakeSession(SimpleNamespace(id=1, filename="rag_test_missing_overtime.txt")),
+        current_user={"username": "admin"},
+    )
 
     assert bm25_sources(rag, "approval") == []
     assert_indices_match_database(rag, session_factory)

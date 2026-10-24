@@ -3,6 +3,7 @@ import sys
 backend_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, backend_dir)
 from app.models.database import SessionLocal
+from app.rag.tools import invalidate_knowledge_base_description
 from app.models import Document as DBDocument
 from app.services.document_processor import DocumentProcessor
 from app.core.limits import ADMIN_UPLOAD_EXTRACTION_LIMITS
@@ -45,6 +46,7 @@ async def reprocess_all():
         doc.description = summary
         db.add(doc)
         db.commit()
+        invalidate_knowledge_base_description()
         print(f"新 AI 大綱摘要: {summary}")
         print(f"提取字數: {len(content)} 字元")
         base_metadata = {
