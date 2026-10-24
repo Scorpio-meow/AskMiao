@@ -18,7 +18,7 @@ def setup_env():
     settings.DATA_DIR = "tests_data"
     settings.FAISS_INDEX_PATH = "tests_data/faiss_index.bin"
     settings.BM25_INDEX_DIR = "tests_data/bm25_index"
-    settings.METADATA_PATH = "tests_data/index_metadata.pkl"
+    settings.METADATA_PATH = "tests_data/index_metadata.json"
     if os.path.exists("tests_data"):
         import shutil
         try:

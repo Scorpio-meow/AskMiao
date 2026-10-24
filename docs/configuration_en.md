@@ -205,7 +205,7 @@ These settings are exported to the environment before any model loads (booleans 
 | `UPLOAD_DIR` | `data/uploads` | `data/uploads` | Original uploaded files; index rebuilds re-extract text from here first |
 | `FAISS_INDEX_PATH` | `data/faiss_index.bin` | same | FAISS vector index (`IndexIDMap2`, ids are chunk_ids) |
 | `BM25_INDEX_DIR` | `data/bm25_index` | same | Whoosh BM25 index directory (including `tokenizer_signature.json`) |
-| `METADATA_PATH` | `data/index_metadata.pkl` | same | Index metadata such as the last rebuild time |
+| `METADATA_PATH` | `data/index_metadata.json` | same | Index metadata (JSON) such as the last rebuild time |
 | `MAX_FILE_SIZE_MB` | `50` | `10` | Per-file upload limit for the knowledge base (MB); also sets the upload request body limit, see [Resource limits](#resource-limits) |
 | `UPLOADS_WATCHER_INTERVAL` | `30` | `30` | Seconds between checks for missing uploads; a missing file is logged once and nothing is deleted |
 

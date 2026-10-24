@@ -1,6 +1,6 @@
 from typing import List, Dict, Any, Optional, Tuple, AsyncGenerator, Callable
 import os
-import pickle
+import json
 import logging
 from datetime import datetime
 
@@ -261,11 +261,11 @@ class HybridContextualRAG:
     def _get_last_reindex_time(self) -> Optional[str]:
         try:
             if os.path.exists(self.vector_store.metadata_path):
-                with open(self.vector_store.metadata_path, "rb") as f:
-                    metadata = pickle.load(f)
+                with open(self.vector_store.metadata_path, encoding="utf-8") as f:
+                    metadata = json.load(f)
                 last_reindex = metadata.get("last_reindex")
-                if last_reindex and isinstance(last_reindex, datetime):
-                    return last_reindex.isoformat()
+                if isinstance(last_reindex, str):
+                    return datetime.fromisoformat(last_reindex).isoformat()
         except Exception:
             pass
         return None

@@ -37,7 +37,7 @@ def _usable_tools(tools: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         else:
             logger.warning("略過名稱不合規則的 MCP 工具: %r", name)
     return usable
-# 檔案系統範本的專屬根目錄：與 DATA_DIR（含以 pickle 載入的索引中繼資料）完全分開
+# 檔案系統範本的專屬根目錄：與 DATA_DIR（含 Whoosh 以 pickle 載入的 BM25 索引）完全分開
 MCP_FILESYSTEM_SANDBOX_DIR = os.path.join(
     os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
     "mcp_filesystem_sandbox",

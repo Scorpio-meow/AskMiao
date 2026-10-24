@@ -34,7 +34,7 @@
 
 ## Upgrading from 5.0.0 to the next release
 
-For upgrading from 5.0.0 to the upcoming, not yet released version; see the [CHANGELOG](../CHANGELOG_en.md#unreleased) for the changes. This release reworks how structured data is parsed and chunked. The database schema and dependencies are unchanged; what you need to do is add two new required fields to the domain profile and rebuild the index once after upgrading.
+For upgrading from 5.0.0 to the upcoming, not yet released version; see the [CHANGELOG](../CHANGELOG_en.md#unreleased) for the changes. This release reworks how structured data is parsed and chunked. The database schema and dependencies are unchanged; what you need to do is add two new required fields to the domain profile and rebuild the index once after upgrading. Index metadata is now stored as JSON, so update `METADATA_PATH` as well.
 
 ### Next release changes and required actions
 
@@ -46,6 +46,7 @@ For upgrading from 5.0.0 to the upcoming, not yet released version; see the [CHA
 | `.jsonl` | Cannot be uploaded | Can be uploaded, one record per line | None |
 | `filter_and_count_records` results | `author`, `link` | `label`, `links` | Integrations that read tool results use the new fields |
 | Upload and rebuild-index responses | Structured record counts were included in `qa_pairs` | `qa_pairs` counts Q&A only; adds `record_count`, `warning`, `records_detected`, and `missing_source_files` | Read the new fields as needed |
+| Index metadata | `METADATA_PATH` defaults to `data/index_metadata.pkl`, read and written with pickle | Defaults to `data/index_metadata.json`, read and written as JSON | Point `METADATA_PATH` in `.env` at the new name; the old name still works |
 
 ### Upgrade steps for the next release
 
@@ -59,14 +60,16 @@ For upgrading from 5.0.0 to the upcoming, not yet released version; see the [CHA
    ```
 
    Either may be an empty array. `record_ignore_fields` holds exactly the noise fields that 5.0.0 hard-coded; if your data has a real `path` field, remove `path` from the list.
-4. Start the backend and, as an admin, run "Rebuild index" on the knowledge base page. Documents whose uploaded file is still in `UPLOAD_DIR` are re-extracted into the new format; `missing_source_files` in the response lists documents whose uploaded file is gone, which are chunked from the stored content as plain text and should be uploaded again.
-5. Upload a JSON or CSV file to confirm: the upload result shows how many structured records it produced.
+4. Set `METADATA_PATH` in `.env` to `data/index_metadata.json` and delete the old `backend/data/index_metadata.pkl`. Keeping the old name also works: the content is rewritten as JSON on the next index write, and until then the last rebuild time shows as empty.
+5. Start the backend and, as an admin, run "Rebuild index" on the knowledge base page. Documents whose uploaded file is still in `UPLOAD_DIR` are re-extracted into the new format; `missing_source_files` in the response lists documents whose uploaded file is gone, which are chunked from the stored content as plain text and should be uploaded again.
+6. Upload a JSON or CSV file to confirm: the upload result shows how many structured records it produced.
 
 ### Rolling back to 5.0.0
 
 1. Stop the backend, switch the code back to 5.0.0, and rebuild the frontend.
 2. Remove `record_label_fields` and `record_ignore_fields` from the domain profile: 5.0.0 rejects unknown fields and will not start with them.
 3. Rebuild the index once so the chunks return to the 5.0.0 format. Documents whose uploaded file is gone keep content in the new format, which 5.0.0 chunks as plain text.
+4. `METADATA_PATH` can go back to `data/index_metadata.pkl` or stay as it is; 5.0.0 cannot read JSON metadata, so the last rebuild time shows as empty until its next index write.
 
 ### After upgrading to the next release
 

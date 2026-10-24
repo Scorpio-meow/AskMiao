@@ -23,6 +23,10 @@ All notable changes to AskMiao are documented in this file. The format is based 
 
 ## [Unreleased]
 
+### Security
+
+- **Index metadata is stored as JSON**: the index metadata at `METADATA_PATH` (the last rebuild time and similar) is read and written as JSON, the default file name is now `data/index_metadata.json`, and the backend no longer reads this file with `pickle.load`, so tampering with it cannot run code in the backend (CWE-502). An existing `index_metadata.pkl` is no longer read; the last rebuild time shows as empty until the next index write. The BM25 index directory is still pickled by Whoosh, so `DATA_DIR` must still be writable only by the backend account.
+
 ### Added
 
 - Community files: [Contributing](.github/CONTRIBUTING_en.md), [Code of Conduct](.github/CODE_OF_CONDUCT_en.md), [Security Policy](.github/SECURITY_en.md), and [Accessibility Statement](.github/ACCESSIBILITY_en.md), each with a Traditional Chinese version. Security vulnerabilities are reported through GitHub private vulnerability reporting or email, with a first reply within 14 days and public disclosure no later than 90 days after the report; only the latest major version receives security fixes.
@@ -48,6 +52,7 @@ All notable changes to AskMiao are documented in this file. The format is based 
 - Nested objects and arrays in structured data are no longer dropped; JSON objects no longer keep only top-level strings, numbers, and booleans.
 - Uploads store the content with surrounding whitespace removed, matching the value the duplicate check compares.
 - When cleanup of an admin-uploaded JSON file failed, the second parse no longer bypasses the parse limit.
+- The `--uploads` and `--out` defaults of `scripts/docx_to_txt.py` use `/` separators, so on Linux and macOS they are no longer read as a single file name that reports a missing directory.
 
 ### Removed
 

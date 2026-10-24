@@ -123,7 +123,7 @@ class Settings(BaseSettings):
     DATA_DIR: str = "data"
     FAISS_INDEX_PATH: str = "data/faiss_index.bin"
     BM25_INDEX_DIR: str = "data/bm25_index"
-    METADATA_PATH: str = "data/index_metadata.pkl"
+    METADATA_PATH: str = "data/index_metadata.json"
     ALLOWED_ORIGINS: str = "http://localhost:3001,https://localhost:3001,http://127.0.0.1:3001,https://127.0.0.1:3001"
     DEVTUNNEL_URL: str = ""
     RATE_LIMIT_ENABLED: bool = True

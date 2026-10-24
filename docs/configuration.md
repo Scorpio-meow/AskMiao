@@ -205,7 +205,7 @@ python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().d
 | `UPLOAD_DIR` | `data/uploads` | `data/uploads` | 上傳原始檔；重建索引時會優先從這裡重新擷取文字 |
 | `FAISS_INDEX_PATH` | `data/faiss_index.bin` | 同左 | FAISS 向量索引（`IndexIDMap2`，以 chunk_id 為 id） |
 | `BM25_INDEX_DIR` | `data/bm25_index` | 同左 | Whoosh BM25 索引目錄（含 `tokenizer_signature.json`） |
-| `METADATA_PATH` | `data/index_metadata.pkl` | 同左 | 索引中繼資料，例如最後重建時間 |
+| `METADATA_PATH` | `data/index_metadata.json` | 同左 | 索引中繼資料（JSON），例如最後重建時間 |
 | `MAX_FILE_SIZE_MB` | `50` | `10` | 知識庫單一上傳檔大小上限（MB）；也決定上傳請求的本文上限，見 [資源上限](#資源上限) |
 | `UPLOADS_WATCHER_INTERVAL` | `30` | `30` | 背景檢查上傳檔是否遺失的間隔秒數；檔案遺失只記一次警告，不會刪除任何資料 |
 

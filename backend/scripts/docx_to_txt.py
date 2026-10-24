@@ -33,8 +33,8 @@ def find_docx_files(root: Path):
         yield p
 def main():
     parser = argparse.ArgumentParser(description="把 uploads 資料夾裡的 .docx 轉成 .txt")
-    parser.add_argument("--uploads", "-u", default="..\\data\\uploads", help="uploads 目錄（相對於 scripts/）")
-    parser.add_argument("--out", "-o", default="..\\data\\converted", help="輸出目錄（相對於 scripts/）")
+    parser.add_argument("--uploads", "-u", default="../data/uploads", help="uploads 目錄（相對於 scripts/）")
+    parser.add_argument("--out", "-o", default="../data/converted", help="輸出目錄（相對於 scripts/）")
     parser.add_argument("--dry-run", action="store_true", help="僅列出將要轉換的檔案，不進行轉換")
     args = parser.parse_args()
     base_dir = Path(__file__).resolve().parent

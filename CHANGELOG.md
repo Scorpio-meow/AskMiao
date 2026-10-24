@@ -23,6 +23,10 @@
 
 ## [Unreleased]
 
+### 安全性 (Security)
+
+- **索引中繼資料改用 JSON**：`METADATA_PATH` 指向的索引中繼資料（最後重建時間等）改以 JSON 讀寫，預設檔名改為 `data/index_metadata.json`，後端不再以 `pickle.load` 讀取這個檔案，竄改它無法在後端執行程式碼（CWE-502）。既有的 `index_metadata.pkl` 不再讀取，最後重建時間在下一次寫入索引前顯示為空。BM25 索引目錄仍由 Whoosh 以 pickle 保存，`DATA_DIR` 依然只能讓後端帳號寫入。
+
 ### 新增 (Added)
 
 - 社群檔案：[貢獻指南](.github/CONTRIBUTING.md)、[行為準則](.github/CODE_OF_CONDUCT.md)、[安全政策](.github/SECURITY.md) 與 [無障礙聲明](.github/ACCESSIBILITY.md)，皆附 `_en` 英文版。安全漏洞以 GitHub 私下回報或 Email 回報，14 天內首次回覆、最晚在回報後 90 天公開，只有最新主版本收到安全修正。
@@ -48,6 +52,7 @@
 - 結構化資料中的巢狀物件與陣列不再被丟棄；JSON 物件不再只保留頂層字串、數字與布林值。
 - 上傳時存入資料庫的內容改為去除前後空白後的版本，與重複檢查比對的值一致。
 - 管理員上傳的 JSON 在清理失敗時，第二次解析不再繞過解析上限。
+- `scripts/docx_to_txt.py` 的 `--uploads`、`--out` 預設值改用 `/` 分隔，在 Linux 與 macOS 上不再被當成單一檔名而回報目錄不存在。
 
 ### 移除 (Removed)
 

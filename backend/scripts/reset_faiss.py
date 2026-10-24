@@ -14,6 +14,7 @@ def reset_indexes():
     
     index_files = [
         data_dir / "faiss_index.bin",
+        data_dir / "index_metadata.json",
         data_dir / "index_metadata.pkl",
     ]
     bm25_dir = data_dir / "bm25_index"

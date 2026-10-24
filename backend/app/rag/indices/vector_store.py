@@ -1,6 +1,6 @@
 from typing import List, Tuple, Dict, Optional, Set
 import os
-import pickle
+import json
 import logging
 import threading
 from datetime import datetime
@@ -190,14 +190,14 @@ class VectorStoreManager:
 
             from ..tokenizers import HAS_JIEBA
             metadata = {
-                "last_reindex": datetime.now(),
+                "last_reindex": datetime.now().isoformat(),
                 "total_documents": len(self.chunks),
                 "total_vectors": self.index.ntotal,
                 "tokenizer": "jieba" if HAS_JIEBA else "standard",
                 "faiss_gpu_enabled": self.use_faiss_gpu
             }
-            with open(metadata_tmp_path, "wb") as f:
-                pickle.dump(metadata, f)
+            with open(metadata_tmp_path, "w", encoding="utf-8") as f:
+                json.dump(metadata, f)
 
             os.replace(faiss_tmp_path, self.faiss_index_path)
             os.replace(metadata_tmp_path, self.metadata_path)

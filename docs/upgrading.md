@@ -34,7 +34,7 @@
 
 ## 從 5.0.0 升級到下一版
 
-適用於從 5.0.0 升級到尚未發行的下一版，變更見 [CHANGELOG](../CHANGELOG.md#unreleased)。這一版重做結構化資料的解析與切塊，資料庫結構與相依套件都沒有變更；需要動手的是領域設定檔的兩個新必填欄位，以及升級後執行一次重建索引。
+適用於從 5.0.0 升級到尚未發行的下一版，變更見 [CHANGELOG](../CHANGELOG.md#unreleased)。這一版重做結構化資料的解析與切塊，資料庫結構與相依套件都沒有變更；需要動手的是領域設定檔的兩個新必填欄位，以及升級後執行一次重建索引。索引中繼資料改以 JSON 保存，建議一併更新 `METADATA_PATH`。
 
 ### 下一版的變更與需要的動作
 
@@ -46,6 +46,7 @@
 | `.jsonl` | 無法上傳 | 可以上傳，每行一筆記錄 | 無 |
 | `filter_and_count_records` 的結果 | `author`、`link` | `label`、`links` | 自行讀取工具結果的整合改用新欄位 |
 | 上傳與重建索引的回應 | 結構化記錄數算在 `qa_pairs` 中 | `qa_pairs` 只算 Q&A，另有 `record_count`、`warning`、`records_detected`、`missing_source_files` | 依需要讀取新欄位 |
+| 索引中繼資料 | `METADATA_PATH` 預設 `data/index_metadata.pkl`，以 pickle 讀寫 | 預設 `data/index_metadata.json`，以 JSON 讀寫 | 把 `.env` 的 `METADATA_PATH` 改為新檔名；沿用舊檔名也能運作 |
 
 ### 升級到下一版的步驟
 
@@ -59,14 +60,16 @@
    ```
 
    兩者都可以是空陣列。`record_ignore_fields` 的內容就是 5.0.0 寫死在程式中的雜訊欄位；資料中有真正的 `path` 欄位時，可以把 `path` 移除。
-4. 啟動後端，以管理員帳號在知識庫頁面執行「重建索引」。原始檔仍在 `UPLOAD_DIR` 的文件會重新擷取並改用新格式；回應的 `missing_source_files` 列出原始檔已遺失的文件，這些文件改以資料庫內容當一般文字切塊，建議重新上傳。
-5. 上傳一份 JSON 或 CSV 確認：上傳結果會顯示切出的結構化記錄數。
+4. 把 `.env` 的 `METADATA_PATH` 改為 `data/index_metadata.json`，並刪除舊的 `backend/data/index_metadata.pkl`。沿用舊檔名也能運作，下一次寫入索引時內容會改寫成 JSON；在那之前，最後重建時間顯示為空。
+5. 啟動後端，以管理員帳號在知識庫頁面執行「重建索引」。原始檔仍在 `UPLOAD_DIR` 的文件會重新擷取並改用新格式；回應的 `missing_source_files` 列出原始檔已遺失的文件，這些文件改以資料庫內容當一般文字切塊，建議重新上傳。
+6. 上傳一份 JSON 或 CSV 確認：上傳結果會顯示切出的結構化記錄數。
 
 ### 回退到 5.0.0
 
 1. 停止後端，把程式碼切回 5.0.0，重新建置前端。
 2. 從領域設定檔移除 `record_label_fields` 與 `record_ignore_fields`：5.0.0 不允許未知欄位，留著會無法啟動。
 3. 執行一次重建索引，讓片段回到 5.0.0 的格式。原始檔已遺失的文件會保留新格式的內容，5.0.0 會把它當一般文字切塊。
+4. `METADATA_PATH` 可以改回 `data/index_metadata.pkl`，也可以保留；5.0.0 讀不懂 JSON 格式的中繼資料，最後重建時間會在它下一次寫入索引前顯示為空。
 
 ### 升級到下一版後的常見狀況
 

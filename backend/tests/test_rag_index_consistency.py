@@ -1,7 +1,9 @@
 import importlib.util
 import json
 import os
+import pickle
 import sys
+from datetime import datetime
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -100,7 +102,7 @@ def session_factory(tmp_path):
 def index_dir(tmp_path, monkeypatch):
     monkeypatch.setattr(settings, "DATA_DIR", str(tmp_path))
     monkeypatch.setattr(settings, "FAISS_INDEX_PATH", str(tmp_path / "faiss_index.bin"))
-    monkeypatch.setattr(settings, "METADATA_PATH", str(tmp_path / "index_metadata.pkl"))
+    monkeypatch.setattr(settings, "METADATA_PATH", str(tmp_path / "index_metadata.json"))
     monkeypatch.setattr(settings, "BM25_INDEX_DIR", str(tmp_path / "bm25_index"))
     monkeypatch.setattr(settings, "CHUNK_SIZE", 300)
     monkeypatch.setattr(settings, "CHUNK_OVERLAP", 100)
@@ -334,7 +336,7 @@ def test_failed_save_keeps_previous_index_file(make_rag, session_factory, monkey
         raise OSError("disk full")
 
     with monkeypatch.context() as patched:
-        patched.setattr(vector_store_module.pickle, "dump", failing_dump)
+        patched.setattr(vector_store_module, "json", SimpleNamespace(dump=failing_dump))
         with pytest.raises(OSError):
             rag.add_documents([Document(page_content=LEAVE, metadata={"source": "leave.txt", "document_id": 2})])
 
@@ -343,6 +345,22 @@ def test_failed_save_keeps_previous_index_file(make_rag, session_factory, monkey
     reloaded = make_rag()
     assert len(reloaded.documents) == 2
     assert_indices_match_database(reloaded, session_factory)
+
+
+def test_index_metadata_is_json_and_reports_last_reindex(rag, session_factory):
+    add_indexed_document(rag, session_factory, 1, "overtime.txt", OVERTIME)
+
+    with open(settings.METADATA_PATH, encoding="utf-8") as f:
+        metadata = json.load(f)
+    assert metadata["total_vectors"] == 1
+    assert rag.get_statistics()["last_reindex"] == metadata["last_reindex"]
+
+
+def test_legacy_pickle_metadata_is_not_loaded(rag):
+    with open(settings.METADATA_PATH, "wb") as f:
+        pickle.dump({"last_reindex": datetime(2026, 10, 1)}, f)
+
+    assert rag.get_statistics()["last_reindex"] is None
 
 
 def test_force_reindex_keeps_chunk_ids_and_metadata(index_dir, session_factory, monkeypatch):
