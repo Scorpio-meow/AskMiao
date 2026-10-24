@@ -1,12 +1,7 @@
-/* AskMiao 介紹頁互動：主題切換、導覽、運作方式軌道、推理檔位、分頁、引用示範、RRF 檢索示範、
-   工具呼叫核准、web_fetch 出站檢查器、子行程環境變數比較、卡片游標光暈與 Hero 傾斜、
-   5.0.0 的登入失敗節流與權杖撤銷示範、複製指令。示範的判斷規則對應後端原始碼，註解標出出處。 */
 (() => {
   const root = document.documentElement;
   const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
   const escapeHtml = (text) => String(text).replace(/[&<>"']/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]));
-
-  /* ---------- 主題：預設跟隨系統；切成與系統相反時才固定，切回與系統相同就取消固定 ---------- */
   const THEME_KEY = 'askmiao-site-theme';
   const systemDark = window.matchMedia('(prefers-color-scheme: dark)');
   const schemeMeta = document.querySelector('meta[name="color-scheme"]');
@@ -14,7 +9,6 @@
   themeColorMetas.forEach((meta) => { meta.dataset.original = meta.content; });
   const themeSources = Array.from(document.querySelectorAll('picture[data-theme-pic] source'));
   const themeToggle = document.querySelector('[data-theme-toggle]');
-
   const readPin = () => {
     try {
       const value = localStorage.getItem(THEME_KEY);
@@ -25,7 +19,7 @@
     try {
       if (value) localStorage.setItem(THEME_KEY, value);
       else localStorage.removeItem(THEME_KEY);
-    } catch { /* 私密視窗或停用儲存時只影響這次瀏覽 */ }
+    } catch { }
   };
   let pinned = readPin();
   const systemTheme = () => (systemDark.matches ? 'dark' : 'light');
@@ -34,10 +28,8 @@
     if (pinned) root.setAttribute('data-theme', pinned);
     else root.removeAttribute('data-theme');
     if (schemeMeta) schemeMeta.content = pinned || 'light dark';
-    /* 固定主題時網址列顏色改用目前主題的頁面底色，否則交回 media 屬性依系統決定 */
     const pageBackground = getComputedStyle(root).getPropertyValue('--bg').trim();
     themeColorMetas.forEach((meta) => { meta.content = pinned ? pageBackground : meta.dataset.original; });
-    /* 截圖有淺色與深色兩版：固定主題時讓 <source> 直接生效或失效，否則交回 prefers-color-scheme */
     themeSources.forEach((source) => {
       source.media = pinned ? (pinned === 'dark' ? 'all' : 'not all') : '(prefers-color-scheme: dark)';
     });
@@ -51,8 +43,6 @@
     writePin(pinned);
     applyTheme();
   });
-
-  /* ---------- 行動版導覽 ---------- */
   const navToggle = document.querySelector('[data-nav-toggle]');
   const navMenu = document.querySelector('[data-nav-menu]');
   if (navToggle && navMenu) {
@@ -74,8 +64,6 @@
       if (navMenu.dataset.open === 'true' && !navMenu.contains(event.target) && !navToggle.contains(event.target)) setOpen(false);
     });
   }
-
-  /* ---------- 導覽列標示目前區段（不在導覽列的區段會清除標示） ---------- */
   const navLinks = Array.from(document.querySelectorAll('.nav__links a[href^="#"]'));
   const pageSections = Array.from(document.querySelectorAll('main section[id]'));
   if (navLinks.length && pageSections.length && 'IntersectionObserver' in window) {
@@ -92,8 +80,6 @@
     }, { rootMargin: '-40% 0px -55% 0px' });
     pageSections.forEach((section) => sectionObserver.observe(section));
   }
-
-  /* ---------- 運作方式：捲動到哪一步，左側軌道就亮哪一步 ---------- */
   const steps = Array.from(document.querySelectorAll('[data-step]'));
   const railItems = Array.from(document.querySelectorAll('[data-rail]'));
   if (steps.length && railItems.length === steps.length) {
@@ -116,8 +102,6 @@
       steps[index].scrollIntoView({ behavior: reduceMotion.matches ? 'auto' : 'smooth', block: 'center' });
     }));
   }
-
-  /* ---------- 推理深度五檔（文字與前端 ChatHeader 的選項相同，放在按鈕的 data 屬性） ---------- */
   const seg = document.querySelector('[data-seg]');
   const segDesc = document.querySelector('[data-seg-desc]');
   if (seg && segDesc) {
@@ -129,8 +113,6 @@
       segDesc.replaceChildren(title, document.createElement('br'), button.dataset.desc);
     }));
   }
-
-  /* ---------- 分頁（WAI-ARIA tabs：方向鍵、Home、End 切換） ---------- */
   document.querySelectorAll('[role="tablist"]').forEach((list) => {
     const tabs = Array.from(list.querySelectorAll('[role="tab"]'));
     const select = (tab, moveFocus) => {
@@ -152,8 +134,6 @@
       });
     });
   });
-
-  /* ---------- 引用示範：回答中的 [n] 對應引用編號表與來源標籤 ---------- */
   const citeDemo = document.querySelector('[data-cite-demo]');
   if (citeDemo) {
     const detail = citeDemo.querySelector('[data-cite-detail]');
@@ -172,12 +152,9 @@
       ['mouseenter', 'focus', 'click'].forEach((type) => button.addEventListener(type, () => showCitation(button.dataset.cite)));
     });
   }
-
-  /* ---------- RRF 檢索示範：融合、排序與門檻與 backend/app/rag/retrievers/hybrid.py 相同 ---------- */
   const rrf = document.querySelector('[data-rrf]');
   const rrfDataElement = document.getElementById('rrf-data');
   if (rrf && rrfDataElement) {
-    /* 內嵌 JSON 讀自 DOM，其中的值插入 HTML 前一律經過 escapeHtml */
     const { rerankWeight, chunks, queries } = JSON.parse(rrfDataElement.textContent);
     const kInput = rrf.querySelector('[data-rrf-k]');
     const tInput = rrf.querySelector('[data-rrf-t]');
@@ -188,8 +165,6 @@
     const results = rrf.querySelector('[data-rrf-results]');
     const verdict = rrf.querySelector('[data-rrf-verdict]');
     const queryInputs = Array.from(rrf.querySelectorAll('input[name="rrf-query"]'));
-
-    /* reciprocal_rank_fusion：分數 = Σ 1 / (rrf_k + 名次)，名次從 1 起算 */
     const fuse = (rankedLists, k) => {
       const fused = new Map();
       rankedLists.forEach((list) => list.forEach((id, index) => {
@@ -198,13 +173,10 @@
       return Array.from(fused, ([id, score]) => ({ id, score })).sort((a, b) => b.score - a.score);
     };
     const chunkLabel = (id) => `<span class="rrf__name"><b>${escapeHtml(chunks[id].doc)}</b><span>${escapeHtml(chunks[id].part)}</span></span>`;
-
-    /* 滑桿已填滿的比例交給 CSS 的 --fill 畫出來 */
     const paintSlider = (input) => {
       const ratio = (Number(input.value) - Number(input.min)) / (Number(input.max) - Number(input.min));
       input.style.setProperty('--fill', `${ratio * 100}%`);
     };
-
     const render = () => {
       const query = queries[queryInputs.find((input) => input.checked).value];
       const k = Number(kInput.value);
@@ -213,14 +185,11 @@
       tOutput.textContent = threshold.toFixed(2);
       [kInput, tInput].forEach(paintSlider);
       caption.textContent = query.caption;
-
       Object.entries(lanes).forEach(([lane, list]) => {
         list.innerHTML = query[lane].map((id, index) => (
           `<li data-chunk="${escapeHtml(id)}" title="${escapeHtml(chunks[id].text)}"><span class="rrf__rank">${index + 1}</span>${chunkLabel(id)}</li>`
         )).join('');
       });
-
-      /* 候選原分數 = RRF 分數 / 最高分；混合分數只用於排序，門檻只看重排機率 */
       const fused = fuse([query.vector, query.bm25], k);
       const topScore = fused[0].score;
       const ranked = fused.map((item, index) => {
@@ -233,7 +202,6 @@
           pass: relevance >= threshold,
         };
       }).sort((a, b) => b.mixed - a.mixed);
-
       results.innerHTML = ranked.map((row) => `
         <li class="rrf-row ${row.pass ? 'is-pass' : 'is-fail'}" data-chunk="${escapeHtml(row.id)}" title="${escapeHtml(chunks[row.id].text)}" style="view-transition-name: rrf-${escapeHtml(row.id)}">
           ${chunkLabel(row.id)}
@@ -244,7 +212,6 @@
             <span class="rrf-row__state">${row.pass ? '通過門檻' : '低於門檻'}</span>
           </span>
         </li>`).join('');
-
       const passed = ranked.filter((row) => row.pass);
       if (passed.length) {
         verdict.dataset.kind = 'pass';
@@ -254,15 +221,12 @@
         verdict.innerHTML = '全部低於門檻：工具回報「知識庫中查無相關資料」<small>模型收到明確的查無結果，會照實說明，不會拿無關片段硬答。</small>';
       }
     };
-
     queryInputs.forEach((input) => input.addEventListener('change', () => {
       if (document.startViewTransition && !reduceMotion.matches) document.startViewTransition(render);
       else render();
     }));
     kInput.addEventListener('input', render);
     tInput.addEventListener('input', render);
-
-    /* 游標停在某個片段上時，三欄中同一片段一起標示 */
     let linkedChunk = null;
     const linkChunk = (id) => {
       if (id === linkedChunk) return;
@@ -273,11 +237,6 @@
     rrf.addEventListener('mouseleave', () => linkChunk(null));
     render();
   }
-
-  /* ---------- web_fetch 出站檢查器 ----------
-     1. 讀過知識庫後停用聯網、2. 網址來源：backend/app/rag/research_session.py
-     3. 網域白名單：backend/app/rag/tools.py 與 app/core/config.py
-     4-9. SSRF：backend/app/core/ssrf_protection.py（DNS 與轉址只能在伺服器執行） */
   const BLOCKED_PORTS = new Set([22, 23, 25, 111, 135, 139, 445, 1433, 1521, 2375, 2376, 3306, 5432, 6379, 11211, 27017]);
   const BLOCKED_HOSTS = new Set(['localhost', 'localhost.localdomain', 'broadcasthost', 'ip6-localhost', 'ip6-loopback', 'local', 'internal', 'metadata.google.internal', 'metadata.internal']);
   const BLOCKED_SUFFIXES = ['.localhost', '.local', '.internal', '.lan', '.home.arpa', '.localdomain', '.corp'];
@@ -288,7 +247,6 @@
     ['203.0.113.0', 24, '文件測試網段'], ['224.0.0.0', 4, '群播'], ['240.0.0.0', 4, '保留網段'], ['255.255.255.255', 32, '廣播位址'],
   ];
   const DOMAIN_PATTERN = /^[a-z0-9-]+(\.[a-z0-9-]+)*$/;
-
   const parseV4 = (host) => {
     const match = host.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
     if (!match) return null;
@@ -316,8 +274,6 @@
     if (/^2001:db8:/.test(host)) return { isIp: true, blocked: true, reason: `禁止存取 IPv6 文件測試網段 ${host}` };
     return { isIp: true, blocked: false };
   };
-  /* 網址來源比對與 research_session.py 相同：兩邊都取正規化後的完整網址逐字比對，不做 unquote 之類的解碼。
-     後端以 httpx.URL 正規化，這裡以瀏覽器的 URL 近似（同樣小寫主機、百分比編碼非 ASCII 字元） */
   const URL_TOKEN_PATTERN = /https?:\/\/[^\s<>"'`]+/gi;
   const URL_TRAILING_PUNCTUATION = '.,;:!?)]}\'"，。、；：！？）」』】';
   const canonicalUrl = (text) => {
@@ -326,7 +282,6 @@
       return (url.protocol === 'http:' || url.protocol === 'https:') && url.hostname ? url.href : null;
     } catch { return null; }
   };
-  /* extract_url_tokens：完整記號、截在第一個非 ASCII 字元前的形式，以及逐一去掉結尾標點的形式 */
   const extractUrlTokens = (text) => {
     const tokens = new Set();
     for (const match of text.matchAll(URL_TOKEN_PATTERN)) {
@@ -347,7 +302,6 @@
     }
     return tokens;
   };
-  /* 與 config.py 的 _validate_web_fetch_domains 相同：不可為空、* 不可與其他網域並列、只接受網域名稱 */
   const parseAllowlist = (raw) => {
     const domains = raw.split(',').map((d) => d.trim().toLowerCase()).filter(Boolean);
     if (!domains.length) return { error: '不可為空；不限制網域請明確設定為 *' };
@@ -356,7 +310,6 @@
     if (invalid.length) return { error: `含無效網域（只填網域，不含通訊協定與路徑）：${invalid.join(', ')}` };
     return { domains };
   };
-
   const inspector = document.querySelector('[data-inspector]');
   if (inspector) {
     const urlInput = inspector.querySelector('[data-url-input]');
@@ -370,7 +323,6 @@
     const ORDER = Array.from(checkRows.keys());
     const ICONS = { idle: '#i-check-circle', pass: '#i-check-circle', fail: '#i-x-circle', skip: '#i-check-circle', server: '#i-globe', config: '#i-warning-circle' };
     const VERDICT_ICONS = { allow: '#i-check-circle', block: '#i-x-circle', config: '#i-warning-circle', pending: '#i-globe' };
-
     const setCheck = (name, state, message) => {
       const row = checkRows.get(name);
       row.dataset.state = state;
@@ -387,7 +339,6 @@
       skipAfter(name, '未執行');
       setVerdict('block', title, detail);
     };
-
     const run = () => {
       sources.forEach((el) => el.classList.remove('is-match'));
       const target = urlInput.value.trim();
@@ -396,16 +347,12 @@
         setVerdict('pending', '輸入一個網址，或點選上方範例。');
         return;
       }
-
-      /* 1. BLOCK_WEB_TOOLS_AFTER_KB：同一次提問讀過知識庫內容後，web_search 與 web_fetch 一律拒絕 */
       if (blockToggle.checked && kbToggle.checked) {
         block('kb', '本次提問已讀取知識庫內容，依設定不再使用聯網工具',
           '拒絕呼叫工具', '避免讀過的內部資料被帶進外部請求；模型只能用已取得的資料回答。');
         return;
       }
       setCheck('kb', 'pass', kbToggle.checked ? 'BLOCK_WEB_TOOLS_AFTER_KB 已關閉' : '這次提問還沒讀到知識庫內容');
-
-      /* 2. 網址須以完整網址出現在使用者訊息或本次工具結果的資料欄位；實際送出的就是比對到的正規化網址 */
       const canonicalTarget = canonicalUrl(target);
       const matches = canonicalTarget
         ? sources.filter((el) => !el.closest('[hidden]') && extractUrlTokens(el.textContent).has(canonicalTarget))
@@ -417,8 +364,6 @@
       }
       matches.forEach((el) => el.classList.add('is-match'));
       setCheck('origin', 'pass', `以完整網址出現在${matches[0].dataset.source}`);
-
-      /* 3. WEB_FETCH_ALLOWED_DOMAINS：主機須為清單中的網域或其子網域 */
       const allow = parseAllowlist(allowInput.value);
       if (allow.error) {
         setCheck('domain', 'config', allow.error);
@@ -427,7 +372,7 @@
         return;
       }
       let url = null;
-      try { url = new URL(target); } catch { /* 交給下一關回報格式錯誤 */ }
+      try { url = new URL(target); } catch { }
       const host = url ? url.hostname.toLowerCase().replace(/^\[|\]$/g, '').replace(/\.+$/, '') : '';
       const unrestricted = allow.domains[0] === '*';
       if (!unrestricted && !allow.domains.some((d) => host === d || host.endsWith(`.${d}`))) {
@@ -436,8 +381,6 @@
         return;
       }
       setCheck('domain', 'pass', unrestricted ? '設為 *，不限制網域' : `${host} 符合允許清單`);
-
-      /* 4. 協定只允許 http、https，且不得夾帶帳號密碼 */
       if (!url) {
         block('scheme', 'URL 格式無法解析', '拒絕請求', 'URL 格式無法解析。');
         return;
@@ -452,16 +395,12 @@
         return;
       }
       setCheck('scheme', 'pass', `${scheme}，未包含帳號密碼`);
-
-      /* 5. 危險連接埠 */
       const port = url.port ? Number(url.port) : (scheme === 'https' ? 443 : 80);
       if (BLOCKED_PORTS.has(port)) {
         block('port', `禁止存取受保護的內部服務連接埠 ${port}`, '拒絕請求', '資料庫、快取與遠端管理服務的連接埠一律阻擋。');
         return;
       }
       setCheck('port', 'pass', `連接埠 ${port} 允許`);
-
-      /* 6. 保留或內部主機名稱 */
       if (BLOCKED_HOSTS.has(host)) {
         block('host', `禁止存取保留或內部主機名稱「${host}」`, '拒絕請求', '主機名稱本身就在封鎖清單中。');
         return;
@@ -472,8 +411,6 @@
         return;
       }
       setCheck('host', 'pass', `「${host}」不在封鎖清單`);
-
-      /* 7. 直接輸入的 IP；8. 網域名稱交給伺服器解析；9. 每一跳轉址都重新驗證 */
       const ip = checkIpLiteral(host);
       setCheck('redirect', 'server', '停用自動轉址，每一跳重新執行 SSRF 驗證（最多 5 次）');
       if (ip.isIp) {
@@ -493,14 +430,12 @@
       setCheck('dns', 'server', '伺服器以專用執行緒池解析（5 秒逾時），所有 IP 都須是公開位址，連線再固定到核可的 IP');
       setVerdict('pending', '瀏覽器能重現的檢查都通過了', '最後兩關在伺服器：DNS 解析出的每個 IP 都必須是公開位址，連線直接打到核可的 IP，轉址也要逐跳重驗，才會真的送出請求。');
     };
-
     urlInput.addEventListener('input', run);
     allowInput.addEventListener('input', run);
     [kbToggle, blockToggle].forEach((toggle) => toggle.addEventListener('change', () => {
       kbContext.hidden = !kbToggle.checked;
       run();
     }));
-    /* 每個範例都帶著自己的情境：是否已讀過知識庫、是否開啟 BLOCK_WEB_TOOLS_AFTER_KB */
     inspector.querySelectorAll('[data-url-example]').forEach((button) => button.addEventListener('click', () => {
       urlInput.value = button.dataset.urlExample;
       kbToggle.checked = button.dataset.kb === 'true';
@@ -511,8 +446,6 @@
     kbContext.hidden = !kbToggle.checked;
     run();
   }
-
-  /* ---------- 工具呼叫核准：事件與逾時與 backend/app/rag/agent.py、tool_approval.py 相同 ---------- */
   const APPROVAL_TIMEOUT_SECONDS = 300;
   const approval = document.querySelector('[data-approval]');
   if (approval) {
@@ -552,7 +485,6 @@
         answer: '這次沒有收到你的確認，所以我沒有送出請假申請。依規定，特休也可以在人資系統的「請假申請」頁面自行填寫',
       },
     };
-
     let remaining = APPROVAL_TIMEOUT_SECONDS;
     let ticker = null;
     let decided = false;
@@ -578,7 +510,6 @@
       item.append(nameElement, dataElement);
       events.append(item);
     };
-
     function decide(kind) {
       if (decided) return;
       decided = true;
@@ -589,13 +520,11 @@
       step.dataset.state = outcome.stepState;
       stepMessage.textContent = outcome.stepMessage;
       stepTime.textContent = outcome.stepTime;
-
       addEvent('approval_resolved', `{"approval_id": "q3VxT0bL8mYc…", "approved": ${outcome.approved}}`, outcome.approved ? 'ok' : 'bad');
       addEvent('step_end', outcome.stepEnd, outcome.approved ? 'ok' : 'bad');
       addEvent('token', `{"content": "${outcome.answer.slice(0, 18)}…[1]"}`);
       addEvent('sources', '{"sources_detail": [{"citation": 1, "source": "員工請假辦法.pdf", ...}]}');
       addEvent('done', '{"message_id": 312, "research_trace": [...]}');
-
       const status = document.createElement('p');
       status.className = 'approval__status';
       status.dataset.kind = kind;
@@ -609,7 +538,6 @@
       result.replaceChildren(status, answer);
       result.hidden = false;
     }
-
     const reset = () => {
       decided = false;
       remaining = APPROVAL_TIMEOUT_SECONDS;
@@ -624,10 +552,8 @@
       stepTime.textContent = '暫停中';
       startTimer();
     };
-
     decideButtons.forEach((button) => button.addEventListener('click', () => decide(button.dataset.approvalDecide)));
     approval.querySelector('[data-approval-reset]').addEventListener('click', reset);
-    /* 倒數在示範捲進畫面時才開始，離開畫面時暫停 */
     if ('IntersectionObserver' in window) {
       new IntersectionObserver((entries) => entries.forEach((entry) => {
         if (entry.isIntersecting && !decided && !ticker) startTimer();
@@ -635,8 +561,6 @@
       }), { threshold: 0.25 }).observe(approval);
     }
   }
-
-  /* ---------- 自訂 API 工具的預設核准：與 tool_approval.default_requires_approval 相同 ---------- */
   const SAFE_HTTP_METHODS = ['GET', 'HEAD', 'OPTIONS'];
   const methodRules = document.querySelector('[data-method-rules]');
   if (methodRules) {
@@ -658,8 +582,6 @@
     methodButtons.forEach((button) => button.addEventListener('click', () => showMethod(button.dataset.method)));
     showMethod('POST');
   }
-
-  /* ---------- stdio 子行程環境變數：依作業系統切換繼承清單（backend/app/services/mcp_service.py） ---------- */
   const envdiff = document.querySelector('[data-envdiff]');
   if (envdiff) {
     const inheritedCell = envdiff.querySelector('[data-inherited]');
@@ -669,8 +591,16 @@
       inheritedCell.textContent = button.dataset.platformVars;
     }));
   }
-
-  /* ---------- 卡片游標光暈與 Hero 傾斜：只在精準指標裝置、未要求減少動態時跟隨游標 ---------- */
+  const marquee = document.querySelector('[data-marquee]');
+  const marqueeToggle = document.querySelector('[data-marquee-toggle]');
+  if (marquee && marqueeToggle) {
+    marqueeToggle.addEventListener('click', () => {
+      const paused = marqueeToggle.getAttribute('aria-pressed') !== 'true';
+      marqueeToggle.setAttribute('aria-pressed', String(paused));
+      marquee.classList.toggle('is-paused', paused);
+      marqueeToggle.querySelector('use').setAttribute('href', paused ? '#i-play' : '#i-pause');
+    });
+  }
   const finePointer = window.matchMedia('(hover: hover) and (pointer: fine)');
   const followPointer = () => finePointer.matches && !reduceMotion.matches;
   let spotFrame = 0;
@@ -685,7 +615,6 @@
       card.style.setProperty('--my', `${Math.round(event.clientY - rect.top)}px`);
     });
   }, { passive: true });
-
   const hero = document.querySelector('.hero');
   const tiltTarget = document.querySelector('[data-tilt]');
   if (hero && tiltTarget) {
@@ -707,10 +636,6 @@
       setTilt(0, 0);
     });
   }
-
-  /* ---------- 5.0.0：登入失敗節流（backend/app/core/login_throttle.py 與 api/auth.py 的 login） ----------
-     先檢查鎖定（429 + Retry-After，連正確密碼也不驗），再驗證密碼；失敗時帳號與來源位址各記一次，
-     達到門檻就清空失敗紀錄並鎖定。登入成功只清除該帳號的紀錄，位址的計數保留。門檻取 .env.example 的建議值。 */
   const throttleDemo = document.querySelector('[data-throttle]');
   if (throttleDemo) {
     const MAX_FAILURES_PER_ACCOUNT = 5;
@@ -727,7 +652,6 @@
       ghost: 'ghost 不存在：失敗照樣計數，回應與密碼錯誤完全相同，無法藉此探測帳號是否存在。',
       spray: '每次換一個帳號猜密碼：單一帳號都到不了門檻，但同一個來源位址累積 20 次失敗就會被暫停。',
     };
-
     const makeTracker = (maxFailures) => {
       const records = new Map();
       return {
@@ -757,7 +681,6 @@
         clear(key) { records.delete(key); },
       };
     };
-
     const whoButtons = Array.from(throttleDemo.querySelectorAll('[data-who]'));
     const hint = throttleDemo.querySelector('[data-who-hint]');
     const keyLabel = throttleDemo.querySelector('[data-meter-key]');
@@ -770,7 +693,6 @@
     const lockTimer = throttleDemo.querySelector('[data-lock-timer]');
     const log = throttleDemo.querySelector('[data-throttle-log]');
     const emptyLog = log.innerHTML;
-
     let accounts;
     let addresses;
     let startedAt;
@@ -785,7 +707,6 @@
       const whole = Math.ceil(seconds);
       return `${Math.floor(whole / 60)}:${String(whole % 60).padStart(2, '0')}`;
     };
-
     const addLog = (code, title, detail, { at = now(), animate = true } = {}) => {
       log.querySelector('.throttle__empty')?.remove();
       const item = document.createElement('li');
@@ -799,7 +720,11 @@
       const titleElement = document.createElement('b');
       titleElement.textContent = title;
       const detailElement = document.createElement('small');
-      detailElement.textContent = detail;
+      detailElement.append(...detail.map((text) => {
+        const part = document.createElement('span');
+        part.textContent = text;
+        return part;
+      }));
       body.append(titleElement, detailElement);
       const time = document.createElement('span');
       time.className = 'log__time';
@@ -807,19 +732,16 @@
       item.append(codeElement, body, time);
       log.prepend(item);
     };
-
-    /* 開場就有三筆失敗：alice 錯兩次，再以 ALICE 錯一次（大小寫不同仍共用計數），再錯兩次就會鎖定 */
     const SEED = [['alice', 0], ['alice', 6], ['ALICE', 11]];
     const seed = () => {
       SEED.forEach(([identifier, at]) => {
         const key = identifier.trim().toLowerCase();
         accounts.recordFailure(key, at);
         addresses.recordFailure(ADDRESS, at);
-        addLog(401, '使用者名稱或密碼錯誤', `${identifier} · 密碼錯誤 · 識別 ${accounts.count(key, at)}/${MAX_FAILURES_PER_ACCOUNT}、位址 ${addresses.count(ADDRESS, at)}/${MAX_FAILURES_PER_ADDRESS}`, { at, animate: false });
+        addLog(401, '使用者名稱或密碼錯誤', [identifier, '密碼錯誤', `識別 ${accounts.count(key, at)}/${MAX_FAILURES_PER_ACCOUNT}、位址 ${addresses.count(ADDRESS, at)}/${MAX_FAILURES_PER_ADDRESS}`], { at, animate: false });
       });
       skipped = SEED.at(-1)[1] + 3;
     };
-
     const render = () => {
       const t = now();
       const accountWait = accounts.retryAfter(shownKey, t);
@@ -849,7 +771,6 @@
         ticker = null;
       }
     };
-
     const attempt = (kind) => {
       const t = now();
       const identifier = who === 'spray' ? (SPRAY_NAMES[sprayIndex] ?? `user${sprayIndex + 1}`) : who;
@@ -858,13 +779,13 @@
       shownKey = key;
       const wait = Math.max(accounts.retryAfter(key, t), addresses.retryAfter(ADDRESS, t));
       if (wait > 0) {
-        addLog(429, '登入失敗次數過多，請稍後再試', `${identifier} · Retry-After: ${Math.ceil(wait)}${kind === 'right' ? ' · 鎖定期間不驗證密碼' : ''}`);
+        addLog(429, '登入失敗次數過多，請稍後再試', [identifier, `Retry-After: ${Math.ceil(wait)}`, ...(kind === 'right' ? ['鎖定期間不驗證密碼'] : [])]);
         render();
         return;
       }
       if (kind === 'right' && EXISTING_ACCOUNTS.has(key)) {
         accounts.clear(key);
-        addLog(200, '登入成功', `${identifier} · 只清除這個帳號的失敗紀錄，來源位址的計數保留`);
+        addLog(200, '登入成功', [identifier, '只清除這個帳號的失敗紀錄，來源位址的計數保留']);
         render();
         return;
       }
@@ -873,10 +794,9 @@
       const reason = EXISTING_ACCOUNTS.has(key) ? '密碼錯誤' : '帳號不存在';
       const counts = `識別 ${accountLocked ? MAX_FAILURES_PER_ACCOUNT : accounts.count(key, t)}/${MAX_FAILURES_PER_ACCOUNT}、位址 ${addressLocked ? MAX_FAILURES_PER_ADDRESS : addresses.count(ADDRESS, t)}/${MAX_FAILURES_PER_ADDRESS}`;
       const lockNote = accountLocked || addressLocked ? '；達到門檻，接下來 15 分鐘一律回 429' : '';
-      addLog(401, '使用者名稱或密碼錯誤', `${identifier} · ${reason} · ${counts}${lockNote}`);
+      addLog(401, '使用者名稱或密碼錯誤', [identifier, reason, `${counts}${lockNote}`]);
       render();
     };
-
     const selectWho = (value) => {
       who = value;
       whoButtons.forEach((button) => button.setAttribute('aria-pressed', String(button.dataset.who === value)));
@@ -884,7 +804,6 @@
       if (value !== 'spray') shownKey = value.trim().toLowerCase();
       render();
     };
-
     const reset = () => {
       accounts = makeTracker(MAX_FAILURES_PER_ACCOUNT);
       addresses = makeTracker(MAX_FAILURES_PER_ADDRESS);
@@ -895,7 +814,6 @@
       seed();
       selectWho(who);
     };
-
     whoButtons.forEach((button) => button.addEventListener('click', () => selectWho(button.dataset.who)));
     throttleDemo.querySelectorAll('[data-attempt]').forEach((button) => button.addEventListener('click', () => attempt(button.dataset.attempt)));
     throttleDemo.querySelector('[data-skip]').addEventListener('click', () => {
@@ -910,9 +828,6 @@
     throttleDemo.querySelector('[data-throttle-reset]').addEventListener('click', reset);
     reset();
   }
-
-  /* ---------- 5.0.0：變更密碼撤銷權杖（backend/app/core/jwt_auth.py 的 resolve_token_user） ----------
-     權杖的 iat 早於帳號的 tokens_valid_after 就無效；兩邊都保留微秒，所以同一秒內稍早簽發的權杖也會失效。 */
   const tokensDemo = document.querySelector('[data-tokens]');
   if (tokensDemo) {
     const CHANGED_AT = '1791627312.420117';
@@ -923,20 +838,18 @@
     const changeButton = tokensDemo.querySelector('[data-change-password]');
     const resetButton = tokensDemo.querySelector('[data-tokens-reset]');
     const initial = { tva: tva.textContent, label: tvaLabel.textContent, note: note.textContent };
-    /* 以字串比較整數秒與微秒，避免浮點數誤差 */
     const isEarlier = (a, b) => {
       const [aSeconds, aFraction = ''] = a.split('.');
       const [bSeconds, bFraction = ''] = b.split('.');
       if (aSeconds !== bSeconds) return Number(aSeconds) < Number(bSeconds);
       return aFraction.padEnd(6, '0') < bFraction.padEnd(6, '0');
     };
-
     changeButton.addEventListener('click', () => {
       sessions.forEach((session, index) => {
         const revoked = isEarlier(session.dataset.iat, CHANGED_AT);
         session.style.transitionDelay = reduceMotion.matches ? '0s' : `${index * 140}ms`;
         session.classList.toggle('is-revoked', revoked);
-        session.querySelector('[data-state]').textContent = revoked ? '已失效 · 401' : '有效';
+        session.querySelector('[data-state]').textContent = revoked ? '已失效（401）' : '有效';
         if (session.classList.contains('session--leak')) {
           const comparison = document.createElement('span');
           comparison.className = 'session__cmp';
@@ -952,7 +865,6 @@
       changeButton.disabled = true;
       resetButton.hidden = false;
     });
-
     resetButton.addEventListener('click', () => {
       sessions.forEach((session) => {
         session.style.transitionDelay = '0s';
@@ -969,12 +881,8 @@
       changeButton.focus();
     });
   }
-
-  /* ---------- 版本時間軸：預設捲到最右邊，先看到最新版本 ---------- */
   const timeline = document.querySelector('.timeline');
   if (timeline) timeline.scrollLeft = timeline.scrollWidth;
-
-  /* ---------- 複製指令 ---------- */
   document.querySelectorAll('[data-copy]').forEach((button) => {
     const target = document.getElementById(button.dataset.copy);
     const label = button.querySelector('span');
