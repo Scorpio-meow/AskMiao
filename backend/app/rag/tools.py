@@ -12,7 +12,7 @@ from app.core.config import settings
 from app.core.domain_profile import domain_profile
 from app.core.error_response import format_ssrf_rejection, log_and_get_error_id
 from app.core.html_text import extract_text_and_title
-from app.core.limits import MAX_TEXT_CLEANUP_CHARS
+from app.core.limits import MAX_KB_CATALOG_CHARS, MAX_TEXT_CLEANUP_CHARS
 from app.rag.retrievers.hybrid import matches_target_document
 from app.services.structured_data import merge_record_parts
 logger = logging.getLogger(__name__)
@@ -408,8 +408,16 @@ class ResearchToolRegistry:
         if not doc_items:
             return "檢索已上傳之內部知識庫與專業文件資料。當使用者提供特定網址連結、作者帳號或查詢內部檔案時必須優先調用。"
         doc_descriptions = []
+        catalog_chars = 0
         for idx, (filename, desc) in enumerate(doc_items, start=1):
-            doc_descriptions.append(f"{idx}. 《{filename}》：{desc}")
+            line = f"{idx}. 《{filename}》：{desc}"
+            catalog_chars += len(line)
+            if catalog_chars > MAX_KB_CATALOG_CHARS:
+                doc_descriptions.append(
+                    f"另有 {len(doc_items) - idx + 1} 份文件未列出，仍可直接檢索，或以 target_document 指定檔名。"
+                )
+                break
+            doc_descriptions.append(line)
         catalog_text = "\n".join(doc_descriptions)
         return (
             "檢索內部知識庫。目前知識庫收錄以下各具不同主題之專屬文件庫，調用時請針對相應主題檢索：\n"

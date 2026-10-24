@@ -4,6 +4,7 @@ import json
 import os
 import pickle
 import sys
+import threading
 from datetime import datetime
 from pathlib import Path
 from types import SimpleNamespace
@@ -310,6 +311,33 @@ def test_document_lists_leave_out_full_text(session_factory):
         ):
             assert [doc["filename"] for doc in listed] == ["overtime.txt"]
             assert "content" not in listed[0]
+
+
+def test_embeddings_are_computed_outside_the_index_lock(rag, session_factory, monkeypatch):
+    add_db_document(session_factory, 1, "overtime.txt", OVERTIME)
+    original_embed = rag.vector_store.embed
+    lock_free_while_embedding = []
+
+    def embed(texts):
+        acquired = []
+
+        def try_lock():
+            acquired.append(rag.vector_store.lock.acquire(timeout=1))
+            if acquired[0]:
+                rag.vector_store.lock.release()
+
+        other = threading.Thread(target=try_lock)
+        other.start()
+        other.join()
+        lock_free_while_embedding.append(acquired[0])
+        return original_embed(texts)
+
+    monkeypatch.setattr(rag.vector_store, "embed", embed)
+    rag.add_documents([Document(page_content=OVERTIME, metadata={"source": "overtime.txt", "document_id": 1})])
+    rag.force_reindex()
+
+    assert lock_free_while_embedding == [True, True]
+    assert_indices_match_database(rag, session_factory)
 
 
 def test_startup_reconciles_indices_with_database(make_rag, session_factory):

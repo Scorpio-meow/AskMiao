@@ -4,6 +4,7 @@ import json
 import logging
 from datetime import datetime
 
+import numpy as np
 from sqlalchemy.orm import Session
 
 from .types import Document
@@ -177,17 +178,19 @@ class HybridContextualRAG:
         chunks = self.pipeline.split_documents(documents)
         if not chunks:
             return 0
+        # 計算向量可能要數分鐘，在鎖外進行，這段期間其他人的檢索不必等待
+        embeddings = self.vector_store.embed([chunk.page_content for chunk in chunks])
         with self.vector_store.lock:
             # 刪除文件時會先刪 documents 列、再持鎖移除片段；持鎖後才確認文件仍存在，
             # 已被刪除（或正在刪除）的文件不會再把片段寫回知識庫
             existing = self.chunk_store.existing_document_ids([chunk.metadata.get("document_id") for chunk in chunks])
-            kept = [chunk for chunk in chunks if chunk.metadata.get("document_id") in existing]
+            kept = [index for index, chunk in enumerate(chunks) if chunk.metadata.get("document_id") in existing]
             if len(kept) != len(chunks):
                 logger.warning(f"略過 {len(chunks) - len(kept)} 個所屬文件已刪除的片段")
-            chunks = kept
-            if not chunks:
+            if not kept:
                 return 0
-            embeddings = self.vector_store.embed([chunk.page_content for chunk in chunks])
+            chunks = [chunks[index] for index in kept]
+            embeddings = embeddings[kept]
             with self.chunk_store.session_factory() as session:
                 chunk_ids = self.chunk_store.insert(session, chunks)
                 self.vector_store.add(chunk_ids, embeddings, chunks)
@@ -284,12 +287,18 @@ class HybridContextualRAG:
     def force_reindex(self):
         logger.info("Forcing reindex...")
         with self.vector_store.lock:
+            snapshot = dict(self.vector_store.chunks)
+        # 整個語料的向量在鎖外計算；期間新增或刪除的片段在持鎖後補算或略過
+        vectors = dict(zip(snapshot, self.vector_store.embed([chunk.page_content for chunk in snapshot.values()]))) if snapshot else {}
+        with self.vector_store.lock:
             chunks = dict(self.vector_store.chunks)
+            added = [chunk_id for chunk_id in chunks if chunk_id not in vectors]
+            if added:
+                vectors.update(zip(added, self.vector_store.embed([chunks[chunk_id].page_content for chunk_id in added])))
             chunk_ids = list(chunks)
-            embeddings = self.vector_store.embed([chunks[chunk_id].page_content for chunk_id in chunk_ids]) if chunk_ids else None
             self.vector_store.reset_index()
             if chunk_ids:
-                self.vector_store.add(chunk_ids, embeddings, [chunks[chunk_id] for chunk_id in chunk_ids])
+                self.vector_store.add(chunk_ids, np.stack([vectors[chunk_id] for chunk_id in chunk_ids]), [chunks[chunk_id] for chunk_id in chunk_ids])
             self.bm25_store.rebuild(chunks)
             self.vector_store.save_indices()
         return True

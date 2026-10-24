@@ -4,8 +4,13 @@ import threading
 import time
 
 import pytest
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
 
 from app.core.config import settings
+from app.core.limits import MAX_KB_CATALOG_CHARS
+from app.models import Document as DbDocument
+from app.models import database as database_module
 from app.rag import agent as agent_module
 from app.rag.agent import ResearchAgent
 from app.rag.pipeline import RAGPipeline
@@ -340,3 +345,23 @@ async def test_tool_definitions_are_loaded_off_the_event_loop(monkeypatch):
     await collect(agent.stream_research("你好", max_turns=1))
 
     assert loaded_in and loaded_in[0] != threading.get_ident()
+
+
+def test_knowledge_base_catalog_stays_within_its_limit(tmp_path, monkeypatch):
+    engine = create_engine(f"sqlite:///{tmp_path / 'kb.db'}")
+    database_module.Base.metadata.create_all(engine)
+    Session = sessionmaker(bind=engine)
+    with Session() as session:
+        session.add_all(
+            DbDocument(filename=f"doc-{index}.txt", content="內容", file_type="text/plain", description="摘要" * 60)
+            for index in range(300)
+        )
+        session.commit()
+    monkeypatch.setattr(database_module, "SessionLocal", Session)
+
+    description = ResearchToolRegistry()._build_knowledge_base_description()
+
+    assert len(description) < MAX_KB_CATALOG_CHARS + 300
+    assert "《doc-0.txt》" in description
+    assert "份文件未列出" in description
+    engine.dispose()

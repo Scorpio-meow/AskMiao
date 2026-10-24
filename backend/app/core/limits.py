@@ -84,6 +84,9 @@ CHAT_ATTACHMENT_EXTRACTION_LIMITS = ExtractionLimits(
 
 # 工具結果放進模型脈絡前的長度上限（每次工具呼叫）
 MAX_TOOL_RESULT_CHARS = 20_000
+# search_knowledge_base 工具說明中的文件目錄（檔名＋摘要）長度：每次呼叫模型都會送出，不能隨文件數無限成長。
+# shortcut: 只列最先收錄的文件（約 25～40 份），其餘只告知份數；文件多到需要依主題挑選時改為先檢索目錄再列出
+MAX_KB_CATALOG_CHARS = 4_000
 
 # 帳號與密碼：Argon2 的成本隨密碼長度成長，登入欄位也會寫進安全日誌
 MAX_PASSWORD_CHARS = 256
