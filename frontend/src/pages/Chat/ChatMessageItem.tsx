@@ -7,6 +7,7 @@ import SourceBadges from './SourceBadges';
 import ResearchTraceBlock from './ResearchTraceBlock';
 import ToolApprovalCard from './ToolApprovalCard';
 import remarkGfmSafe from './remarkGfmSafe';
+import { parseServerDate } from '../../utils/serverDate';
 import { Avatar, Tooltip, IconButton, Spinner, Icon, Button, useModalDialog } from '../../components/ui';
 import styles from './ChatMessageItem.module.css';
 const SOCIAL_PLATFORM_DOMAINS = ['threads.com', 'threads.net', 'instagram.com', 'twitter.com', 'x.com'];
@@ -41,7 +42,7 @@ const parseExternalLink = (href?: string): URL | null => {
   }
 };
 const formatMessageTime = (value: string) => {
-  const date = new Date(value);
+  const date = parseServerDate(value);
   if (Number.isNaN(date.getTime())) return null;
   const now = new Date();
   const label =

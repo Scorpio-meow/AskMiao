@@ -1,6 +1,6 @@
 import axios, { AxiosInstance, InternalAxiosRequestConfig, AxiosResponse } from 'axios';
-import { shouldRefreshToken, hasValidAuth, clearAuth } from '../utils/tokenUtils.ts';
-import { devLog, devWarn } from '../utils/secureLogger.ts';
+import { isTokenExpired, clearAuth } from '../utils/tokenUtils.ts';
+import { devWarn } from '../utils/secureLogger.ts';
 import { createSseParser } from './sse.ts';
 export interface ChatAttachment {
   id?: string;
@@ -71,10 +71,6 @@ export interface User {
   is_admin: boolean;
   role: string;
 }
-export interface ChatResponse {
-  message: Message;
-  conversation_id: number;
-}
 const RAW_API_URL = (import.meta.env.VITE_API_BASE as string) || (import.meta.env.VITE_API_URL as string) || '/api';
 const ensureTrailingApi = (urlString: string): string => {
   const trimmed = urlString.replace(/\/+$/, '');
@@ -105,49 +101,55 @@ const api: AxiosInstance = axios.create({
   },
   withCredentials: true,
 });
-let isRefreshing = false;
-let refreshSubscribers: ((token: string) => void)[] = [];
-const onAccessTokenRefreshed = (accessToken: string) => {
-  refreshSubscribers.forEach((callback) => callback(accessToken));
-  refreshSubscribers = [];
+// 同一時間只送一個換發請求：重新整理權杖只能用一次，同時送出的第二個請求會被拒絕並把使用者登出
+let refreshPromise: Promise<string> | null = null;
+const refreshAccessToken = (): Promise<string> => {
+  refreshPromise ??= axios
+    .post<{ access_token: string }>(`${API_BASE_URL}/auth/refresh`, {}, { withCredentials: true })
+    .then((response) => {
+      localStorage.setItem('access_token', response.data.access_token);
+      return response.data.access_token;
+    })
+    .finally(() => {
+      refreshPromise = null;
+    });
+  return refreshPromise;
 };
-const addRefreshSubscriber = (callback: (token: string) => void) => {
-  refreshSubscribers.push(callback);
+// 存取權杖已過期或 5 分鐘內到期時先換發；換發被拒（401）代表重新整理權杖也已失效
+const currentAccessToken = async (): Promise<string | null> => {
+  const token = localStorage.getItem('access_token');
+  if (!token || !isTokenExpired(token, 300)) return token;
+  try {
+    return await refreshAccessToken();
+  } catch (error: any) {
+    devWarn('[Token] 靜默刷新失敗:', error.response?.status);
+    if (error.response?.status === 401) {
+      clearAuth();
+      return null;
+    }
+    return token;
+  }
+};
+const refreshOrSignOut = async (): Promise<string> => {
+  try {
+    return await refreshAccessToken();
+  } catch (refreshError: any) {
+    console.warn('[Token] Token 刷新失敗，清除認證信息:', refreshError.response?.status);
+    clearAuth();
+    const currentPath = window.location.pathname;
+    if (currentPath !== '/login' && currentPath !== '/register') {
+      setTimeout(() => {
+        window.location.href = '/login';
+      }, 100);
+    }
+    throw refreshError;
+  }
 };
 api.interceptors.request.use(
   async (config: InternalAxiosRequestConfig) => {
-    const token = localStorage.getItem('access_token');
+    const token = await currentAccessToken();
     if (token) {
-      if (shouldRefreshToken(token, 300) && !isRefreshing) {
-        devLog('[Token] Token 即將過期，觸發靜默刷新...');
-        try {
-          isRefreshing = true;
-          const response = await axios.post<{ access_token: string }>(
-            `${API_BASE_URL}/auth/refresh`,
-            {},
-            { withCredentials: true }
-          );
-          const { access_token } = response.data;
-          localStorage.setItem('access_token', access_token);
-          onAccessTokenRefreshed(access_token);
-          config.headers.Authorization = `Bearer ${access_token}`;
-          devLog('[Token] 靜默刷新成功');
-        } catch (error: any) {
-          devWarn('[Token] 靜默刷新失敗，清除無效 Token:', error.response?.status);
-          if (error.response?.status === 401) {
-            clearAuth();
-          } else {
-            config.headers.Authorization = `Bearer ${token}`;
-          }
-        } finally {
-          isRefreshing = false;
-        }
-      } else if (!hasValidAuth() && token) {
-        console.log('[Token] Token 已完全過期，清除認證信息');
-        clearAuth();
-      } else {
-        config.headers.Authorization = `Bearer ${token}`;
-      }
+      config.headers.Authorization = `Bearer ${token}`;
     }
     return config;
   },
@@ -170,41 +172,9 @@ api.interceptors.response.use(
     const originalRequest = error.config;
     if (error.response?.status === 401 && !originalRequest._retry && !isAuthPathWithoutRefresh(originalRequest.url)) {
       originalRequest._retry = true;
-      if (isRefreshing) {
-        return new Promise((resolve) => {
-          addRefreshSubscriber((accessToken) => {
-            originalRequest.headers.Authorization = `Bearer ${accessToken}`;
-            resolve(api(originalRequest));
-          });
-        });
-      }
-      isRefreshing = true;
-      try {
-        const response = await axios.post<{ access_token: string }>(
-          `${API_BASE_URL}/auth/refresh`,
-          {},
-          { withCredentials: true }
-        );
-        const { access_token } = response.data;
-        localStorage.setItem('access_token', access_token);
-        isRefreshing = false;
-        onAccessTokenRefreshed(access_token);
-        originalRequest.headers.Authorization = `Bearer ${access_token}`;
-        return api(originalRequest);
-      } catch (refreshError: any) {
-        isRefreshing = false;
-        refreshSubscribers = [];
-        console.warn('[Token] Token 刷新失敗，清除認證信息:', refreshError.response?.status);
-        clearAuth();
-        const currentPath = window.location.pathname;
-        if (currentPath !== '/login' && currentPath !== '/register') {
-          console.log('[Token] 跳轉到登錄頁面');
-          setTimeout(() => {
-            window.location.href = '/login';
-          }, 100);
-        }
-        return Promise.reject(refreshError);
-      }
+      const accessToken = await refreshOrSignOut();
+      originalRequest.headers.Authorization = `Bearer ${accessToken}`;
+      return api(originalRequest);
     }
     return Promise.reject(error);
   }
@@ -223,13 +193,6 @@ export const chatService = {
     signal?: AbortSignal,
     attachments?: ChatAttachment[]
   ): Promise<void> {
-    const token = localStorage.getItem('access_token');
-    const headers: Record<string, string> = {
-      'Content-Type': 'application/json',
-    };
-    if (token) {
-      headers['Authorization'] = `Bearer ${token}`;
-    }
     const payloadAttachments = attachments?.map(a => ({
       filename: a.filename,
       file_type: a.file_type,
@@ -237,18 +200,28 @@ export const chatService = {
       data_url: a.data_url,
       content: a.content
     })) || [];
-    const response = await fetch(`${API_BASE_URL}/chat/send`, {
+    const body = JSON.stringify({
+      content,
+      conversation_id: conversationId,
+      model_name,
+      reasoning_effort,
+      attachments: payloadAttachments
+    });
+    // fetch 不經過 axios 攔截器，換發權杖要自己處理：過期的權杖連同附件送出只會換來 401 或 413
+    const send = (token: string | null) => fetch(`${API_BASE_URL}/chat/send`, {
       method: 'POST',
-      headers,
-      body: JSON.stringify({
-        content,
-        conversation_id: conversationId,
-        model_name,
-        reasoning_effort,
-        attachments: payloadAttachments
-      }),
+      headers: {
+        'Content-Type': 'application/json',
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+      body,
       signal
     });
+    let response = await send(await currentAccessToken());
+    if (response.status === 401) {
+      // 權杖在送出途中到期或已被撤銷：換發一次再重送
+      response = await send(await refreshOrSignOut());
+    }
     if (!response.ok) {
       const errText = await response.text();
       let detail = errText;
@@ -283,29 +256,6 @@ export const chatService = {
       parser.push(decoder.decode(value, { stream: true }));
     }
     parser.push(decoder.decode());
-  },
-  async sendMessage(
-    content: string,
-    conversationId: number | null = null,
-    model_name: string | null = null,
-    reasoning_effort: string = 'medium',
-    attachments?: ChatAttachment[]
-  ): Promise<ChatResponse> {
-    const payloadAttachments = attachments?.map(a => ({
-      filename: a.filename,
-      file_type: a.file_type,
-      file_size: a.file_size,
-      data_url: a.data_url,
-      content: a.content
-    })) || [];
-    const response = await api.post<ChatResponse>('/chat/send', {
-      content,
-      conversation_id: conversationId,
-      model_name,
-      reasoning_effort,
-      attachments: payloadAttachments
-    });
-    return response.data;
   },
   async getConversations(): Promise<Conversation[]> {
     const response = await api.get<Conversation[]>('/chat/conversations');

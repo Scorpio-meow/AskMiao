@@ -35,22 +35,6 @@ class NetworkMonitor {
   checkOnline() {
     return this.isOnline;
   }
-  async pingServer(url = '/api/auth/validate-token') {
-    try {
-      const response = await fetch(url, {
-        method: 'GET',
-        headers: {
-          'Authorization': `Bearer ${localStorage.getItem('access_token') || ''}`,
-        },
-        cache: 'no-cache',
-        signal: AbortSignal.timeout(5000),
-      });
-      return response.ok;
-    } catch (error) {
-      console.error('[Network] 服務器連接測試失敗:', error);
-      return false;
-    }
-  }
 }
 const networkMonitor = new NetworkMonitor();
 export default networkMonitor;

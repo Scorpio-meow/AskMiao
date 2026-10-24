@@ -4,6 +4,7 @@ import api from '../services/api';
 import { describeRequestError } from '../utils/secureLogger';
 import { useDocuments, getApiErrorMessage } from '../hooks/useDocuments';
 import { useDocumentTitle } from '../hooks/useDocumentTitle';
+import { parseServerDate } from '../utils/serverDate';
 import {
   Button,
   IconButton,
@@ -603,7 +604,7 @@ function Documents() {
                       </div>
                     )}
                     <div className={styles.docMeta}>
-                      <span>上傳時間：{new Date(doc.created_at).toLocaleString('zh-TW')}</span>
+                      <span>上傳時間：{parseServerDate(doc.created_at).toLocaleString('zh-TW')}</span>
                     </div>
                   </div>
                   <div className={styles.docActions}>

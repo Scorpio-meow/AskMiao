@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../hooks/useAuth';
 import { LOGOUT_UNCONFIRMED_NOTICE } from '../services/authService';
 import { useDocumentTitle } from '../hooks/useDocumentTitle';
+import { parseServerDate } from '../utils/serverDate';
 import {
   TextField,
   Button,
@@ -123,14 +124,14 @@ const ProfilePage = () => {
           <div className={styles.infoItem}>
             <dt className={styles.infoLabel}>註冊時間</dt>
             <dd className={styles.infoValue}>
-              {new Date(user.created_at).toLocaleString('zh-TW')}
+              {parseServerDate(user.created_at).toLocaleString('zh-TW')}
             </dd>
           </div>
           {user.last_login && (
             <div className={styles.infoItem}>
               <dt className={styles.infoLabel}>最後登入</dt>
               <dd className={styles.infoValue}>
-                {new Date(user.last_login).toLocaleString('zh-TW')}
+                {parseServerDate(user.last_login).toLocaleString('zh-TW')}
               </dd>
             </div>
           )}

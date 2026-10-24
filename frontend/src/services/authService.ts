@@ -1,7 +1,6 @@
 import api, { User } from './api';
 import { describeRequestError } from '../utils/secureLogger';
 const TOKEN_KEY = 'access_token';
-const REFRESH_TOKEN_KEY = 'refresh_token';
 const USER_KEY = 'user_info';
 export interface Tokens {
   access_token: string;
@@ -125,31 +124,6 @@ class AuthService {
       this.clearAuth();
     }
   }
-  async refreshAccessToken(): Promise<string> {
-    try {
-      const refreshToken = this.getRefreshToken();
-      if (!refreshToken) {
-        throw new Error('沒有重新整理權杖，請重新登入');
-      }
-      const response = await withTimeout(
-        (signal) => api.post<{ access_token: string; refresh_token: string }>('/auth/refresh', {
-          refresh_token: refreshToken
-        }, { signal }),
-        45000
-      );
-      const { access_token, refresh_token } = response.data;
-      this.saveTokens({
-        access_token,
-        refresh_token,
-        token_type: 'bearer'
-      });
-      return access_token;
-    } catch (error) {
-      console.error('刷新令牌失敗:', describeRequestError(error));
-      this.clearAuth();
-      throw error;
-    }
-  }
   async getCurrentUser(): Promise<User> {
     try {
       const response = await withTimeout(
@@ -213,23 +187,9 @@ class AuthService {
     );
     return response.data.enabled;
   }
-  async validateToken(): Promise<boolean> {
-    try {
-      const response = await withTimeout(
-        (signal) => api.get<{ success: boolean }>('/auth/validate', { signal }),
-        10000
-      );
-      return response.data.success;
-    } catch {
-      return false;
-    }
-  }
   saveTokens(tokens: Tokens) {
     if (tokens.access_token) {
       localStorage.setItem(TOKEN_KEY, tokens.access_token);
-    }
-    if (tokens.refresh_token) {
-      localStorage.setItem(REFRESH_TOKEN_KEY, tokens.refresh_token);
     }
   }
   saveUser(user: User) {
@@ -237,9 +197,6 @@ class AuthService {
   }
   getAccessToken(): string | null {
     return localStorage.getItem(TOKEN_KEY);
-  }
-  getRefreshToken(): string | null {
-    return localStorage.getItem(REFRESH_TOKEN_KEY);
   }
   getUser(): User | null {
     const userStr = localStorage.getItem(USER_KEY);
@@ -258,7 +215,6 @@ class AuthService {
   }
   clearAuth() {
     localStorage.removeItem(TOKEN_KEY);
-    localStorage.removeItem(REFRESH_TOKEN_KEY);
     localStorage.removeItem(USER_KEY);
   }
 }

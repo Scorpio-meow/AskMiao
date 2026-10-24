@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import api from '../services/api';
 import { describeRequestError } from '../utils/secureLogger';
 import { useDocumentTitle } from '../hooks/useDocumentTitle';
+import { parseServerDate } from '../utils/serverDate';
 import {
   Button,
   Dialog,
@@ -25,7 +26,7 @@ const cache = {
 };
 const CACHE_TTL = 3 * 60 * 1000;
 let loadingPromise = null;
-const formatDate = (value) => new Date(value).toLocaleDateString('zh-TW');
+const formatDate = (value) => parseServerDate(value).toLocaleDateString('zh-TW');
 function AdminDashboard() {
   const [statistics, setStatistics] = useState(null);
   const [users, setUsers] = useState([]);
