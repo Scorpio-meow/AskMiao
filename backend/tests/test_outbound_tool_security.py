@@ -98,10 +98,10 @@ async def test_path_parameters_cannot_change_request_target(public_dns, upstream
         "parameters_schema": {"type": "object", "properties": {"petId": {"type": "string"}}},
         "param_locations": {"petId": "path"},
     }
-    await execute_http_api_tool(tool, {"petId": "../../admin/users?all=1#x"})
+    await execute_http_api_tool(tool, {"petId": "../../admin/users?all=1#x"}, "test_tool")
     assert upstream["sent"][0].url.raw_path == b"/v1/pets/..%2F..%2Fadmin%2Fusers%3Fall%3D1%23x"
 
-    result = await execute_http_api_tool(tool, {"petId": ".."})
+    result = await execute_http_api_tool(tool, {"petId": ".."}, "test_tool")
     assert result["status_code"] == 400
     assert len(upstream["sent"]) == 1
 
@@ -116,15 +116,15 @@ async def test_undeclared_arguments_are_rejected_before_sending(public_dns, upst
         "parameters_schema": {"type": "object", "properties": {"title": {"type": "string"}}},
         "param_locations": {"title": "body"},
     }
-    result = await execute_http_api_tool(tool, {"title": "t", "assignee": "admin", "_method": "DELETE"})
+    result = await execute_http_api_tool(tool, {"title": "t", "assignee": "admin", "_method": "DELETE"}, "test_tool")
     assert result["status_code"] == 400
     assert "assignee" in result["error"] and "_method" in result["error"]
     # 沒有宣告 request_body 時，不能以它整包替換本文
-    result = await execute_http_api_tool(tool, {"title": "t", "request_body": {"is_admin": True}})
+    result = await execute_http_api_tool(tool, {"title": "t", "request_body": {"is_admin": True}}, "test_tool")
     assert result["status_code"] == 400
     assert upstream["sent"] == []
 
-    await execute_http_api_tool(tool, {"title": "t"})
+    await execute_http_api_tool(tool, {"title": "t"}, "test_tool")
     assert await upstream["sent"][0].aread() == b'{"title":"t"}'
 
 
@@ -139,12 +139,12 @@ async def test_request_body_fields_follow_the_declared_body_schema(public_dns, u
         "request_body_schema": {"type": "object", "properties": {"subject": {"type": "string"}}},
         "param_locations": {"request_body": "body"},
     }
-    result = await execute_http_api_tool(declared_body, {"request_body": {"subject": "s", "priority": "urgent"}})
+    result = await execute_http_api_tool(declared_body, {"request_body": {"subject": "s", "priority": "urgent"}}, "test_tool")
     assert result["status_code"] == 400 and "request_body.priority" in result["error"]
-    await execute_http_api_tool(declared_body, {"request_body": {"subject": "s"}})
+    await execute_http_api_tool(declared_body, {"request_body": {"subject": "s"}}, "test_tool")
     # 規格沒有描述本文欄位時，宣告的 request_body 照原樣送出
     opaque = dict(declared_body, request_body_schema=None)
-    await execute_http_api_tool(opaque, {"request_body": {"anything": 1}})
+    await execute_http_api_tool(opaque, {"request_body": {"anything": 1}}, "test_tool")
     assert [await request.aread() for request in upstream["sent"]] == [b'{"subject":"s"}', b'{"anything":1}']
 
 
@@ -162,11 +162,11 @@ async def test_fixed_query_parameters_cannot_be_overridden(public_dns, upstream)
         "auth_type": "api_key",
         "auth_config": {"key_name": "key", "key_value": "query-secret-123", "key_in": "query"},
     }
-    result = await execute_http_api_tool(tool, {"q": "x", "project": "hr-salaries"})
+    result = await execute_http_api_tool(tool, {"q": "x", "project": "hr-salaries"}, "test_tool")
     assert result["status_code"] == 400 and "project" in result["error"]
     assert upstream["sent"] == []
 
-    await execute_http_api_tool(tool, {"q": "x", "tags": ["a", "b"]})
+    await execute_http_api_tool(tool, {"q": "x", "tags": ["a", "b"]}, "test_tool")
     assert upstream["sent"][0].url.params.multi_items() == [
         ("project", "public-docs"), ("readonly", "true"), ("q", "x"), ("tags", "a"), ("tags", "b"), ("key", "query-secret-123"),
     ]
@@ -188,7 +188,7 @@ async def test_cross_origin_redirect_drops_credentials(public_dns, upstream):
         "auth_type": "api_key",
         "auth_config": {"key_name": "X-API-Key", "key_value": "admin-api-key-value", "key_in": "header"},
     }
-    result = await execute_http_api_tool(tool, {})
+    result = await execute_http_api_tool(tool, {}, "test_tool")
     assert result["is_success"] is True
     first, second = upstream["sent"]
     assert first.headers["x-api-key"] == "admin-api-key-value"
@@ -216,7 +216,7 @@ async def test_credentials_are_redacted_from_result(public_dns, upstream):
         "auth_type": "api_key",
         "auth_config": {"key_name": "key", "key_value": "query-secret-123", "key_in": "query"},
     }
-    result = await execute_http_api_tool(query_tool, {"q": "cats"})
+    result = await execute_http_api_tool(query_tool, {"q": "cats"}, "test_tool")
     assert "query-secret-123" not in str(result)
     assert "key=" in result["url"]
     assert upstream["sent"][0].url.params["key"] == "query-secret-123"
@@ -228,7 +228,7 @@ async def test_credentials_are_redacted_from_result(public_dns, upstream):
         "auth_type": "bearer",
         "auth_config": {"token": "bearer-secret-456"},
     }
-    result = await execute_http_api_tool(bearer_tool, {})
+    result = await execute_http_api_tool(bearer_tool, {}, "test_tool")
     assert "bearer-secret-456" not in str(result)
 
 
@@ -237,7 +237,7 @@ async def test_oversized_response_is_not_buffered(public_dns, upstream):
     upstream["handler"] = lambda request: httpx.Response(
         200, content=b"x" * (MAX_API_TOOL_RESPONSE_BYTES + 1), headers={"content-type": "text/plain"}, request=request
     )
-    result = await execute_http_api_tool({"name": "big", "method": "GET", "url": "https://api.example.com/big"}, {})
+    result = await execute_http_api_tool({"name": "big", "method": "GET", "url": "https://api.example.com/big"}, {}, "test_tool")
     assert result["is_success"] is False
     assert result["status_code"] == 502
     assert "data" not in result
@@ -301,7 +301,7 @@ async def test_redirect_bodies_are_never_read(public_dns, upstream):
         return httpx.Response(200, json={"ok": True}, request=request)
 
     upstream["handler"] = handler
-    result = await execute_http_api_tool({"name": "hop", "method": "GET", "url": "https://api.example.com/start"}, {})
+    result = await execute_http_api_tool({"name": "hop", "method": "GET", "url": "https://api.example.com/start"}, {}, "test_tool")
     assert result["is_success"] is True
     assert result["url"] == "https://api.example.com/final"
     assert len(redirect_bodies) == 1 and redirect_bodies[0].read is False
@@ -337,7 +337,7 @@ async def test_mcp_failures_return_only_an_error_code(public_dns, upstream):
 async def test_fixed_query_values_are_not_returned(public_dns, upstream):
     upstream["handler"] = lambda request: httpx.Response(200, json={}, request=request)
     tool = {"name": "weather", "method": "GET", "url": "https://api.example.com/weather?appid=url-embedded-secret&units=metric"}
-    result = await execute_http_api_tool(tool, {})
+    result = await execute_http_api_tool(tool, {}, "test_tool")
     assert upstream["sent"][0].url.params["appid"] == "url-embedded-secret"
     assert "url-embedded-secret" not in str(result)
 
@@ -350,7 +350,7 @@ async def test_tool_call_has_a_total_deadline(public_dns, monkeypatch):
 
     monkeypatch.setattr(httpx.AsyncHTTPTransport, "handle_async_request", slow_send)
     started = time.monotonic()
-    result = await execute_http_api_tool({"name": "slow", "method": "GET", "url": "https://api.example.com/slow", "timeout": 1}, {})
+    result = await execute_http_api_tool({"name": "slow", "method": "GET", "url": "https://api.example.com/slow", "timeout": 1}, {}, "test_tool")
     assert result["status_code"] == 504
     assert time.monotonic() - started < 3
 
@@ -400,7 +400,7 @@ async def test_user_urls_and_configured_endpoints_use_separate_dns_pools(monkeyp
         await ResearchToolRegistry().web_fetch("https://news.example.com/a")
         assert {call.args[2] for call in mock_dns.call_args_list} == {ssrf_protection.DnsPool.USER_URL}
         mock_dns.reset_mock()
-        await execute_http_api_tool({"name": "t", "method": "GET", "url": "https://api.example.com/x"}, {})
+        await execute_http_api_tool({"name": "t", "method": "GET", "url": "https://api.example.com/x"}, {}, "test_tool")
         assert {call.args[2] for call in mock_dns.call_args_list} == {ssrf_protection.DnsPool.CONFIGURED_ENDPOINT}
 
 

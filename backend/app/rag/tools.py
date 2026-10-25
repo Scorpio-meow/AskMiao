@@ -889,7 +889,7 @@ class ResearchToolRegistry:
                 if custom_tool and custom_tool.is_enabled:
                     tool_dict = _serialize_tool_model(custom_tool)
                     db.close()
-                    return await execute_http_api_tool(tool_dict, arguments)
+                    return await execute_http_api_tool(tool_dict, arguments, name)
                 db.close()
             except Exception as e:
                 error_id = log_and_get_error_id(logger, f"執行自訂 API 工具 {name} 時發生異常", e)

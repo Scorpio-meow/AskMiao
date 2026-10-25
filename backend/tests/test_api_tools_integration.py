@@ -57,7 +57,7 @@ paths:
     tool_names = [t["function"]["name"] for t in defs]
     assert endpoint["name"] in tool_names
     tool_dict = _serialize_tool_model(new_tool)
-    res = await execute_http_api_tool(tool_dict, {"city": "Taipei"})
+    res = await execute_http_api_tool(tool_dict, {"city": "Taipei"}, "test_tool")
     assert res["status_code"] == 200
     assert res["is_success"] is True
     assert "Taipei" in str(res["data"])

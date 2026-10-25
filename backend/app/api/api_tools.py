@@ -204,7 +204,7 @@ def _query_items(params: Dict[str, Any]) -> List[tuple]:
     return items
 
 
-async def execute_http_api_tool(tool_dict: Dict[str, Any], arguments: Dict[str, Any]) -> Dict[str, Any]:
+async def execute_http_api_tool(tool_dict: Dict[str, Any], arguments: Dict[str, Any], tool_name: str) -> Dict[str, Any]:
     """
     通用 HTTP API 工具非同步執行器
     支援：
@@ -264,7 +264,7 @@ async def execute_http_api_tool(tool_dict: Dict[str, Any], arguments: Dict[str, 
         try:
             headers["Authorization"] = f"Bearer {await client_credentials_token(auth_config)}"
         except (OAuthError, SSRFProtectionError, httpx.HTTPError, asyncio.TimeoutError) as e:
-            error_id = log_and_get_error_id(logger, f"自訂 API 工具 {tool_dict.get('name')} 取得 OAuth2 權杖失敗", e, logging.WARNING)
+            error_id = log_and_get_error_id(logger, f"自訂 API 工具 {tool_name} 取得 OAuth2 權杖失敗", e, logging.WARNING)
             return {
                 "status_code": 502,
                 "is_success": False,
@@ -432,7 +432,7 @@ async def execute_http_api_tool(tool_dict: Dict[str, Any], arguments: Dict[str, 
     except SSRFProtectionError as e:
         duration = round(time.time() - start_time, 3)
         error_id = log_and_get_error_id(
-            logger, f"自訂 API 工具 {tool_dict.get('name')} 被 SSRF 防護拒絕", e, logging.WARNING
+            logger, f"自訂 API 工具 {tool_name} 被 SSRF 防護拒絕", e, logging.WARNING
         )
         return {
             "status_code": 403,
@@ -445,7 +445,7 @@ async def execute_http_api_tool(tool_dict: Dict[str, Any], arguments: Dict[str, 
     except Exception as e:
         duration = round(time.time() - start_time, 3)
         error_id = log_and_get_error_id(
-            logger, f"執行自訂 API 工具 {tool_dict.get('name')} 失敗", e
+            logger, f"執行自訂 API 工具 {tool_name} 失敗", e
         )
         return {
             "status_code": 500,
@@ -751,7 +751,7 @@ async def test_api_tool(
         tool_dict = _serialize_tool_model(tool)
     except SafeClientError as e:
         raise HTTPException(status_code=400, detail=str(e))
-    result = await execute_http_api_tool(tool_dict, test_data.arguments or {})
+    result = await execute_http_api_tool(tool_dict, test_data.arguments or {}, tool.name)
     return {
         "status": "success",
         "tool_name": tool.name,

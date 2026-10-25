@@ -195,6 +195,7 @@ async def test_api_tool_redirect_to_metadata_ip_is_blocked(monkeypatch):
         result = await execute_http_api_tool(
             {"name": "redirect_probe", "method": "GET", "url": "https://api.example.com/status"},
             {},
+            "redirect_probe",
         )
     assert result["status_code"] == 403
     assert result["is_success"] is False

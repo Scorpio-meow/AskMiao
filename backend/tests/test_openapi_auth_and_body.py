@@ -49,7 +49,7 @@ def post_tool(content_type):
 ])
 async def test_body_is_encoded_by_declared_content_type(upstream, content_type, expected_header):
     upstream["handler"] = lambda request: httpx.Response(200, json={"ok": True}, request=request)
-    result = await execute_http_api_tool(post_tool(content_type), {"title": "嗨", "tags": ["a", "b"]})
+    result = await execute_http_api_tool(post_tool(content_type), {"title": "嗨", "tags": ["a", "b"]}, "test_tool")
     assert result["is_success"] is True
     request = upstream["sent"][0]
     assert request.headers["content-type"].startswith(expected_header)
@@ -143,7 +143,7 @@ async def test_client_credentials_token_is_cached_and_refreshed_on_401(upstream)
         return httpx.Response(200, json={"echo": f"{token} csecret-123"}, request=request)
 
     upstream["handler"] = handler
-    first = await execute_http_api_tool(OAUTH_TOOL, {})
+    first = await execute_http_api_tool(OAUTH_TOOL, {}, "test_tool")
     assert first["is_success"] is True
     assert issued == ["token-1", "token-2"]
     assert "token-2" not in json.dumps(first) and "csecret-123" not in json.dumps(first)
@@ -151,7 +151,7 @@ async def test_client_credentials_token_is_cached_and_refreshed_on_401(upstream)
     assert parse_qs(token_request.content.decode()) == {"grant_type": ["client_credentials"], "scope": ["read"]}
     assert token_request.headers["authorization"].startswith("Basic ")
 
-    second = await execute_http_api_tool(OAUTH_TOOL, {})
+    second = await execute_http_api_tool(OAUTH_TOOL, {}, "test_tool")
     assert second["is_success"] is True
     assert issued == ["token-1", "token-2"]
 
@@ -159,7 +159,7 @@ async def test_client_credentials_token_is_cached_and_refreshed_on_401(upstream)
 @pytest.mark.anyio
 async def test_token_endpoint_failure_is_reported_without_details(upstream):
     upstream["handler"] = lambda request: httpx.Response(400, json={"error": "invalid_client", "secret": "x"}, request=request)
-    result = await execute_http_api_tool(OAUTH_TOOL, {})
+    result = await execute_http_api_tool(OAUTH_TOOL, {}, "test_tool")
     assert result["is_success"] is False
     assert "錯誤代碼" in result["error"]
     assert "invalid_client" not in result["error"]
