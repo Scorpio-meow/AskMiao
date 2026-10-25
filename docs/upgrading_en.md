@@ -34,7 +34,7 @@
 
 ## Upgrading from 5.0.0 to the next release
 
-For upgrading from 5.0.0 to the upcoming, not yet released version; see the [CHANGELOG](../CHANGELOG_en.md#unreleased) for the changes. This release reworks how structured data is parsed and chunked. The database schema is unchanged, and the backend drops the `passlib` dependency; what you need to do is add two new required fields to the domain profile, reinstall the backend packages from the new `requirements.txt`, and rebuild the index once after upgrading. Index metadata is now stored as JSON, so update `METADATA_PATH` as well.
+For upgrading from 5.0.0 to the upcoming, not yet released version; see the [CHANGELOG](../CHANGELOG_en.md#unreleased) for the changes. This release reworks how structured data is parsed and chunked and adds Agent Skills support. The database gains an `agent_skills` table, created automatically at startup (existing tables are unchanged), and the backend drops the `passlib` dependency; what you need to do is add two new required fields to the domain profile, add one new required setting, `SKILLS_DIR`, to `.env`, reinstall the backend packages from the new `requirements.txt`, and rebuild the index once after upgrading. Index metadata is now stored as JSON, so update `METADATA_PATH` as well.
 
 ### Next release changes and required actions
 
@@ -52,11 +52,13 @@ For upgrading from 5.0.0 to the upcoming, not yet released version; see the [CHA
 | Rebuild index | Regenerates every document's AI summary, overwriting hand edits | Summarizes only documents without a summary; a second call while one is running returns `409` | To regenerate every summary, use "Regenerate" on each document in the knowledge base page |
 | MCP tool results | Both `content` and a duplicate `raw_result` | `content` only | Integrations that read `raw_result` read `content` |
 | Password hashing package | `passlib` calling argon2 | `argon2-cffi` directly, with the same hash format and parameters | Reinstall from the new `requirements.txt`; existing passwords keep working |
+| `SKILLS_DIR` | None | Required; the Agent Skills file directory | Add `SKILLS_DIR=data/skills` to `.env`, or the backend will not start |
+| `agent_skills` table | None | Holds installed skills' metadata and enabled state | None; created automatically at startup |
 
 ### Upgrade steps for the next release
 
 1. Stop the backend and back up the database and `backend/data/`.
-2. Update the code, run `pip install -r requirements.txt` in `backend/` to reinstall the backend packages (`passlib` is no longer needed; remove it with `pip uninstall passlib` if you like), and run `bun run build` for the frontend again. `ADMIN_API_KEY`, `ENABLE_BATCH_ACCUMULATION`, `BATCH_ACCUMULATOR_SIZE`, and `BASE_URL` can be deleted from `.env`.
+2. Update the code, run `pip install -r requirements.txt` in `backend/` to reinstall the backend packages (`passlib` is no longer needed; remove it with `pip uninstall passlib` if you like), and run `bun run build` for the frontend again. Add `SKILLS_DIR=data/skills` to `.env` (relative paths resolve against `backend/`); `ADMIN_API_KEY`, `ENABLE_BATCH_ACCUMULATION`, `BATCH_ACCUMULATOR_SIZE`, and `BASE_URL` can be deleted from `.env`.
 3. Add both fields to the domain profile that `DOMAIN_PROFILE_PATH` points to. The bundled `backend/config/domain_profile.json` already has them; deployments with their own profile add them, for example:
 
    ```json
@@ -76,6 +78,7 @@ For upgrading from 5.0.0 to the upcoming, not yet released version; see the [CHA
 3. Rebuild the index once so the chunks return to the 5.0.0 format. Documents whose uploaded file is gone keep content in the new format, which 5.0.0 chunks as plain text.
 4. `METADATA_PATH` can go back to `data/index_metadata.pkl` or stay as it is; 5.0.0 cannot read JSON metadata, so the last rebuild time shows as empty until its next index write.
 5. `ADMIN_API_KEY` is required in 5.0.0: if you deleted it from `.env`, add it back (any random string), and reinstall the backend packages from the 5.0.0 `requirements.txt` (which includes `passlib`).
+6. The `agent_skills` table and the `SKILLS_DIR` directory can stay: 5.0.0 never reads them, and it ignores `SKILLS_DIR` in `.env`.
 
 ### After upgrading to the next release
 
@@ -83,6 +86,13 @@ For upgrading from 5.0.0 to the upcoming, not yet released version; see the [CHA
 <summary><b>Startup fails with an error naming <code>record_label_fields</code> or <code>record_ignore_fields</code></b></summary>
 
 The domain profile is missing a new required field; add it as in step 3 of the [upgrade steps](#upgrade-steps-for-the-next-release).
+
+</details>
+
+<details>
+<summary><b>Startup fails with an error naming <code>SKILLS_DIR</code></b></summary>
+
+`.env` is missing the new required setting; add `SKILLS_DIR=data/skills` as in step 2 of the [upgrade steps](#upgrade-steps-for-the-next-release).
 
 </details>
 

@@ -481,4 +481,61 @@ export const mcpService = {
     return response.data;
   }
 };
+export interface AgentSkillItem {
+  id: number;
+  name: string;
+  description: string;
+  license?: string | null;
+  compatibility?: string | null;
+  metadata?: Record<string, string> | null;
+  allowed_tools?: string | null;
+  warnings: string[];
+  is_enabled: boolean;
+  files_present: boolean;
+  created_at: string;
+  updated_at: string;
+}
+export interface AgentSkillDetail extends AgentSkillItem {
+  body: string | null;
+  load_error?: string;
+  resources: string[];
+  resources_truncated: boolean;
+}
+export interface EnabledSkill {
+  name: string;
+  description: string;
+}
+export const skillService = {
+  async getSkills(): Promise<{ status: string; total: number; skills: AgentSkillItem[] }> {
+    const response = await api.get<{ status: string; total: number; skills: AgentSkillItem[] }>('/skills');
+    return response.data;
+  },
+  async getEnabledSkills(): Promise<{ status: string; skills: EnabledSkill[] }> {
+    const response = await api.get<{ status: string; skills: EnabledSkill[] }>('/skills/enabled');
+    return response.data;
+  },
+  async getSkill(skillId: number): Promise<{ status: string; skill: AgentSkillDetail }> {
+    const response = await api.get<{ status: string; skill: AgentSkillDetail }>(`/skills/${skillId}`);
+    return response.data;
+  },
+  async uploadSkill(file: File, replace: boolean): Promise<{ status: string; message: string; skill: AgentSkillItem }> {
+    const formData = new FormData();
+    formData.append('file', file);
+    const response = await api.post<{ status: string; message: string; skill: AgentSkillItem }>('/skills/upload', formData, {
+      params: { replace },
+      headers: {
+        'Content-Type': 'multipart/form-data',
+      },
+    });
+    return response.data;
+  },
+  async toggleSkill(skillId: number): Promise<{ status: string; is_enabled: boolean; message: string }> {
+    const response = await api.patch<{ status: string; is_enabled: boolean; message: string }>(`/skills/${skillId}/toggle`);
+    return response.data;
+  },
+  async deleteSkill(skillId: number): Promise<{ status: string; message: string }> {
+    const response = await api.delete<{ status: string; message: string }>(`/skills/${skillId}`);
+    return response.data;
+  }
+};
 export default api;

@@ -34,7 +34,7 @@
 
 ## 從 5.0.0 升級到下一版
 
-適用於從 5.0.0 升級到尚未發行的下一版，變更見 [CHANGELOG](../CHANGELOG.md#unreleased)。這一版重做結構化資料的解析與切塊，資料庫結構沒有變更，後端相依套件移除 `passlib`；需要動手的是領域設定檔的兩個新必填欄位、依新的 `requirements.txt` 重新安裝後端套件，以及升級後執行一次重建索引。索引中繼資料改以 JSON 保存，建議一併更新 `METADATA_PATH`。
+適用於從 5.0.0 升級到尚未發行的下一版，變更見 [CHANGELOG](../CHANGELOG.md#unreleased)。這一版重做結構化資料的解析與切塊並支援 Agent Skills，資料庫新增 `agent_skills` 資料表（啟動時自動建立，既有資料表沒有變更），後端相依套件移除 `passlib`；需要動手的是領域設定檔的兩個新必填欄位、`.env` 的一個新必填設定 `SKILLS_DIR`、依新的 `requirements.txt` 重新安裝後端套件，以及升級後執行一次重建索引。索引中繼資料改以 JSON 保存，建議一併更新 `METADATA_PATH`。
 
 ### 下一版的變更與需要的動作
 
@@ -52,11 +52,13 @@
 | 重建索引 | 每份文件都重新生成 AI 摘要，覆蓋手動修訂 | 只替沒有摘要的文件生成；重建進行中再次呼叫回傳 `409` | 需要全部重新生成時，在知識庫頁逐份按「重新生成」 |
 | MCP 工具結果 | 同時有 `content` 與重複內容的 `raw_result` | 只有 `content` | 讀取 `raw_result` 的整合改讀 `content` |
 | 密碼雜湊套件 | `passlib` 呼叫 argon2 | 直接使用 `argon2-cffi`，雜湊格式與參數相同 | 依新的 `requirements.txt` 重新安裝；既有密碼不需重設 |
+| `SKILLS_DIR` | 無 | 必填，Agent Skills 的技能檔案目錄 | 在 `.env` 加上 `SKILLS_DIR=data/skills`，否則後端無法啟動 |
+| `agent_skills` 資料表 | 無 | 保存已安裝技能的中繼資料與啟用狀態 | 無，啟動時自動建立 |
 
 ### 升級到下一版的步驟
 
 1. 停止後端，備份資料庫與 `backend/data/`。
-2. 更新程式碼，在 `backend/` 執行 `pip install -r requirements.txt` 重新安裝後端套件（`passlib` 已不再需要，可以 `pip uninstall passlib` 移除），前端重新執行 `bun run build`。`.env` 中的 `ADMIN_API_KEY`、`ENABLE_BATCH_ACCUMULATION`、`BATCH_ACCUMULATOR_SIZE`、`BASE_URL` 可以刪除。
+2. 更新程式碼，在 `backend/` 執行 `pip install -r requirements.txt` 重新安裝後端套件（`passlib` 已不再需要，可以 `pip uninstall passlib` 移除），前端重新執行 `bun run build`。在 `.env` 加上 `SKILLS_DIR=data/skills`（相對路徑以 `backend/` 為基準）；`ADMIN_API_KEY`、`ENABLE_BATCH_ACCUMULATION`、`BATCH_ACCUMULATOR_SIZE`、`BASE_URL` 可以刪除。
 3. 在 `DOMAIN_PROFILE_PATH` 指向的領域設定檔補上兩個欄位。內建的 `backend/config/domain_profile.json` 已經包含；使用自己設定檔的部署請加上，例如：
 
    ```json
@@ -76,6 +78,7 @@
 3. 執行一次重建索引，讓片段回到 5.0.0 的格式。原始檔已遺失的文件會保留新格式的內容，5.0.0 會把它當一般文字切塊。
 4. `METADATA_PATH` 可以改回 `data/index_metadata.pkl`，也可以保留；5.0.0 讀不懂 JSON 格式的中繼資料，最後重建時間會在它下一次寫入索引前顯示為空。
 5. 5.0.0 的 `ADMIN_API_KEY` 是必填設定：已從 `.env` 刪除時要加回（任意隨機字串），並以 5.0.0 的 `requirements.txt` 重新安裝後端套件（含 `passlib`）。
+6. `agent_skills` 資料表與 `SKILLS_DIR` 目錄可以保留：5.0.0 不會讀取它們，`.env` 中的 `SKILLS_DIR` 也會被忽略。
 
 ### 升級到下一版後的常見狀況
 
@@ -83,6 +86,13 @@
 <summary><b>後端啟動失敗，錯誤訊息提到 <code>record_label_fields</code> 或 <code>record_ignore_fields</code></b></summary>
 
 領域設定檔缺少新的必填欄位，依 [升級步驟](#升級到下一版的步驟) 第 3 點補上。
+
+</details>
+
+<details>
+<summary><b>後端啟動失敗，錯誤訊息提到 <code>SKILLS_DIR</code></b></summary>
+
+`.env` 缺少新的必填設定，依 [升級步驟](#升級到下一版的步驟) 第 2 點加上 `SKILLS_DIR=data/skills`。
 
 </details>
 

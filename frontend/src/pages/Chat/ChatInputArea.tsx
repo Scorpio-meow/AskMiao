@@ -1,6 +1,7 @@
 import React, { useRef, useEffect, useLayoutEffect, useState, useCallback } from 'react';
 import { ChatInputAreaProps, ChatAttachment } from './types';
 import { Tooltip, Icon } from '../../components/ui';
+import { skillService, EnabledSkill } from '../../services/api';
 import styles from './ChatInputArea.module.css';
 const formatFileSize = (bytes?: number): string => {
   if (!bytes) return '';
@@ -23,6 +24,8 @@ const getBadgeClass = (filename: string): { className: string; label: string } =
 const canAutoFocus = () => window.matchMedia('(pointer: fine)').matches;
 // 支援 field-sizing 的瀏覽器由 CSS 自動長高，其餘才用 JS 計算高度
 const supportsFieldSizing = typeof CSS !== 'undefined' && CSS.supports('field-sizing', 'content');
+const SKILL_COMMAND_PATTERN = /^\/([a-z0-9-]*)$/;
+const MAX_SKILL_SUGGESTIONS = 8;
 export const ChatInputArea: React.FC<ChatInputAreaProps> = ({
   value,
   onChange,
@@ -38,6 +41,31 @@ export const ChatInputArea: React.FC<ChatInputAreaProps> = ({
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [isDragging, setIsDragging] = useState(false);
+  const [skills, setSkills] = useState<EnabledSkill[]>([]);
+  const [activeSkillIndex, setActiveSkillIndex] = useState(0);
+  const [dismissedCommand, setDismissedCommand] = useState<string | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    skillService.getEnabledSkills()
+      .then((res) => {
+        if (!cancelled) setSkills(res.skills);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+  const commandMatch = SKILL_COMMAND_PATTERN.exec(value);
+  const skillSuggestions = commandMatch && dismissedCommand !== value
+    ? skills.filter((s) => s.name.startsWith(commandMatch[1])).slice(0, MAX_SKILL_SUGGESTIONS)
+    : [];
+  const suggestionsOpen = skillSuggestions.length > 0 && !disabled;
+  const highlightedSkill = suggestionsOpen ? Math.min(activeSkillIndex, skillSuggestions.length - 1) : -1;
+  const chooseSkill = (name: string) => {
+    onChange(`/${name} `);
+    setActiveSkillIndex(0);
+    textareaRef.current?.focus();
+  };
   const processFiles = useCallback((files: FileList | File[]) => {
     const newAttachments: ChatAttachment[] = [];
     const fileList = Array.from(files);
@@ -82,6 +110,24 @@ export const ChatInputArea: React.FC<ChatInputAreaProps> = ({
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     // 注音、倉頡等輸入法組字時按 Enter 是在選字，不能當成送出
     if (e.nativeEvent.isComposing || e.keyCode === 229) return;
+    if (suggestionsOpen) {
+      if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+        e.preventDefault();
+        const step = e.key === 'ArrowDown' ? 1 : -1;
+        setActiveSkillIndex((highlightedSkill + step + skillSuggestions.length) % skillSuggestions.length);
+        return;
+      }
+      if (e.key === 'Enter' || e.key === 'Tab') {
+        e.preventDefault();
+        chooseSkill(skillSuggestions[highlightedSkill].name);
+        return;
+      }
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        setDismissedCommand(value);
+        return;
+      }
+    }
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       if (canSend) {
@@ -208,6 +254,27 @@ export const ChatInputArea: React.FC<ChatInputAreaProps> = ({
             })}
           </ul>
         )}
+        {suggestionsOpen && (
+          <ul id="skill-suggestions" className={styles.skillSuggestions} role="listbox" aria-label="可使用的技能">
+            {skillSuggestions.map((skill, idx) => (
+              <li
+                key={skill.name}
+                id={`skill-option-${skill.name}`}
+                role="option"
+                aria-selected={idx === highlightedSkill}
+                className={`${styles.skillOption} ${idx === highlightedSkill ? styles.skillOptionActive : ''}`}
+                onMouseDown={(e) => {
+                  e.preventDefault();
+                  chooseSkill(skill.name);
+                }}
+                onMouseEnter={() => setActiveSkillIndex(idx)}
+              >
+                <span className={styles.skillOptionName}>/{skill.name}</span>
+                <span className={styles.skillOptionDescription}>{skill.description}</span>
+              </li>
+            ))}
+          </ul>
+        )}
         <div className={styles.inputRow}>
           {/* 上傳檔案/圖片按鈕 */}
           <input
@@ -236,8 +303,14 @@ export const ChatInputArea: React.FC<ChatInputAreaProps> = ({
             placeholder="輸入您的問題..."
             aria-label="輸入訊息"
             value={value}
-            onChange={(e) => onChange(e.target.value)}
+            onChange={(e) => {
+              onChange(e.target.value);
+              setActiveSkillIndex(0);
+            }}
             onKeyDown={handleKeyDown}
+            aria-autocomplete={skills.length > 0 ? 'list' : undefined}
+            aria-controls={suggestionsOpen ? 'skill-suggestions' : undefined}
+            aria-activedescendant={suggestionsOpen ? `skill-option-${skillSuggestions[highlightedSkill].name}` : undefined}
             onPaste={handlePaste}
             disabled={disabled}
           />
@@ -272,7 +345,7 @@ export const ChatInputArea: React.FC<ChatInputAreaProps> = ({
           <span className={styles.hint}>{hint}</span>
         ) : (
           <span className={styles.dragHint}>
-            <Icon name="image" size={13} /> 可貼上截圖或拖曳檔案
+            <Icon name="image" size={13} /> 可貼上截圖或拖曳檔案{skills.length > 0 && '，輸入 / 指定技能'}
           </span>
         )}
         <span className={`${styles.hint} ${styles.keyboardHint}`}>按 Enter 發送，Shift + Enter 換行</span>

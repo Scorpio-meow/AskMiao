@@ -12,12 +12,14 @@ from app.core.config import settings
 from app.core.domain_profile import domain_profile
 from app.core.error_response import format_ssrf_rejection, log_and_get_error_id
 from app.core.html_text import extract_text_and_title
-from app.core.limits import MAX_KB_CATALOG_CHARS, MAX_TEXT_CLEANUP_CHARS
+from app.core.limits import MAX_KB_CATALOG_CHARS, MAX_SKILL_CATALOG_CHARS, MAX_TEXT_CLEANUP_CHARS
 from app.rag.retrievers.hybrid import matches_target_document
+from app.services import agent_skills
 from app.services.structured_data import merge_record_parts
 logger = logging.getLogger(__name__)
 WEB_TOOL_NAMES = ("web_search", "web_fetch")
-BUILTIN_TOOL_NAMES = ("search_knowledge_base", "filter_and_count_records") + WEB_TOOL_NAMES
+SKILL_TOOL_NAMES = ("activate_skill", "read_skill_resource")
+BUILTIN_TOOL_NAMES = ("search_knowledge_base", "filter_and_count_records") + WEB_TOOL_NAMES + SKILL_TOOL_NAMES
 def is_web_fetch_domain_allowed(url: str) -> bool:
     """WEB_FETCH_ALLOWED_DOMAINS 為 * 時不限制；否則主機須為清單中的網域或其子網域"""
     allowed = settings.web_fetch_allowed_domains
@@ -529,6 +531,10 @@ class ResearchToolRegistry:
         ]
         if not settings.ENABLE_WEB_SEARCH:
             base_tools = [t for t in base_tools if t["function"]["name"] not in WEB_TOOL_NAMES]
+        try:
+            base_tools.extend(self._skill_tool_definitions())
+        except Exception as e:
+            logger.warning(f"載入 Agent Skills 失敗: {e}")
 
         try:
             from app.models.database import SessionLocal
@@ -572,6 +578,76 @@ class ResearchToolRegistry:
         except Exception as e:
             logger.warning(f"動態載入外部工具或 MCP 失敗: {e}")
         return base_tools
+    @staticmethod
+    def _enabled_skills() -> List[Any]:
+        from app.models.database import SessionLocal
+        from app.models import AgentSkill
+        db = SessionLocal()
+        try:
+            skills = db.query(AgentSkill).filter(AgentSkill.is_enabled == True).order_by(AgentSkill.name).all()
+            return [s for s in skills if agent_skills.skill_files_present(s.name)]
+        finally:
+            db.close()
+    def _skill_tool_definitions(self) -> List[Dict[str, Any]]:
+        header = (
+            "載入管理員安裝的技能（Agent Skills）完整指示。當使用者的任務符合下列某個技能的描述時，"
+            "先以技能名稱呼叫此工具取得指示，再依指示完成任務；不相關時不要呼叫。\n"
+        )
+        entries: List[str] = []
+        names: List[str] = []
+        used = len(header) + len("<available_skills>\n</available_skills>")
+        for skill in self._enabled_skills():
+            entry = f"  <skill>\n    <name>{skill.name}</name>\n    <description>{skill.description}</description>\n  </skill>\n"
+            if used + len(entry) > MAX_SKILL_CATALOG_CHARS:
+                logger.warning(f"技能目錄超過 {MAX_SKILL_CATALOG_CHARS} 字，未列入技能：{skill.name}")
+                continue
+            used += len(entry)
+            entries.append(entry)
+            names.append(skill.name)
+        if not names:
+            return []
+        catalog = header + "<available_skills>\n" + "".join(entries) + "</available_skills>"
+        return [
+            {
+                "type": "function",
+                "function": {
+                    "name": "activate_skill",
+                    "description": catalog,
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "name": {"type": "string", "enum": names, "description": "要載入的技能名稱"}
+                        },
+                        "required": ["name"]
+                    }
+                }
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "read_skill_resource",
+                    "description": "讀取已載入技能目錄中的參考檔、範本或腳本內容（例如 references/REFERENCE.md）。只在技能指示提到該檔案時使用；腳本只能讀取，不會被執行。",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "skill": {"type": "string", "enum": names, "description": "技能名稱"},
+                            "path": {"type": "string", "description": "技能目錄內的相對路徑"}
+                        },
+                        "required": ["skill", "path"]
+                    }
+                }
+            }
+        ]
+    def _skill_enabled(self, name: str) -> bool:
+        return any(skill.name == name for skill in self._enabled_skills())
+    async def activate_skill(self, name: str) -> Dict[str, Any]:
+        if not await asyncio.to_thread(self._skill_enabled, name):
+            return {"error": f"沒有啟用中的技能：{name}"}
+        return await asyncio.to_thread(agent_skills.activate_skill, name)
+    async def read_skill_resource(self, skill: str, path: str) -> Dict[str, Any]:
+        if not await asyncio.to_thread(self._skill_enabled, skill):
+            return {"error": f"沒有啟用中的技能：{skill}"}
+        return await asyncio.to_thread(agent_skills.read_skill_resource, skill, path)
     @staticmethod
     def _find_mcp_tool(db, name: str):
         """依 Agent 看到的函式名稱找出啟用中的 MCP 伺服器與其工具原名"""
@@ -638,6 +714,10 @@ class ResearchToolRegistry:
         elif name == "web_fetch":
             url = arguments.get("url", "")
             return await self.web_fetch(url)
+        elif name == "activate_skill":
+            return await self.activate_skill(str(arguments.get("name", "")))
+        elif name == "read_skill_resource":
+            return await self.read_skill_resource(str(arguments.get("skill", "")), str(arguments.get("path", "")))
         elif name.startswith("mcp_"):
 
             try:

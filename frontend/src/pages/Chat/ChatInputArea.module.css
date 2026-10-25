@@ -34,6 +34,46 @@
   box-shadow: 0 0 0 4px rgba(37, 99, 235, 0.18) !important;
 }
 
+.skillSuggestions {
+  list-style: none;
+  margin: 0 0 var(--space-2);
+  padding: var(--space-1);
+  max-height: 280px;
+  overflow-y: auto;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  background-color: var(--bg-surface);
+  box-shadow: var(--shadow-md);
+}
+
+.skillOption {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+
+.skillOptionActive {
+  background-color: var(--color-primary-light);
+}
+
+.skillOptionName {
+  font-family: var(--font-mono);
+  font-size: var(--font-size-sm);
+  color: var(--text-primary);
+}
+
+.skillOptionDescription {
+  font-size: var(--font-size-xs);
+  color: var(--text-secondary);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
 /* 附件預覽區域 */
 .attachmentPreviewBar {
   list-style: none;

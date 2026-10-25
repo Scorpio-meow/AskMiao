@@ -7,7 +7,7 @@ import httpx
 
 from app.core.config import settings
 from app.core.limits import MAX_TOOL_RESULT_CHARS
-from app.rag.tools import WEB_TOOL_NAMES
+from app.rag.tools import SKILL_TOOL_NAMES, WEB_TOOL_NAMES
 
 # 答案中的引用標記：[1]、[1,2]、[1，2]、[1、2]；[1][2] 會被視為兩個標記
 CITATION_PATTERN = re.compile(r"\[(\d+(?:\s*[,，、]\s*\d+)*)\]")
@@ -68,11 +68,14 @@ class ResearchSession:
                 self._url_sources |= extract_url_tokens(text)
         self._citation_numbers: Dict[str, int] = {}
         self._citation_details: Dict[int, Dict[str, Any]] = {}
+        self.activated_skills: Set[str] = set()
 
     def refuse_tool_call(self, name: str, arguments: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """依聯網安全規則檢查工具呼叫；應拒絕時回傳要交給模型的錯誤結果"""
         if name in WEB_TOOL_NAMES and settings.BLOCK_WEB_TOOLS_AFTER_KB and self.kb_content_returned:
             return {"error": "本次提問已讀取知識庫內容，依系統設定（BLOCK_WEB_TOOLS_AFTER_KB）不再使用聯網工具，請以已取得的資料回答"}
+        if name == "activate_skill" and arguments.get("name") in self.activated_skills:
+            return {"skill": arguments.get("name"), "message": "此技能已在本次提問載入，請直接沿用先前的技能指示"}
         if name == "web_fetch":
             url = str(arguments.get("url", ""))
             target = canonical_url(url)
@@ -88,7 +91,11 @@ class ResearchSession:
         自訂 API 與 MCP 工具的結果不列入。"""
         if not isinstance(output, dict) or "error" in output:
             return
-        if name == "search_knowledge_base":
+        if name in SKILL_TOOL_NAMES:
+            if name == "activate_skill" and output.get("skill"):
+                self.activated_skills.add(output["skill"])
+            self._add_url_source(output.get("content"))
+        elif name == "search_knowledge_base":
             for doc in output.get("documents") or []:
                 self.kb_content_returned = True
                 content = doc.get("content") or ""
@@ -142,6 +149,11 @@ class ResearchSession:
             self._citation_numbers[key] = number
             self._citation_details[number] = {"citation": number, **detail}
         return number
+
+    def tool_message_content(self, name: str, output: Any) -> str:
+        if name in SKILL_TOOL_NAMES and isinstance(output, dict) and "error" not in output and isinstance(output.get("content"), str):
+            return output["content"]
+        return self.wrap_tool_output(output)
 
     def wrap_tool_output(self, output: Any) -> str:
         # 工具結果每輪都會重送給模型，截斷以限制單次請求的輸入量

@@ -18,6 +18,7 @@ from app.core.limits import (
     MAX_CHAT_REQUEST_BODY_BYTES,
     MAX_FILES_PER_UPLOAD,
     MAX_REQUEST_BODY_BYTES,
+    MAX_SKILL_ARCHIVE_BYTES,
     MIB,
 )
 
@@ -33,6 +34,7 @@ LARGE_BODY_ROUTES: Dict[str, LargeBodyRoute] = {
     "/api/documents/upload": LargeBodyRoute(
         limit=MAX_FILES_PER_UPLOAD * settings.MAX_FILE_SIZE_MB * MIB + 1 * MIB, admin_only=True
     ),
+    "/api/skills/upload": LargeBodyRoute(limit=MAX_SKILL_ARCHIVE_BYTES + 1 * MIB, admin_only=True),
 }
 TOO_LARGE_DETAIL = "請求內容超過大小上限"
 

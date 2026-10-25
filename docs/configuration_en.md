@@ -31,12 +31,12 @@
 - **Required settings have no defaults**: if any is missing, the backend stops at startup with a `Field required` error that names the missing fields.
 - **Value ranges and formats**: `AGENT_MAX_TURNS ≥ 1`, `CONVERSATION_HISTORY_MESSAGES ≥ 0`, `RRF_K ≥ 1`, `0 ≤ RERANK_RELEVANCE_THRESHOLD ≤ 1`, and `ANTHROPIC_MAX_TOKENS ≥ 1`; `LOGIN_MAX_FAILURES_PER_ACCOUNT`, `LOGIN_MAX_FAILURES_PER_ADDRESS`, `LOGIN_FAILURE_WINDOW_SECONDS`, and `LOGIN_LOCKOUT_SECONDS` must all be ≥ 1, and `TOOL_SECRETS_KEY` must be a valid Fernet key; out-of-range or malformed values also stop startup.
 - **Booleans**: `true` / `false`, `1` / `0`, and `yes` / `no` all work.
-- **Relative paths**: relative values of `DATA_DIR`, `UPLOAD_DIR`, `FAISS_INDEX_PATH`, `BM25_INDEX_DIR`, `METADATA_PATH`, `HF_HOME`, `HF_HUB_CACHE`, `SENTENCE_TRANSFORMERS_HOME`, `DOMAIN_PROFILE_PATH`, and `JIEBA_DICTIONARY` always resolve against `backend/`. `DATABASE_URL` is not one of them: a relative SQLite path depends on the startup directory.
+- **Relative paths**: relative values of `DATA_DIR`, `UPLOAD_DIR`, `FAISS_INDEX_PATH`, `BM25_INDEX_DIR`, `METADATA_PATH`, `HF_HOME`, `HF_HUB_CACHE`, `SENTENCE_TRANSFORMERS_HOME`, `DOMAIN_PROFILE_PATH`, `JIEBA_DICTIONARY`, and `SKILLS_DIR` always resolve against `backend/`. `DATABASE_URL` is not one of them: a relative SQLite path depends on the startup directory.
 - **Code default versus template value**: in the tables below, "Code default" applies when `.env` does not set the key, and "Template" is the value suggested by `backend/.env.example`; your `.env` wins whenever they differ.
 
 ## Required settings
 
-These 20 settings have no default; the backend does not start if any is missing.
+These 21 settings have no default; the backend does not start if any is missing.
 
 | Variable | Template | Description |
 |---|---|---|
@@ -59,6 +59,7 @@ These 20 settings have no default; the backend does not start if any is missing.
 | `RRF_K` | `60` | RRF fusion constant |
 | `RERANK_RELEVANCE_THRESHOLD` | `0.2` | Reranker probability threshold |
 | `DOMAIN_PROFILE_PATH` | `config/domain_profile.json` | Domain profile path |
+| `SKILLS_DIR` | `data/skills` | Agent Skills file directory; see [Storage paths and uploads](#storage-paths-and-uploads) |
 
 Generate a `TOOL_SECRETS_KEY` for each deployment, for example in an environment where the backend dependencies are installed:
 
@@ -203,6 +204,7 @@ These settings are exported to the environment before any model loads (booleans 
 |---|---|---|---|
 | `DATA_DIR` | `data` | `data` | Root directory for indexes and runtime data; the jieba dictionary cache also lives in its `jieba_cache/` subdirectory (no longer in the system temp directory) |
 | `UPLOAD_DIR` | `data/uploads` | `data/uploads` | Original uploaded files; index rebuilds re-extract text from here first |
+| `SKILLS_DIR` | — (required) | `data/skills` | Agent Skills uploaded by admins on the AI Tools page, one subdirectory `SKILLS_DIR/<name>/` per skill; `.tmp-*` and `.old-*` directories left by an interrupted install are removed at startup |
 | `FAISS_INDEX_PATH` | `data/faiss_index.bin` | same | FAISS vector index (`IndexIDMap2`, ids are chunk_ids) |
 | `BM25_INDEX_DIR` | `data/bm25_index` | same | Whoosh BM25 index directory (including `tokenizer_signature.json`) |
 | `METADATA_PATH` | `data/index_metadata.json` | same | Index metadata (JSON) such as the last rebuild time |
@@ -412,6 +414,18 @@ Admin uploads to the knowledge base and chat attachments each use their own `Ext
 | `MAX_CONCURRENT_ATTACHMENT_EXTRACTIONS` | 2 | Chat attachments parsed at once across the whole process; multiplied by the per-file budget, this bounds the memory used for attachment parsing |
 
 The OOXML checks run before parsing and use the sizes the ZIP members declare. python-docx and python-pptx build whole XML parts into a DOM (about 15 to 30 times the XML size in memory); which members count toward the XML total is decided from `[Content_Types].xml` (plus `.rels` files and `[Content_Types].xml` itself), so changing a part's file extension does not get around it. `.xlsx` files are read as a stream, so this item does not apply to them. When a file exceeds any OOXML budget, an admin upload of that file fails; a chat attachment is not parsed, and the model is told that the attachment exceeded the parsing limits and was not read. JSON, JSONL, YAML, and JS declaration attachments over the length limit are not parsed into structured records and get only the linear noise cleanup. CSV and XLSX are not subject to this length limit; YAML whose aliases expand to more nodes than the source has characters is never parsed and is handled as plain text.
+
+**Agent Skills**
+
+| Constant | Value | Description |
+|---|---|---|
+| `MAX_SKILL_ARCHIVE_BYTES` | 10 MiB | Size of an uploaded skill file (`.zip` or `SKILL.md`); the body limit of `POST /api/skills/upload` is this plus 1 MiB, raised only when the access token's `is_admin` claim is `true`, as for document uploads |
+| `MAX_SKILL_UNCOMPRESSED_BYTES` | 50 MiB | Total uncompressed size of a skill zip, counted from the bytes actually decompressed |
+| `MAX_SKILL_FILES` | 500 | Files in one skill |
+| `MAX_SKILL_MD_BYTES` | 256 KiB | Size of `SKILL.md` |
+| `MAX_SKILL_RESOURCE_LISTING` | 100 | Files listed to the model when a skill is activated |
+| `MAX_SKILL_RESOURCE_CHARS` | 20,000 characters | The `SKILL.md` body returned on activation and each `read_skill_resource` result; the rest is truncated |
+| `MAX_SKILL_CATALOG_CHARS` | 8,000 characters | Length of the skill catalog (names and descriptions) in the `activate_skill` tool description; skills that do not fit are left out with a warning in the log |
 
 **Accounts, logs, and rate limiting**
 

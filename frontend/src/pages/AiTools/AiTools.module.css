@@ -935,6 +935,13 @@
   max-height: 280px;
 }
 
+.skillBody {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 420px;
+  overflow-y: auto;
+}
+
 .emptyNotice {
   display: flex;
   flex-direction: column;

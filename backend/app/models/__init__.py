@@ -124,6 +124,20 @@ class McpServer(Base):
     created_by = Column(Integer, ForeignKey("users.id"), nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+class AgentSkill(Base):
+    __tablename__ = "agent_skills"
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, unique=True, index=True, nullable=False)
+    description = Column(Text, nullable=False)
+    license = Column(String, nullable=True)
+    compatibility = Column(Text, nullable=True)
+    skill_metadata = Column(Text, nullable=True)
+    allowed_tools = Column(Text, nullable=True)
+    warnings = Column(Text, nullable=True)
+    is_enabled = Column(Boolean, nullable=False)
+    created_by = Column(Integer, ForeignKey("users.id"), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 class UserCreate(BaseModel):
     username: str
     email: str

@@ -12,11 +12,12 @@
 - [3. Knowledge-base documents `/api/documents`](#3-knowledge-base-documents-apidocuments)
 - [4. Custom API tools `/api/api-tools`](#4-custom-api-tools-apiapi-tools)
 - [5. MCP servers `/api/mcp`](#5-mcp-servers-apimcp)
-- [6. Model lists `/api/tags`](#6-model-lists-apitags)
-- [7. Admin `/api/admin`](#7-admin-apiadmin)
-- [8. Health checks](#8-health-checks)
-- [9. Error handling](#9-error-handling)
-- [10. Known limitations](#10-known-limitations)
+- [6. Agent Skills `/api/skills`](#6-agent-skills-apiskills)
+- [7. Model lists `/api/tags`](#7-model-lists-apitags)
+- [8. Admin `/api/admin`](#8-admin-apiadmin)
+- [9. Health checks](#9-health-checks)
+- [10. Error handling](#10-error-handling)
+- [11. Known limitations](#11-known-limitations)
 
 ---
 
@@ -29,7 +30,7 @@
 | Content types | `multipart/form-data` for uploads, `text/event-stream` for chat streaming, `application/json` for everything else |
 | Timestamps | ISO 8601 in UTC without a timezone suffix (for example `2026-09-25T02:30:00`) |
 | Rate limit | `RATE_LIMIT_PER_MINUTE` requests per client IP per 60 seconds (default 60); beyond that the API returns `429`. The client IP is the direct peer unless `FORWARDED_ALLOW_IPS` names a proxy whose `X-Forwarded-For` is trusted |
-| Request body limit | 1 MiB for general requests; `POST /api/chat/send` allows more with a valid access token, and `POST /api/documents/upload` only when the valid access token's `is_admin` claim is `true`. Larger bodies get `413` `{"detail": "請求內容超過大小上限"}`; see [configuration reference: resource limits](configuration_en.md#resource-limits) |
+| Request body limit | 1 MiB for general requests; `POST /api/chat/send` allows more with a valid access token, and `POST /api/documents/upload` and `POST /api/skills/upload` only when the valid access token's `is_admin` claim is `true`. Larger bodies get `413` `{"detail": "請求內容超過大小上限"}`; see [configuration reference: resource limits](configuration_en.md#resource-limits) |
 
 ### Permission levels
 
@@ -90,6 +91,12 @@ API messages are in Traditional Chinese; the English glosses in this document ar
 | POST | `/api/mcp/servers/{server_id}/discover` | Admin | Rediscover tools |
 | PATCH | `/api/mcp/servers/{server_id}/toggle` | Admin | Enable or disable a server |
 | POST | `/api/mcp/servers/{server_id}/tools/{tool_name}/test` | Admin | Call an MCP tool once |
+| GET | `/api/skills/enabled` | Signed in | Names and descriptions of enabled skills |
+| GET | `/api/skills` | Admin | List skills |
+| GET | `/api/skills/{skill_id}` | Admin | One skill with its `SKILL.md` body |
+| POST | `/api/skills/upload` | Admin | Upload and install a skill |
+| PATCH | `/api/skills/{skill_id}/toggle` | Admin | Toggle enabled state |
+| DELETE | `/api/skills/{skill_id}` | Admin | Delete a skill and its files |
 | GET | `/api/tags` | Public | Model list in the Ollama `tags` format |
 | GET | `/api/admin/users` | Admin | List users |
 | PUT | `/api/admin/users/{user_id}` | Admin | Update a user |
@@ -280,7 +287,7 @@ Send a message and start the `ResearchAgent`. The response is a **Server-Sent Ev
 
 | Field | Type | Required | Default | Description |
 |---|---|---|---|---|
-| `content` | string | Yes | — | The user's question, at most 20,000 characters |
+| `content` | string | Yes | — | The user's question, at most 20,000 characters; when it starts with `/skill-name` for an enabled skill, that skill is loaded first, the prefix is removed, and an `activate_skill` step is recorded in the research trace |
 | `conversation_id` | integer | No | `null` | Conversation ID; a new conversation is created when it is empty, unknown, or not yours |
 | `model_name` | string | No | Default model | Model to use; it must be in the [available model list](configuration_en.md#model-list) or equal `MODEL_NAME`, otherwise `400` `不支援的模型` ("unsupported model"); the provider is routed by name |
 | `reasoning_effort` | string | No | `medium` | Reasoning level, sent only to OpenAI and Azure OpenAI; see below |
@@ -389,6 +396,7 @@ The tool definitions currently available to the agent (sign-in required), in the
 - Built-in tools `search_knowledge_base`, `filter_and_count_records`, `web_search`, and `web_fetch` (the last two are omitted when `ENABLE_WEB_SEARCH=false`). The `search_knowledge_base` description lists every document's file name and AI summary so the model can choose where to search.
 - Enabled custom API tools (description prefixed with `【外部自訂 API】`).
 - Discovered tools of enabled MCP servers, named `mcp_<server>_<tool>` (description prefixed with `【MCP 協定工具】`).
+- When at least one enabled Agent Skill has its files present, `activate_skill` and `read_skill_resource` (see [6. Agent Skills](#6-agent-skills-apiskills)); otherwise neither appears.
 
 ```json
 {
@@ -911,11 +919,63 @@ A failed call returns `result` as `{"is_success": false, "duration_seconds": ...
 
 ---
 
-## 6. Model lists `/api/tags`
+## 6. Agent Skills `/api/skills`
+
+Manages skills in the [Agent Skills](https://agentskills.io/specification) format. Skill files live in `SKILLS_DIR/<name>/`; the `agent_skills` table only keeps the parsed metadata and the enabled flag. Every endpoint except 6.1 requires **admin** permission.
+
+The agent uses skills through progressive disclosure: when at least one enabled skill has its files present, [`GET /api/chat/tools`](#23-get-apichattools) gains two built-in tools, `activate_skill` (its description lists each skill's name and description) and `read_skill_resource`. Only when the model calls `activate_skill` does it receive the `SKILL.md` body (frontmatter stripped, wrapped in `<skill_content>`) and the list of files in the skill; it then reads single UTF-8 text files with `read_skill_resource` as needed. Skill content is admin-installed instructions and is not wrapped in `<untrusted_tool_result>`, but it cannot override the system prompt's data-safety and citation rules; scripts in a skill are never executed. Neither skill tool requires approval.
+
+### Skill object
+
+| Field | Type | Description |
+|---|---|---|
+| `id` | integer | Skill ID |
+| `name` | string | Skill name (from `name` in `SKILL.md`); also the directory name and the `/skill-name` command |
+| `description` | string | When to use the skill; listed in the `activate_skill` tool description |
+| `license` / `compatibility` / `allowed_tools` | string | Optional `SKILL.md` fields; `allowed_tools` is stored only and does not change tool permissions |
+| `metadata` | object | `metadata` from `SKILL.md`, values converted to strings |
+| `warnings` | array | Problems found while parsing that did not prevent loading |
+| `is_enabled` | boolean | Whether the skill is offered to the agent |
+| `files_present` | boolean | Whether `SKILLS_DIR/<name>/SKILL.md` exists; skills without it are not offered to the agent |
+| `created_at` / `updated_at` | string | Timestamps |
+
+### 6.1 GET /api/skills/enabled
+
+Sign-in required. Lists enabled skills whose files exist, for the `/` skill suggestions in the chat input.
+
+**Response**: `{"status": "success", "skills": [{"name": "meeting-minutes", "description": "…"}]}`
+
+### 6.2 GET /api/skills
+
+**Response**: `{"status": "success", "total": 1, "skills": [skill object, ...]}`, sorted by name.
+
+### 6.3 GET /api/skills/{skill_id}
+
+**Response**: `{"status": "success", "skill": {...}}`: the skill object plus `body` (the `SKILL.md` body, or `null` with `load_error` when it cannot be read), `resources` (relative paths of the files other than `SKILL.md`, at most 100), and `resources_truncated`. Returns `404` `找不到該技能` when not found.
+
+### 6.4 POST /api/skills/upload
+
+`multipart/form-data` with a `file` field: a `.zip` of the skill directory (`SKILL.md` at the root or inside the single top-level directory; the `.skill` extension is treated as zip) or a single `SKILL.md`, at most 10 MiB. **Query parameter**: `replace` (default `false`); when `true`, the whole directory of a skill with the same name is replaced.
+
+`name` must follow the specification (lowercase letters, digits and hyphens, at most 64 characters, no leading, trailing or consecutive hyphens) and `description` is required. The archive may not contain absolute paths, `..`, drive letters or symbolic links, and may hold at most 500 files and 50 MiB uncompressed; `SKILL.md` is at most 256 KiB. A `name` that differs from the top-level directory, fields longer than the specification allows, unknown frontmatter fields and similar problems go into `warnings` and the skill is installed anyway.
+
+**Response**: `{"status": "success", "message": "已安裝技能「meeting-minutes」", "skill": skill object}`. Invalid skills return `400` with the reason; when a skill with the same name exists and `replace` is `false`, it returns `409` `已存在同名技能：<name>`.
+
+### 6.5 PATCH /api/skills/{skill_id}/toggle
+
+**Response**: `{"status": "success", "is_enabled": false, "message": "技能已停用"}`
+
+### 6.6 DELETE /api/skills/{skill_id}
+
+Deletes the database row and the skill directory. **Response**: `{"status": "success", "message": "已刪除技能「meeting-minutes」"}`
+
+---
+
+## 7. Model lists `/api/tags`
 
 A model list in the Ollama `tags` format; no sign-in is required. The former `GET /api/external-tags` has been removed.
 
-### 6.1 GET /api/tags
+### 7.1 GET /api/tags
 
 Returns the same list and default model as `GET /api/chat/models` (both share one rule; see [Configuration: model list](configuration_en.md#model-list)), under the field `tags`. With no model source configured (`AVAILABLE_MODELS` or a cloud key), it queries the remote list at `EXTERNAL_TAGS_URL` (or `{LLM_API_BASE}/api/tags`) and returns an empty list if that fails. The remote query runs in a worker thread, its result (failures included) is cached for 30 seconds, and only one query runs at a time, so anonymous requests do not trigger an outbound call each time.
 
@@ -925,11 +985,11 @@ Returns the same list and default model as `GET /api/chat/models` (both share on
 
 ---
 
-## 7. Admin `/api/admin`
+## 8. Admin `/api/admin`
 
 > Every endpoint in this module requires **admin** access.
 
-### 7.1 User management
+### 8.1 User management
 
 | Method | Path | Description |
 |---|---|---|
@@ -941,7 +1001,7 @@ Returns the same list and default model as `GET /api/chat/models` (both share on
 
 Account changes and deletions are written to the security log along with the acting admin: `PUT` writes `ADMIN_USER_UPDATED` when something actually changed (the target account id and the before and after values of `username`, `email`, `is_active`, and `is_admin`), and `DELETE` writes `ADMIN_USER_DELETED` (the target account id, the username, and whether it was an admin).
 
-### 7.2 Statistics
+### 8.2 Statistics
 
 `GET /api/admin/statistics`, cached for 180 seconds:
 
@@ -957,7 +1017,7 @@ Account changes and deletions are written to the security log along with the act
 
 `daily_stats` covers the last 7 days (from today backwards, by UTC date).
 
-### 7.3 Conversations and documents
+### 8.3 Conversations and documents
 
 | Method | Path | Description |
 |---|---|---|
@@ -967,7 +1027,7 @@ Account changes and deletions are written to the security log along with the act
 | GET | `/api/admin/documents` | All documents, newest first, with the same fields as `GET /api/documents/` and no full text |
 | DELETE | `/api/admin/documents/{document_id}` | Same as `DELETE /api/documents/{document_id}`: deletes the record, its chunks and indexes, and the uploaded file |
 
-### 7.4 Retrieval and index maintenance
+### 8.4 Retrieval and index maintenance
 
 | Method | Path | Description |
 |---|---|---|
@@ -1017,7 +1077,7 @@ Account changes and deletions are written to the security log along with the act
 
 ---
 
-## 8. Health checks
+## 9. Health checks
 
 | Method | Path | Response |
 |---|---|---|
@@ -1028,7 +1088,7 @@ The interactive docs `/docs` and `/redoc` and the OpenAPI document `/openapi.jso
 
 ---
 
-## 9. Error handling
+## 10. Error handling
 
 ### Response format
 
@@ -1078,7 +1138,7 @@ Every response carries `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY
 
 ---
 
-## 10. Known limitations
+## 11. Known limitations
 
 The current state, worth knowing when integrating:
 

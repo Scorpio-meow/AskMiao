@@ -6,12 +6,14 @@ from app.core.config import settings
 from app.models.database import create_tables
 from app.tasks.uploads_watcher import watch_missing_uploads
 from app.core.rag_manager import get_rag_system
+from app.services.agent_skills import cleanup_staging_directories
 logger = logging.getLogger(__name__)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info("Starting ChatBot application...")
     
     await create_tables()
+    cleanup_staging_directories()
     
     logger.info("Initializing global RAG system...")
     rag_system = get_rag_system()

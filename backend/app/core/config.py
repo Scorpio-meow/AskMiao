@@ -18,6 +18,7 @@ PATH_SETTING_KEYS = (
     "SENTENCE_TRANSFORMERS_HOME",
     "DOMAIN_PROFILE_PATH",
     "JIEBA_DICTIONARY",
+    "SKILLS_DIR",
 )
 DOMAIN_NAME_PATTERN = re.compile(r"[a-z0-9-]+(\.[a-z0-9-]+)*")
 class Settings(BaseSettings):
@@ -119,6 +120,7 @@ class Settings(BaseSettings):
     CHUNK_OVERLAP: int = 150
     MAX_FILE_SIZE_MB: int = 50
     UPLOAD_DIR: str = "data/uploads"
+    SKILLS_DIR: str
     DATA_DIR: str = "data"
     FAISS_INDEX_PATH: str = "data/faiss_index.bin"
     BM25_INDEX_DIR: str = "data/bm25_index"

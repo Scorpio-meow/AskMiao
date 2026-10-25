@@ -12,11 +12,12 @@
 - [3. 知識庫文件 `/api/documents`](#3-知識庫文件-apidocuments)
 - [4. 自訂 API 工具 `/api/api-tools`](#4-自訂-api-工具-apiapi-tools)
 - [5. MCP 伺服器 `/api/mcp`](#5-mcp-伺服器-apimcp)
-- [6. 模型清單 `/api/tags`](#6-模型清單-apitags)
-- [7. 管理後台 `/api/admin`](#7-管理後台-apiadmin)
-- [8. 健康檢查](#8-健康檢查)
-- [9. 錯誤處理](#9-錯誤處理)
-- [10. 已知限制](#10-已知限制)
+- [6. Agent Skills `/api/skills`](#6-agent-skills-apiskills)
+- [7. 模型清單 `/api/tags`](#7-模型清單-apitags)
+- [8. 管理後台 `/api/admin`](#8-管理後台-apiadmin)
+- [9. 健康檢查](#9-健康檢查)
+- [10. 錯誤處理](#10-錯誤處理)
+- [11. 已知限制](#11-已知限制)
 
 ---
 
@@ -29,7 +30,7 @@
 | 內容型態 | 檔案上傳為 `multipart/form-data`，對話串流為 `text/event-stream`，其餘皆為 `application/json` |
 | 時間格式 | ISO 8601，時間為 UTC 但不含時區標記（例如 `2026-09-25T02:30:00`） |
 | 速率限制 | 每個來源 IP 每 60 秒 `RATE_LIMIT_PER_MINUTE` 次（預設 60），超過回傳 `429`；來源 IP 預設為實際連線對端，只有設定 `FORWARDED_ALLOW_IPS` 時才採信該代理送來的 `X-Forwarded-For` |
-| 請求本文上限 | 一般請求 1 MiB；`POST /api/chat/send` 帶有效存取權杖時放寬，`POST /api/documents/upload` 只在有效存取權杖的 `is_admin` 聲明為 `true` 時放寬；超過回傳 `413` `{"detail": "請求內容超過大小上限"}`，詳見 [設定參考：資源上限](configuration.md#資源上限) |
+| 請求本文上限 | 一般請求 1 MiB；`POST /api/chat/send` 帶有效存取權杖時放寬，`POST /api/documents/upload` 與 `POST /api/skills/upload` 只在有效存取權杖的 `is_admin` 聲明為 `true` 時放寬；超過回傳 `413` `{"detail": "請求內容超過大小上限"}`，詳見 [設定參考：資源上限](configuration.md#資源上限) |
 
 ### 權限層級
 
@@ -88,6 +89,12 @@
 | POST | `/api/mcp/servers/{server_id}/discover` | 管理員 | 重新探索工具 |
 | PATCH | `/api/mcp/servers/{server_id}/toggle` | 管理員 | 切換啟用狀態 |
 | POST | `/api/mcp/servers/{server_id}/tools/{tool_name}/test` | 管理員 | 實際呼叫一次 MCP 工具 |
+| GET | `/api/skills/enabled` | 登入 | 啟用中的技能名稱與描述 |
+| GET | `/api/skills` | 管理員 | 技能清單 |
+| GET | `/api/skills/{skill_id}` | 管理員 | 單一技能與 `SKILL.md` 內文 |
+| POST | `/api/skills/upload` | 管理員 | 上傳並安裝技能 |
+| PATCH | `/api/skills/{skill_id}/toggle` | 管理員 | 切換啟用狀態 |
+| DELETE | `/api/skills/{skill_id}` | 管理員 | 刪除技能與技能檔案 |
 | GET | `/api/tags` | 公開 | 相容 Ollama 格式的模型清單 |
 | GET | `/api/admin/users` | 管理員 | 使用者清單 |
 | PUT | `/api/admin/users/{user_id}` | 管理員 | 更新使用者 |
@@ -278,7 +285,7 @@
 
 | 欄位 | 型態 | 必填 | 預設 | 說明 |
 |---|---|---|---|---|
-| `content` | string | 是 | — | 使用者的問題，最多 20,000 字元 |
+| `content` | string | 是 | — | 使用者的問題，最多 20,000 字元；以 `/技能名稱` 開頭且該技能已啟用時，先載入該技能並去掉前綴，研究過程記錄一個 `activate_skill` 步驟 |
 | `conversation_id` | integer | 否 | `null` | 對話 ID；留空、不存在或不屬於自己時會建立新對話 |
 | `model_name` | string | 否 | 預設模型 | 要使用的模型，必須在 [可用模型清單](configuration.md#模型清單) 內或等於 `MODEL_NAME`，否則回傳 `400` `不支援的模型`；供應商依名稱自動路由 |
 | `reasoning_effort` | string | 否 | `medium` | 推理程度，只傳給 OpenAI 與 Azure OpenAI，見下方說明 |
@@ -387,6 +394,7 @@ data: {"message_id": 108, "conversation_id": 42, "answer": "特休假需先在�
 - 內建工具 `search_knowledge_base`、`filter_and_count_records`、`web_search`、`web_fetch`（`ENABLE_WEB_SEARCH=false` 時不含後兩者）。`search_knowledge_base` 的說明會列出知識庫中每份文件的檔名與 AI 摘要，幫助模型判斷該查哪份文件。
 - 啟用中的自訂 API 工具（說明前綴 `【外部自訂 API】`）。
 - 啟用中 MCP 伺服器的已探索工具，名稱為 `mcp_<伺服器>_<工具>`（說明前綴 `【MCP 協定工具】`）。
+- 有啟用且檔案存在的 Agent Skills 時，另有 `activate_skill` 與 `read_skill_resource`（見 [6. Agent Skills](#6-agent-skills-apiskills)）；沒有時兩者都不出現。
 
 ```json
 {
@@ -909,11 +917,63 @@ data: {"message_id": 108, "conversation_id": 42, "answer": "特休假需先在�
 
 ---
 
-## 6. 模型清單 `/api/tags`
+## 6. Agent Skills `/api/skills`
+
+管理符合 [Agent Skills](https://agentskills.io/specification) 規格的技能。技能檔案存放在 `SKILLS_DIR/<name>/`，資料庫的 `agent_skills` 資料表只保存解析後的中繼資料與啟用狀態。除了 6.1，所有端點都需要**管理員**權限。
+
+Agent 以漸進揭露使用技能：有啟用且檔案存在的技能時，[`GET /api/chat/tools`](#23-get-apichattools) 多出 `activate_skill`（說明中列出技能名稱與描述）與 `read_skill_resource` 兩個內建工具；模型呼叫 `activate_skill` 才取得 `SKILL.md` 內文（去掉 frontmatter，包在 `<skill_content>` 中）與技能內的檔案清單，需要時再以 `read_skill_resource` 讀取單一 UTF-8 文字檔。技能內容是管理員安裝的指示，不包上 `<untrusted_tool_result>`，但不能推翻系統提示詞的資料安全與引用規則；技能中的腳本不會被執行。兩個技能工具都不需要核准。
+
+### 技能物件
+
+| 欄位 | 型態 | 說明 |
+|---|---|---|
+| `id` | integer | 技能 ID |
+| `name` | string | 技能名稱（取自 `SKILL.md` 的 `name`），同時是目錄名稱與 `/技能名稱` 指令 |
+| `description` | string | 何時使用此技能，列在 `activate_skill` 的工具說明中 |
+| `license` / `compatibility` / `allowed_tools` | string | `SKILL.md` 的選填欄位；`allowed_tools` 只保存，不影響工具權限 |
+| `metadata` | object | `SKILL.md` 的 `metadata`，值一律轉成字串 |
+| `warnings` | array | 解析時發現、但不影響載入的問題 |
+| `is_enabled` | boolean | 是否提供給 Agent |
+| `files_present` | boolean | `SKILLS_DIR/<name>/SKILL.md` 是否存在；不存在時技能不會提供給 Agent |
+| `created_at` / `updated_at` | string | 時間戳記 |
+
+### 6.1 GET /api/skills/enabled
+
+需登入。列出啟用且檔案存在的技能，供輸入框的 `/` 技能提示使用。
+
+**回應**：`{"status": "success", "skills": [{"name": "meeting-minutes", "description": "…"}]}`
+
+### 6.2 GET /api/skills
+
+**回應**：`{"status": "success", "total": 1, "skills": [技能物件, ...]}`，依名稱排序。
+
+### 6.3 GET /api/skills/{skill_id}
+
+**回應**：`{"status": "success", "skill": {...}}`，在技能物件之外另有 `body`（`SKILL.md` 內文，讀不到時為 `null` 並附 `load_error`）、`resources`（`SKILL.md` 以外的檔案相對路徑，最多 100 個）與 `resources_truncated`。找不到時回傳 `404` `找不到該技能`。
+
+### 6.4 POST /api/skills/upload
+
+`multipart/form-data`，欄位 `file` 為技能目錄的 `.zip`（`SKILL.md` 在根目錄或唯一的頂層目錄中；副檔名 `.skill` 也視為 zip）或單一 `SKILL.md`，最多 10 MiB。**查詢參數**：`replace`（預設 `false`），為 `true` 時取代同名技能的整個目錄。
+
+`name` 必須符合規格（小寫英數與連字號、最多 64 字、不以連字號開頭或結尾、不含連續連字號），且必須有 `description`；壓縮檔不可含絕對路徑、`..`、磁碟代號或符號連結，解壓後最多 500 個檔案、50 MiB，`SKILL.md` 最多 256 KiB。`name` 與頂層目錄名不同、欄位超過規格長度、未知的 frontmatter 欄位等問題列入 `warnings`，技能照常安裝。
+
+**回應**：`{"status": "success", "message": "已安裝技能「meeting-minutes」", "skill": 技能物件}`；不合規時回傳 `400` 並說明原因，同名技能已存在且 `replace` 為 `false` 時回傳 `409` `已存在同名技能：<名稱>`。
+
+### 6.5 PATCH /api/skills/{skill_id}/toggle
+
+**回應**：`{"status": "success", "is_enabled": false, "message": "技能已停用"}`
+
+### 6.6 DELETE /api/skills/{skill_id}
+
+刪除資料庫紀錄與技能目錄。**回應**：`{"status": "success", "message": "已刪除技能「meeting-minutes」"}`
+
+---
+
+## 7. 模型清單 `/api/tags`
 
 相容 Ollama `tags` 格式的模型清單，不需要登入。原本的 `GET /api/external-tags` 已移除。
 
-### 6.1 GET /api/tags
+### 7.1 GET /api/tags
 
 回傳與 `GET /api/chat/models` 相同的清單與預設模型（兩者共用同一套規則，見 [設定參考：模型清單](configuration.md#模型清單)），欄位名稱為 `tags`。沒有設定任何模型來源（`AVAILABLE_MODELS` 或雲端金鑰）時，向 `EXTERNAL_TAGS_URL`（或 `{LLM_API_BASE}/api/tags`）查詢遠端清單；查詢失敗時回傳空清單。遠端查詢在執行緒中進行，結果（含失敗）快取 30 秒，同一時間只有一個查詢在進行，匿名請求不會每次都觸發對外連線。
 
@@ -923,11 +983,11 @@ data: {"message_id": 108, "conversation_id": 42, "answer": "特休假需先在�
 
 ---
 
-## 7. 管理後台 `/api/admin`
+## 8. 管理後台 `/api/admin`
 
 > 本模組所有端點都需要**管理員**權限。
 
-### 7.1 使用者管理
+### 8.1 使用者管理
 
 | 方法 | 路徑 | 說明 |
 |---|---|---|
@@ -939,7 +999,7 @@ data: {"message_id": 108, "conversation_id": 42, "answer": "特休假需先在�
 
 變更與刪除帳號會寫入安全日誌並記錄操作的管理員：`PUT` 有實際變更時寫入 `ADMIN_USER_UPDATED`（目標帳號 id，以及 `username`、`email`、`is_active`、`is_admin` 變更前後的值），`DELETE` 寫入 `ADMIN_USER_DELETED`（目標帳號 id、使用者名稱與是否為管理員）。
 
-### 7.2 統計
+### 8.2 統計
 
 `GET /api/admin/statistics`，結果快取 180 秒：
 
@@ -955,7 +1015,7 @@ data: {"message_id": 108, "conversation_id": 42, "answer": "特休假需先在�
 
 `daily_stats` 列出最近 7 天（從今天往前，以 UTC 日期計）的訊息數。
 
-### 7.3 對話與文件
+### 8.3 對話與文件
 
 | 方法 | 路徑 | 說明 |
 |---|---|---|
@@ -965,7 +1025,7 @@ data: {"message_id": 108, "conversation_id": 42, "answer": "特休假需先在�
 | GET | `/api/admin/documents` | 全部文件（新到舊），欄位與 `GET /api/documents/` 相同，不含完整文字 |
 | DELETE | `/api/admin/documents/{document_id}` | 與 `DELETE /api/documents/{document_id}` 相同：刪除資料庫紀錄、片段與索引，以及上傳原檔 |
 
-### 7.4 檢索與索引維運
+### 8.4 檢索與索引維運
 
 | 方法 | 路徑 | 說明 |
 |---|---|---|
@@ -1015,7 +1075,7 @@ data: {"message_id": 108, "conversation_id": 42, "answer": "特休假需先在�
 
 ---
 
-## 8. 健康檢查
+## 9. 健康檢查
 
 | 方法 | 路徑 | 回應 |
 |---|---|---|
@@ -1026,7 +1086,7 @@ data: {"message_id": 108, "conversation_id": 42, "answer": "特休假需先在�
 
 ---
 
-## 9. 錯誤處理
+## 10. 錯誤處理
 
 ### 回應格式
 
@@ -1076,7 +1136,7 @@ data: {"message_id": 108, "conversation_id": 42, "answer": "特休假需先在�
 
 ---
 
-## 10. 已知限制
+## 11. 已知限制
 
 以下是目前的現況，整合時請留意：
 

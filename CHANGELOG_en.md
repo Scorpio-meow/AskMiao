@@ -29,6 +29,7 @@ All notable changes to AskMiao are documented in this file. The format is based 
 - **Concurrent login requests no longer bypass the failure lockout**: the lockout is checked again after a password-hashing slot is acquired, and failures are recorded before the slot is released. Previously 40 wrong passwords sent at once were all verified, making the threshold useless; now, once locked, at most the 4 requests already being verified complete.
 - **Login response time no longer reveals whether an account exists**: unknown and deactivated accounts verify the password against a dummy hash. Previously an existing account took about 76 ms and an unknown one 0.3 ms, so accounts could be listed even with registration closed.
 - **The attachment quota can no longer be bypassed with concurrent sends**: messages with attachments check the quota and are written one at a time. Previously concurrent requests all saw the same old usage, so any signed-in account could exceed the 200 MiB limit.
+- **Agent Skills trust boundary**: skills are installed by admins and their content reaches the model as instructions, not wrapped in `<untrusted_tool_result>`, but the system prompt says skills cannot override the data-safety and citation rules. Scripts inside skills are never executed; the model can only read them. Uploaded zips with absolute paths, `..`, drive letters, or symlinks are rejected, and the limit counts the bytes actually decompressed (`MAX_SKILL_UNCOMPRESSED_BYTES`, 50 MiB); `read_skill_resource` accepts only relative paths to UTF-8 text files inside the skill directory.
 
 ### Added
 
@@ -42,6 +43,12 @@ All notable changes to AskMiao are documented in this file. The format is based 
 - Upload results gain `record_count` and `warning` (explaining when a structured format failed to parse or exceeded the limit and was handled as plain text); the rebuild-index response gains `records_detected` and `missing_source_files` (documents whose uploaded file is gone and that were rebuilt from the stored content). The frontend upload dialog and rebuild message show them.
 - `MAX_KB_CATALOG_CHARS` (4,000 characters): caps the document catalog (file names and summaries) in the `search_knowledge_base` tool description; past it, only the first documents are listed and the rest are counted.
 - `POST /api/documents/rebuild-index` returns `409` when called while a rebuild is running.
+- [Agent Skills](https://agentskills.io) support: admins upload skills on the AI Tools page, and the model loads a skill's instructions and reference files on its own when a question calls for it.
+  - Upload a `.zip` of the skill directory (`SKILL.md` at the root or inside a single top-level directory; the `.skill` extension is treated as zip) or a single `SKILL.md`. Installs are written to a staging directory and then renamed, and leftover staging directories are removed at startup. A `name` that breaks the spec or a missing `description` is rejected (`400`); other problems (a `name` that differs from the directory name, overlong fields, unknown frontmatter fields, an empty body, and so on) become warnings shown on the card, and the skill still loads.
+  - With at least one enabled skill, the model gets two built-in tools, `activate_skill` and `read_skill_resource`: the tool description lists only skill names and descriptions (`MAX_SKILL_CATALOG_CHARS`, 8,000 characters), the `SKILL.md` body and file list arrive only after the model activates a skill, and text files inside the skill are read one at a time when needed; the system prompt also gains a 【技能規則】 (skill rules) section. With no enabled skills, neither the tools nor the rules appear.
+  - A message starting with `/skill-name` loads that skill before sending and drops the prefix, and the research trace records an `activate_skill` step; typing `/` in the input lists matching skills (↑/↓ to choose, Enter or Tab to insert, Esc to dismiss).
+  - New `/api/skills` endpoints: list enabled skills (any signed-in user), and list, view, upload, enable or disable, and delete skills (admins only); `GET /api/chat/tools` includes the two skill tools when skills are enabled.
+  - New required setting `SKILLS_DIR` (the skill file directory, one subdirectory per skill) and table `agent_skills` (created automatically at startup).
 
 ### Changed
 
@@ -87,7 +94,7 @@ All notable changes to AskMiao are documented in this file. The format is based 
 - The `custom_agents` table, which no feature used, from `init.sql` and the migration script (an existing table in your database is not dropped).
 
 > [!IMPORTANT]
-> Before upgrading, add `record_label_fields` and `record_ignore_fields` to the domain profile, or the backend will not start, and reinstall the backend packages from the new `requirements.txt`; after upgrading, have an admin run "Rebuild index" once so existing documents switch to the new record format. See the [upgrade guide](docs/upgrading_en.md#upgrading-from-500-to-the-next-release).
+> Before upgrading, add `record_label_fields` and `record_ignore_fields` to the domain profile and `SKILLS_DIR` to `.env`, or the backend will not start, and reinstall the backend packages from the new `requirements.txt`; after upgrading, have an admin run "Rebuild index" once so existing documents switch to the new record format. See the [upgrade guide](docs/upgrading_en.md#upgrading-from-500-to-the-next-release).
 
 ---
 

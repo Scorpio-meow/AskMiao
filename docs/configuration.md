@@ -31,12 +31,12 @@
 - **必填設定沒有預設值**：缺少任一項時，後端在啟動時就以 `Field required` 錯誤結束，並列出缺少的欄位。
 - **數值範圍與格式**：`AGENT_MAX_TURNS ≥ 1`、`CONVERSATION_HISTORY_MESSAGES ≥ 0`、`RRF_K ≥ 1`、`0 ≤ RERANK_RELEVANCE_THRESHOLD ≤ 1`、`ANTHROPIC_MAX_TOKENS ≥ 1`，`LOGIN_MAX_FAILURES_PER_ACCOUNT`、`LOGIN_MAX_FAILURES_PER_ADDRESS`、`LOGIN_FAILURE_WINDOW_SECONDS`、`LOGIN_LOCKOUT_SECONDS` 皆須 ≥ 1，`TOOL_SECRETS_KEY` 必須是有效的 Fernet 金鑰；超出範圍或格式不符同樣無法啟動。
 - **布林值**：`true` / `false`、`1` / `0`、`yes` / `no` 皆可。
-- **相對路徑**：`DATA_DIR`、`UPLOAD_DIR`、`FAISS_INDEX_PATH`、`BM25_INDEX_DIR`、`METADATA_PATH`、`HF_HOME`、`HF_HUB_CACHE`、`SENTENCE_TRANSFORMERS_HOME`、`DOMAIN_PROFILE_PATH`、`JIEBA_DICTIONARY` 的相對路徑一律以 `backend/` 為基準。`DATABASE_URL` 不在此列，SQLite 的相對路徑依啟動目錄而定。
+- **相對路徑**：`DATA_DIR`、`UPLOAD_DIR`、`FAISS_INDEX_PATH`、`BM25_INDEX_DIR`、`METADATA_PATH`、`HF_HOME`、`HF_HUB_CACHE`、`SENTENCE_TRANSFORMERS_HOME`、`DOMAIN_PROFILE_PATH`、`JIEBA_DICTIONARY`、`SKILLS_DIR` 的相對路徑一律以 `backend/` 為基準。`DATABASE_URL` 不在此列，SQLite 的相對路徑依啟動目錄而定。
 - **程式預設值與範本值**：下表的「程式預設值」是 `.env` 未設定時的值；「範本值」是 `backend/.env.example` 建議的值，兩者不同時以你的 `.env` 為準。
 
 ## 必填設定
 
-下列 20 個設定沒有預設值，缺少任一項後端就無法啟動。
+下列 21 個設定沒有預設值，缺少任一項後端就無法啟動。
 
 | 變數 | 範本值 | 說明 |
 |---|---|---|
@@ -59,6 +59,7 @@
 | `RRF_K` | `60` | RRF 融合常數 |
 | `RERANK_RELEVANCE_THRESHOLD` | `0.2` | 重排機率門檻 |
 | `DOMAIN_PROFILE_PATH` | `config/domain_profile.json` | 領域設定檔路徑 |
+| `SKILLS_DIR` | `data/skills` | Agent Skills 的技能檔案目錄，見 [儲存路徑與上傳](#儲存路徑與上傳) |
 
 `TOOL_SECRETS_KEY` 由每個部署自行產生，例如在已安裝後端相依套件的環境執行：
 
@@ -203,6 +204,7 @@ python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().d
 |---|---|---|---|
 | `DATA_DIR` | `data` | `data` | 索引與執行資料的根目錄；jieba 的詞典快取也放在其下的 `jieba_cache/`（不再使用系統暫存目錄） |
 | `UPLOAD_DIR` | `data/uploads` | `data/uploads` | 上傳原始檔；重建索引時會優先從這裡重新擷取文字 |
+| `SKILLS_DIR` | —（必填） | `data/skills` | 管理員在「AI 工具」頁上傳的 Agent Skills，每個技能一個子目錄 `SKILLS_DIR/<name>/`；啟動時清除安裝中斷留下的 `.tmp-*`、`.old-*` 目錄 |
 | `FAISS_INDEX_PATH` | `data/faiss_index.bin` | 同左 | FAISS 向量索引（`IndexIDMap2`，以 chunk_id 為 id） |
 | `BM25_INDEX_DIR` | `data/bm25_index` | 同左 | Whoosh BM25 索引目錄（含 `tokenizer_signature.json`） |
 | `METADATA_PATH` | `data/index_metadata.json` | 同左 | 索引中繼資料（JSON），例如最後重建時間 |
@@ -412,6 +414,18 @@ python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().d
 | `MAX_CONCURRENT_ATTACHMENT_EXTRACTIONS` | 2 | 整個行程同時解析的聊天附件數；與單檔預算相乘即為附件解析的記憶體上界 |
 
 OOXML 的檢查在解析前進行，依 ZIP 成員宣告的大小計算。python-docx 與 python-pptx 會把 XML 部件整份建成 DOM（記憶體約為 XML 大小的 15 至 30 倍），哪些成員算進 XML 總量依 `[Content_Types].xml` 判定（另含 `.rels` 與該檔本身），改副檔名無法繞過；`.xlsx` 以串流讀取，不套用此項。超過任一項 OOXML 預算時，管理員上傳的該檔案上傳失敗；聊天附件則不解析，改告知模型附件超過解析上限、未讀取內容。超過長度的 JSON、JSONL、YAML 與 JS 宣告附件不解析成結構化記錄，只做線性的雜訊清除。CSV 與 XLSX 不套用這個長度上限；YAML 的別名展開後節點數超過原始文字長度時一律放棄解析，改以純文字處理。
+
+**Agent Skills**
+
+| 常數 | 值 | 說明 |
+|---|---|---|
+| `MAX_SKILL_ARCHIVE_BYTES` | 10 MiB | 上傳的技能檔（`.zip` 或 `SKILL.md`）大小；`POST /api/skills/upload` 的本文上限為此值加 1 MiB，與文件上傳相同只在存取權杖的 `is_admin` 聲明為 `true` 時放寬 |
+| `MAX_SKILL_UNCOMPRESSED_BYTES` | 50 MiB | 技能 zip 解壓後的總大小，以實際解壓的位元組數計算 |
+| `MAX_SKILL_FILES` | 500 | 單一技能的檔案數 |
+| `MAX_SKILL_MD_BYTES` | 256 KiB | `SKILL.md` 的大小 |
+| `MAX_SKILL_RESOURCE_LISTING` | 100 | 啟用技能時列給模型的檔案數 |
+| `MAX_SKILL_RESOURCE_CHARS` | 20,000 字元 | 啟用技能時回傳的 `SKILL.md` 內文與每次 `read_skill_resource` 的結果，超過的部分截斷 |
+| `MAX_SKILL_CATALOG_CHARS` | 8,000 字元 | `activate_skill` 工具說明中技能目錄（名稱與描述）的長度；放不下的技能不列出並寫入警告日誌 |
 
 **帳號、日誌與速率限制**
 

@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { chatService, apiToolService, mcpService } from '../../services/api';
+import { chatService, apiToolService, mcpService, skillService } from '../../services/api';
 import { describeRequestError } from '../../utils/secureLogger';
 import { useDocumentTitle } from '../../hooks/useDocumentTitle';
 import {
@@ -17,6 +17,8 @@ import { DEFAULT_TOOLS_METADATA } from './builtinTools';
 import McpServerFormDialog from './McpServerFormDialog';
 import McpToolTestDialog from './McpToolTestDialog';
 import OpenApiImportDialog from './OpenApiImportDialog';
+import SkillDetailDialog from './SkillDetailDialog';
+import SkillUploadDialog from './SkillUploadDialog';
 import { CREDENTIALS_UNREADABLE_NOTICE, getMethodClass, getRequestErrorMessage } from './shared';
 import styles from './AiTools.module.css';
 const matchesQuery = (query, ...values) =>
@@ -24,15 +26,22 @@ const matchesQuery = (query, ...values) =>
 const CATEGORY_FILTERS = [
   { value: 'all', label: '全部工具' },
   { value: 'mcp', label: 'MCP 協定伺服器' },
+  { value: 'skills', label: 'Agent Skills' },
   { value: 'knowledge', label: '知識庫與資料' },
   { value: 'web', label: '聯網與閱讀' },
   { value: 'custom_api', label: '自訂 API 工具' },
 ];
+const DELETE_TITLES = {
+  tool: '刪除這個自訂 API 工具？',
+  server: '刪除這台 MCP 伺服器？',
+  skill: '刪除這個技能？',
+};
 export default function AiTools() {
   const navigate = useNavigate();
   const [defaultTools, setDefaultTools] = useState(DEFAULT_TOOLS_METADATA);
   const [customTools, setCustomTools] = useState([]);
   const [mcpServers, setMcpServers] = useState([]);
+  const [skills, setSkills] = useState([]);
   const [loading, setLoading] = useState(false);
   const [activeCategory, setActiveCategory] = useState('all');
   const [searchQuery, setSearchQuery] = useState('');
@@ -52,11 +61,12 @@ export default function AiTools() {
   const fetchAllTools = useCallback(async () => {
     try {
       setLoading(true);
-      const [resDefault, resCustom, resMcp, resPresets] = await Promise.allSettled([
+      const [resDefault, resCustom, resMcp, resPresets, resSkills] = await Promise.allSettled([
         chatService.getTools(),
         apiToolService.getTools(),
         mcpService.getServers(),
-        mcpService.getPresets()
+        mcpService.getPresets(),
+        skillService.getSkills()
       ]);
       if (resDefault.status === 'fulfilled' && resDefault.value?.tools) {
         const updated = DEFAULT_TOOLS_METADATA.map((meta) => {
@@ -79,6 +89,9 @@ export default function AiTools() {
       }
       if (resPresets.status === 'fulfilled' && resPresets.value?.presets) {
         setMcpPresets(resPresets.value.presets);
+      }
+      if (resSkills.status === 'fulfilled' && resSkills.value?.skills) {
+        setSkills(resSkills.value.skills);
       }
     } catch (err) {
       console.warn('載入工具清單失敗:', describeRequestError(err));
@@ -117,6 +130,10 @@ export default function AiTools() {
         await apiToolService.deleteTool(item.id);
         setCustomTools((prev) => prev.filter((t) => t.id !== item.id));
         showSnackbar(`已刪除工具「${item.display_name}」`, 'success');
+      } else if (type === 'skill') {
+        await skillService.deleteSkill(item.id);
+        setSkills((prev) => prev.filter((s) => s.id !== item.id));
+        showSnackbar(`已刪除技能「${item.name}」`, 'success');
       } else {
         await mcpService.deleteServer(item.id);
         setMcpServers((prev) => prev.filter((s) => s.id !== item.id));
@@ -147,6 +164,18 @@ export default function AiTools() {
       showSnackbar(res.message, 'success');
     } catch (err) {
       console.warn('切換 MCP 狀態失敗:', describeRequestError(err));
+      showSnackbar(getRequestErrorMessage(err, '切換狀態失敗'), 'error');
+    }
+  };
+  const handleToggleSkill = async (skillId) => {
+    try {
+      const res = await skillService.toggleSkill(skillId);
+      setSkills((prev) =>
+        prev.map((s) => (s.id === skillId ? { ...s, is_enabled: res.is_enabled } : s))
+      );
+      showSnackbar(res.message, 'success');
+    } catch (err) {
+      console.warn('切換技能狀態失敗:', describeRequestError(err));
       showSnackbar(getRequestErrorMessage(err, '切換狀態失敗'), 'error');
     }
   };
@@ -209,12 +238,20 @@ export default function AiTools() {
       ...(server.discovered_tools || []).map((t) => t.name)
     )
   ));
+  const filteredSkills = skills.filter((skill) => (
+    !query || matchesQuery(query, skill.name, skill.description, skill.compatibility)
+  ));
   const showServers = activeCategory === 'all' || activeCategory === 'mcp';
-  const showTools = activeCategory !== 'mcp';
-  const nothingMatches = Boolean(query) && (!showServers || filteredServers.length === 0) && (!showTools || filteredTools.length === 0);
+  const showSkills = activeCategory === 'all' || activeCategory === 'skills';
+  const showTools = activeCategory !== 'mcp' && activeCategory !== 'skills';
+  const nothingMatches = Boolean(query)
+    && (!showServers || filteredServers.length === 0)
+    && (!showSkills || filteredSkills.length === 0)
+    && (!showTools || filteredTools.length === 0);
   const categoryCounts = {
-    all: allUnifiedTools.length + totalMcpToolsCount,
+    all: allUnifiedTools.length + totalMcpToolsCount + skills.length,
     mcp: mcpServers.length,
+    skills: skills.length,
     knowledge: defaultTools.filter((t) => t.category === 'knowledge').length,
     web: defaultTools.filter((t) => t.category === 'web').length,
     custom_api: customTools.length,
@@ -246,6 +283,13 @@ export default function AiTools() {
               startIcon={<Icon name="build" size={18} />}
             >
               新增 MCP 伺服器
+            </Button>
+            <Button
+              variant="secondary"
+              onClick={() => setDialog({ type: 'skillUpload', skill: null })}
+              startIcon={<Icon name="sparkles" size={18} />}
+            >
+              上傳 Agent Skill
             </Button>
             <Button
               variant="secondary"
@@ -327,7 +371,7 @@ export default function AiTools() {
           <input
             type="search"
             className={styles.searchInput}
-            placeholder="搜尋工具名稱、網址、MCP 伺服器…"
+            placeholder="搜尋工具名稱、網址、MCP 伺服器、技能…"
             aria-label="搜尋工具"
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
@@ -336,7 +380,7 @@ export default function AiTools() {
       </div>
       {nothingMatches && (
         <div className={styles.emptyNotice}>
-          <p>查無符合「{searchQuery.trim()}」的工具或 MCP 伺服器</p>
+          <p>查無符合「{searchQuery.trim()}」的工具、MCP 伺服器或技能</p>
           <Button variant="secondary" size="sm" onClick={() => setSearchQuery('')}>
             清除搜尋
           </Button>
@@ -500,6 +544,127 @@ export default function AiTools() {
                           startIcon={<Icon name="delete" size={16} />}
                         >
                           刪除伺服器
+                        </Button>
+                      </div>
+                    </div>
+                  </article>
+                );
+              })}
+            </div>
+          )}
+        </section>
+      )}
+      {showSkills && !(query && filteredSkills.length === 0) && (
+        <section className={styles.serverSection} aria-labelledby="skills-section-title">
+          <div className={styles.sectionHeader}>
+            <h2 className={styles.sectionTitle} id="skills-section-title">
+              <Icon name="sparkles" size={20} color="var(--color-primary)" />
+              <span>Agent Skills 技能</span>
+            </h2>
+            <Button
+              variant="secondary"
+              onClick={() => setDialog({ type: 'skillUpload', skill: null })}
+              startIcon={<Icon name="upload" size={16} />}
+            >
+              上傳技能
+            </Button>
+          </div>
+          {filteredSkills.length === 0 ? (
+            <div className={styles.emptyNotice}>
+              <p>尚未安裝任何技能。上傳符合 Agent Skills 規格的技能後，AI 會在任務符合技能描述時自動載入，使用者也可以在對話中輸入「/技能名稱」指定使用。</p>
+            </div>
+          ) : (
+            <div className={styles.toolsList}>
+              {filteredSkills.map((skill) => {
+                const isEnabled = skill.is_enabled;
+                return (
+                  <article key={skill.id} className={styles.toolOuterShell} aria-labelledby={`skill-${skill.id}`}>
+                    <div className={styles.toolInnerCore}>
+                      <div className={styles.toolHeader}>
+                        <div className={styles.toolIdentity}>
+                          <div className={styles.toolIconBox}>
+                            <Icon name="sparkles" size={22} />
+                          </div>
+                          <div className={styles.toolTitleWrap}>
+                            <h3 className={styles.toolTitle} id={`skill-${skill.id}`}>
+                              <span>{skill.name}</span>
+                            </h3>
+                            <div className={styles.toolIdentifier}>/{skill.name}</div>
+                          </div>
+                        </div>
+                        <div className={styles.toolStatusWrap}>
+                          <span className={styles.categoryTag}>Agent Skill</span>
+                          {skill.license && <span className={styles.versionTag}>{skill.license}</span>}
+                          {!skill.files_present && (
+                            <span className={`${styles.statusPill} ${styles.statusError}`}>
+                              <span className={styles.statusDot} />
+                              <span>找不到技能檔案</span>
+                            </span>
+                          )}
+                          <div className={styles.switchGroup}>
+                            <span className={`${styles.enabledText} ${isEnabled ? styles.enabledTextOn : ''}`}>
+                              {isEnabled ? '已啟用' : '已停用'}
+                            </span>
+                            <Switch
+                              checked={isEnabled}
+                              onChange={() => handleToggleSkill(skill.id)}
+                              aria-label={`啟用技能「${skill.name}」`}
+                            />
+                          </div>
+                        </div>
+                      </div>
+                      <p className={styles.toolDescription}>{skill.description}</p>
+                      {skill.compatibility && (
+                        <div className={`${styles.specBlock} ${styles.specBlockSpaced}`}>
+                          <div className={styles.specLabel}>
+                            <Icon name="info" size={14} color="var(--color-primary)" />
+                            <span>相容性需求</span>
+                          </div>
+                          <div className={styles.specContent}>{skill.compatibility}</div>
+                        </div>
+                      )}
+                      {skill.warnings.length > 0 && (
+                        <div className={`${styles.specBlock} ${styles.specBlockSpaced} ${styles.specBlockError}`}>
+                          <div className={styles.specLabel}>
+                            <Icon name="warning" size={14} />
+                            <span>與規格不符之處（不影響使用）</span>
+                          </div>
+                          <ul className={styles.specContent}>
+                            {skill.warnings.map((w) => <li key={w}>{w}</li>)}
+                          </ul>
+                        </div>
+                      )}
+                      <div className={styles.toolActionsFooter}>
+                        <div className={styles.toolActionGroup}>
+                          <Button
+                            variant="secondary"
+                            onClick={() => setDialog({ type: 'skillDetail', skill })}
+                            startIcon={<Icon name="description" size={16} />}
+                          >
+                            檢視內容
+                          </Button>
+                          <Button
+                            variant="secondary"
+                            onClick={() => setDialog({ type: 'skillUpload', skill })}
+                            startIcon={<Icon name="upload" size={16} />}
+                          >
+                            上傳新版本
+                          </Button>
+                          <Button
+                            variant="secondary"
+                            onClick={() => handleTestExample(`/${skill.name} `)}
+                            disabled={!isEnabled || !skill.files_present}
+                            startIcon={<Icon name="chat" size={16} />}
+                          >
+                            在對話中使用
+                          </Button>
+                        </div>
+                        <Button
+                          variant="danger"
+                          onClick={() => setPendingDelete({ type: 'skill', item: skill })}
+                          startIcon={<Icon name="delete" size={16} />}
+                        >
+                          刪除技能
                         </Button>
                       </div>
                     </div>
@@ -737,10 +902,16 @@ export default function AiTools() {
         <ApiToolFormDialog tool={dialog.tool} onClose={closeDialog} onSaved={handleDialogSaved} />
       )}
       {dialog?.type === 'toolTest' && <ApiToolTestDialog tool={dialog.tool} onClose={closeDialog} />}
+      {dialog?.type === 'skillUpload' && (
+        <SkillUploadDialog skill={dialog.skill} onClose={closeDialog} onSaved={handleDialogSaved} />
+      )}
+      {dialog?.type === 'skillDetail' && <SkillDetailDialog skill={dialog.skill} onClose={closeDialog} />}
       <ConfirmDialog
         open={Boolean(pendingDelete)}
-        title={pendingDelete?.type === 'tool' ? '刪除這個自訂 API 工具？' : '刪除這台 MCP 伺服器？'}
-        description={`「${pendingDelete?.item.display_name}」刪除後，AI 就無法再使用它提供的工具，此操作無法復原。`}
+        title={DELETE_TITLES[pendingDelete?.type]}
+        description={pendingDelete?.type === 'skill'
+          ? `「${pendingDelete.item.name}」刪除後會一併移除技能檔案，AI 就無法再使用這個技能，此操作無法復原。`
+          : `「${pendingDelete?.item.display_name}」刪除後，AI 就無法再使用它提供的工具，此操作無法復原。`}
         confirmLabel="刪除"
         destructive
         loading={deleting}
