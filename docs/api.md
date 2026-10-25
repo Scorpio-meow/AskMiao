@@ -801,7 +801,7 @@ data: {"message_id": 108, "conversation_id": 42, "answer": "特休假需先在�
 
 ## 5. MCP 伺服器 `/api/mcp`
 
-管理 Model Context Protocol 伺服器，協定版本 `2024-11-05`，以 JSON-RPC 2.0 進行 `initialize`、`tools/list` 與 `tools/call`。交握時的 `clientInfo` 為 `AskMiao-MCP-Client` 與後端版本號。
+管理 Model Context Protocol 伺服器，協定版本 `2025-06-18`（伺服器回覆的版本為準），以 JSON-RPC 2.0 進行 `initialize`、`notifications/initialized`、`tools/list`（依 `nextCursor` 讀完所有分頁，最多 50 頁）與 `tools/call`。交握不宣告任何用戶端 capability（不支援 sampling、roots）。交握時的 `clientInfo` 為 `AskMiao-MCP-Client` 與後端版本號。
 
 > 本模組所有端點（含查詢）都需要**管理員**權限：`stdio` 模式會在主機上執行指定的指令，伺服器設定也含環境變數與標頭等憑證（加密存放，回應中以 `••••••••` 遮蔽）。
 
@@ -812,7 +812,7 @@ data: {"message_id": 108, "conversation_id": 42, "answer": "特休假需先在�
 | `id` | integer | 伺服器 ID |
 | `name` | string | 唯一名稱（建立時轉為小寫），用於工具名稱 `mcp_<name>_<tool>` |
 | `display_name` / `description` | string | 顯示名稱與說明 |
-| `transport_type` | string | `stdio`，或 `http` / `sse`（兩者都以 HTTP POST 傳送 JSON-RPC） |
+| `transport_type` | string | `stdio`，或 `http` / `sse`（兩者都使用 Streamable HTTP：以 POST 傳送 JSON-RPC，帶 `Accept: application/json, text/event-stream`，接受 JSON 或 SSE 回應，並在之後的請求帶上伺服器發的 `Mcp-Session-Id` 與 `MCP-Protocol-Version`；不支援舊版以 GET 開啟 SSE 的傳輸） |
 | `command` / `args` | string / array | `stdio` 模式的執行指令與參數 |
 | `env_vars` | object | `stdio` 子行程的額外環境變數；一律視為憑證，回應中每個值都以 `••••••••` 遮蔽 |
 | `url` / `headers` | string / object | HTTP 模式的伺服器位址與請求標頭；`headers` 的遮蔽規則同自訂 API 工具 |

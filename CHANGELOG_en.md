@@ -69,6 +69,9 @@ All notable changes to AskMiao are documented in this file. The format is based 
 
 ### Fixed
 
+- **HTTP MCP servers use Streamable HTTP**: requests send `Accept: application/json, text/event-stream`, SSE responses are accepted, later requests carry the server-issued `Mcp-Session-Id` and `MCP-Protocol-Version`, and `notifications/initialized` is sent after the handshake; the protocol version is now `2025-06-18`. Previously only a JSON POST was sent, so most remote servers built to the current specification could not connect.
+- `tools/list` follows `nextCursor` through every page (at most 50), so servers with many tools no longer return only the first page.
+- The MCP handshake no longer declares the unimplemented `sampling` and `roots` capabilities; stdio skips server-initiated requests whose id happens to match while waiting for a response.
 - Nested objects and arrays in structured data are no longer dropped; JSON objects no longer keep only top-level strings, numbers, and booleans.
 - Uploads store the content with surrounding whitespace removed, matching the value the duplicate check compares.
 - When cleanup of an admin-uploaded JSON file failed, the second parse no longer bypasses the parse limit.

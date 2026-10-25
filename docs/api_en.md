@@ -803,7 +803,7 @@ Send one real request with the given arguments.
 
 ## 5. MCP servers `/api/mcp`
 
-Manage Model Context Protocol servers, protocol version `2024-11-05`, using JSON-RPC 2.0 for `initialize`, `tools/list`, and `tools/call`. The handshake identifies the client as `AskMiao-MCP-Client` with the backend version.
+Manage Model Context Protocol servers, protocol version `2025-06-18` (the version the server replies with wins), using JSON-RPC 2.0 for `initialize`, `notifications/initialized`, `tools/list` (all pages are read by following `nextCursor`, at most 50), and `tools/call`. The handshake declares no client capabilities (sampling and roots are not supported). The handshake identifies the client as `AskMiao-MCP-Client` with the backend version.
 
 > Every endpoint in this module, including reads, requires **admin** access: `stdio` servers run the configured command on the host, and server settings include credentials such as environment variables and headers (stored encrypted and shown as `••••••••` in responses).
 
@@ -814,7 +814,7 @@ Manage Model Context Protocol servers, protocol version `2024-11-05`, using JSON
 | `id` | integer | Server ID |
 | `name` | string | Unique name (lowercased on creation), used in tool names `mcp_<name>_<tool>` |
 | `display_name` / `description` | string | Display name and description |
-| `transport_type` | string | `stdio`, or `http` / `sse` (both send JSON-RPC over HTTP POST) |
+| `transport_type` | string | `stdio`, or `http` / `sse` (both use Streamable HTTP: JSON-RPC over POST with `Accept: application/json, text/event-stream`, accepting a JSON or SSE response, and sending the server-issued `Mcp-Session-Id` and `MCP-Protocol-Version` on later requests; the legacy transport that opens an SSE stream with GET is not supported) |
 | `command` / `args` | string / array | Command and arguments for `stdio` |
 | `env_vars` | object | Extra environment variables for the `stdio` subprocess; all are treated as credentials, so every value is shown as `••••••••` in responses |
 | `url` / `headers` | string / object | Server URL and request headers for HTTP; `headers` are masked like a custom API tool's |

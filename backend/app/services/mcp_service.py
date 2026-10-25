@@ -14,7 +14,9 @@ from app import __version__
 from app.core.error_response import format_client_error, log_and_get_error_id
 from app.core.ssrf_protection import DnsPool, SSRFSafeTransport, send_following_redirects
 logger = logging.getLogger(__name__)
-MCP_PROTOCOL_VERSION = "2024-11-05"
+MCP_PROTOCOL_VERSION = "2025-06-18"
+MAX_MCP_TOOL_PAGES = 50
+MCP_HTTP_ACCEPT = "application/json, text/event-stream"
 # 同時存在的 stdio MCP 子行程數上限（每次探索或工具呼叫都會啟動一個）；等待空位的時間不超過該伺服器的逾時設定
 MAX_CONCURRENT_STDIO_PROCESSES = 4
 _stdio_process_slots = asyncio.Semaphore(MAX_CONCURRENT_STDIO_PROCESSES)
@@ -28,6 +30,45 @@ MCP_STDERR_TAIL_BYTES = 2048
 MAX_MCP_HTTP_REDIRECTS = 5
 # MCP 規格建議的工具名稱字元；名稱會出現在 API 路徑與函式名稱中，其他名稱的工具一律略過
 MCP_TOOL_NAME_PATTERN = re.compile(r"[A-Za-z0-9_.-]{1,128}")
+def _is_response_to(message: Any, req_id: int) -> bool:
+    return isinstance(message, dict) and message.get("id") == req_id and "method" not in message
+
+
+def _rpc_result(message: Dict[str, Any]) -> Dict[str, Any]:
+    if "error" in message:
+        raise RuntimeError(f"MCP JSON-RPC 錯誤: {message['error']}")
+    return message.get("result", {})
+
+
+async def _list_all_tools(send_rpc_request) -> List[Dict[str, Any]]:
+    tools: List[Dict[str, Any]] = []
+    params: Dict[str, Any] = {}
+    for _ in range(MAX_MCP_TOOL_PAGES):
+        result = await send_rpc_request("tools/list", params)
+        tools.extend(result.get("tools", []))
+        cursor = result.get("nextCursor")
+        if not cursor:
+            return _usable_tools(tools)
+        params = {"cursor": cursor}
+    raise RuntimeError(f"MCP 工具清單超過 {MAX_MCP_TOOL_PAGES} 頁")
+
+
+def _sse_messages(buffer: bytes) -> Tuple[List[Any], bytes]:
+    messages = []
+    normalized = buffer.replace(b"\r\n", b"\n")
+    *events, rest = normalized.split(b"\n\n")
+    for event in events:
+        data = "\n".join(
+            line[5:].lstrip(" ") for line in event.decode("utf-8", errors="replace").split("\n") if line.startswith("data:")
+        )
+        if data:
+            try:
+                messages.append(json.loads(data))
+            except json.JSONDecodeError:
+                logger.debug("略過無法解析的 MCP SSE 事件")
+    return messages, rest
+
+
 def _usable_tools(tools: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     usable = []
     for tool in tools:
@@ -233,10 +274,8 @@ class McpStdioClient:
                 continue
             try:
                 data = json.loads(line_str)
-                if isinstance(data, dict) and data.get("id") == req_id:
-                    if "error" in data:
-                        raise RuntimeError(f"MCP JSON-RPC 錯誤: {data['error']}")
-                    return data.get("result", {})
+                if _is_response_to(data, req_id):
+                    return _rpc_result(data)
             except json.JSONDecodeError:
  
                 logger.debug(f"[MCP Stdio Log] {line_str}")
@@ -247,10 +286,7 @@ class McpStdioClient:
             "initialize",
             {
                 "protocolVersion": MCP_PROTOCOL_VERSION,
-                "capabilities": {
-                    "roots": {"listChanged": True},
-                    "sampling": {}
-                },
+                "capabilities": {},
                 "clientInfo": {
                     "name": "AskMiao-MCP-Client",
                     "version": __version__
@@ -267,8 +303,7 @@ class McpStdioClient:
         return result
     async def list_tools(self) -> List[Dict[str, Any]]:
         """向 MCP 伺服器查詢所有可用工具"""
-        result = await self._send_rpc_request("tools/list", {})
-        return _usable_tools(result.get("tools", []))
+        return await _list_all_tools(self._send_rpc_request)
     async def call_tool(self, name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
         """向 MCP 伺服器發送 tools/call 工具執行請求"""
         result = await self._send_rpc_request("tools/call", {
@@ -290,9 +325,18 @@ class McpHttpClient:
         self.headers = headers or {}
         self.timeout = timeout
         self._request_id = 0
+        self._session_id: Optional[str] = None
+        self._protocol_version: Optional[str] = None
     def _next_id(self) -> int:
         self._request_id += 1
         return self._request_id
+    def _request_headers(self) -> Dict[str, str]:
+        headers = {**self.headers, "Accept": MCP_HTTP_ACCEPT}
+        if self._session_id:
+            headers["Mcp-Session-Id"] = self._session_id
+        if self._protocol_version:
+            headers["MCP-Protocol-Version"] = self._protocol_version
+        return headers
     async def _send_rpc_request(self, method: str, params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         req_id = self._next_id()
         payload = {
@@ -303,7 +347,9 @@ class McpHttpClient:
         }
         # httpx 的逾時是逐次讀寫計算；整個請求（含轉址與慢速逐段回應）另以伺服器的逾時設定為總時限
         return await asyncio.wait_for(self._post(payload), timeout=self.timeout)
-    async def _post(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+    async def _send_notification(self, method: str) -> None:
+        await asyncio.wait_for(self._post({"jsonrpc": "2.0", "method": method}), timeout=self.timeout)
+    async def _post(self, payload: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         # 與自訂 API 工具相同：第一跳與每次轉址都要通過 SSRF 檢查，並固定連線到核可的 IP。
         # 只跟隨同一來源的轉址：307／308 會把管理員設定的標頭與 JSON-RPC 本文（含使用者資料）原樣送往轉址目標；
         # 轉址回應的本文不讀取，最終回應才套用大小上限
@@ -312,29 +358,50 @@ class McpHttpClient:
             follow_redirects=False,
             transport=SSRFSafeTransport(DnsPool.CONFIGURED_ENDPOINT),
         ) as client:
-            request = client.build_request("POST", self.url, headers=self.headers, json=payload)
+            request = client.build_request("POST", self.url, headers=self._request_headers(), json=payload)
             resp = await send_following_redirects(client, request, MAX_MCP_HTTP_REDIRECTS, allow_cross_origin=False)
             try:
+                if "id" not in payload:
+                    if resp.status_code not in (200, 202):
+                        raise RuntimeError(f"HTTP MCP 伺服器返回狀態碼 {resp.status_code}")
+                    return None
+                if resp.status_code != 200:
+                    raise RuntimeError(f"HTTP MCP 伺服器返回狀態碼 {resp.status_code}")
+                session_id = resp.headers.get("mcp-session-id")
+                if session_id:
+                    self._session_id = session_id
                 content_length = resp.headers.get("content-length")
                 if content_length and content_length.isdigit() and int(content_length) > MAX_MCP_HTTP_RESPONSE_BYTES:
                     raise RuntimeError(f"HTTP MCP 伺服器回應超過 {MAX_MCP_HTTP_RESPONSE_BYTES} 位元組上限")
+                is_sse = resp.headers.get("content-type", "").split(";")[0].strip().lower() == "text/event-stream"
                 chunks = []
+                buffer = b""
                 total = 0
                 async for chunk in resp.aiter_bytes():
                     total += len(chunk)
                     if total > MAX_MCP_HTTP_RESPONSE_BYTES:
                         raise RuntimeError(f"HTTP MCP 伺服器回應超過 {MAX_MCP_HTTP_RESPONSE_BYTES} 位元組上限")
-                    chunks.append(chunk)
+                    if not is_sse:
+                        chunks.append(chunk)
+                        continue
+                    messages, buffer = _sse_messages(buffer + chunk)
+                    for message in messages:
+                        if _is_response_to(message, payload["id"]):
+                            return _rpc_result(message)
             finally:
                 await resp.aclose()
-            if resp.status_code != 200:
-                raise RuntimeError(f"HTTP MCP 伺服器返回狀態碼 {resp.status_code}")
+            if is_sse:
+                messages, _ = _sse_messages(buffer + b"\n\n")
+                for message in messages:
+                    if _is_response_to(message, payload["id"]):
+                        return _rpc_result(message)
+                raise RuntimeError("HTTP MCP 伺服器的 SSE 串流結束前沒有回應")
             data = json.loads(b"".join(chunks))
-            if "error" in data:
-                raise RuntimeError(f"MCP JSON-RPC 錯誤: {data['error']}")
-            return data.get("result", {})
+            if not _is_response_to(data, payload["id"]):
+                raise RuntimeError("HTTP MCP 伺服器的回應與請求不符")
+            return _rpc_result(data)
     async def initialize(self) -> Dict[str, Any]:
-        return await self._send_rpc_request("initialize", {
+        result = await self._send_rpc_request("initialize", {
             "protocolVersion": MCP_PROTOCOL_VERSION,
             "capabilities": {},
             "clientInfo": {
@@ -342,9 +409,11 @@ class McpHttpClient:
                 "version": __version__
             }
         })
+        self._protocol_version = result.get("protocolVersion") or MCP_PROTOCOL_VERSION
+        await self._send_notification("notifications/initialized")
+        return result
     async def list_tools(self) -> List[Dict[str, Any]]:
-        result = await self._send_rpc_request("tools/list", {})
-        return _usable_tools(result.get("tools", []))
+        return await _list_all_tools(self._send_rpc_request)
     async def call_tool(self, name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
         return await self._send_rpc_request("tools/call", {
             "name": name,

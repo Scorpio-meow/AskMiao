@@ -69,6 +69,9 @@
 
 ### 修正 (Fixed)
 
+- **HTTP MCP 伺服器改用 Streamable HTTP**：請求帶 `Accept: application/json, text/event-stream`，接受 SSE 回應，之後的請求帶上伺服器發的 `Mcp-Session-Id` 與 `MCP-Protocol-Version`，交握後送出 `notifications/initialized`；協定版本改為 `2025-06-18`。先前只送 JSON 的 POST，依現行規格實作的遠端伺服器多半無法連線。
+- `tools/list` 依 `nextCursor` 讀完所有分頁（最多 50 頁），工具多的伺服器不再只取得第一頁。
+- MCP 交握不再宣告沒有實作的 `sampling` 與 `roots`；stdio 讀取回應時略過伺服器主動發出、id 剛好相同的請求。
 - 結構化資料中的巢狀物件與陣列不再被丟棄；JSON 物件不再只保留頂層字串、數字與布林值。
 - 上傳時存入資料庫的內容改為去除前後空白後的版本，與重複檢查比對的值一致。
 - 管理員上傳的 JSON 在清理失敗時，第二次解析不再繞過解析上限。
