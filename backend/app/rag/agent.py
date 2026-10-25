@@ -105,7 +105,7 @@ class ResearchAgent:
         approval_user_id：可以在對話內核准有副作用工具的使用者；None 時這類工具一律不執行"""
         start_time = time.time()
         # 會讀資料庫並等待知識庫描述的快取鎖，移到執行緒以免阻塞事件迴圈
-        tools_def = await asyncio.to_thread(self.tools.get_tool_definitions)
+        tools_def = await asyncio.to_thread(self.tools.get_tool_definitions, approval_user_id)
 
         skill_names = next(
             (t["function"]["parameters"]["properties"]["name"]["enum"] for t in tools_def if t["function"]["name"] == "activate_skill"),
@@ -120,7 +120,7 @@ class ResearchAgent:
             query = query[explicit_match.end():].strip() or query
             yield {"event": "step_start", "data": {"step": 1, "tool": "activate_skill", "arguments": {"name": explicit_skill}}}
             skill_start = time.time()
-            skill_output = await self.tools.activate_skill(explicit_skill)
+            skill_output = await self.tools.activate_skill(explicit_skill, approval_user_id)
             if "error" not in skill_output:
                 system_prompt += f"\n使用者指定使用以下技能，請依其指示完成這次的任務：\n{skill_output['content']}"
             step_info = {
@@ -196,7 +196,7 @@ class ResearchAgent:
             + [m["content"] for m in history if m.get("role") == "user" and isinstance(m.get("content"), str)]
         )
         if explicit_skill and research_trace[0]["status"] == "success":
-            session.activated_skills.add(explicit_skill)
+            session.record_tool_output("activate_skill", skill_output)
         final_answer = ""
         turns_used = 0
 
@@ -260,7 +260,9 @@ class ResearchAgent:
                 tool_start = time.time()
                 tool_output = session.refuse_tool_call(fn_name, args)
                 if tool_output is None:
-                    approval = await asyncio.to_thread(self.tools.approval_requirement, fn_name)
+                    approval = await asyncio.to_thread(self.tools.approval_requirement, fn_name, args)
+                    if fn_name in session.preapproved_tools:
+                        approval = None
                     if approval is not None:
                         if approval_user_id is None:
                             tool_output = {"error": "此工具需要使用者在對話中核准後才能執行，本次無法取得核准，請改以已取得的資料回答"}
@@ -283,7 +285,7 @@ class ResearchAgent:
                                 tool_output = {"error": "使用者未核准執行此工具，請改以已取得的資料回答，不要再次呼叫同一工具"}
                 if tool_output is None:
                     try:
-                        tool_output = await self.tools.execute_tool(fn_name, args)
+                        tool_output = await self.tools.execute_tool(fn_name, args, user_id=approval_user_id)
                     except Exception as e:
                         # 模型給的參數型別不對（例如 top_k 為 null）時讓模型改正，不中斷整個回答
                         error_id = log_and_get_error_id(logger, f"工具 {fn_name} 執行失敗", e)

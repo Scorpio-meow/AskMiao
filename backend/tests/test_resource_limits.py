@@ -259,7 +259,7 @@ async def test_attachment_parsing_runs_off_the_event_loop(monkeypatch):
 
     monkeypatch.setattr(agent_module, "chat_completion", fake_chat_completion)
     registry = ResearchToolRegistry()
-    monkeypatch.setattr(registry, "get_tool_definitions", lambda: [])
+    monkeypatch.setattr(registry, "get_tool_definitions", lambda user_id=None: [])
     agent = agent_module.ResearchAgent(tool_registry=registry)
     attachment = FileAttachment(filename="a.txt", file_type="text/plain", data_url=data_url(10))
     [event async for event in agent.stream_research("摘要", attachments=[attachment], max_turns=1)]
@@ -407,7 +407,7 @@ async def test_attachment_extractions_are_bounded_process_wide(monkeypatch):
     monkeypatch.setattr(agent_module, "_extract_attachment_text", slow_extract)
     monkeypatch.setattr(agent_module, "chat_completion", fake_chat_completion)
     registry = ResearchToolRegistry()
-    monkeypatch.setattr(registry, "get_tool_definitions", lambda: [])
+    monkeypatch.setattr(registry, "get_tool_definitions", lambda user_id=None: [])
     attachments = [FileAttachment(filename=f"{i}.txt", file_type="text/plain", data_url=data_url(10)) for i in range(2)]
 
     async def ask():

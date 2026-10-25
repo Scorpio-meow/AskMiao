@@ -75,7 +75,7 @@ async def get_available_models():
 def get_available_tools(user_id: int = Depends(get_current_user_id)):
     """獲取 AI 系統當前已註冊並啟用的所有工具定義清單與說明（需登入；同步函式在執行緒池執行）"""
     try:
-        tool_defs = get_rag_system().pipeline.tool_registry.get_tool_definitions()
+        tool_defs = get_rag_system().pipeline.tool_registry.get_tool_definitions(user_id)
         return {
             "status": "success",
             "tools": tool_defs
@@ -83,7 +83,7 @@ def get_available_tools(user_id: int = Depends(get_current_user_id)):
     except Exception as e:
         error_payload = build_error_payload(logger, "取得可用工具清單失敗", e)
         from app.rag.tools import ResearchToolRegistry
-        tool_defs = ResearchToolRegistry().get_tool_definitions()
+        tool_defs = ResearchToolRegistry().get_tool_definitions(user_id)
         return {
             "status": "partial",
             "tools": tool_defs,

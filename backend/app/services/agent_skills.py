@@ -1,3 +1,4 @@
+import asyncio
 import codecs
 import io
 import json
@@ -5,6 +6,9 @@ import re
 import secrets
 import shutil
 import stat
+import sys
+import tempfile
+import time
 import threading
 import zipfile
 from dataclasses import dataclass, field
@@ -20,6 +24,12 @@ from app.core.limits import (
     MAX_SKILL_MD_BYTES,
     MAX_SKILL_RESOURCE_CHARS,
     MAX_SKILL_RESOURCE_LISTING,
+    MAX_CONCURRENT_SKILL_SCRIPTS,
+    MAX_SKILL_SCRIPT_ARG_CHARS,
+    MAX_SKILL_SCRIPT_ARGS,
+    MAX_SKILL_SCRIPT_OUTPUT_CHARS,
+    MAX_SKILL_SCRIPT_SECONDS,
+    MAX_SKILL_SCRIPT_STDIN_CHARS,
     MAX_SKILL_UNCOMPRESSED_BYTES,
 )
 
@@ -303,22 +313,29 @@ def list_skill_resources(name: str) -> Tuple[List[str], bool]:
     return resources[:MAX_SKILL_RESOURCE_LISTING], len(resources) > MAX_SKILL_RESOURCE_LISTING
 
 
-def read_skill_resource(name: str, relative_path: str) -> Dict[str, Any]:
+def _skill_file(name: str, relative_path: str) -> Tuple[Optional[Path], Optional[PurePosixPath], Dict[str, Any]]:
     directory = skill_directory(name)
     if directory is None or not directory.is_dir():
-        return {"error": f"找不到技能：{name}"}
+        return None, None, {"error": f"找不到技能：{name}"}
     raw = (relative_path or "").replace("\\", "/").strip()
     path = PurePosixPath(raw)
     if not raw or path.is_absolute() or ".." in path.parts or re.match(r"^[A-Za-z]:", raw):
-        return {"error": "path 必須是技能目錄內的相對路徑，例如 references/REFERENCE.md"}
+        return None, None, {"error": "path 必須是技能目錄內的相對路徑，例如 references/REFERENCE.md"}
     target = directory.joinpath(*path.parts)
-    resolved_root = directory.resolve()
     try:
         resolved = target.resolve(strict=True)
     except (FileNotFoundError, OSError):
-        return {"error": f"技能「{name}」中沒有這個檔案：{raw}"}
-    if resolved_root not in resolved.parents or target.is_symlink() or not resolved.is_file():
-        return {"error": f"技能「{name}」中沒有這個檔案：{raw}"}
+        return None, None, {"error": f"技能「{name}」中沒有這個檔案：{raw}"}
+    if directory.resolve() not in resolved.parents or target.is_symlink() or not resolved.is_file():
+        return None, None, {"error": f"技能「{name}」中沒有這個檔案：{raw}"}
+    return resolved, path, {}
+
+
+def read_skill_resource(name: str, relative_path: str) -> Dict[str, Any]:
+    resolved, path, error = _skill_file(name, relative_path)
+    if resolved is None:
+        return error
+    raw = path.as_posix()
     byte_budget = MAX_SKILL_RESOURCE_CHARS * 4
     with open(resolved, "rb") as handle:
         data = handle.read(byte_budget + 1)
@@ -362,13 +379,126 @@ def format_skill_resource(name: str, path: str, text: str, truncated: bool) -> s
     return f'<skill_resource skill="{name}" path="{path}">\n{text}{note}\n</skill_resource>'
 
 
+def allowed_tool_names(allowed_tools: Optional[str]) -> List[str]:
+    return [token.split("(", 1)[0] for token in (allowed_tools or "").split() if token.split("(", 1)[0]]
+
+
 def activate_skill(name: str) -> Dict[str, Any]:
     try:
         skill = load_skill(name)
     except SkillError as e:
         return {"error": str(e)}
     resources, listing_truncated = list_skill_resources(name)
-    return {"skill": name, "content": format_skill_activation(skill, resources, listing_truncated)}
+    return {
+        "skill": name,
+        "allowed_tools": allowed_tool_names(skill.allowed_tools),
+        "content": format_skill_activation(skill, resources, listing_truncated),
+    }
+
+
+def skill_visible_to(allowed_user_ids: Optional[str], user_id: Optional[int]) -> bool:
+    if allowed_user_ids is None:
+        return True
+    try:
+        users = json.loads(allowed_user_ids)
+    except json.JSONDecodeError:
+        return False
+    return isinstance(users, list) and user_id is not None and user_id in users
+
+
+def script_interpreter(path: PurePosixPath) -> Optional[List[str]]:
+    suffix = path.suffix.lower()
+    if suffix == ".py":
+        return [sys.executable, "-I"]
+    program = {".sh": "bash", ".js": "node", ".mjs": "node"}.get(suffix)
+    located = shutil.which(program) if program else None
+    return [located] if located else None
+
+
+_script_slots = asyncio.Semaphore(MAX_CONCURRENT_SKILL_SCRIPTS)
+
+
+async def _read_capped(stream: asyncio.StreamReader) -> Tuple[str, bool]:
+    kept = bytearray()
+    truncated = False
+    while True:
+        chunk = await stream.read(65536)
+        if not chunk:
+            break
+        room = MAX_SKILL_SCRIPT_OUTPUT_CHARS * 4 - len(kept)
+        if room > 0:
+            kept.extend(chunk[:room])
+        if len(chunk) > max(room, 0):
+            truncated = True
+    text = kept.decode("utf-8", errors="replace")
+    return text[:MAX_SKILL_SCRIPT_OUTPUT_CHARS], truncated or len(text) > MAX_SKILL_SCRIPT_OUTPUT_CHARS
+
+
+async def run_skill_script(name: str, relative_path: str, args: Any, stdin_text: Any) -> Dict[str, Any]:
+    from app.services.mcp_service import PROCESS_GROUP_KWARGS, build_stdio_env, kill_process_tree
+
+    resolved, path, error = _skill_file(name, relative_path)
+    if resolved is None:
+        return error
+    interpreter = script_interpreter(path)
+    if interpreter is None:
+        return {"error": f"不支援執行 {path.suffix or '沒有副檔名的'} 檔案，或主機上沒有對應的直譯器"}
+    if args is None:
+        args = []
+    if not isinstance(args, list) or len(args) > MAX_SKILL_SCRIPT_ARGS or any(
+        not isinstance(arg, (str, int, float)) or len(str(arg)) > MAX_SKILL_SCRIPT_ARG_CHARS for arg in args
+    ):
+        return {"error": f"args 必須是最多 {MAX_SKILL_SCRIPT_ARGS} 個、每個最多 {MAX_SKILL_SCRIPT_ARG_CHARS} 字的字串陣列"}
+    stdin_bytes = str(stdin_text or "")[:MAX_SKILL_SCRIPT_STDIN_CHARS].encode("utf-8")
+    start = time.time()
+    async with _script_slots:
+        with tempfile.TemporaryDirectory(prefix="askmiao-skill-") as workdir:
+            copy = Path(workdir) / name
+            await asyncio.to_thread(shutil.copytree, skill_directory(name), copy, symlinks=False)
+            process = await asyncio.create_subprocess_exec(
+                *interpreter, str(copy.joinpath(*path.parts)), *[str(arg) for arg in args],
+                stdin=asyncio.subprocess.PIPE,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                env=build_stdio_env({}),
+                cwd=str(copy),
+                **PROCESS_GROUP_KWARGS,
+            )
+
+            async def communicate():
+                async def feed():
+                    try:
+                        process.stdin.write(stdin_bytes)
+                        await process.stdin.drain()
+                    except (BrokenPipeError, ConnectionResetError):
+                        pass
+                    finally:
+                        process.stdin.close()
+                _, stdout, stderr = await asyncio.gather(feed(), _read_capped(process.stdout), _read_capped(process.stderr))
+                await process.wait()
+                return stdout, stderr
+
+            timed_out = False
+            try:
+                (stdout, stdout_cut), (stderr, stderr_cut) = await asyncio.wait_for(communicate(), timeout=MAX_SKILL_SCRIPT_SECONDS)
+            except asyncio.TimeoutError:
+                timed_out = True
+                stdout, stdout_cut, stderr, stderr_cut = "", False, "", False
+                await kill_process_tree(process)
+                try:
+                    await asyncio.wait_for(process.wait(), timeout=5)
+                except asyncio.TimeoutError:
+                    process.kill()
+    return {
+        "skill": name,
+        "path": path.as_posix(),
+        "exit_code": process.returncode,
+        "timed_out": timed_out,
+        "duration_seconds": round(time.time() - start, 3),
+        "stdout": stdout,
+        "stderr": stderr,
+        "output_truncated": stdout_cut or stderr_cut,
+    }
 
 
 def skill_record_fields(skill: ParsedSkill) -> Dict[str, Any]:

@@ -11,7 +11,7 @@ async def test_mcp_stdio_lifecycle():
     Base.metadata.create_all(bind=engine)
     presets = McpManager.get_preset_servers()
     time_preset = next(p for p in presets if p["name"] == "mcp_time")
-    tools, init_info = await McpManager.discover_server_tools(time_preset)
+    tools, init_info, _ = await McpManager.discover_server_tools(time_preset)
     assert len(tools) >= 1
     assert tools[0]["name"] == "get_current_time"
     assert init_info.get("protocolVersion") == "2024-11-05"

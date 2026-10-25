@@ -5,11 +5,12 @@ from typing import Any, Dict
 from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile
 from sqlalchemy.orm import Session
 
+from app.core.error_response import log_and_get_error_id
 from app.core.jwt_auth import get_current_admin_user
 from app.core.limits import MAX_SKILL_ARCHIVE_BYTES
 from app.core.security_logging import log_security_event
 from app.core.user_context import get_current_user_id
-from app.models import AgentSkill
+from app.models import AgentSkill, AgentSkillSettingsUpdate, User
 from app.models.database import get_db
 from app.services.agent_skills import (
     SkillError,
@@ -20,6 +21,7 @@ from app.services.agent_skills import (
     remove_skill_files,
     skill_files_present,
     skill_record_fields,
+    skill_visible_to,
 )
 
 logger = logging.getLogger(__name__)
@@ -46,6 +48,8 @@ def _skill_response(skill: AgentSkill) -> Dict[str, Any]:
         "allowed_tools": skill.allowed_tools,
         "warnings": _json_or_none(skill.warnings) or [],
         "is_enabled": bool(skill.is_enabled),
+        "allow_scripts": bool(skill.allow_scripts),
+        "allowed_user_ids": None if skill.allowed_user_ids is None else (_json_or_none(skill.allowed_user_ids) or []),
         "files_present": skill_files_present(skill.name),
         "created_at": skill.created_at,
         "updated_at": skill.updated_at,
@@ -67,7 +71,7 @@ def get_enabled_skills(db: Session = Depends(get_db), user_id: int = Depends(get
         "skills": [
             {"name": s.name, "description": s.description}
             for s in skills
-            if skill_files_present(s.name)
+            if skill_files_present(s.name) and skill_visible_to(s.allowed_user_ids, user_id)
         ],
     }
 
@@ -85,8 +89,9 @@ def get_skill_detail(skill_id: int, db: Session = Depends(get_db), current_user:
     try:
         detail["body"] = load_skill(skill.name).body
     except SkillError as e:
+        error_id = log_and_get_error_id(logger, f"讀取技能 {skill.name} 失敗", e, logging.WARNING)
         detail["body"] = None
-        detail["load_error"] = str(e)
+        detail["load_error"] = f"無法讀取 SKILL.md，請重新上傳技能（錯誤代碼：{error_id}）"
     detail["resources"], detail["resources_truncated"] = list_skill_resources(skill.name)
     return {"status": "success", "skill": detail}
 
@@ -119,7 +124,7 @@ async def upload_skill(
             setattr(existing, key, value)
         skill = existing
     else:
-        skill = AgentSkill(name=parsed.name, is_enabled=True, created_by=current_user["user_id"], **fields)
+        skill = AgentSkill(name=parsed.name, is_enabled=True, allow_scripts=False, created_by=current_user["user_id"], **fields)
         db.add(skill)
     db.commit()
     db.refresh(skill)
@@ -144,6 +149,35 @@ def toggle_skill(skill_id: int, db: Session = Depends(get_db), current_user: dic
         "is_enabled": skill.is_enabled,
         "message": f"技能已{'啟用' if skill.is_enabled else '停用'}",
     }
+
+
+@router.patch("/{skill_id}/settings")
+def update_skill_settings(
+    skill_id: int,
+    settings_data: AgentSkillSettingsUpdate,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_admin_user),
+):
+    skill = _get_skill(db, skill_id)
+    if settings_data.allow_scripts is not None:
+        skill.allow_scripts = settings_data.allow_scripts
+    if settings_data.allowed_user_ids is not None:
+        user_ids = sorted(set(settings_data.allowed_user_ids))
+        existing = {row.id for row in db.query(User.id).filter(User.id.in_(user_ids)).all()} if user_ids else set()
+        missing = [user_id for user_id in user_ids if user_id not in existing]
+        if missing:
+            raise HTTPException(status_code=400, detail=f"找不到使用者：{', '.join(map(str, missing))}")
+        skill.allowed_user_ids = json.dumps(user_ids) if user_ids else None
+    db.commit()
+    db.refresh(skill)
+    log_security_event(
+        "ADMIN_SKILL_SETTINGS_UPDATED",
+        request=request,
+        user_id=current_user["user_id"],
+        details={"skill": skill.name, "allow_scripts": bool(skill.allow_scripts), "allowed_user_ids": _json_or_none(skill.allowed_user_ids)},
+    )
+    return {"status": "success", "message": "技能設定已更新", "skill": _skill_response(skill)}
 
 
 @router.delete("/{skill_id}")

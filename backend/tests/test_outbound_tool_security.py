@@ -374,7 +374,7 @@ for line in sys.stdin:
 @pytest.mark.anyio
 async def test_stdio_server_runs_in_an_empty_workdir_and_large_output_does_not_hang():
     server = {"transport_type": "stdio", "command": sys.executable, "args": ["-c", STDIO_SERVER], "timeout": 10}
-    tools, init_info = await McpManager.discover_server_tools(server)
+    tools, init_info, _ = await McpManager.discover_server_tools(server)
     assert len(tools[0]["description"]) == 200000
     assert init_info["files"] == []
     assert os.path.realpath(init_info["cwd"]) != os.path.realpath(os.getcwd())

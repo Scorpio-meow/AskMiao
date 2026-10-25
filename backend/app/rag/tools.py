@@ -6,19 +6,22 @@ import re
 import threading
 import time
 from typing import Any, Dict, List, Optional, Tuple
+from pathlib import PurePosixPath
 from urllib.parse import urlparse
 import httpx
 from app.core.config import settings
 from app.core.domain_profile import domain_profile
 from app.core.error_response import format_ssrf_rejection, log_and_get_error_id
 from app.core.html_text import extract_text_and_title
-from app.core.limits import MAX_KB_CATALOG_CHARS, MAX_SKILL_CATALOG_CHARS, MAX_TEXT_CLEANUP_CHARS
+from app.core.limits import MAX_KB_CATALOG_CHARS, MAX_MCP_CATALOG_CHARS, MAX_SKILL_CATALOG_CHARS, MAX_TEXT_CLEANUP_CHARS
 from app.rag.retrievers.hybrid import matches_target_document
 from app.services import agent_skills
 from app.services.structured_data import merge_record_parts
 logger = logging.getLogger(__name__)
 WEB_TOOL_NAMES = ("web_search", "web_fetch")
 SKILL_TOOL_NAMES = ("activate_skill", "read_skill_resource")
+MCP_CATALOG_TOOL_NAMES = ("read_mcp_resource", "get_mcp_prompt")
+SKILL_SCRIPT_TOOL_NAME = "run_skill_script"
 BUILTIN_TOOL_NAMES = ("search_knowledge_base", "filter_and_count_records") + WEB_TOOL_NAMES + SKILL_TOOL_NAMES
 def is_web_fetch_domain_allowed(url: str) -> bool:
     """WEB_FETCH_ALLOWED_DOMAINS 為 * 時不限制；否則主機須為清單中的網域或其子網域"""
@@ -426,7 +429,7 @@ class ResearchToolRegistry:
             f"{catalog_text}\n"
             "當使用者提問涉及上述任一文件的專屬領域時，必須優先調用此工具。"
         )
-    def get_tool_definitions(self) -> List[Dict[str, Any]]:
+    def get_tool_definitions(self, user_id: Optional[int] = None) -> List[Dict[str, Any]]:
         """回傳 OpenAI / Ollama / Azure OpenAI 相容之 Function Calling 工具規格清單（包含內部預設工具與已啟用的自訂 API Tools）"""
         kb_desc = self._generate_knowledge_base_description()
         base_tools = [
@@ -532,7 +535,7 @@ class ResearchToolRegistry:
         if not settings.ENABLE_WEB_SEARCH:
             base_tools = [t for t in base_tools if t["function"]["name"] not in WEB_TOOL_NAMES]
         try:
-            base_tools.extend(self._skill_tool_definitions())
+            base_tools.extend(self._skill_tool_definitions(user_id))
         except Exception as e:
             logger.warning(f"載入 Agent Skills 失敗: {e}")
 
@@ -574,29 +577,106 @@ class ResearchToolRegistry:
                             base_tools.append(fdef)
                     except Exception as e:
                         logger.warning(f"解析 MCP 伺服器 {ms.name} 工具快取失敗: {e}")
+            base_tools.extend(self._mcp_catalog_tool_definitions(mcp_servers))
             db.close()
         except Exception as e:
             logger.warning(f"動態載入外部工具或 MCP 失敗: {e}")
         return base_tools
     @staticmethod
-    def _enabled_skills() -> List[Any]:
+    def _mcp_catalog(server, column: str) -> List[Dict[str, Any]]:
+        try:
+            items = json.loads(getattr(server, column) or "[]")
+        except Exception:
+            return []
+        return items if isinstance(items, list) else []
+    def _mcp_catalog_tool_definitions(self, servers: List[Any]) -> List[Dict[str, Any]]:
+        definitions = []
+        for tool_name, column, header, render, parameters in (
+            (
+                "read_mcp_resource",
+                "discovered_resources",
+                "讀取 MCP 伺服器提供的 resource（文件、資料等）內容，只能讀取下列清單中的 uri：\n",
+                lambda r: f"- {r['uri']}｜{r.get('name') or ''}{('：' + r['description']) if r.get('description') else ''}",
+                {"uri": {"type": "string", "description": "要讀取的 resource uri，必須與清單完全相同"}},
+            ),
+            (
+                "get_mcp_prompt",
+                "discovered_prompts",
+                "取得 MCP 伺服器提供的 prompt 範本內容，作為完成任務的參考指引，只能使用下列 prompt：\n",
+                lambda p: f"- {p['name']}{('：' + p['description']) if p.get('description') else ''}"
+                + (f"（參數：{', '.join(a['name'] + ('*' if a.get('required') else '') for a in p.get('arguments') or [])}）" if p.get("arguments") else ""),
+                {"name": {"type": "string", "description": "prompt 名稱"}, "arguments": {"type": "object", "description": "prompt 參數，值皆為字串"}},
+            ),
+        ):
+            lines: List[str] = []
+            servers_used: List[str] = []
+            used = len(header)
+            for server in servers:
+                items = self._mcp_catalog(server, column)
+                if not items:
+                    continue
+                section = [f"[{server.name}] {server.display_name}"] + [render(item) for item in items]
+                text = "\n".join(section) + "\n"
+                if used + len(text) > MAX_MCP_CATALOG_CHARS:
+                    logger.warning(f"MCP {column} 目錄超過 {MAX_MCP_CATALOG_CHARS} 字，未列入伺服器：{server.name}")
+                    continue
+                used += len(text)
+                lines.append(text)
+                servers_used.append(server.name)
+            if not servers_used:
+                continue
+            properties = {"server": {"type": "string", "enum": servers_used, "description": "MCP 伺服器名稱（方括號內）"}, **parameters}
+            required = ["server", "uri"] if tool_name == "read_mcp_resource" else ["server", "name"]
+            definitions.append({
+                "type": "function",
+                "function": {
+                    "name": tool_name,
+                    "description": "【MCP 協定】" + header + "".join(lines),
+                    "parameters": {"type": "object", "properties": properties, "required": required},
+                },
+            })
+        return definitions
+    @staticmethod
+    def _find_mcp_catalog_server(db, name: str, arguments: Dict[str, Any]):
+        from app.models import McpServer
+        server = db.query(McpServer).filter(McpServer.name == str(arguments.get("server", "")), McpServer.is_enabled == True).first()
+        if server is None:
+            return None, None
+        if name == "read_mcp_resource":
+            uri = str(arguments.get("uri", ""))
+            listed = any(r.get("uri") == uri for r in ResearchToolRegistry._mcp_catalog(server, "discovered_resources"))
+            return (server, uri) if listed else (None, None)
+        prompt_name = str(arguments.get("name", ""))
+        listed = any(p.get("name") == prompt_name for p in ResearchToolRegistry._mcp_catalog(server, "discovered_prompts"))
+        return (server, prompt_name) if listed else (None, None)
+    @staticmethod
+    def _mcp_target(server) -> str:
+        if server.transport_type == "stdio":
+            return f"本機指令 {os.path.basename(server.command or '')}"
+        return f"{(server.transport_type or '').upper()} {_url_host(server.url or '')}"
+    @staticmethod
+    def _enabled_skills(user_id: Optional[int]) -> List[Any]:
         from app.models.database import SessionLocal
         from app.models import AgentSkill
         db = SessionLocal()
         try:
             skills = db.query(AgentSkill).filter(AgentSkill.is_enabled == True).order_by(AgentSkill.name).all()
-            return [s for s in skills if agent_skills.skill_files_present(s.name)]
+            return [
+                s for s in skills
+                if agent_skills.skill_files_present(s.name) and agent_skills.skill_visible_to(s.allowed_user_ids, user_id)
+            ]
         finally:
             db.close()
-    def _skill_tool_definitions(self) -> List[Dict[str, Any]]:
+    def _skill_tool_definitions(self, user_id: Optional[int]) -> List[Dict[str, Any]]:
         header = (
             "載入管理員安裝的技能（Agent Skills）完整指示。當使用者的任務符合下列某個技能的描述時，"
             "先以技能名稱呼叫此工具取得指示，再依指示完成任務；不相關時不要呼叫。\n"
         )
         entries: List[str] = []
         names: List[str] = []
+        script_names: List[str] = []
         used = len(header) + len("<available_skills>\n</available_skills>")
-        for skill in self._enabled_skills():
+        for skill in self._enabled_skills(user_id):
             entry = f"  <skill>\n    <name>{skill.name}</name>\n    <description>{skill.description}</description>\n  </skill>\n"
             if used + len(entry) > MAX_SKILL_CATALOG_CHARS:
                 logger.warning(f"技能目錄超過 {MAX_SKILL_CATALOG_CHARS} 字，未列入技能：{skill.name}")
@@ -604,6 +684,8 @@ class ResearchToolRegistry:
             used += len(entry)
             entries.append(entry)
             names.append(skill.name)
+            if skill.allow_scripts:
+                script_names.append(skill.name)
         if not names:
             return []
         catalog = header + "<available_skills>\n" + "".join(entries) + "</available_skills>"
@@ -626,7 +708,7 @@ class ResearchToolRegistry:
                 "type": "function",
                 "function": {
                     "name": "read_skill_resource",
-                    "description": "讀取已載入技能目錄中的參考檔、範本或腳本內容（例如 references/REFERENCE.md）。只在技能指示提到該檔案時使用；腳本只能讀取，不會被執行。",
+                    "description": "讀取已載入技能目錄中的參考檔、範本或腳本內容（例如 references/REFERENCE.md）。只在技能指示提到該檔案時使用。",
                     "parameters": {
                         "type": "object",
                         "properties": {
@@ -637,17 +719,43 @@ class ResearchToolRegistry:
                     }
                 }
             }
-        ]
-    def _skill_enabled(self, name: str) -> bool:
-        return any(skill.name == name for skill in self._enabled_skills())
-    async def activate_skill(self, name: str) -> Dict[str, Any]:
-        if not await asyncio.to_thread(self._skill_enabled, name):
+        ] + ([{
+            "type": "function",
+            "function": {
+                "name": SKILL_SCRIPT_TOOL_NAME,
+                "description": "在主機上執行已載入技能中的腳本（.py、.sh、.js），每次執行前需使用者核准；回傳結束碼、stdout 與 stderr。只在技能指示要求執行該腳本時使用。",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "skill": {"type": "string", "enum": script_names, "description": "技能名稱"},
+                        "path": {"type": "string", "description": "技能目錄內的腳本相對路徑，例如 scripts/extract.py"},
+                        "args": {"type": "array", "items": {"type": "string"}, "description": "命令列參數"},
+                        "stdin": {"type": "string", "description": "選填：傳給腳本的標準輸入"}
+                    },
+                    "required": ["skill", "path"]
+                }
+            }
+        }] if script_names else [])
+    def _visible_skill(self, name: str, user_id: Optional[int]):
+        return next((skill for skill in self._enabled_skills(user_id) if skill.name == name), None)
+    async def activate_skill(self, name: str, user_id: Optional[int] = None) -> Dict[str, Any]:
+        if await asyncio.to_thread(self._visible_skill, name, user_id) is None:
             return {"error": f"沒有啟用中的技能：{name}"}
         return await asyncio.to_thread(agent_skills.activate_skill, name)
-    async def read_skill_resource(self, skill: str, path: str) -> Dict[str, Any]:
-        if not await asyncio.to_thread(self._skill_enabled, skill):
+    async def read_skill_resource(self, skill: str, path: str, user_id: Optional[int] = None) -> Dict[str, Any]:
+        if await asyncio.to_thread(self._visible_skill, skill, user_id) is None:
             return {"error": f"沒有啟用中的技能：{skill}"}
         return await asyncio.to_thread(agent_skills.read_skill_resource, skill, path)
+    async def run_skill_script(self, arguments: Dict[str, Any], user_id: Optional[int] = None) -> Dict[str, Any]:
+        name = str(arguments.get("skill", ""))
+        skill = await asyncio.to_thread(self._visible_skill, name, user_id)
+        if skill is None or not skill.allow_scripts:
+            return {"error": f"技能「{name}」沒有啟用或不允許執行腳本"}
+        try:
+            return await agent_skills.run_skill_script(name, str(arguments.get("path", "")), arguments.get("args"), arguments.get("stdin"))
+        except Exception as e:
+            error_id = log_and_get_error_id(logger, f"執行技能 {name} 的腳本失敗", e)
+            return {"error": f"執行技能腳本失敗（錯誤代碼：{error_id}）"}
     @staticmethod
     def _find_mcp_tool(db, name: str):
         """依 Agent 看到的函式名稱找出啟用中的 MCP 伺服器與其工具原名"""
@@ -665,23 +773,30 @@ class ResearchToolRegistry:
                 if f"mcp_{clean_s}_{clean_t}" == name:
                     return ms, mt.get("name")
         return None, None
-    def approval_requirement(self, name: str) -> Optional[Dict[str, str]]:
+    def approval_requirement(self, name: str, arguments: Optional[Dict[str, Any]] = None) -> Optional[Dict[str, str]]:
         """需要使用者核准的工具回傳顯示資訊，其餘（含內建工具與找不到的工具）回傳 None。
         target 說明實際送出的位置（HTTP 方法與主機、MCP 的傳輸方式與主機或指令），讓核准者知道資料會送到哪裡"""
         if name in BUILTIN_TOOL_NAMES:
             return None
+        if name == SKILL_SCRIPT_TOOL_NAME:
+            arguments = arguments or {}
+            path = str(arguments.get("path", ""))
+            interpreter = agent_skills.script_interpreter(PurePosixPath(path.replace("\\", "/")))
+            program = os.path.basename(interpreter[0]) if interpreter else "?"
+            return {"kind": "skill_script", "display_name": f"{arguments.get('skill', '')} → {path}", "target": f"本機指令 {program}"}
         from app.models.database import SessionLocal
         from app.models import CustomApiTool
         db = SessionLocal()
         try:
+            if name in MCP_CATALOG_TOOL_NAMES:
+                server, item = self._find_mcp_catalog_server(db, name, arguments or {})
+                if server is not None and server.requires_approval:
+                    return {"kind": "mcp", "display_name": f"{server.display_name} → {item}", "target": self._mcp_target(server)}
+                return None
             if name.startswith("mcp_"):
                 server, tool_name = self._find_mcp_tool(db, name)
                 if server is not None and server.requires_approval:
-                    if server.transport_type == "stdio":
-                        target = f"本機指令 {os.path.basename(server.command or '')}"
-                    else:
-                        target = f"{(server.transport_type or '').upper()} {_url_host(server.url or '')}"
-                    return {"kind": "mcp", "display_name": f"{server.display_name} → {tool_name}", "target": target}
+                    return {"kind": "mcp", "display_name": f"{server.display_name} → {tool_name}", "target": self._mcp_target(server)}
                 return None
             tool = db.query(CustomApiTool).filter(CustomApiTool.name == name, CustomApiTool.is_enabled == True).first()
             if tool is not None and tool.requires_approval:
@@ -691,7 +806,29 @@ class ResearchToolRegistry:
             return None
         finally:
             db.close()
-    async def execute_tool(self, name: str, arguments: Dict[str, Any]) -> Any:
+    async def _execute_mcp_catalog_tool(self, name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
+        from app.models.database import SessionLocal
+        from app.services.mcp_service import McpManager
+        from app.api.mcp import _serialize_mcp_server
+        try:
+            db = SessionLocal()
+            try:
+                server, item = self._find_mcp_catalog_server(db, name, arguments)
+                if server is None:
+                    return {"error": "找不到啟用中的 MCP 伺服器，或 uri / prompt 不在該伺服器的清單中"}
+                server_dict = _serialize_mcp_server(server)
+            finally:
+                db.close()
+            if name == "read_mcp_resource":
+                return await McpManager.read_mcp_resource(server_dict, item)
+            prompt_arguments = arguments.get("arguments") or {}
+            if not isinstance(prompt_arguments, dict):
+                return {"error": "arguments 必須是物件"}
+            return await McpManager.get_mcp_prompt(server_dict, item, {str(k): str(v) for k, v in prompt_arguments.items()})
+        except Exception as e:
+            error_id = log_and_get_error_id(logger, f"執行 {name} 時發生異常", e)
+            return {"error": f"執行 MCP 請求失敗（錯誤代碼：{error_id}）"}
+    async def execute_tool(self, name: str, arguments: Dict[str, Any], user_id: Optional[int] = None) -> Any:
         """執行指定名稱之工具並回傳結果"""
         if name in WEB_TOOL_NAMES and not settings.ENABLE_WEB_SEARCH:
             return {"error": f"聯網工具已停用（ENABLE_WEB_SEARCH=false）: {name}"}
@@ -715,9 +852,13 @@ class ResearchToolRegistry:
             url = arguments.get("url", "")
             return await self.web_fetch(url)
         elif name == "activate_skill":
-            return await self.activate_skill(str(arguments.get("name", "")))
+            return await self.activate_skill(str(arguments.get("name", "")), user_id)
         elif name == "read_skill_resource":
-            return await self.read_skill_resource(str(arguments.get("skill", "")), str(arguments.get("path", "")))
+            return await self.read_skill_resource(str(arguments.get("skill", "")), str(arguments.get("path", "")), user_id)
+        elif name == SKILL_SCRIPT_TOOL_NAME:
+            return await self.run_skill_script(arguments, user_id)
+        elif name in MCP_CATALOG_TOOL_NAMES:
+            return await self._execute_mcp_catalog_tool(name, arguments)
         elif name.startswith("mcp_"):
 
             try:

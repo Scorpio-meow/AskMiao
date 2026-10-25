@@ -109,7 +109,7 @@ def test_admin_can_create_and_delete_mcp_server(monkeypatch, clean_test_servers)
     monkeypatch.setattr(
         McpManager,
         "discover_server_tools",
-        AsyncMock(return_value=([], {"protocolVersion": mcp_service.MCP_PROTOCOL_VERSION})),
+        AsyncMock(return_value=([], {"protocolVersion": mcp_service.MCP_PROTOCOL_VERSION}, {"resources": [], "prompts": []})),
     )
     client = build_client(ADMIN_USER)
     created = client.post(

@@ -40,10 +40,22 @@ describe('custom API tool form', () => {
       url: 'https://api.example.com/weather',
       auth_type: 'bearer',
       auth_config: { token: MASK },
+      body_content_type: 'application/json',
       requires_approval: true,
       timeout: 20,
       parameters_schema: tool.parameters_schema,
     });
+  });
+
+  it('sends only the fields of the selected auth type', () => {
+    const form = {
+      ...toolToForm({ ...EMPTY_TOOL_FORM, auth_type: 'api_key', auth_config: { key_name: 'X-Key', key_in: 'query', key_value: MASK } }),
+      parameters_json: '{}',
+    };
+    expect(toolFormToPayload(form).auth_config).toEqual({ key_name: 'X-Key', key_in: 'query', key_value: MASK });
+    const oauth = { ...form, auth_type: 'oauth2_client_credentials', auth: { ...form.auth, token_url: 'https://auth/token', client_id: 'c', client_secret: 's' } };
+    expect(toolFormToPayload(oauth).auth_config).toEqual({ token_url: 'https://auth/token', client_id: 'c', client_secret: 's', scope: '', client_auth: 'basic' });
+    expect(toolFormToPayload({ ...form, auth_type: 'none' }).auth_config).toEqual({});
   });
 
   it('names the field when its JSON is invalid', () => {
@@ -82,6 +94,11 @@ describe('MCP server form', () => {
 
   it('names the field when its JSON is invalid', () => {
     expect(() => mcpFormToPayload({ ...EMPTY_MCP_FORM, env_vars_json: '{"a":' })).toThrow('「環境變數配置」不是有效的 JSON');
+  });
+
+  it('sends the OAuth client only for HTTP servers and keeps the masked secret', () => {
+    const server = { name: 'remote', display_name: '遠端', transport_type: 'http', url: 'https://mcp.example.com/mcp', oauth_client: { client_id: 'c', client_secret: MASK, scope: 'read' } };
+    expect(mcpFormToPayload(mcpServerToForm(server)).oauth_client).toEqual({ client_id: 'c', client_secret: MASK, scope: 'read' });
   });
 });
 

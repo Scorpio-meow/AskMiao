@@ -5,6 +5,7 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 import yaml
 from app.core.ssrf_protection import DnsPool, safe_fetch_text, SSRFProtectionError
 from app.core.error_response import SafeClientError, format_ssrf_rejection, log_and_get_error_id
+from app.models import BODY_CONTENT_TYPES, OAUTH2_CLIENT_CREDENTIALS
 
 logger = logging.getLogger(__name__)
 
@@ -327,7 +328,8 @@ class OpenApiParser:
                 if not target_mime and content:
                     target_mime = list(content.keys())[0]
                 if target_mime:
-                    body_content_type = target_mime
+                    if target_mime in BODY_CONTENT_TYPES:
+                        body_content_type = target_mime
                     body_schema_obj = content[target_mime].get("schema", {})
                     cleaned_body = cls._clean_schema(body_schema_obj, root_spec)
                     if cleaned_body.get("type") == "object" and "properties" in cleaned_body:
@@ -359,6 +361,7 @@ class OpenApiParser:
             }
         }
         full_url = f"{base_url.rstrip('/')}/{path_str.lstrip('/')}" if base_url else path_str
+        auth_type, auth_config = cls._security_auth(op, root_spec, version)
         return {
             "name": tool_name,
             "display_name": display_name,
@@ -370,6 +373,8 @@ class OpenApiParser:
             "full_url": full_url,
             "has_body": has_body,
             "body_content_type": body_content_type,
+            "auth_type": auth_type,
+            "auth_config": auth_config,
             "param_locations": param_locations,
             "parameters_schema": {
                 "type": "object",
@@ -380,6 +385,66 @@ class OpenApiParser:
             "tags": op.get("tags", []),
             "spec_version": version
         }
+    @classmethod
+    def _security_schemes(cls, root_spec: Dict[str, Any], version: str) -> Dict[str, Any]:
+        if version == "swagger_2.0":
+            schemes = root_spec.get("securityDefinitions")
+        else:
+            schemes = (root_spec.get("components") or {}).get("securitySchemes")
+        if not isinstance(schemes, dict):
+            return {}
+        resolved = {}
+        for name, scheme in schemes.items():
+            if isinstance(scheme, dict) and "$ref" in scheme:
+                scheme = cls._resolve_ref(scheme["$ref"], root_spec)
+            if isinstance(scheme, dict):
+                resolved[name] = scheme
+        return resolved
+
+    @classmethod
+    def _scheme_auth(cls, scheme: Dict[str, Any], scopes: List[str]) -> Optional[Tuple[str, Dict[str, Any]]]:
+        scheme_type = str(scheme.get("type", "")).lower()
+        if scheme_type == "apikey" and scheme.get("in") in ("header", "query") and scheme.get("name"):
+            return "api_key", {"key_name": scheme["name"], "key_in": scheme["in"], "key_value": ""}
+        if scheme_type == "basic" or (scheme_type == "http" and str(scheme.get("scheme", "")).lower() == "basic"):
+            return "basic", {"username": "", "password": ""}
+        if scheme_type == "http" and str(scheme.get("scheme", "")).lower() == "bearer":
+            return "bearer", {"token": ""}
+        if scheme_type == "oauth2":
+            token_url = None
+            flows = scheme.get("flows")
+            if isinstance(flows, dict) and isinstance(flows.get("clientCredentials"), dict):
+                token_url = flows["clientCredentials"].get("tokenUrl")
+            elif scheme.get("flow") == "application":
+                token_url = scheme.get("tokenUrl")
+            if token_url:
+                return OAUTH2_CLIENT_CREDENTIALS, {
+                    "token_url": token_url,
+                    "scope": " ".join(scopes),
+                    "client_id": "",
+                    "client_secret": "",
+                    "client_auth": "basic",
+                }
+        return None
+
+    @classmethod
+    def _security_auth(cls, op: Dict[str, Any], root_spec: Dict[str, Any], version: str) -> Tuple[str, Dict[str, Any]]:
+        requirements = op.get("security", root_spec.get("security"))
+        schemes = cls._security_schemes(root_spec, version)
+        if not isinstance(requirements, list) or not schemes:
+            return "none", {}
+        for requirement in requirements:
+            if not isinstance(requirement, dict) or len(requirement) != 1:
+                continue
+            name, scopes = next(iter(requirement.items()))
+            scheme = schemes.get(name)
+            if scheme is None:
+                continue
+            mapped = cls._scheme_auth(scheme, [str(s) for s in scopes] if isinstance(scopes, list) else [])
+            if mapped is not None:
+                return mapped
+        return "none", {}
+
     @classmethod
     def _generate_tool_name(cls, method: str, path: str, operation_id: Optional[str]) -> str:
         """生成符合 Function Calling 規範的唯一合法工具名稱 (英文字母、數字與底線)"""

@@ -106,8 +106,8 @@ export default function McpServerFormDialog({ server, presets, onClose, onSaved 
                 onChange={(e) => setForm({ ...form, transport_type: e.target.value })}
               >
                 <option value="stdio">Stdio (子進程)</option>
-                <option value="sse">SSE (Server-Sent Events)</option>
-                <option value="http">HTTP (POST Stream)</option>
+                <option value="http">HTTP（Streamable HTTP，舊版 SSE 自動相容）</option>
+                <option value="sse">SSE（舊版 HTTP+SSE）</option>
               </select>
             </div>
             {form.transport_type === 'stdio' ? (
@@ -179,6 +179,51 @@ export default function McpServerFormDialog({ server, presets, onClose, onSaved 
               />
               <span id="mcp-headers-hint" className={styles.credentialHint}>{SECRET_FIELD_HINT}</span>
             </div>
+          )}
+          {form.transport_type !== 'stdio' && (
+            <fieldset className={styles.formFieldset}>
+              <legend className={styles.formLabel}>OAuth 用戶端（選填）</legend>
+              <p className={styles.mutedNote}>
+                伺服器要求 OAuth 時，儲存後在伺服器卡片按「OAuth 授權」。授權伺服器支援動態註冊時可以留空；不支援時填入在授權伺服器註冊的用戶端。
+              </p>
+              <div className={styles.formRow}>
+                <div className={styles.formGroup}>
+                  <label className={styles.formLabel} htmlFor="mcp-oauth-client-id">Client ID</label>
+                  <input
+                    id="mcp-oauth-client-id"
+                    type="text"
+                    className={styles.formInput}
+                    value={form.oauth_client_id}
+                    onChange={(e) => setForm({ ...form, oauth_client_id: e.target.value })}
+                    autoComplete="off"
+                  />
+                </div>
+                <div className={styles.formGroup}>
+                  <label className={styles.formLabel} htmlFor="mcp-oauth-client-secret">Client Secret（公開用戶端可留空）</label>
+                  <input
+                    id="mcp-oauth-client-secret"
+                    type="password"
+                    className={styles.formInput}
+                    value={form.oauth_client_secret}
+                    onChange={(e) => setForm({ ...form, oauth_client_secret: e.target.value })}
+                    autoComplete="off"
+                    aria-describedby="mcp-oauth-secret-hint"
+                  />
+                  <span id="mcp-oauth-secret-hint" className={styles.credentialHint}>{SECRET_FIELD_HINT}</span>
+                </div>
+              </div>
+              <div className={styles.formGroup}>
+                <label className={styles.formLabel} htmlFor="mcp-oauth-scope">Scope（選填，以空白分隔）</label>
+                <input
+                  id="mcp-oauth-scope"
+                  type="text"
+                  className={styles.formInput}
+                  value={form.oauth_scope}
+                  onChange={(e) => setForm({ ...form, oauth_scope: e.target.value })}
+                  autoComplete="off"
+                />
+              </div>
+            </fieldset>
           )}
           <label className={styles.approvalOption}>
             <input

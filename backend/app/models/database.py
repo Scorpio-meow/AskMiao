@@ -42,6 +42,13 @@ COLUMN_UPGRADES = (
         "(UPPER(COALESCE(method, 'GET')) NOT IN ('GET', 'HEAD', 'OPTIONS'))",
     ),
     ("mcp_servers", "requires_approval", "BOOLEAN", "UPDATE mcp_servers SET requires_approval = TRUE"),
+    ("custom_api_tools", "body_content_type", "VARCHAR", "UPDATE custom_api_tools SET body_content_type = 'application/json'"),
+    ("mcp_servers", "discovered_resources", "TEXT", "UPDATE mcp_servers SET discovered_resources = NULL"),
+    ("mcp_servers", "discovered_prompts", "TEXT", "UPDATE mcp_servers SET discovered_prompts = NULL"),
+    ("mcp_servers", "oauth_config", "TEXT", "UPDATE mcp_servers SET oauth_config = NULL"),
+    ("mcp_servers", "oauth_tokens", "TEXT", "UPDATE mcp_servers SET oauth_tokens = NULL"),
+    ("agent_skills", "allow_scripts", "BOOLEAN", "UPDATE agent_skills SET allow_scripts = FALSE"),
+    ("agent_skills", "allowed_user_ids", "TEXT", "UPDATE agent_skills SET allowed_user_ids = NULL"),
     # 既有帳號沿用原本「權杖不得早於帳號建立時間」的規則
     ("users", "tokens_valid_after", "TIMESTAMP", "UPDATE users SET tokens_valid_after = created_at"),
 )
@@ -53,7 +60,7 @@ ROW_BACKFILLS = (
 # 含憑證的欄位：寫入時以 TOOL_SECRETS_KEY 加密（見 app/core/tool_secrets.py）
 ENCRYPTED_TOOL_SECRET_COLUMNS = (
     ("custom_api_tools", ("headers", "auth_config")),
-    ("mcp_servers", ("env_vars", "headers")),
+    ("mcp_servers", ("env_vars", "headers", "oauth_config", "oauth_tokens")),
 )
 logger = logging.getLogger(__name__)
 def encrypt_stored_tool_secrets(conn, inspector, tables) -> None:

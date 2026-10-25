@@ -1,4 +1,5 @@
 .venv/
+.venv-py310/
 __pycache__/
 *.pyc
 .pytest_cache/
@@ -13,9 +14,9 @@ node_modules/
 .vscode/
 .claude/
 .codegraph/
-modelcontextprotocol
-OpenAPI Specification
-~
-agentskills
-quickstart-resources
-OpenAPI-Specification
+modelcontextprotocol/
+OpenAPI Specification/
+~/
+agentskills/
+quickstart-resources/
+OpenAPI-Specification/

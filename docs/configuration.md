@@ -317,8 +317,8 @@ python scripts/create_user.py --username root --email root@example.com --admin
 python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
 ```
 
-- **加密範圍**：自訂 API 工具的 `headers`、`auth_config` 與 MCP 伺服器的 `env_vars`、`headers` 寫入資料庫前以此金鑰加密（存成 `fernet:` 開頭的內容），資料庫或備份外流時不會直接暴露憑證。舊版以明文存放的值在後端啟動時自動改為加密，不是 JSON 物件的舊值會被清空，需要重新輸入。
-- **管理 API 的遮蔽**：工具與 MCP 伺服器的回應以 `••••••••` 取代秘密值，憑證寫入後不會再從 API 讀出。秘密值包括 `Accept`、`Accept-Encoding`、`Accept-Language`、`Cache-Control`、`Content-Type`、`User-Agent` 以外的標頭，`auth_config` 中的 `token`、`key_value`、`password`，以及 MCP 伺服器的所有環境變數；`key_name`、`key_in`、`username` 等設定照常顯示。更新時送出的內容取代整個欄位，其中仍為 `••••••••` 的項目沿用已儲存的值；沒有已儲存的值可沿用時回傳 `400`。
+- **加密範圍**：自訂 API 工具的 `headers`、`auth_config` 與 MCP 伺服器的 `env_vars`、`headers`、`oauth_config`、`oauth_tokens` 寫入資料庫前以此金鑰加密（存成 `fernet:` 開頭的內容），資料庫或備份外流時不會直接暴露憑證。舊版以明文存放的值在後端啟動時自動改為加密，不是 JSON 物件的舊值會被清空，需要重新輸入。
+- **管理 API 的遮蔽**：工具與 MCP 伺服器的回應以 `••••••••` 取代秘密值，憑證寫入後不會再從 API 讀出。秘密值包括 `Accept`、`Accept-Encoding`、`Accept-Language`、`Cache-Control`、`Content-Type`、`User-Agent` 以外的標頭，`auth_config` 中的 `token`、`key_value`、`password`、`client_secret`，MCP 伺服器的所有環境變數與 OAuth `client_secret`（OAuth 權杖不會出現在回應中）；`key_name`、`key_in`、`username` 等設定照常顯示。更新時送出的內容取代整個欄位，其中仍為 `••••••••` 的項目沿用已儲存的值；沒有已儲存的值可沿用時回傳 `400`。
 - **更換或遺失金鑰**：已儲存的憑證無法以其他金鑰解密。管理 API 對這些工具與 MCP 伺服器回傳 `credentials_unreadable: true`，無法解密的欄位為 `null`，請重新輸入憑證；在此之前，Agent 呼叫這些工具會失敗。請把 `TOOL_SECRETS_KEY` 與資料庫備份一起妥善保存：只還原資料庫而沒有原本的金鑰時，所有工具憑證都要重新輸入。
 
 ## 網路存取控制
@@ -380,6 +380,7 @@ python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().d
 |---|---|---|
 | `MAX_TOOL_RESULT_CHARS` | 20,000 字元 | 每次工具呼叫的結果放進模型脈絡前的上限，超過的部分截斷 |
 | `MAX_KB_CATALOG_CHARS` | 4,000 字元 | `search_knowledge_base` 工具說明中文件目錄（檔名與摘要）的長度；每次呼叫模型都會送出，超過時只列出前面的文件並告知其餘份數 |
+| `MAX_MCP_CATALOG_CHARS` | 8,000 字元 | `read_mcp_resource`、`get_mcp_prompt` 工具說明中各自列出的 MCP resources 或 prompts 清單長度；放不下的伺服器不列出並寫入警告日誌 |
 | `MAX_TEXT_CLEANUP_CHARS` | 2,000,000 字元 | `web_fetch` 抽取文字前先截斷 HTML 的長度 |
 | `MAX_DATE_RANGE_CHARS`、`MAX_TARGET_DATES`、`MAX_FILTER_RECORDS`（`rag/tools.py`） | 200 字元、93 天、50 筆 | `filter_and_count_records` 的 `date_range` 長度、展開後的日期數與回傳筆數（`limit` 超過時夾到 50） |
 | `MAX_API_TOOL_RESPONSE_BYTES`（`api/api_tools.py`） | 1 MiB | 自訂 API 工具的回應本文上限，超過即中止讀取並回傳 `502` |
@@ -426,6 +427,11 @@ OOXML 的檢查在解析前進行，依 ZIP 成員宣告的大小計算。python
 | `MAX_SKILL_RESOURCE_LISTING` | 100 | 啟用技能時列給模型的檔案數 |
 | `MAX_SKILL_RESOURCE_CHARS` | 20,000 字元 | 啟用技能時回傳的 `SKILL.md` 內文與每次 `read_skill_resource` 的結果，超過的部分截斷 |
 | `MAX_SKILL_CATALOG_CHARS` | 8,000 字元 | `activate_skill` 工具說明中技能目錄（名稱與描述）的長度；放不下的技能不列出並寫入警告日誌 |
+| `MAX_SKILL_SCRIPT_SECONDS` | 60 秒 | `run_skill_script` 每次執行的時限，逾時終止整個程序群組，結果的 `timed_out` 為 `true` |
+| `MAX_SKILL_SCRIPT_OUTPUT_CHARS` | 20,000 字元 | 腳本的 `stdout` 與 `stderr` 各自保留的長度，超過時截斷並設 `output_truncated` |
+| `MAX_SKILL_SCRIPT_ARGS`、`MAX_SKILL_SCRIPT_ARG_CHARS` | 20 個、1,000 字元 | 腳本命令列參數的個數與每個參數的長度，超過時不執行 |
+| `MAX_SKILL_SCRIPT_STDIN_CHARS` | 100,000 字元 | 傳給腳本標準輸入的長度，超過的部分截斷 |
+| `MAX_CONCURRENT_SKILL_SCRIPTS` | 2 | 整個行程同時執行的技能腳本數，其餘排隊等候 |
 
 **帳號、日誌與速率限制**
 

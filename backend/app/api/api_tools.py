@@ -16,10 +16,12 @@ from app.models import (
     CustomApiToolResponse,
     OpenApiParseRequest,
     OpenApiImportRequest,
+    OAUTH2_CLIENT_CREDENTIALS,
     ToolTestRequest,
 )
 from app.core.jwt_auth import get_current_admin_user
 from app.core.ssrf_protection import DnsPool, SSRFProtectionError, SSRFSafeTransport, same_origin, send_following_redirects
+from app.services.oauth_client import OAuthError, client_credentials_token, invalidate_client_credentials_token
 from app.services.openapi_parser import OpenApiParser
 from app.rag.tool_approval import default_requires_approval
 from app.core.error_response import SafeClientError, log_and_get_error_id, format_client_error, format_ssrf_rejection
@@ -84,6 +86,7 @@ def _tool_fields(tool: CustomApiTool, headers: Optional[Dict[str, Any]], auth_co
         "parameters_schema": parameters_schema,
         "request_body_schema": request_body_schema,
         "param_locations": param_locations,
+        "body_content_type": tool.body_content_type or JSON_CONTENT_TYPE,
         "response_mapping": tool.response_mapping,
         "is_enabled": bool(tool.is_enabled),
         "requires_approval": bool(tool.requires_approval),
@@ -98,6 +101,9 @@ MAX_API_TOOL_TEXT_CHARS = 4000
 MAX_API_TOOL_REDIRECTS = 5
 REDACTED = "[已遮蔽]"
 MIN_SECRET_LENGTH = 4
+JSON_CONTENT_TYPE = "application/json"
+FORM_CONTENT_TYPE = "application/x-www-form-urlencoded"
+MULTIPART_CONTENT_TYPE = "multipart/form-data"
 
 
 class ApiToolResponseTooLarge(ValueError):
@@ -127,7 +133,25 @@ def _collect_secrets(headers: Dict[str, str], auth_type: str, auth_config: Dict[
         password = str(auth_config.get("password", ""))
         secrets.add(password)
         secrets.add(base64.b64encode(f"{username}:{password}".encode()).decode())
+    elif auth_type == OAUTH2_CLIENT_CREDENTIALS and auth_config.get("client_secret"):
+        secrets.add(str(auth_config["client_secret"]))
     return {s for s in secrets if len(s) >= MIN_SECRET_LENGTH}
+
+
+def _form_value(value: Any) -> str:
+    if isinstance(value, (dict, list)):
+        return json.dumps(value, ensure_ascii=False)
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    return str(value)
+
+
+def _body_kwargs(content_type: str, body: Dict[str, Any]) -> Dict[str, Any]:
+    if content_type == FORM_CONTENT_TYPE:
+        return {"data": {name: _form_value(value) for name, value in body.items()}}
+    if content_type == MULTIPART_CONTENT_TYPE:
+        return {"files": {name: (None, _form_value(value)) for name, value in body.items()}}
+    return {"json": body}
 
 
 def _redact(value: Any, secrets: Set[str]) -> Any:
@@ -236,7 +260,23 @@ async def execute_http_api_tool(tool_dict: Dict[str, Any], arguments: Dict[str, 
         b64_auth = base64.b64encode(f"{u}:{p}".encode()).decode()
         headers["Authorization"] = f"Basic {b64_auth}"
         credential_header_names.add("authorization")
+    elif auth_type == OAUTH2_CLIENT_CREDENTIALS:
+        try:
+            headers["Authorization"] = f"Bearer {await client_credentials_token(auth_config)}"
+        except (OAuthError, SSRFProtectionError, httpx.HTTPError, asyncio.TimeoutError) as e:
+            error_id = log_and_get_error_id(logger, f"自訂 API 工具 {tool_dict.get('name')} 取得 OAuth2 權杖失敗", e, logging.WARNING)
+            return {
+                "status_code": 502,
+                "is_success": False,
+                "duration_seconds": round(time.time() - start_time, 3),
+                "url": _without_query(url),
+                "error": f"無法取得 OAuth2 存取權杖，請檢查工具的 OAuth2 設定（錯誤代碼：{error_id}）",
+                "error_id": error_id,
+            }
+        credential_header_names.add("authorization")
     secrets = _collect_secrets(headers, auth_type, auth_config)
+    if auth_type == OAUTH2_CLIENT_CREDENTIALS:
+        secrets.add(headers["Authorization"].split(" ", 1)[1])
     query_params: Dict[str, Any] = {}
     body_data: Dict[str, Any] = {}
     path_replaced_url = url
@@ -308,7 +348,7 @@ async def execute_http_api_tool(tool_dict: Dict[str, Any], arguments: Dict[str, 
             "params": request_params,
         }
         if method in ["POST", "PUT", "PATCH", "DELETE"] and body_data:
-            req_kwargs["json"] = body_data
+            req_kwargs.update(_body_kwargs(tool_dict.get("body_content_type") or JSON_CONTENT_TYPE, body_data))
 
         async def perform() -> Dict[str, Any]:
             async with httpx.AsyncClient(
@@ -357,7 +397,14 @@ async def execute_http_api_tool(tool_dict: Dict[str, Any], arguments: Dict[str, 
                 }
 
         # httpx 的逾時是逐次讀寫計算；整個呼叫（含轉址與慢速逐段回應）另以工具的逾時設定為總時限
-        return await asyncio.wait_for(perform(), timeout=float(timeout))
+        result = await asyncio.wait_for(perform(), timeout=float(timeout))
+        if auth_type == OAUTH2_CLIENT_CREDENTIALS and result.get("status_code") == 401:
+            invalidate_client_credentials_token(auth_config)
+            token = await client_credentials_token(auth_config)
+            headers["Authorization"] = f"Bearer {token}"
+            secrets.add(token)
+            result = await asyncio.wait_for(perform(), timeout=float(timeout))
+        return result
     except asyncio.TimeoutError:
         return {
             "status_code": 504,
@@ -428,6 +475,15 @@ async def parse_openapi_spec(
     except Exception as e:
         error_id = log_and_get_error_id(logger, "OpenAPI 規格解析失敗", e)
         raise HTTPException(status_code=500, detail=format_client_error(error_id))
+def _import_auth(item, global_auth_type: str, global_auth_config: Dict[str, Any]) -> tuple:
+    if not item.auth_type or item.auth_type == "none":
+        return global_auth_type, global_auth_config
+    config = dict(item.auth_config or {})
+    if item.auth_type == global_auth_type:
+        config.update({key: value for key, value in global_auth_config.items() if value not in (None, "")})
+    return item.auth_type, config
+
+
 @router.post("/import")
 async def import_openapi_tools(
     import_data: OpenApiImportRequest,
@@ -449,8 +505,7 @@ async def import_openapi_tools(
         merged_headers = dict(global_headers)
         if item.headers:
             merged_headers.update(item.headers)
-        effective_auth_type = item.auth_type if item.auth_type and item.auth_type != "none" else global_auth_type
-        effective_auth_config = item.auth_config if item.auth_config else global_auth_config
+        effective_auth_type, effective_auth_config = _import_auth(item, global_auth_type, global_auth_config)
         existing = db.query(CustomApiTool).filter(CustomApiTool.name == item.name).first()
         if existing:
             existing.display_name = item.display_name
@@ -465,6 +520,7 @@ async def import_openapi_tools(
             existing.parameters_schema = json.dumps(item.parameters_schema, ensure_ascii=False) if item.parameters_schema else None
             existing.request_body_schema = json.dumps(item.request_body_schema, ensure_ascii=False) if item.request_body_schema else None
             existing.param_locations = json.dumps(item.param_locations, ensure_ascii=False) if item.param_locations else None
+            existing.body_content_type = item.body_content_type
             existing.spec_version = item.spec_version
             existing.is_enabled = True
             # 重新匯入不會自動放寬既有的核准設定
@@ -485,6 +541,7 @@ async def import_openapi_tools(
                 parameters_schema=json.dumps(item.parameters_schema, ensure_ascii=False) if item.parameters_schema else None,
                 request_body_schema=json.dumps(item.request_body_schema, ensure_ascii=False) if item.request_body_schema else None,
                 param_locations=json.dumps(item.param_locations, ensure_ascii=False) if item.param_locations else None,
+                body_content_type=item.body_content_type,
                 spec_version=item.spec_version,
                 is_enabled=True,
                 requires_approval=default_requires_approval(item.method),
@@ -553,6 +610,7 @@ async def create_api_tool(
         parameters_schema=json.dumps(tool_data.parameters_schema, ensure_ascii=False) if tool_data.parameters_schema else None,
         request_body_schema=json.dumps(tool_data.request_body_schema, ensure_ascii=False) if tool_data.request_body_schema else None,
         param_locations=json.dumps(tool_data.param_locations, ensure_ascii=False) if tool_data.param_locations else None,
+        body_content_type=tool_data.body_content_type,
         response_mapping=tool_data.response_mapping,
         is_enabled=tool_data.is_enabled if tool_data.is_enabled is not None else True,
         requires_approval=(
@@ -626,6 +684,8 @@ async def update_api_tool(
         tool.request_body_schema = json.dumps(tool_data.request_body_schema, ensure_ascii=False) if tool_data.request_body_schema else None
     if tool_data.param_locations is not None:
         tool.param_locations = json.dumps(tool_data.param_locations, ensure_ascii=False) if tool_data.param_locations else None
+    if tool_data.body_content_type is not None:
+        tool.body_content_type = tool_data.body_content_type
     if tool_data.is_enabled is not None:
         tool.is_enabled = tool_data.is_enabled
     if tool_data.requires_approval is not None:

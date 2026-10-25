@@ -88,7 +88,7 @@ def test_api_tool_credentials_are_encrypted_masked_and_merged(client):
 
 def test_mcp_server_credentials_are_encrypted_and_masked(client):
     with patch("app.services.mcp_service.McpManager.discover_server_tools", new_callable=AsyncMock) as discover:
-        discover.return_value = ([], {})
+        discover.return_value = ([], {}, {"resources": [], "prompts": []})
         created = client.post("/api/mcp/servers", json={
             "name": SERVER_NAME, "display_name": "d", "transport_type": "stdio", "command": "mcp-server",
             "env_vars": {"DATABASE_URL": "postgresql://u:pw@db/x"}, "headers": {},

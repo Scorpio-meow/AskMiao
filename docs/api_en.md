@@ -91,11 +91,15 @@ API messages are in Traditional Chinese; the English glosses in this document ar
 | POST | `/api/mcp/servers/{server_id}/discover` | Admin | Rediscover tools |
 | PATCH | `/api/mcp/servers/{server_id}/toggle` | Admin | Enable or disable a server |
 | POST | `/api/mcp/servers/{server_id}/tools/{tool_name}/test` | Admin | Call an MCP tool once |
-| GET | `/api/skills/enabled` | Signed in | Names and descriptions of enabled skills |
+| POST | `/api/mcp/servers/{server_id}/oauth/start` | Admin | Start OAuth authorization and get the authorization URL |
+| GET | `/api/mcp/oauth/callback` | Public | Where the OAuth authorization server redirects back |
+| DELETE | `/api/mcp/servers/{server_id}/oauth` | Admin | Clear the stored OAuth tokens |
+| GET | `/api/skills/enabled` | Signed in | Names and descriptions of the enabled skills the caller may use |
 | GET | `/api/skills` | Admin | List skills |
 | GET | `/api/skills/{skill_id}` | Admin | One skill with its `SKILL.md` body |
 | POST | `/api/skills/upload` | Admin | Upload and install a skill |
 | PATCH | `/api/skills/{skill_id}/toggle` | Admin | Toggle enabled state |
+| PATCH | `/api/skills/{skill_id}/settings` | Admin | Set script execution and which accounts may use the skill |
 | DELETE | `/api/skills/{skill_id}` | Admin | Delete a skill and its files |
 | GET | `/api/tags` | Public | Model list in the Ollama `tags` format |
 | GET | `/api/admin/users` | Admin | List users |
@@ -396,7 +400,8 @@ The tool definitions currently available to the agent (sign-in required), in the
 - Built-in tools `search_knowledge_base`, `filter_and_count_records`, `web_search`, and `web_fetch` (the last two are omitted when `ENABLE_WEB_SEARCH=false`). The `search_knowledge_base` description lists every document's file name and AI summary so the model can choose where to search.
 - Enabled custom API tools (description prefixed with `【外部自訂 API】`).
 - Discovered tools of enabled MCP servers, named `mcp_<server>_<tool>` (description prefixed with `【MCP 協定工具】`).
-- When at least one enabled Agent Skill has its files present, `activate_skill` and `read_skill_resource` (see [6. Agent Skills](#6-agent-skills-apiskills)); otherwise neither appears.
+- When an enabled MCP server has discovered resources or prompts, `read_mcp_resource` (parameters `server`, `uri`) and `get_mcp_prompt` (parameters `server`, `name`, `arguments`), whose descriptions list the available items (see [Server object](#server-object)).
+- When at least one enabled Agent Skill that the caller can see has its files present, `activate_skill` and `read_skill_resource`, plus `run_skill_script` when one of them has `allow_scripts` turned on (see [6. Agent Skills](#6-agent-skills-apiskills)); otherwise none of them appears.
 
 ```json
 {
@@ -497,6 +502,8 @@ Approve or deny a tool call the agent is waiting on. Custom API tools and MCP se
 - No answer within 300 seconds counts as a denial; when the user interrupts the stream, the pending item is cancelled with it.
 - On a denial or timeout the tool does not run, and the agent receives a "not approved by the user" tool result and answers from what it already has.
 - When no user can approve (a non-interactive run), tools that need approval never run.
+- `run_skill_script` always needs approval (`target` is `本機指令 <interpreter>`, "local command"); `read_mcp_resource` and `get_mcp_prompt` follow that MCP server's `requires_approval`.
+- After a skill is activated, the tool names in its `allowed-tools` no longer ask for approval for the rest of that question (see [Skill object](#skill-object)).
 - Pending items live in the backend process's memory and are lost when the backend restarts.
 
 ---
@@ -633,8 +640,9 @@ Register external HTTP APIs as tools the agent can call. Enabled tools are loade
 | `url` | string | Full request URL, with path parameters written as `{name}` |
 | `base_url` / `path` | string | Base URL and path, combined when `url` is empty |
 | `headers` | object | Fixed request headers; responses show every header value as `••••••••` except `Accept`, `Accept-Encoding`, `Accept-Language`, `Cache-Control`, `Content-Type`, and `User-Agent` |
-| `auth_type` | string | `none`, `bearer`, `api_key`, or `basic` |
-| `auth_config` | object | Auth settings; see the table below. `token`, `key_value`, and `password` are shown as `••••••••` in responses |
+| `auth_type` | string | `none`, `bearer`, `api_key`, `basic`, or `oauth2_client_credentials`; other values return `422` |
+| `auth_config` | object | Auth settings; see the table below. `token`, `key_value`, `password`, and `client_secret` are shown as `••••••••` in responses |
+| `body_content_type` | string | Request body format: `application/json` (default), `application/x-www-form-urlencoded`, or `multipart/form-data`; other values return `422` |
 | `parameters_schema` | object | JSON Schema of the parameters, used as the `parameters` the model sees; calls accept only the parameters declared in its `properties` |
 | `request_body_schema` | object | Request body structure; when it has `properties`, it is also used to check the fields of `request_body` |
 | `param_locations` | object | Where each parameter goes: `path`, `query`, `header`, or `body` |
@@ -651,10 +659,13 @@ Register external HTTP APIs as tools the agent can call. Enabled tools are loade
 | `bearer` | `token` |
 | `api_key` | `key_name` (default `X-API-Key`), `key_value`, `key_in` (`header` or `query`) |
 | `basic` | `username`, `password` |
+| `oauth2_client_credentials` | `token_url`, `client_id`, `client_secret`, `scope`, `client_auth` (`basic` sends the client credentials with HTTP Basic, `post` puts them in the form body) |
+
+**OAuth2 client credentials**: before the call, the backend POSTs a form with `grant_type=client_credentials` (and `scope`) to `token_url` and sends the access token as `Authorization: Bearer`. The token is cached in the backend process until 30 seconds before `expires_in` (300 seconds when there is no `expires_in`); a `401` from the API drops the cached token, fetches a new one, and retries once. Token endpoint requests are SSRF-validated too, follow only same-origin redirects, and have a 15-second timeout and a 256 KiB response limit; if no token can be obtained the API is not called, `status_code` is `502`, and `error` carries only an error code. The access token and `client_secret` are replaced with `[已遮蔽]` wherever they appear in the result.
 
 **Credential encryption and masking**: `headers` and `auth_config` are encrypted with `TOOL_SECRETS_KEY` (Fernet) before they reach the database, and at startup the backend encrypts rows that earlier versions stored in plaintext. Admin API responses show `••••••••` in place of secret values (empty values are not masked), so a credential cannot be read back through the API once saved. On update, a `headers` or `auth_config` you send replaces the whole field, and keys whose value is still `••••••••` keep their stored value; if such a key has no stored value (including when the stored credentials cannot be decrypted), the API returns `400` `欄位 <name> 沒有已儲存的值，請輸入實際內容` ("field <name> has no stored value; enter the actual value"). After `TOOL_SECRETS_KEY` changes, stored credentials can no longer be decrypted (`credentials_unreadable` is `true`), and the tool cannot run until they are entered again: an agent call returns an error with an error ID, and the [test endpoint](#49-post-apiapi-toolstool_idtest) returns `400` `無法以目前的 TOOL_SECRETS_KEY 解密工具憑證，請重新輸入` ("stored tool credentials cannot be decrypted with the current TOOL_SECRETS_KEY; enter them again"); see [configuration reference: tool credential encryption](configuration_en.md#tool-credential-encryption) for the key and what it covers.
 
-**Parameter assembly**: parameters that appear as `{name}` in the URL or are located in `path` are substituted into the URL; `header` parameters go into headers, `query` parameters into the query string, and `body` parameters into the JSON body. Parameters without a location go into the body for `POST`, `PUT`, and `PATCH`, and into the query string otherwise. A `request_body` object passed by the model replaces the whole body.
+**Parameter assembly**: parameters that appear as `{name}` in the URL or are located in `path` are substituted into the URL; `header` parameters go into headers, `query` parameters into the query string, and `body` parameters into the body. The body is sent as JSON, as a form (`application/x-www-form-urlencoded`), or as `multipart/form-data` fields (no files) according to `body_content_type`; in both form encodings, object and array values become JSON strings and booleans become `true` / `false`. Parameters without a location go into the body for `POST`, `PUT`, and `PATCH`, and into the query string otherwise. A `request_body` object passed by the model replaces the whole body.
 
 **Only declared parameters**: every parameter the caller (the agent or the [4.9](#49-post-apiapi-toolstool_idtest) test) passes must be listed in `parameters_schema.properties`; otherwise no request is sent and the result's `status_code` is `400` (`工具參數無效：未宣告的參數 …`, "invalid tool parameters: undeclared parameter …"). A tool that declares no parameters accepts none. `request_body` must be declared as well, and when `request_body_schema` has `properties` and `additionalProperties` is not `true`, the fields of the `request_body` object must be listed there too; undeclared fields are reported as `request_body.<field>`.
 
@@ -696,6 +707,8 @@ Spec URLs are SSRF-validated first (every hop is pinned to the validated IP) and
         "full_url": "https://api.example.com/pets/{petId}",
         "has_body": false,
         "body_content_type": "application/json",
+        "auth_type": "api_key",
+        "auth_config": {"key_name": "X-API-Key", "key_in": "header", "key_value": ""},
         "param_locations": {"petId": "path"},
         "parameters_schema": {"type": "object", "properties": {"petId": {"type": "integer"}}, "required": ["petId"]},
         "function_definition": {"type": "function", "function": {"name": "get_pet_by_id", "...": "..."}},
@@ -709,6 +722,16 @@ Spec URLs are SSRF-validated first (every hop is pinned to the validated IP) and
 
 Tool names come from `operationId` (lowercased, with non-alphanumeric characters replaced by underscores); without an `operationId`, the method and path are combined, such as `get_pets_petid`.
 
+`body_content_type` is chosen from the spec's request body formats in the order `application/json`, `application/x-www-form-urlencoded`, `multipart/form-data`; other formats (such as XML) fall back to JSON. `auth_type` and `auth_config` come from the endpoint's `security` (or the spec's top-level `security`) and `securitySchemes` (under `components` in 3.x) or `securityDefinitions` (2.0); only the settings are filled in, and credentials are left empty:
+
+| Auth in the spec | `auth_type` | `auth_config` filled in |
+|---|---|---|
+| `apiKey` (`in` is `header` or `query`) | `api_key` | `key_name`, `key_in` |
+| `http` `basic`, 2.0 `basic` | `basic` | — |
+| `http` `bearer` | `bearer` | — |
+| `oauth2` `clientCredentials` flow, 2.0 `application` flow | `oauth2_client_credentials` | `token_url` (`tokenUrl`), `scope` (the scopes in the requirement, space-separated), `client_auth` `basic` |
+| `apiKey` with `in: cookie`, other OAuth flows, requirements that combine several schemes | `none` | — |
+
 | Status | When |
 |---|---|
 | `400` | Invalid spec (including one that uses YAML aliases), unrecognized version, or an unreachable URL (the message is safe to show to users); a URL rejected by the SSRF guard only reports the rejection with an error code, and the full reason goes to the server log |
@@ -720,11 +743,13 @@ Bulk-import the endpoints selected from a parsed spec. Tools with the same name 
 
 | Field | Type | Required | Description |
 |---|---|---|---|
-| `tools` | array | Yes | Endpoints with the parsed fields: `name`, `display_name`, `description`, `method`, `path`, `full_url` (required), plus optional `base_url`, `headers`, `auth_type`, `auth_config`, `parameters_schema`, `request_body_schema`, `param_locations`, `spec_version` |
+| `tools` | array | Yes | Endpoints with the parsed fields: `name`, `display_name`, `description`, `method`, `path`, `full_url` (required), plus optional `base_url`, `headers`, `auth_type`, `auth_config`, `body_content_type`, `parameters_schema`, `request_body_schema`, `param_locations`, `spec_version` |
 | `global_base_url` | string | No | Used when an endpoint has no `base_url` |
 | `global_headers` | object | No | Shared headers; an endpoint's own header of the same name wins |
-| `global_auth_type` | string | No | Used when an endpoint has no auth type |
-| `global_auth_config` | object | No | Used when an endpoint has no auth settings |
+| `global_auth_type` | string | No | Used when an endpoint's `auth_type` is empty or `none` |
+| `global_auth_config` | object | No | Used as a whole when an endpoint's `auth_type` is empty or `none`; when the endpoint's `auth_type` equals `global_auth_type`, its non-empty values override the endpoint's `auth_config` |
+
+An endpoint's declared auth wins: the Bearer token in the frontend import dialog only goes into endpoints that declare no auth or declare Bearer, and credentials for other auth types are entered by editing the tool with 4.6 after import. An `auth_type` or `body_content_type` outside the allowed values returns `422`.
 
 Newly imported tools get `requires_approval` from their method (`true` for anything other than `GET`, `HEAD`, and `OPTIONS`). When an existing tool is overwritten, a tool that required approval keeps requiring it, while `headers` and `auth_config` are replaced with what this import sends (including `global_headers` and `global_auth_config`): stored credentials are not kept and are cleared when none are sent. Change tools afterwards with 4.6.
 
@@ -803,9 +828,9 @@ Send one real request with the given arguments.
 
 ## 5. MCP servers `/api/mcp`
 
-Manage Model Context Protocol servers, protocol version `2025-06-18` (the version the server replies with wins), using JSON-RPC 2.0 for `initialize`, `notifications/initialized`, `tools/list` (all pages are read by following `nextCursor`, at most 50), and `tools/call`. The handshake declares no client capabilities (sampling and roots are not supported). The handshake identifies the client as `AskMiao-MCP-Client` with the backend version.
+Manage Model Context Protocol servers, protocol version `2025-06-18` (the version the server replies with wins), using JSON-RPC 2.0 for `initialize`, `notifications/initialized`, `tools/list` (all pages are read by following `nextCursor`, at most 50), and `tools/call`; when the server's `initialize` capabilities declare `resources` or `prompts`, `resources/list` and `prompts/list` are read with the same paging, and `resources/read` and `prompts/get` use them. The handshake declares no client capabilities (sampling and roots are not supported). The handshake identifies the client as `AskMiao-MCP-Client` with the backend version.
 
-> Every endpoint in this module, including reads, requires **admin** access: `stdio` servers run the configured command on the host, and server settings include credentials such as environment variables and headers (stored encrypted and shown as `••••••••` in responses).
+> Every endpoint in this module except the OAuth callback ([5.11](#511-get-apimcpoauthcallback)), including reads, requires **admin** access: `stdio` servers run the configured command on the host, and server settings include credentials such as environment variables and headers (stored encrypted and shown as `••••••••` in responses).
 
 ### Server object
 
@@ -814,7 +839,7 @@ Manage Model Context Protocol servers, protocol version `2025-06-18` (the versio
 | `id` | integer | Server ID |
 | `name` | string | Unique name (lowercased on creation), used in tool names `mcp_<name>_<tool>` |
 | `display_name` / `description` | string | Display name and description |
-| `transport_type` | string | `stdio`, or `http` / `sse` (both use Streamable HTTP: JSON-RPC over POST with `Accept: application/json, text/event-stream`, accepting a JSON or SSE response, and sending the server-issued `Mcp-Session-Id` and `MCP-Protocol-Version` on later requests; the legacy transport that opens an SSE stream with GET is not supported) |
+| `transport_type` | string | `stdio`, or `http` / `sse` (both try Streamable HTTP first: JSON-RPC over POST with `Accept: application/json, text/event-stream`, accepting a JSON or SSE response, and sending the server-issued `Mcp-Session-Id` and `MCP-Protocol-Version` on later requests; a `404` on a request that carries a session re-initializes once and retries, and closing ends the session with `DELETE`. When `initialize` gets `400`, `404`, or `405`, the legacy HTTP+SSE transport is used instead; see below) |
 | `command` / `args` | string / array | Command and arguments for `stdio` |
 | `env_vars` | object | Extra environment variables for the `stdio` subprocess; all are treated as credentials, so every value is shown as `••••••••` in responses |
 | `url` / `headers` | string / object | Server URL and request headers for HTTP; `headers` are masked like a custom API tool's |
@@ -823,9 +848,15 @@ Manage Model Context Protocol servers, protocol version `2025-06-18` (the versio
 | `status` | string | `connected`, `disconnected`, or `error` |
 | `last_error` | string | Why the latest discovery failed |
 | `discovered_tools` | array | Cached tools from the latest discovery (`name`, `description`, `inputSchema`); tools whose names do not match `[A-Za-z0-9_.-]{1,128}` are skipped |
+| `discovered_resources` | array | Resources from the latest discovery (`uri`, `name`, `description`, `mimeType`), at most 200; items without a `uri` or with a `uri` longer than 2,048 characters are skipped |
+| `discovered_prompts` | array | Prompts from the latest discovery (`name`, `description`, `arguments`), at most 200; prompts and arguments whose names do not match `[A-Za-z0-9_.-]{1,128}` are skipped |
+| `oauth_authorized` | boolean | Responses only: whether OAuth tokens are stored (see [5.10](#510-post-apimcpserversserver_idoauthstart)) |
+| `oauth_client` | object | The admin-entered OAuth client (`client_id`, `client_secret`, `scope`), with `client_secret` shown as `••••••••`; `null` when none was entered (or dynamic registration is used) |
 | `timeout` | integer | Connect and call timeout in seconds, 30 by default |
 | `created_at` / `updated_at` | string | Timestamps |
-| `credentials_unreadable` | boolean | Responses only: `true` when `env_vars` or `headers` cannot be decrypted with the current `TOOL_SECRETS_KEY`; the unreadable field is returned as `null` and must be entered again |
+| `credentials_unreadable` | boolean | Responses only: `true` when `env_vars`, `headers`, or the OAuth settings cannot be decrypted with the current `TOOL_SECRETS_KEY`; the unreadable field is returned as `null` and must be entered again |
+
+Resource and prompt descriptions are truncated to 500 characters; the lists are empty when the server does not declare the capability or listing fails (only the server log records it). The agent uses them through `read_mcp_resource` and `get_mcp_prompt` (see [2.3](#23-get-apichattools)): the tool descriptions list each server's items, at most 8,000 characters in total (`MAX_MCP_CATALOG_CHARS`), and servers that do not fit are left out with a warning in the log; only listed `uri` values and prompt names are accepted, and anything else is refused without contacting the server. Results are wrapped as untrusted like MCP tool results, and approval follows the server's `requires_approval`.
 
 `env_vars` and `headers` are encrypted, masked, and updated like [custom API tool credentials](#tool-object): on update, keys whose value is still `••••••••` keep their stored value, and a masked key with no stored value returns `400`. While the credentials cannot be decrypted, the server cannot be connected to and its tools cannot be called until they are entered again; the discover and tool test endpoints return `400` `無法以目前的 TOOL_SECRETS_KEY 解密工具憑證，請重新輸入`.
 
@@ -834,6 +865,10 @@ Manage Model Context Protocol servers, protocol version `2025-06-18` (the versio
 **`stdio` subprocess lifetime**: each subprocess runs in its own process group (a new process group on Windows, a new session elsewhere), and closing it terminates the whole tree, including grandchildren started by `npx` or `uvx` (`taskkill /T /F` on Windows; `SIGTERM`, then `SIGKILL`, to the group elsewhere). Every discovery or tool call starts a subprocess; at most 4 run at once and the rest wait, failing once they have waited the server's `timeout` seconds. Each subprocess runs in a fresh, empty temporary directory that is deleted afterwards, so relative paths do not reach `.env` or `keys/` in the backend directory; it still runs under the backend's system account and can read any file that account can. stderr is drained continuously and goes only to the server log, and a single JSON-RPC message line may be at most 4 MiB.
 
 **HTTP servers** are SSRF-validated on every request and redirect, with the connection pinned to the validated IP, so servers on loopback or intranet addresses are rejected; use `stdio` for local MCP servers. The backend follows redirects itself, only within the same origin (same scheme, host, and port), at most 5, and never reads the body of a redirect response; a redirect to another origin aborts the request, so admin-configured headers and the JSON-RPC body never go to another domain. Each JSON-RPC request, redirects included, has an overall deadline of the server's `timeout` seconds. One response may be at most 4 MiB, and error messages no longer include the peer's response body.
+
+**Legacy HTTP+SSE transport**: when Streamable HTTP `initialize` returns `400`, `404`, or `405`, the client opens an SSE stream with GET (`Accept: text/event-stream`), waits for the server's `endpoint` event, then POSTs JSON-RPC to that address and reads the responses from the SSE stream. The `endpoint` must be on the same origin as the SSE URL, or the connection is rejected; at most 4 MiB is read from the whole stream.
+
+**OAuth tokens**: for an authorized server (see [5.10](#510-post-apimcpserversserver_idoauthstart)), HTTP requests carry `Authorization: Bearer <access token>`; within 60 seconds of expiry, or once when connecting gets `401`, the token is refreshed with the refresh token (sending `resource`). When discovery gets `401`, `last_error` says the server requires OAuth authorization.
 
 ### 5.1 GET /api/mcp/presets
 
@@ -860,6 +895,7 @@ Add a server; it connects and discovers tools right away.
 | `is_enabled` | boolean | No | `true` |
 | `requires_approval` | boolean | No | `true` |
 | `timeout` | integer | No | `30` |
+| `oauth_client` | object | No (used for HTTP) | `null`; `client_id`, `client_secret`, `scope`. `client_id` is required when the authorization server does not support dynamic registration |
 
 **Response**: `{"status": "success", "message": "MCP 伺服器建立成功", "server": {...}}`. If discovery fails, the server is still created with `status` `error`, and `last_error` records only an error code; an SSRF rejection also says the SSRF guard rejected it, and its full reason likewise goes only to the server log. A duplicate name returns `400` `已存在同名 MCP 伺服器: <name>`.
 
@@ -869,7 +905,7 @@ Add a server; it connects and discovers tools right away.
 
 ### 5.5 PUT /api/mcp/servers/{server_id}
 
-Send only the fields you change (`name` cannot be changed). An `env_vars` or `headers` you send replaces the whole field; keys whose value is `••••••••` keep their stored value, and a masked key with no stored value returns `400`. Updating does not rediscover tools; call 5.7 afterwards. **Response**: `{"status": "success", "message": "MCP 伺服器配置更新成功", "server": {...}}`.
+Send only the fields you change (`name` cannot be changed). An `env_vars` or `headers` you send replaces the whole field; keys whose value is `••••••••` keep their stored value, and a masked key with no stored value returns `400`. The `client_secret` in `oauth_client` can likewise stay `••••••••`; changing `url` or the admin-entered client clears the stored OAuth tokens, sending the same client keeps them, and an empty `client_id` removes the admin-entered client. Updating does not rediscover tools; call 5.7 afterwards. **Response**: `{"status": "success", "message": "MCP 伺服器配置更新成功", "server": {...}}`.
 
 ### 5.6 DELETE /api/mcp/servers/{server_id}
 
@@ -877,14 +913,16 @@ Send only the fields you change (`name` cannot be changed). An `env_vars` or `he
 
 ### 5.7 POST /api/mcp/servers/{server_id}/discover
 
-Reconnect and rediscover tools; the result is written to `discovered_tools`. Tools whose names do not match `[A-Za-z0-9_.-]{1,128}` are skipped (only the server log records them): they appear neither in `tools` nor among the tools offered to the agent.
+Reconnect and rediscover tools, resources, and prompts; the results are written to `discovered_tools`, `discovered_resources`, and `discovered_prompts`. Tools whose names do not match `[A-Za-z0-9_.-]{1,128}` are skipped (only the server log records them): they appear neither in `tools` nor among the tools offered to the agent.
 
 ```json
 {
   "status": "success",
-  "message": "成功連線並探索到 1 項 MCP 工具",
+  "message": "成功連線並探索到 1 項 MCP 工具、0 項 resource、0 項 prompt",
   "tools_count": 1,
   "tools": [{"name": "get_current_time", "description": "查詢指定時區或城市的當前精確時間", "inputSchema": {"type": "object", "properties": {"timezone": {"type": "string"}}}}],
+  "resources": [],
+  "prompts": [],
   "init_info": {"protocolVersion": "2024-11-05", "capabilities": {"tools": {}}, "serverInfo": {"name": "mcp-time-server", "version": "1.0"}},
   "server": {...}
 }
@@ -917,13 +955,43 @@ Call a tool once (`tools/call`). `tool_name` is the tool's original name on the 
 
 A failed call returns `result` as `{"is_success": false, "duration_seconds": ..., "error": "伺服器內部錯誤，請聯繫系統管理員並提供錯誤代碼（錯誤代碼：…）", "error_id": "…"}` ("internal server error; contact the administrator with the error code"); the full reason (such as the subprocess's stderr, a JSON-RPC error, or an SSRF rejection reason) goes only to the server log. The agent gets the same result when an MCP tool call fails.
 
+### 5.10 POST /api/mcp/servers/{server_id}/oauth/start
+
+Starts the authorization code flow of the MCP authorization specification (`2025-06-18`) for an HTTP / SSE server; no request body. `stdio` servers or servers without a `url` return `400`.
+
+1. Sends `ping` to the server and reads `resource_metadata` from the `WWW-Authenticate` response header; without it, tries `/.well-known/oauth-protected-resource<path>` and then `/.well-known/oauth-protected-resource`.
+2. Reads the authorization server metadata (RFC 8414 `/.well-known/oauth-authorization-server`, falling back to the OpenID Connect locations); without protected resource metadata, the MCP server's origin is treated as the authorization server. Metadata that lists `code_challenge_methods_supported` without `S256` is rejected.
+3. Uses the admin-entered client in `oauth_client`; without one, gets a client through dynamic registration (RFC 7591, a public client with `token_endpoint_auth_method` `none`).
+4. Creates PKCE (S256) and a single-use `state`, and returns the authorization URL, which carries `resource` (RFC 8707) and `scope` (the admin-entered scope, or `scopes_supported` when there is none).
+
+**Response**: `{"status": "success", "authorization_url": "https://auth.example.com/authorize?..."}`, which the admin opens in the browser.
+
+| Status | When |
+|---|---|
+| `400` | The authorization server has no registration endpoint and no `client_id` was entered: `授權伺服器不支援動態註冊，請在 MCP 伺服器設定中填入 OAuth client_id` ("the authorization server does not support dynamic registration; enter an OAuth client_id in the MCP server settings"); a URL rejected by the SSRF guard, or any other discovery failure (error code only) |
+| `404` | `找不到該 MCP 伺服器` (server not found) |
+
+The `redirect_uri` the authorization server sends the browser back to is `/api/mcp/oauth/callback`, built by the backend from this request's URL; behind a reverse proxy, the proxy must pass the scheme and host the client sees to the backend, or the redirect address will be wrong. OAuth endpoint requests are SSRF-validated, follow only same-origin redirects, and have a 15-second timeout and a 256 KiB response limit.
+
+### 5.11 GET /api/mcp/oauth/callback
+
+**Public**: where the authorization server sends the browser back. It needs no access token; the single-use `state` from 5.10 identifies the admin who started the authorization and the server. `state` is valid for 10 minutes and only once; it lives in the backend process's memory and is lost on restart, and with multiple workers the callback must reach the same process that handled 5.10 (for example with sticky routing).
+
+**Query parameters**: `state` and `code` (or the `error` returned by the authorization server). The backend exchanges `code` for tokens with `code_verifier`, `redirect_uri`, and `resource`, stores them encrypted, writes the security event `ADMIN_MCP_OAUTH_AUTHORIZED`, and returns a short HTML page (`200`). An invalid or expired `state`, a missing `code`, or a failed exchange returns an HTML page with `400` (a failed exchange shows only an error code), and a deleted server returns `404`. Call 5.7 afterwards to rediscover.
+
+### 5.12 DELETE /api/mcp/servers/{server_id}/oauth
+
+Clears the stored OAuth tokens and keeps the OAuth client settings. **Response**: `{"status": "success", "message": "已清除 OAuth 授權", "server": {...}}`
+
 ---
 
 ## 6. Agent Skills `/api/skills`
 
 Manages skills in the [Agent Skills](https://agentskills.io/specification) format. Skill files live in `SKILLS_DIR/<name>/`; the `agent_skills` table only keeps the parsed metadata and the enabled flag. Every endpoint except 6.1 requires **admin** permission.
 
-The agent uses skills through progressive disclosure: when at least one enabled skill has its files present, [`GET /api/chat/tools`](#23-get-apichattools) gains two built-in tools, `activate_skill` (its description lists each skill's name and description) and `read_skill_resource`. Only when the model calls `activate_skill` does it receive the `SKILL.md` body (frontmatter stripped, wrapped in `<skill_content>`) and the list of files in the skill; it then reads single UTF-8 text files with `read_skill_resource` as needed. Skill content is admin-installed instructions and is not wrapped in `<untrusted_tool_result>`, but it cannot override the system prompt's data-safety and citation rules; scripts in a skill are never executed. Neither skill tool requires approval.
+The agent uses skills through progressive disclosure: when at least one enabled skill has its files present, [`GET /api/chat/tools`](#23-get-apichattools) gains two built-in tools, `activate_skill` (its description lists each skill's name and description) and `read_skill_resource`. Only when the model calls `activate_skill` does it receive the `SKILL.md` body (frontmatter stripped, wrapped in `<skill_content>`) and the list of files in the skill; it then reads single UTF-8 text files with `read_skill_resource` as needed. Skill content is admin-installed instructions and is not wrapped in `<untrusted_tool_result>`, but it cannot override the system prompt's data-safety and citation rules. Neither skill tool requires approval.
+
+**Running scripts**: scripts in a skill are not executed by default. After an admin turns on the skill's `allow_scripts` with [6.7](#67-patch-apiskillsskill_idsettings), the agent gets `run_skill_script` (parameters `skill`, `path`, `args`, `stdin`), and every run needs the asking user's approval (see [2.9](#29-post-apichatapprovalsapproval_id)). Only `.py` (the backend's Python, run with `-I`), `.sh` (`bash`), and `.js` and `.mjs` (`node`) are run; other extensions, or a missing interpreter on the host, are refused. Scripts run in a temporary copy of the skill directory (so the installed skill cannot be modified), with the same environment as `stdio` MCP subprocesses (backend settings and keys are not passed), and the whole process group is killed on timeout. The result has `exit_code`, `timed_out`, `duration_seconds`, `stdout`, `stderr`, and `output_truncated`, and is wrapped as untrusted like external tool results; see [configuration reference: resource limits](configuration_en.md#resource-limits) for the time, output, and argument limits. This is **not a sandbox**: scripts run as the backend's OS account, can read any file that account can read, and can reach the network, so enable it only for trusted skills.
 
 ### Skill object
 
@@ -932,7 +1000,9 @@ The agent uses skills through progressive disclosure: when at least one enabled 
 | `id` | integer | Skill ID |
 | `name` | string | Skill name (from `name` in `SKILL.md`); also the directory name and the `/skill-name` command |
 | `description` | string | When to use the skill; listed in the `activate_skill` tool description |
-| `license` / `compatibility` / `allowed_tools` | string | Optional `SKILL.md` fields; `allowed_tools` is stored only and does not change tool permissions |
+| `license` / `compatibility` / `allowed_tools` | string | Optional `SKILL.md` fields; once the skill is activated in a question (the model calls `activate_skill` or the message starts with `/skill-name`), each space-separated tool name in `allowed_tools` (the part before any `(`) no longer asks for approval for the rest of that question |
+| `allow_scripts` | boolean | Whether `run_skill_script` may run this skill's scripts; `false` by default |
+| `allowed_user_ids` | array \| null | Account ids that may use this skill; `null` means every user, and an empty array means nobody (for example when every listed account was deleted) |
 | `metadata` | object | `metadata` from `SKILL.md`, values converted to strings |
 | `warnings` | array | Problems found while parsing that did not prevent loading |
 | `is_enabled` | boolean | Whether the skill is offered to the agent |
@@ -941,7 +1011,7 @@ The agent uses skills through progressive disclosure: when at least one enabled 
 
 ### 6.1 GET /api/skills/enabled
 
-Sign-in required. Lists enabled skills whose files exist, for the `/` skill suggestions in the chat input.
+Sign-in required. Lists enabled skills whose files exist and that the caller may use (`allowed_user_ids` is `null` or contains the caller), for the `/` skill suggestions in the chat input. Skills restricted to other accounts are also missing from the caller's agent tools, and activating, reading, or running them is refused.
 
 **Response**: `{"status": "success", "skills": [{"name": "meeting-minutes", "description": "…"}]}`
 
@@ -951,7 +1021,7 @@ Sign-in required. Lists enabled skills whose files exist, for the `/` skill sugg
 
 ### 6.3 GET /api/skills/{skill_id}
 
-**Response**: `{"status": "success", "skill": {...}}`: the skill object plus `body` (the `SKILL.md` body, or `null` with `load_error` when it cannot be read), `resources` (relative paths of the files other than `SKILL.md`, at most 100), and `resources_truncated`. Returns `404` `找不到該技能` when not found.
+**Response**: `{"status": "success", "skill": {...}}`: the skill object plus `body` (the `SKILL.md` body, or `null` with `load_error` when it cannot be read; `load_error` is a fixed message with an error code, and the full reason goes only to the server log), `resources` (relative paths of the files other than `SKILL.md`, at most 100), and `resources_truncated`. Returns `404` `找不到該技能` when not found.
 
 ### 6.4 POST /api/skills/upload
 
@@ -968,6 +1038,17 @@ Sign-in required. Lists enabled skills whose files exist, for the `/` skill sugg
 ### 6.6 DELETE /api/skills/{skill_id}
 
 Deletes the database row and the skill directory. **Response**: `{"status": "success", "message": "已刪除技能「meeting-minutes」"}`
+
+### 6.7 PATCH /api/skills/{skill_id}/settings
+
+Sets script execution and which accounts may use the skill; send only the fields you change.
+
+| Field | Type | Description |
+|---|---|---|
+| `allow_scripts` | boolean | Whether scripts may run (see "Running scripts" above) |
+| `allowed_user_ids` | array | Account ids that may use the skill; an empty array means every user (stored as `null`) |
+
+**Response**: `{"status": "success", "message": "技能設定已更新", "skill": skill object}`; ids of accounts that do not exist return `400` `找不到使用者：<id>` ("user not found"). Success writes the security event `ADMIN_SKILL_SETTINGS_UPDATED`. Deleting an account removes it from every skill's `allowed_user_ids`; a skill whose list becomes empty this way is usable by nobody, not by everyone.
 
 ---
 
@@ -995,7 +1076,7 @@ Returns the same list and default model as `GET /api/chat/models` (both share on
 |---|---|---|
 | GET | `/api/admin/users` | All users, each as a `UserProfile` (`id`, `username`, `email`, `role`, `is_active`, `is_admin`, `created_at`, `last_login`) without `hashed_password` |
 | PUT | `/api/admin/users/{user_id}` | Update `username`, `email`, `is_active`, or `is_admin` (send only what changes); duplicate names or emails return `400` (`使用者名稱已存在`, `電子郵件已存在`) |
-| DELETE | `/api/admin/users/{user_id}` | Delete a user and all their conversations; documents they uploaded and tools they created stay, with the creator field set to null |
+| DELETE | `/api/admin/users/{user_id}` | Delete a user and all their conversations; documents they uploaded and tools they created stay, with the creator field set to null; the account is removed from skills' `allowed_user_ids` (see [6.7](#67-patch-apiskillsskill_idsettings)) |
 
 `PUT` returns `{"message": "使用者更新成功", "user": {...}}`, where `user` is the updated `UserProfile`, and `DELETE` returns `{"message": "使用者刪除成功"}`. Both return `404` `使用者不存在` (user not found) for an unknown user and clear the statistics cache on success. Deactivation, deletion, and removal of admin rights apply from the next request: tokens already issued to a deactivated or deleted account stop working and the account can no longer sign in, and an account that lost admin rights gets `403` from admin endpoints.
 

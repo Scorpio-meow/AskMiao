@@ -29,7 +29,9 @@
 - **同時送出的登入請求不再繞過失敗鎖定**：拿到密碼雜湊名額後會再檢查一次是否鎖定，失敗也在釋放名額前記錄。先前同時送出 40 個錯誤密碼會全部被驗證，門檻形同虛設；現在鎖定後最多只有已在驗證中的 4 個請求會完成。
 - **登入回應時間不再透露帳號是否存在**：帳號不存在或已停用時也對假雜湊驗一次密碼。先前存在的帳號約需 76 毫秒、不存在的只要 0.3 毫秒，關閉註冊時仍可藉此列出帳號。
 - **附件配額不再能以同時送出繞過**：含附件的訊息逐一檢查配額並寫入資料庫。先前同時送出的請求都看到同一個舊用量，任何登入的帳號都能超過 200 MiB 的上限。
-- **Agent Skills 的信任邊界**：技能由管理員安裝，內容當作指示交給模型，不包上 `<untrusted_tool_result>`，但系統提示詞規定技能不能推翻資料安全與引用規則。技能中的腳本永遠不會執行，模型只能讀取。上傳的 zip 拒絕絕對路徑、`..`、磁碟代號與符號連結，以實際解壓縮的位元組數計算上限（`MAX_SKILL_UNCOMPRESSED_BYTES`，50 MiB）；`read_skill_resource` 只接受技能目錄內的相對路徑與 UTF-8 文字檔。
+- **Agent Skills 的信任邊界**：技能由管理員安裝，內容當作指示交給模型，不包上 `<untrusted_tool_result>`，但系統提示詞規定技能不能推翻資料安全與引用規則。技能中的腳本預設不會執行，模型只能讀取。上傳的 zip 拒絕絕對路徑、`..`、磁碟代號與符號連結，以實際解壓縮的位元組數計算上限（`MAX_SKILL_UNCOMPRESSED_BYTES`，50 MiB）；`read_skill_resource` 只接受技能目錄內的相對路徑與 UTF-8 文字檔。
+- **技能腳本只在管理員開啟後、經使用者核准才執行，且不是沙箱**：技能的 `allow_scripts` 預設關閉；開啟後 `run_skill_script` 每次執行都要發問的使用者在對話中核准（除非技能的 `allowed-tools` 列出此工具）。腳本在技能目錄的暫存複本中執行，只繼承與 `stdio` MCP 相同的最小環境變數（後端的設定與金鑰不會傳入），逾時整個程序群組終止；但腳本仍以後端的系統帳號執行，能讀取該帳號可讀的檔案並連上網路，只對信任的技能開啟。
+- **MCP OAuth 的授權狀態與權杖**：`state` 為一次性、10 分鐘內有效，以 PKCE（S256）換取權杖；MCP 伺服器的 OAuth 設定與權杖和其他工具憑證一樣以 `TOOL_SECRETS_KEY` 加密存放，`client_secret` 在回應中遮蔽。自訂 API 工具的 OAuth2 `client_secret` 同樣遮蔽，取得的存取權杖與 `client_secret` 出現在工具結果中時換成 `[已遮蔽]`。
 
 ### 新增 (Added)
 
@@ -49,6 +51,15 @@
   - 訊息以 `/技能名稱` 開頭時，送出前先載入該技能並去掉前綴，研究過程記錄一個 `activate_skill` 步驟；輸入框打 `/` 時列出符合的技能（↑/↓ 選擇、Enter 或 Tab 插入、Esc 關閉）。
   - 新增 `/api/skills` 端點：列出啟用的技能（所有登入使用者）、列出與檢視、上傳、啟用 / 停用、刪除（限管理員）；`GET /api/chat/tools` 在有啟用的技能時包含兩個技能工具。
   - 新增必填設定 `SKILLS_DIR`（技能檔案目錄，每個技能一個子目錄）與資料表 `agent_skills`（啟動時自動建立）。
+  - 管理員可為技能開啟 `allow_scripts`：開啟的技能多出 `run_skill_script` 工具，執行技能內的 `.py`（後端的 Python，以 `-I` 執行）、`.sh`（bash）與 `.js`、`.mjs`（node，主機上有對應直譯器時），回傳 `exit_code`、`timed_out`、`duration_seconds`、`stdout`、`stderr`、`output_truncated`；執行時間、輸出、參數與同時執行數的上限見設定參考的 `MAX_SKILL_SCRIPT_*`。
+  - 技能啟用後（模型呼叫或 `/技能名稱`），`allowed-tools` 列出的工具名稱（`(` 之前的部分）在同一次提問的其餘過程中不再要求核准。
+  - 管理員可把技能限定給指定使用者（`allowed_user_ids`）：其他使用者的工具清單、`/` 提示、`GET /api/skills/enabled` 與 `GET /api/chat/tools` 都看不到該技能，也無法啟用、讀取或執行。新增 `PATCH /api/skills/{id}/settings` 設定這兩項，技能物件多出 `allow_scripts`、`allowed_user_ids`；`agent_skills` 新增同名欄位（啟動時自動補上）。
+- 遠端 MCP 伺服器支援 OAuth 授權（MCP 授權規格 `2025-06-18`）：HTTP / SSE 伺服器的卡片上按「OAuth 授權」，後端依 `WWW-Authenticate` 或 `/.well-known/oauth-protected-resource` 找到授權伺服器，使用管理員填入的 client 或以動態註冊（RFC 7591）取得 client，以授權碼與 PKCE 取得權杖並帶 `resource`（RFC 8707）；之後的請求帶 Bearer 權杖，快到期或連線時收到 `401` 會以 refresh token 換新。新增 `POST /api/mcp/servers/{id}/oauth/start`、`DELETE /api/mcp/servers/{id}/oauth` 與不需登入的回呼 `GET /api/mcp/oauth/callback`；`mcp_servers` 新增 `oauth_config`、`oauth_tokens`（啟動時自動補上）。
+- MCP 伺服器的 resources 與 prompts：探索時依伺服器宣告的 capability 另外讀取 `resources/list`、`prompts/list`，存入新欄位 `discovered_resources`、`discovered_prompts`（啟動時自動補上）並列在伺服器卡片上；Agent 多出 `read_mcp_resource` 與 `get_mcp_prompt`，只接受清單中的 uri 與 prompt 名稱，是否需要核准依伺服器的 `requires_approval`。工具說明中的清單以 `MAX_MCP_CATALOG_CHARS`（8,000 字）為上限。
+- HTTP MCP 伺服器的 `initialize` 回傳 `400`、`404` 或 `405` 時改用舊版 HTTP+SSE 傳輸（以 GET 開啟 SSE、等待 `endpoint` 事件，endpoint 必須與 SSE 網址同一來源）；Streamable HTTP 的工作階段被伺服器以 `404` 結束時重新交握一次再重試，關閉連線時以 `DELETE` 結束工作階段。
+- 自訂 API 工具支援 OAuth2 client credentials（`auth_type` 為 `oauth2_client_credentials`）：向 `token_url` 取得存取權杖並快取到到期前 30 秒，API 回傳 `401` 時重新取得權杖並重試一次；取不到權杖時回傳 `502` 與錯誤代碼。
+- OpenAPI 匯入會讀取規格的 `securitySchemes`（3.x）或 `securityDefinitions`（2.0）與 `security`，替每個端點填入對應的 `auth_type` 與 `auth_config` 欄位（API Key 的名稱與位置、Basic、Bearer、OAuth2 client credentials 的 `token_url` 與 scope），實際的憑證在匯入後編輯工具填入。
+- 自訂 API 工具新增 `body_content_type`：請求主體可用 `application/json`、`application/x-www-form-urlencoded` 或 `multipart/form-data`（不含檔案）送出，OpenAPI 匯入依規格選擇；`custom_api_tools` 新增此欄位（啟動時自動補上，既有工具為 `application/json`）。
 
 ### 變更 (Changed)
 
@@ -72,6 +83,9 @@
 - **HTTP MCP 伺服器改用 Streamable HTTP**：請求帶 `Accept: application/json, text/event-stream`，接受 SSE 回應，之後的請求帶上伺服器發的 `Mcp-Session-Id` 與 `MCP-Protocol-Version`，交握後送出 `notifications/initialized`；協定版本改為 `2025-06-18`。先前只送 JSON 的 POST，依現行規格實作的遠端伺服器多半無法連線。
 - `tools/list` 依 `nextCursor` 讀完所有分頁（最多 50 頁），工具多的伺服器不再只取得第一頁。
 - MCP 交握不再宣告沒有實作的 `sampling` 與 `roots`；stdio 讀取回應時略過伺服器主動發出、id 剛好相同的請求。
+- 規格宣告表單格式的 OpenAPI 端點，請求主體不再一律以 JSON 送出。
+- 「AI 工具」頁的工具表單把 API Key 存成 `token`，在介面設定的 API Key 認證從未送出金鑰；表單現在依認證方式顯示對應欄位，並可選擇主體格式。
+- 技能詳細資料的 `load_error` 不再包含例外訊息，改為固定說明與錯誤代碼（CodeQL `py/stack-trace-exposure`）。
 - 結構化資料中的巢狀物件與陣列不再被丟棄；JSON 物件不再只保留頂層字串、數字與布林值。
 - 上傳時存入資料庫的內容改為去除前後空白後的版本，與重複檢查比對的值一致。
 - 管理員上傳的 JSON 在清理失敗時，第二次解析不再繞過解析上限。

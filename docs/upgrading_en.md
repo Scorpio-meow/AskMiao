@@ -34,7 +34,7 @@
 
 ## Upgrading from 5.0.0 to the next release
 
-For upgrading from 5.0.0 to the upcoming, not yet released version; see the [CHANGELOG](../CHANGELOG_en.md#unreleased) for the changes. This release reworks how structured data is parsed and chunked and adds Agent Skills support. The database gains an `agent_skills` table, created automatically at startup (existing tables are unchanged), and the backend drops the `passlib` dependency; what you need to do is add two new required fields to the domain profile, add one new required setting, `SKILLS_DIR`, to `.env`, reinstall the backend packages from the new `requirements.txt`, and rebuild the index once after upgrading. Index metadata is now stored as JSON, so update `METADATA_PATH` as well.
+For upgrading from 5.0.0 to the upcoming, not yet released version; see the [CHANGELOG](../CHANGELOG_en.md#unreleased) for the changes. This release reworks how structured data is parsed and chunked and adds Agent Skills support. The database gains an `agent_skills` table and a few columns in `custom_api_tools` and `mcp_servers`, all created automatically at startup, and the backend drops the `passlib` dependency; what you need to do is add two new required fields to the domain profile, add one new required setting, `SKILLS_DIR`, to `.env`, reinstall the backend packages from the new `requirements.txt`, and rebuild the index once after upgrading. Index metadata is now stored as JSON, so update `METADATA_PATH` as well.
 
 ### Next release changes and required actions
 
@@ -53,7 +53,11 @@ For upgrading from 5.0.0 to the upcoming, not yet released version; see the [CHA
 | MCP tool results | Both `content` and a duplicate `raw_result` | `content` only | Integrations that read `raw_result` read `content` |
 | Password hashing package | `passlib` calling argon2 | `argon2-cffi` directly, with the same hash format and parameters | Reinstall from the new `requirements.txt`; existing passwords keep working |
 | `SKILLS_DIR` | None | Required; the Agent Skills file directory | Add `SKILLS_DIR=data/skills` to `.env`, or the backend will not start |
-| `agent_skills` table | None | Holds installed skills' metadata and enabled state | None; created automatically at startup |
+| `agent_skills` table | None | Holds installed skills' metadata, enabled state, `allow_scripts`, and `allowed_user_ids` | None; created automatically at startup |
+| New columns in existing tables | None | `custom_api_tools.body_content_type`; `mcp_servers.discovered_resources`, `discovered_prompts`, `oauth_config`, and `oauth_tokens` (the last two encrypted) | None; added automatically at startup, and existing tools get `body_content_type` `application/json` |
+| HTTP MCP protocol | JSON-only POST, protocol version `2024-11-05` | Streamable HTTP, protocol version `2025-06-18`; falls back to legacy HTTP+SSE when `initialize` returns `400`, `404`, or `405` | None; rediscover servers whose discovery failed |
+| Remote MCP OAuth | Not supported | HTTP / SSE servers can be authorized with OAuth; the callback address is `/api/mcp/oauth/callback` | When the backend is behind a reverse proxy, the proxy must pass the scheme and host the client sees to the backend (`redirect_uri` is built from the request URL); with multiple workers, the authorization callback must reach the same process that started it |
+| Custom API tools | `auth_type` is not checked, and form bodies are sent as JSON too | `auth_type` accepts only `none`, `bearer`, `api_key`, `basic`, and `oauth2_client_credentials`, and the body is sent according to `body_content_type` | Integrations that create or import tools through the API with another `auth_type` get `422`; use an allowed value |
 
 ### Upgrade steps for the next release
 
@@ -79,6 +83,7 @@ For upgrading from 5.0.0 to the upcoming, not yet released version; see the [CHA
 4. `METADATA_PATH` can go back to `data/index_metadata.pkl` or stay as it is; 5.0.0 cannot read JSON metadata, so the last rebuild time shows as empty until its next index write.
 5. `ADMIN_API_KEY` is required in 5.0.0: if you deleted it from `.env`, add it back (any random string), and reinstall the backend packages from the 5.0.0 `requirements.txt` (which includes `passlib`).
 6. The `agent_skills` table and the `SKILLS_DIR` directory can stay: 5.0.0 never reads them, and it ignores `SKILLS_DIR` in `.env`.
+7. The new columns in `custom_api_tools` and `mcp_servers` can stay, and 5.0.0 ignores them: MCP servers' OAuth authorization, resources, and prompts are no longer used; tools with `auth_type` `oauth2_client_credentials` are called without auth, and form bodies are sent as JSON again.
 
 ### After upgrading to the next release
 

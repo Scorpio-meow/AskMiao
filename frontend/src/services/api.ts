@@ -428,6 +428,10 @@ export interface McpServerItem {
   status: string;
   last_error?: string | null;
   discovered_tools?: any[] | null;
+  discovered_resources?: { uri: string; name: string; description?: string | null; mimeType?: string | null }[];
+  discovered_prompts?: { name: string; description?: string | null; arguments: { name: string; description?: string | null; required: boolean }[] }[];
+  oauth_client?: { client_id: string; client_secret: string; scope: string } | null;
+  oauth_authorized?: boolean;
   timeout: number;
   created_at: string;
   updated_at: string;
@@ -479,6 +483,14 @@ export const mcpService = {
       { arguments: argumentsData }
     );
     return response.data;
+  },
+  async startOAuth(serverId: number): Promise<{ status: string; authorization_url: string }> {
+    const response = await api.post<{ status: string; authorization_url: string }>(`/mcp/servers/${serverId}/oauth/start`);
+    return response.data;
+  },
+  async revokeOAuth(serverId: number): Promise<{ status: string; message: string; server: McpServerItem }> {
+    const response = await api.delete<{ status: string; message: string; server: McpServerItem }>(`/mcp/servers/${serverId}/oauth`);
+    return response.data;
   }
 };
 export interface AgentSkillItem {
@@ -491,6 +503,8 @@ export interface AgentSkillItem {
   allowed_tools?: string | null;
   warnings: string[];
   is_enabled: boolean;
+  allow_scripts: boolean;
+  allowed_user_ids: number[] | null;
   files_present: boolean;
   created_at: string;
   updated_at: string;
@@ -531,6 +545,13 @@ export const skillService = {
   },
   async toggleSkill(skillId: number): Promise<{ status: string; is_enabled: boolean; message: string }> {
     const response = await api.patch<{ status: string; is_enabled: boolean; message: string }>(`/skills/${skillId}/toggle`);
+    return response.data;
+  },
+  async updateSkillSettings(
+    skillId: number,
+    settings: { allow_scripts?: boolean; allowed_user_ids?: number[] }
+  ): Promise<{ status: string; message: string; skill: AgentSkillItem }> {
+    const response = await api.patch<{ status: string; message: string; skill: AgentSkillItem }>(`/skills/${skillId}/settings`, settings);
     return response.data;
   },
   async deleteSkill(skillId: number): Promise<{ status: string; message: string }> {

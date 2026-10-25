@@ -92,6 +92,7 @@ class CustomApiTool(Base):
     parameters_schema = Column(Text, nullable=True)
     request_body_schema = Column(Text, nullable=True)
     param_locations = Column(Text, nullable=True)
+    body_content_type = Column(String, nullable=True)
     response_mapping = Column(Text, nullable=True)
     is_enabled = Column(Boolean, default=True)
     # Agent 呼叫前是否需要發問的使用者在對話內核准；建立時依 HTTP 方法決定（見 tool_approval.default_requires_approval）
@@ -120,6 +121,10 @@ class McpServer(Base):
     status = Column(String, default="disconnected")
     last_error = Column(Text, nullable=True)
     discovered_tools = Column(Text, nullable=True)
+    discovered_resources = Column(Text, nullable=True)
+    discovered_prompts = Column(Text, nullable=True)
+    oauth_config = Column(Text, nullable=True)
+    oauth_tokens = Column(Text, nullable=True)
     timeout = Column(Integer, default=30)
     created_by = Column(Integer, ForeignKey("users.id"), nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
@@ -135,9 +140,14 @@ class AgentSkill(Base):
     allowed_tools = Column(Text, nullable=True)
     warnings = Column(Text, nullable=True)
     is_enabled = Column(Boolean, nullable=False)
+    allow_scripts = Column(Boolean, nullable=False, default=False)
+    allowed_user_ids = Column(Text, nullable=True)
     created_by = Column(Integer, ForeignKey("users.id"), nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+class AgentSkillSettingsUpdate(BaseModel):
+    allow_scripts: Optional[bool] = None
+    allowed_user_ids: Optional[List[int]] = None
 class UserCreate(BaseModel):
     username: str
     email: str
@@ -216,7 +226,28 @@ class ConversationResponse(BaseModel):
 class ChatResponse(BaseModel):
     message: MessageResponse
     conversation_id: int
-class CustomApiToolCreate(BaseModel):
+BODY_CONTENT_TYPES = ("application/json", "application/x-www-form-urlencoded", "multipart/form-data")
+OAUTH2_CLIENT_CREDENTIALS = "oauth2_client_credentials"
+AUTH_TYPES = ("none", "bearer", "api_key", "basic", OAUTH2_CLIENT_CREDENTIALS)
+
+
+class ApiToolOptionsValidator(BaseModel):
+    @field_validator("body_content_type", check_fields=False)
+    @classmethod
+    def _validate_body_content_type(cls, value: Optional[str]) -> Optional[str]:
+        if value is not None and value not in BODY_CONTENT_TYPES:
+            raise ValueError(f"body_content_type 只能是 {', '.join(BODY_CONTENT_TYPES)}")
+        return value
+
+    @field_validator("auth_type", check_fields=False)
+    @classmethod
+    def _validate_auth_type(cls, value: Optional[str]) -> Optional[str]:
+        if value is not None and value not in AUTH_TYPES:
+            raise ValueError(f"auth_type 只能是 {', '.join(AUTH_TYPES)}")
+        return value
+
+
+class CustomApiToolCreate(ApiToolOptionsValidator):
     name: str
     display_name: str
     description: str
@@ -231,13 +262,14 @@ class CustomApiToolCreate(BaseModel):
     parameters_schema: Optional[Dict[str, Any]] = None
     request_body_schema: Optional[Dict[str, Any]] = None
     param_locations: Optional[Dict[str, str]] = None
+    body_content_type: Optional[str] = None
     response_mapping: Optional[str] = None
     is_enabled: Optional[bool] = True
     requires_approval: Optional[bool] = None
     timeout: Optional[int] = 15
     spec_version: Optional[str] = "manual"
     raw_spec: Optional[str] = None
-class CustomApiToolUpdate(BaseModel):
+class CustomApiToolUpdate(ApiToolOptionsValidator):
     name: Optional[str] = None
     display_name: Optional[str] = None
     description: Optional[str] = None
@@ -252,6 +284,7 @@ class CustomApiToolUpdate(BaseModel):
     parameters_schema: Optional[Dict[str, Any]] = None
     request_body_schema: Optional[Dict[str, Any]] = None
     param_locations: Optional[Dict[str, str]] = None
+    body_content_type: Optional[str] = None
     response_mapping: Optional[str] = None
     is_enabled: Optional[bool] = None
     requires_approval: Optional[bool] = None
@@ -272,6 +305,7 @@ class CustomApiToolResponse(BaseModel):
     parameters_schema: Optional[Dict[str, Any]] = None
     request_body_schema: Optional[Dict[str, Any]] = None
     param_locations: Optional[Dict[str, str]] = None
+    body_content_type: Optional[str] = None
     response_mapping: Optional[str] = None
     is_enabled: bool
     requires_approval: bool
@@ -282,7 +316,7 @@ class CustomApiToolResponse(BaseModel):
 class OpenApiParseRequest(BaseModel):
     spec_content_or_url: str
     default_base_url: Optional[str] = None
-class OpenApiImportItem(BaseModel):
+class OpenApiImportItem(ApiToolOptionsValidator):
     name: str
     display_name: str
     description: str
@@ -296,6 +330,7 @@ class OpenApiImportItem(BaseModel):
     parameters_schema: Optional[Dict[str, Any]] = None
     request_body_schema: Optional[Dict[str, Any]] = None
     param_locations: Optional[Dict[str, str]] = None
+    body_content_type: Optional[str] = None
     spec_version: Optional[str] = None
 class OpenApiImportRequest(BaseModel):
     tools: List[OpenApiImportItem]
@@ -315,6 +350,7 @@ class McpServerCreate(BaseModel):
     env_vars: Optional[Dict[str, str]] = None
     url: Optional[str] = None
     headers: Optional[Dict[str, str]] = None
+    oauth_client: Optional[Dict[str, str]] = None
     is_enabled: Optional[bool] = True
     requires_approval: Optional[bool] = None
     timeout: Optional[int] = 30
@@ -327,6 +363,7 @@ class McpServerUpdate(BaseModel):
     env_vars: Optional[Dict[str, str]] = None
     url: Optional[str] = None
     headers: Optional[Dict[str, str]] = None
+    oauth_client: Optional[Dict[str, str]] = None
     is_enabled: Optional[bool] = None
     requires_approval: Optional[bool] = None
     timeout: Optional[int] = None
@@ -346,6 +383,8 @@ class McpServerResponse(BaseModel):
     status: str
     last_error: Optional[str] = None
     discovered_tools: Optional[List[Dict[str, Any]]] = None
+    discovered_resources: Optional[List[Dict[str, Any]]] = None
+    discovered_prompts: Optional[List[Dict[str, Any]]] = None
     timeout: int
     created_at: datetime
     updated_at: datetime

@@ -229,6 +229,16 @@ def test_admin_skill_lifecycle(skills_dir):
     assert not (skills_dir / "pdf-processing").exists()
 
 
+def test_detail_hides_load_error_details(skills_dir):
+    admin = client_for(ADMIN_USER)
+    skill = upload(admin, "SKILL.md", PDF_SKILL.encode()).json()["skill"]
+    (skills_dir / "pdf-processing" / "SKILL.md").write_text("broken without frontmatter", encoding="utf-8")
+    detail = admin.get(f"/api/skills/{skill['id']}").json()["skill"]
+    assert detail["body"] is None
+    assert "錯誤代碼" in detail["load_error"]
+    assert "frontmatter" not in detail["load_error"]
+
+
 def test_upload_reports_invalid_skill(skills_dir):
     response = upload(client_for(ADMIN_USER), "SKILL.md", b"---\nname: demo\n---\n")
     assert response.status_code == 400

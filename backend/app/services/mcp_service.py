@@ -12,11 +12,15 @@ from typing import Any, Dict, List, Optional, Tuple
 import httpx
 from app import __version__
 from app.core.error_response import format_client_error, log_and_get_error_id
-from app.core.ssrf_protection import DnsPool, SSRFSafeTransport, send_following_redirects
+from app.core.ssrf_protection import DnsPool, SSRFSafeTransport, same_origin, send_following_redirects
 logger = logging.getLogger(__name__)
 MCP_PROTOCOL_VERSION = "2025-06-18"
 MAX_MCP_TOOL_PAGES = 50
+MAX_MCP_CATALOG_ITEMS = 200
+MAX_MCP_URI_CHARS = 2048
+MAX_MCP_CATALOG_DESCRIPTION_CHARS = 500
 MCP_HTTP_ACCEPT = "application/json, text/event-stream"
+LEGACY_SSE_FALLBACK_STATUS = (400, 404, 405)
 # 同時存在的 stdio MCP 子行程數上限（每次探索或工具呼叫都會啟動一個）；等待空位的時間不超過該伺服器的逾時設定
 MAX_CONCURRENT_STDIO_PROCESSES = 4
 _stdio_process_slots = asyncio.Semaphore(MAX_CONCURRENT_STDIO_PROCESSES)
@@ -40,32 +44,98 @@ def _rpc_result(message: Dict[str, Any]) -> Dict[str, Any]:
     return message.get("result", {})
 
 
-async def _list_all_tools(send_rpc_request) -> List[Dict[str, Any]]:
-    tools: List[Dict[str, Any]] = []
+async def _list_all(send_rpc_request, method: str, key: str) -> List[Any]:
+    items: List[Any] = []
     params: Dict[str, Any] = {}
     for _ in range(MAX_MCP_TOOL_PAGES):
-        result = await send_rpc_request("tools/list", params)
-        tools.extend(result.get("tools", []))
+        result = await send_rpc_request(method, params)
+        page = result.get(key, [])
+        if isinstance(page, list):
+            items.extend(page)
         cursor = result.get("nextCursor")
         if not cursor:
-            return _usable_tools(tools)
+            return items
         params = {"cursor": cursor}
-    raise RuntimeError(f"MCP 工具清單超過 {MAX_MCP_TOOL_PAGES} 頁")
+    raise RuntimeError(f"MCP 清單 {method} 超過 {MAX_MCP_TOOL_PAGES} 頁")
+
+
+async def _list_all_tools(send_rpc_request) -> List[Dict[str, Any]]:
+    return _usable_tools(await _list_all(send_rpc_request, "tools/list", "tools"))
+
+
+def _text(value: Any, limit: int) -> Optional[str]:
+    return value[:limit] if isinstance(value, str) else None
+
+
+def _usable_resources(items: List[Any]) -> List[Dict[str, Any]]:
+    resources = []
+    for item in items[:MAX_MCP_CATALOG_ITEMS]:
+        if isinstance(item, dict) and isinstance(item.get("uri"), str) and len(item["uri"]) <= MAX_MCP_URI_CHARS:
+            resources.append({
+                "uri": item["uri"],
+                "name": _text(item.get("name"), 200) or item["uri"],
+                "description": _text(item.get("description"), MAX_MCP_CATALOG_DESCRIPTION_CHARS),
+                "mimeType": _text(item.get("mimeType"), 100),
+            })
+    return resources
+
+
+def _usable_prompts(items: List[Any]) -> List[Dict[str, Any]]:
+    prompts = []
+    for item in items[:MAX_MCP_CATALOG_ITEMS]:
+        if not isinstance(item, dict) or not isinstance(item.get("name"), str) or not MCP_TOOL_NAME_PATTERN.fullmatch(item["name"]):
+            continue
+        arguments = [
+            {
+                "name": arg["name"],
+                "description": _text(arg.get("description"), MAX_MCP_CATALOG_DESCRIPTION_CHARS),
+                "required": bool(arg.get("required")),
+            }
+            for arg in item.get("arguments") or []
+            if isinstance(arg, dict) and isinstance(arg.get("name"), str) and MCP_TOOL_NAME_PATTERN.fullmatch(arg["name"])
+        ]
+        prompts.append({
+            "name": item["name"],
+            "description": _text(item.get("description"), MAX_MCP_CATALOG_DESCRIPTION_CHARS),
+            "arguments": arguments,
+        })
+    return prompts
+
+
+class McpHttpStatusError(RuntimeError):
+    def __init__(self, status_code: int):
+        super().__init__(f"HTTP MCP 伺服器返回狀態碼 {status_code}")
+        self.status_code = status_code
+
+
+def _sse_events(buffer: bytes) -> Tuple[List[Tuple[str, str]], bytes]:
+    events = []
+    normalized = buffer.replace(b"\r\n", b"\n")
+    *raw_events, rest = normalized.split(b"\n\n")
+    for raw in raw_events:
+        name = "message"
+        data_lines = []
+        for line in raw.decode("utf-8", errors="replace").split("\n"):
+            if line.startswith("event:"):
+                name = line[6:].strip()
+            elif line.startswith("data:"):
+                value = line[5:]
+                data_lines.append(value[1:] if value.startswith(" ") else value)
+        if data_lines:
+            events.append((name, "\n".join(data_lines)))
+    return events, rest
 
 
 def _sse_messages(buffer: bytes) -> Tuple[List[Any], bytes]:
+    events, rest = _sse_events(buffer)
     messages = []
-    normalized = buffer.replace(b"\r\n", b"\n")
-    *events, rest = normalized.split(b"\n\n")
-    for event in events:
-        data = "\n".join(
-            line[5:].lstrip(" ") for line in event.decode("utf-8", errors="replace").split("\n") if line.startswith("data:")
-        )
-        if data:
-            try:
-                messages.append(json.loads(data))
-            except json.JSONDecodeError:
-                logger.debug("略過無法解析的 MCP SSE 事件")
+    for name, data in events:
+        if name != "message":
+            continue
+        try:
+            messages.append(json.loads(data))
+        except json.JSONDecodeError:
+            logger.debug("略過無法解析的 MCP SSE 事件")
     return messages, rest
 
 
@@ -117,6 +187,31 @@ def build_stdio_env(env_vars: Dict[str, str]) -> Dict[str, str]:
         env[key] = value
     env.update(env_vars)
     return env
+async def kill_process_tree(process: asyncio.subprocess.Process) -> None:
+    if sys.platform == "win32":
+        # taskkill /T 會終止整棵子行程樹
+        killer = await asyncio.create_subprocess_exec(
+            "taskkill", "/PID", str(process.pid), "/T", "/F",
+            stdout=asyncio.subprocess.DEVNULL,
+            stderr=asyncio.subprocess.DEVNULL,
+        )
+        await asyncio.wait_for(killer.wait(), timeout=5.0)
+    else:
+        try:
+            os.killpg(process.pid, signal.SIGTERM)
+            await asyncio.wait_for(process.wait(), timeout=3.0)
+        except (ProcessLookupError, asyncio.TimeoutError):
+            try:
+                os.killpg(process.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+
+
+PROCESS_GROUP_KWARGS: Dict[str, Any] = (
+    {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP} if sys.platform == "win32" else {"start_new_session": True}
+)
+
+
 class McpStdioClient:
     """
     基於 Stdio (標準輸入/輸出子進程) 的 MCP 用戶端通訊器
@@ -157,11 +252,6 @@ class McpStdioClient:
             raise TimeoutError(f"同時執行的 MCP 子行程已達上限 ({MAX_CONCURRENT_STDIO_PROCESSES})，請稍後再試")
         self._holds_slot = True
         self._workdir = tempfile.TemporaryDirectory(prefix="askmiao-mcp-")
-        group_kwargs: Dict[str, Any] = (
-            {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP}
-            if sys.platform == "win32"
-            else {"start_new_session": True}
-        )
         try:
             self.process = await asyncio.create_subprocess_exec(
                 *full_cmd,
@@ -171,7 +261,7 @@ class McpStdioClient:
                 env=env,
                 cwd=self._workdir.name,
                 limit=MAX_MCP_STDIO_LINE_BYTES,
-                **group_kwargs
+                **PROCESS_GROUP_KWARGS
             )
         except Exception as e:
             self._release_slot()
@@ -194,24 +284,6 @@ class McpStdioClient:
         if self._workdir is not None:
             self._workdir.cleanup()
             self._workdir = None
-    async def _kill_process_tree(self, process: asyncio.subprocess.Process):
-        if sys.platform == "win32":
-            # taskkill /T 會終止整棵子行程樹
-            killer = await asyncio.create_subprocess_exec(
-                "taskkill", "/PID", str(process.pid), "/T", "/F",
-                stdout=asyncio.subprocess.DEVNULL,
-                stderr=asyncio.subprocess.DEVNULL,
-            )
-            await asyncio.wait_for(killer.wait(), timeout=5.0)
-        else:
-            try:
-                os.killpg(process.pid, signal.SIGTERM)
-                await asyncio.wait_for(process.wait(), timeout=3.0)
-            except (ProcessLookupError, asyncio.TimeoutError):
-                try:
-                    os.killpg(process.pid, signal.SIGKILL)
-                except ProcessLookupError:
-                    pass
     async def close(self):
         """關閉子進程：先關閉管線，再終止整個程序群組（含孫行程）"""
         process = self.process
@@ -223,7 +295,7 @@ class McpStdioClient:
             if process.stdin and not process.stdin.is_closing():
                 process.stdin.close()
             if process.returncode is None:
-                await self._kill_process_tree(process)
+                await kill_process_tree(process)
             try:
                 await asyncio.wait_for(process.wait(), timeout=3.0)
             except asyncio.TimeoutError:
@@ -338,6 +410,15 @@ class McpHttpClient:
             headers["MCP-Protocol-Version"] = self._protocol_version
         return headers
     async def _send_rpc_request(self, method: str, params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        try:
+            return await self._send_once(method, params)
+        except McpHttpStatusError as e:
+            if e.status_code != 404 or not self._session_id or method == "initialize":
+                raise
+        self._session_id = None
+        await self.initialize()
+        return await self._send_once(method, params)
+    async def _send_once(self, method: str, params: Optional[Dict[str, Any]]) -> Dict[str, Any]:
         req_id = self._next_id()
         payload = {
             "jsonrpc": "2.0",
@@ -347,6 +428,20 @@ class McpHttpClient:
         }
         # httpx 的逾時是逐次讀寫計算；整個請求（含轉址與慢速逐段回應）另以伺服器的逾時設定為總時限
         return await asyncio.wait_for(self._post(payload), timeout=self.timeout)
+    async def close(self) -> None:
+        if not self._session_id:
+            return
+        headers = self._request_headers()
+        self._session_id = None
+        try:
+            async with httpx.AsyncClient(
+                timeout=self.timeout,
+                follow_redirects=False,
+                transport=SSRFSafeTransport(DnsPool.CONFIGURED_ENDPOINT),
+            ) as client:
+                await asyncio.wait_for(client.delete(self.url, headers=headers), timeout=self.timeout)
+        except Exception as e:
+            logger.debug("關閉 MCP session 失敗: %s", e)
     async def _send_notification(self, method: str) -> None:
         await asyncio.wait_for(self._post({"jsonrpc": "2.0", "method": method}), timeout=self.timeout)
     async def _post(self, payload: Dict[str, Any]) -> Optional[Dict[str, Any]]:
@@ -363,10 +458,10 @@ class McpHttpClient:
             try:
                 if "id" not in payload:
                     if resp.status_code not in (200, 202):
-                        raise RuntimeError(f"HTTP MCP 伺服器返回狀態碼 {resp.status_code}")
+                        raise McpHttpStatusError(resp.status_code)
                     return None
                 if resp.status_code != 200:
-                    raise RuntimeError(f"HTTP MCP 伺服器返回狀態碼 {resp.status_code}")
+                    raise McpHttpStatusError(resp.status_code)
                 session_id = resp.headers.get("mcp-session-id")
                 if session_id:
                     self._session_id = session_id
@@ -410,7 +505,10 @@ class McpHttpClient:
             }
         })
         self._protocol_version = result.get("protocolVersion") or MCP_PROTOCOL_VERSION
-        await self._send_notification("notifications/initialized")
+        try:
+            await self._send_notification("notifications/initialized")
+        except McpHttpStatusError as e:
+            raise RuntimeError(str(e)) from e
         return result
     async def list_tools(self) -> List[Dict[str, Any]]:
         return await _list_all_tools(self._send_rpc_request)
@@ -419,6 +517,129 @@ class McpHttpClient:
             "name": name,
             "arguments": arguments or {}
         })
+class McpLegacySseClient:
+    def __init__(self, url: str, headers: Optional[Dict[str, str]] = None, timeout: float = 30.0):
+        self.url = url
+        self.headers = headers or {}
+        self.timeout = timeout
+        self._request_id = 0
+        self._client: Optional[httpx.AsyncClient] = None
+        self._stream: Optional[httpx.Response] = None
+        self._reader: Optional[asyncio.Task] = None
+        self._endpoint: Optional[asyncio.Future] = None
+        self._post_url: Optional[httpx.URL] = None
+        self._pending: Dict[int, asyncio.Future] = {}
+    async def start(self) -> None:
+        self._endpoint = asyncio.get_running_loop().create_future()
+        self._client = httpx.AsyncClient(
+            timeout=httpx.Timeout(self.timeout, read=None),
+            follow_redirects=False,
+            transport=SSRFSafeTransport(DnsPool.CONFIGURED_ENDPOINT),
+        )
+        request = self._client.build_request("GET", self.url, headers={**self.headers, "Accept": "text/event-stream"})
+        self._stream = await asyncio.wait_for(
+            send_following_redirects(self._client, request, MAX_MCP_HTTP_REDIRECTS, allow_cross_origin=False),
+            timeout=self.timeout,
+        )
+        if self._stream.status_code != 200:
+            raise McpHttpStatusError(self._stream.status_code)
+        self._reader = asyncio.create_task(self._read_stream())
+        endpoint = await asyncio.wait_for(asyncio.shield(self._endpoint), timeout=self.timeout)
+        target = self._stream.url.join(endpoint)
+        if not same_origin(target, self._stream.url):
+            raise RuntimeError("MCP SSE 伺服器指定的 endpoint 屬於其他來源，已拒絕")
+        self._post_url = target
+    async def _read_stream(self) -> None:
+        buffer = b""
+        total = 0
+        try:
+            async for chunk in self._stream.aiter_bytes():
+                total += len(chunk)
+                if total > MAX_MCP_HTTP_RESPONSE_BYTES:
+                    raise RuntimeError(f"HTTP MCP 伺服器回應超過 {MAX_MCP_HTTP_RESPONSE_BYTES} 位元組上限")
+                events, buffer = _sse_events(buffer + chunk)
+                for name, data in events:
+                    if name == "endpoint":
+                        if not self._endpoint.done():
+                            self._endpoint.set_result(data.strip())
+                        continue
+                    if name != "message":
+                        continue
+                    try:
+                        message = json.loads(data)
+                    except json.JSONDecodeError:
+                        continue
+                    if isinstance(message, dict) and "method" not in message:
+                        future = self._pending.pop(message.get("id"), None)
+                        if future is not None and not future.done():
+                            future.set_result(message)
+            raise RuntimeError("MCP SSE 串流已結束")
+        except Exception as e:
+            for future in [self._endpoint, *self._pending.values()]:
+                if future is not None and not future.done():
+                    future.set_exception(e)
+            self._pending.clear()
+    async def _post_message(self, payload: Dict[str, Any]) -> None:
+        request = self._client.build_request("POST", self._post_url, headers=self.headers, json=payload)
+        response = await self._client.send(request, stream=True)
+        await response.aclose()
+        if response.status_code not in (200, 202):
+            raise McpHttpStatusError(response.status_code)
+    async def _send_rpc_request(self, method: str, params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        self._request_id += 1
+        req_id = self._request_id
+        future = asyncio.get_running_loop().create_future()
+        self._pending[req_id] = future
+        try:
+            payload = {"jsonrpc": "2.0", "id": req_id, "method": method, "params": params or {}}
+            await asyncio.wait_for(self._post_message(payload), timeout=self.timeout)
+            message = await asyncio.wait_for(future, timeout=self.timeout)
+        finally:
+            self._pending.pop(req_id, None)
+        return _rpc_result(message)
+    async def initialize(self) -> Dict[str, Any]:
+        result = await self._send_rpc_request("initialize", {
+            "protocolVersion": MCP_PROTOCOL_VERSION,
+            "capabilities": {},
+            "clientInfo": {"name": "AskMiao-MCP-Client", "version": __version__},
+        })
+        await asyncio.wait_for(self._post_message({"jsonrpc": "2.0", "method": "notifications/initialized"}), timeout=self.timeout)
+        return result
+    async def list_tools(self) -> List[Dict[str, Any]]:
+        return await _list_all_tools(self._send_rpc_request)
+    async def call_tool(self, name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
+        return await self._send_rpc_request("tools/call", {"name": name, "arguments": arguments or {}})
+    async def close(self) -> None:
+        if self._reader is not None:
+            self._reader.cancel()
+            try:
+                await self._reader
+            except BaseException:
+                pass
+        if self._endpoint is not None and self._endpoint.done() and not self._endpoint.cancelled():
+            self._endpoint.exception()
+        if self._stream is not None:
+            await self._stream.aclose()
+        if self._client is not None:
+            await self._client.aclose()
+
+
+async def open_http_mcp_client(url: str, headers: Dict[str, str], timeout: float):
+    client = McpHttpClient(url=url, headers=headers, timeout=timeout)
+    try:
+        return client, await client.initialize()
+    except McpHttpStatusError as e:
+        if e.status_code not in LEGACY_SSE_FALLBACK_STATUS:
+            raise
+    legacy = McpLegacySseClient(url=url, headers=headers, timeout=timeout)
+    try:
+        await legacy.start()
+        return legacy, await legacy.initialize()
+    except BaseException:
+        await legacy.close()
+        raise
+
+
 class McpManager:
     """
     MCP 伺服器與工具調度管理器
@@ -491,142 +712,117 @@ if __name__ == '__main__':
                 "env_vars": {}
             },
         ]
+    @staticmethod
+    def _json_value(value: Any, fallback: Any) -> Any:
+        if not isinstance(value, str):
+            return value if value is not None else fallback
+        try:
+            return json.loads(value)
+        except Exception:
+            return fallback
     @classmethod
-    async def discover_server_tools(cls, server_dict: Dict[str, Any]) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
-        """
-        向指定 MCP 伺服器進行 Initialize 交握並探索工具清單 (tools/list)
-        回傳: (tools_list, server_info)
-        """
+    async def _http_headers(cls, server_dict: Dict[str, Any], force_refresh: bool = False) -> Dict[str, str]:
+        headers = dict(cls._json_value(server_dict.get("headers"), {}) or {})
+        if server_dict.get("oauth_authorized") and server_dict.get("id") is not None:
+            from app.services import mcp_oauth
+            token = await mcp_oauth.access_token(server_dict["id"], force_refresh=force_refresh)
+            if token:
+                headers["Authorization"] = f"Bearer {token}"
+        return headers
+    @classmethod
+    async def _run(cls, server_dict: Dict[str, Any], action) -> Any:
         transport_type = server_dict.get("transport_type", "stdio")
-        timeout = float(server_dict.get("timeout", 20))
+        timeout = float(server_dict.get("timeout", 30))
         if transport_type == "stdio":
             cmd = server_dict.get("command")
             if not cmd:
                 raise ValueError("Stdio 傳輸模式必須指定 command 執行指令")
-            raw_args = server_dict.get("args") or []
-            if isinstance(raw_args, str):
-                try:
-                    raw_args = json.loads(raw_args)
-                except Exception:
-                    raw_args = [raw_args]
-            raw_env = server_dict.get("env_vars") or {}
-            if isinstance(raw_env, str):
-                try:
-                    raw_env = json.loads(raw_env)
-                except Exception:
-                    raw_env = {}
-            client = McpStdioClient(
-                command=cmd,
-                args=raw_args,
-                env_vars=raw_env,
-                timeout=timeout
-            )
+            raw_args = cls._json_value(server_dict.get("args"), [server_dict.get("args")]) or []
+            raw_env = cls._json_value(server_dict.get("env_vars"), {}) or {}
+            client = McpStdioClient(command=cmd, args=raw_args, env_vars=raw_env, timeout=timeout)
             try:
                 await client.start()
                 init_res = await client.initialize()
-                tools = await client.list_tools()
-                return tools, init_res
+                return await action(client, init_res)
             finally:
                 await client.close()
-        elif transport_type in ["sse", "http"]:
+        if transport_type in ("sse", "http"):
             url = server_dict.get("url")
             if not url:
                 raise ValueError("SSE/HTTP 傳輸模式必須指定 url 連線網址")
-            raw_headers = server_dict.get("headers") or {}
-            if isinstance(raw_headers, str):
-                try:
-                    raw_headers = json.loads(raw_headers)
-                except Exception:
-                    raw_headers = {}
-            client = McpHttpClient(
-                url=url,
-                headers=raw_headers,
-                timeout=timeout
-            )
-            init_res = await client.initialize()
-            tools = await client.list_tools()
-            return tools, init_res
-        else:
-            raise ValueError(f"不支援的傳輸模式: {transport_type}")
+            try:
+                client, init_res = await open_http_mcp_client(url, await cls._http_headers(server_dict), timeout)
+            except McpHttpStatusError as e:
+                if e.status_code != 401 or not server_dict.get("oauth_authorized"):
+                    raise
+                client, init_res = await open_http_mcp_client(url, await cls._http_headers(server_dict, force_refresh=True), timeout)
+            try:
+                return await action(client, init_res)
+            finally:
+                await client.close()
+        raise ValueError(f"不支援的傳輸模式: {transport_type}")
     @classmethod
-    async def execute_mcp_tool(
-        cls,
-        server_dict: Dict[str, Any],
-        tool_name: str,
-        arguments: Dict[str, Any]
-    ) -> Dict[str, Any]:
+    async def discover_server_tools(cls, server_dict: Dict[str, Any]) -> Tuple[List[Dict[str, Any]], Dict[str, Any], Dict[str, List[Dict[str, Any]]]]:
         """
-        調用指定 MCP 伺服器之特定工具 (tools/call)
+        向指定 MCP 伺服器進行 Initialize 交握並探索工具、resources 與 prompts
+        回傳: (tools_list, server_info, {"resources": [...], "prompts": [...]})
         """
-        start_t = time.time()
-        transport_type = server_dict.get("transport_type", "stdio")
-        timeout = float(server_dict.get("timeout", 30))
-        try:
-            if transport_type == "stdio":
-                cmd = server_dict.get("command")
-                raw_args = server_dict.get("args") or []
-                if isinstance(raw_args, str):
-                    try:
-                        raw_args = json.loads(raw_args)
-                    except Exception:
-                        raw_args = [raw_args]
-                raw_env = server_dict.get("env_vars") or {}
-                if isinstance(raw_env, str):
-                    try:
-                        raw_env = json.loads(raw_env)
-                    except Exception:
-                        raw_env = {}
-                client = McpStdioClient(
-                    command=cmd,
-                    args=raw_args,
-                    env_vars=raw_env,
-                    timeout=timeout
-                )
+        async def discover(client, init_res):
+            tools = await client.list_tools()
+            capabilities = init_res.get("capabilities") or {}
+            catalog = {"resources": [], "prompts": []}
+            for kind, method in (("resources", "resources/list"), ("prompts", "prompts/list")):
+                if kind not in capabilities:
+                    continue
                 try:
-                    await client.start()
-                    await client.initialize()
-                    res = await client.call_tool(tool_name, arguments)
-                    duration = round(time.time() - start_t, 3)
-                    return {
-                        "is_success": not res.get("isError", False),
-                        "duration_seconds": duration,
-                        "content": res.get("content", [])
-                    }
-                finally:
-                    await client.close()
-            elif transport_type in ["sse", "http"]:
-                url = server_dict.get("url")
-                raw_headers = server_dict.get("headers") or {}
-                if isinstance(raw_headers, str):
-                    try:
-                        raw_headers = json.loads(raw_headers)
-                    except Exception:
-                        raw_headers = {}
-                client = McpHttpClient(
-                    url=url,
-                    headers=raw_headers,
-                    timeout=timeout
-                )
-                await client.initialize()
-                res = await client.call_tool(tool_name, arguments)
-                duration = round(time.time() - start_t, 3)
-                return {
-                    "is_success": not res.get("isError", False),
-                    "duration_seconds": duration,
-                    "content": res.get("content", [])
-                }
-            else:
-                raise ValueError(f"不支援的傳輸模式: {transport_type}")
+                    items = await _list_all(client._send_rpc_request, method, kind)
+                except Exception as e:
+                    log_and_get_error_id(logger, f"探索 MCP {kind} 失敗", e, logging.WARNING)
+                    continue
+                catalog[kind] = _usable_resources(items) if kind == "resources" else _usable_prompts(items)
+            return tools, init_res, catalog
+        return await cls._run(server_dict, discover)
+    @classmethod
+    async def _execute(cls, server_dict: Dict[str, Any], label: str, action, shape) -> Dict[str, Any]:
+        start_t = time.time()
+        try:
+            res = await cls._run(server_dict, lambda client, _init: action(client))
+            return {"duration_seconds": round(time.time() - start_t, 3), **shape(res)}
         except Exception as e:
             duration = round(time.time() - start_t, 3)
             # 例外內容（stderr、JSON-RPC 錯誤、SSRF 拒絕原因）只寫入日誌；結果會交給模型、顯示給使用者並存進研究軌跡
-            error_id = log_and_get_error_id(logger, f"調用 MCP 工具 {tool_name} 失敗", e)
+            error_id = log_and_get_error_id(logger, f"調用 {label} 失敗", e)
             return {
                 "is_success": False,
                 "duration_seconds": duration,
                 "error": format_client_error(error_id),
                 "error_id": error_id
             }
+    @classmethod
+    async def execute_mcp_tool(cls, server_dict: Dict[str, Any], tool_name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
+        """調用指定 MCP 伺服器之特定工具 (tools/call)"""
+        return await cls._execute(
+            server_dict,
+            f"MCP 工具 {tool_name}",
+            lambda client: client.call_tool(tool_name, arguments),
+            lambda res: {"is_success": not res.get("isError", False), "content": res.get("content", [])},
+        )
+    @classmethod
+    async def read_mcp_resource(cls, server_dict: Dict[str, Any], uri: str) -> Dict[str, Any]:
+        return await cls._execute(
+            server_dict,
+            f"MCP resource {uri}",
+            lambda client: client._send_rpc_request("resources/read", {"uri": uri}),
+            lambda res: {"is_success": True, "contents": res.get("contents", [])},
+        )
+    @classmethod
+    async def get_mcp_prompt(cls, server_dict: Dict[str, Any], name: str, arguments: Dict[str, str]) -> Dict[str, Any]:
+        return await cls._execute(
+            server_dict,
+            f"MCP prompt {name}",
+            lambda client: client._send_rpc_request("prompts/get", {"name": name, "arguments": arguments}),
+            lambda res: {"is_success": True, "description": res.get("description"), "messages": res.get("messages", [])},
+        )
     @classmethod
     def convert_mcp_tool_to_function_def(
         cls,

@@ -34,7 +34,7 @@
 
 ## 從 5.0.0 升級到下一版
 
-適用於從 5.0.0 升級到尚未發行的下一版，變更見 [CHANGELOG](../CHANGELOG.md#unreleased)。這一版重做結構化資料的解析與切塊並支援 Agent Skills，資料庫新增 `agent_skills` 資料表（啟動時自動建立，既有資料表沒有變更），後端相依套件移除 `passlib`；需要動手的是領域設定檔的兩個新必填欄位、`.env` 的一個新必填設定 `SKILLS_DIR`、依新的 `requirements.txt` 重新安裝後端套件，以及升級後執行一次重建索引。索引中繼資料改以 JSON 保存，建議一併更新 `METADATA_PATH`。
+適用於從 5.0.0 升級到尚未發行的下一版，變更見 [CHANGELOG](../CHANGELOG.md#unreleased)。這一版重做結構化資料的解析與切塊並支援 Agent Skills，資料庫新增 `agent_skills` 資料表，`custom_api_tools` 與 `mcp_servers` 新增幾個欄位（都在啟動時自動建立），後端相依套件移除 `passlib`；需要動手的是領域設定檔的兩個新必填欄位、`.env` 的一個新必填設定 `SKILLS_DIR`、依新的 `requirements.txt` 重新安裝後端套件，以及升級後執行一次重建索引。索引中繼資料改以 JSON 保存，建議一併更新 `METADATA_PATH`。
 
 ### 下一版的變更與需要的動作
 
@@ -53,7 +53,11 @@
 | MCP 工具結果 | 同時有 `content` 與重複內容的 `raw_result` | 只有 `content` | 讀取 `raw_result` 的整合改讀 `content` |
 | 密碼雜湊套件 | `passlib` 呼叫 argon2 | 直接使用 `argon2-cffi`，雜湊格式與參數相同 | 依新的 `requirements.txt` 重新安裝；既有密碼不需重設 |
 | `SKILLS_DIR` | 無 | 必填，Agent Skills 的技能檔案目錄 | 在 `.env` 加上 `SKILLS_DIR=data/skills`，否則後端無法啟動 |
-| `agent_skills` 資料表 | 無 | 保存已安裝技能的中繼資料與啟用狀態 | 無，啟動時自動建立 |
+| `agent_skills` 資料表 | 無 | 保存已安裝技能的中繼資料、啟用狀態、`allow_scripts` 與 `allowed_user_ids` | 無，啟動時自動建立 |
+| 既有資料表的新欄位 | 無 | `custom_api_tools.body_content_type`；`mcp_servers` 的 `discovered_resources`、`discovered_prompts`、`oauth_config`、`oauth_tokens`（後兩者加密存放） | 無，啟動時自動補上；既有工具的 `body_content_type` 填入 `application/json` |
+| HTTP MCP 協定 | 只送 JSON 的 POST，協定版本 `2024-11-05` | Streamable HTTP，協定版本 `2025-06-18`；`initialize` 回傳 `400`、`404`、`405` 時改用舊版 HTTP+SSE | 無；探索失敗的伺服器可以重新探索一次 |
+| MCP 遠端 OAuth | 不支援 | HTTP / SSE 伺服器可以 OAuth 授權，回呼位址為 `/api/mcp/oauth/callback` | 後端在反向代理之後時，代理必須把用戶端看到的 scheme 與主機傳給後端（`redirect_uri` 依請求網址組成）；執行多個 worker 時，授權回呼必須回到發起授權的同一個行程 |
+| 自訂 API 工具 | `auth_type` 不檢查，表單格式的主體也以 JSON 送出 | `auth_type` 只接受 `none`、`bearer`、`api_key`、`basic`、`oauth2_client_credentials`，主體依 `body_content_type` 送出 | 以 API 建立或匯入工具、帶其他 `auth_type` 的整合會收到 `422`，請改用允許的值 |
 
 ### 升級到下一版的步驟
 
@@ -79,6 +83,7 @@
 4. `METADATA_PATH` 可以改回 `data/index_metadata.pkl`，也可以保留；5.0.0 讀不懂 JSON 格式的中繼資料，最後重建時間會在它下一次寫入索引前顯示為空。
 5. 5.0.0 的 `ADMIN_API_KEY` 是必填設定：已從 `.env` 刪除時要加回（任意隨機字串），並以 5.0.0 的 `requirements.txt` 重新安裝後端套件（含 `passlib`）。
 6. `agent_skills` 資料表與 `SKILLS_DIR` 目錄可以保留：5.0.0 不會讀取它們，`.env` 中的 `SKILLS_DIR` 也會被忽略。
+7. `custom_api_tools` 與 `mcp_servers` 的新欄位可以保留，5.0.0 會忽略它們：MCP 伺服器的 OAuth 授權與 resources、prompts 不再使用；`auth_type` 為 `oauth2_client_credentials` 的工具呼叫時不帶認證，表單格式的主體改以 JSON 送出。
 
 ### 升級到下一版後的常見狀況
 

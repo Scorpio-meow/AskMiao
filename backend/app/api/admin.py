@@ -1,4 +1,5 @@
 import asyncio
+import json
 from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import func
@@ -234,6 +235,9 @@ async def delete_user(
     # 文件與工具留給其他管理員使用，只清掉指向這個帳號的欄位；PostgreSQL 的外鍵不允許指向已刪除的帳號
     for column in (Document.uploaded_by, CustomApiTool.created_by, McpServer.created_by, AgentSkill.created_by):
         db.query(column.class_).filter(column == user_id).update({column: None}, synchronize_session=False)
+    for skill in db.query(AgentSkill).filter(AgentSkill.allowed_user_ids.isnot(None)).all():
+        remaining = [uid for uid in json.loads(skill.allowed_user_ids) if uid != user_id]
+        skill.allowed_user_ids = json.dumps(remaining)
     deleted = {"target_user_id": user_id, "username": user.username, "was_admin": bool(user.is_admin)}
     db.delete(user)
     db.commit()

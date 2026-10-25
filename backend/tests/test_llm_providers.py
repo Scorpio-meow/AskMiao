@@ -172,7 +172,7 @@ CLAUDE_TOOL_USE_CONTENT = [
 
 def claude_agent(monkeypatch):
     registry = ResearchToolRegistry(retriever=StaticRetriever())
-    monkeypatch.setattr(registry, "get_tool_definitions", lambda: [KB_TOOL])
+    monkeypatch.setattr(registry, "get_tool_definitions", lambda user_id=None: [KB_TOOL])
     return ResearchAgent(tool_registry=registry)
 
 

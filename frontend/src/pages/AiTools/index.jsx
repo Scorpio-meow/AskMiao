@@ -17,6 +17,7 @@ import { DEFAULT_TOOLS_METADATA } from './builtinTools';
 import McpServerFormDialog from './McpServerFormDialog';
 import McpToolTestDialog from './McpToolTestDialog';
 import OpenApiImportDialog from './OpenApiImportDialog';
+import SkillAccessDialog from './SkillAccessDialog';
 import SkillDetailDialog from './SkillDetailDialog';
 import SkillUploadDialog from './SkillUploadDialog';
 import { CREDENTIALS_UNREADABLE_NOTICE, getMethodClass, getRequestErrorMessage } from './shared';
@@ -165,6 +166,43 @@ export default function AiTools() {
     } catch (err) {
       console.warn('切換 MCP 狀態失敗:', describeRequestError(err));
       showSnackbar(getRequestErrorMessage(err, '切換狀態失敗'), 'error');
+    }
+  };
+  const handleSkillScripts = async (skill) => {
+    try {
+      const res = await skillService.updateSkillSettings(skill.id, { allow_scripts: !skill.allow_scripts });
+      setSkills((prev) => prev.map((s) => (s.id === skill.id ? res.skill : s)));
+      showSnackbar(res.skill.allow_scripts ? `已允許「${skill.name}」執行腳本` : `已停止「${skill.name}」執行腳本`, 'success');
+    } catch (err) {
+      console.warn('更新技能設定失敗:', describeRequestError(err));
+      showSnackbar(getRequestErrorMessage(err, '更新技能設定失敗'), 'error');
+    }
+  };
+  const handleStartOAuth = async (server) => {
+    const popup = window.open('', '_blank');
+    try {
+      const res = await mcpService.startOAuth(server.id);
+      if (popup) {
+        popup.opener = null;
+        popup.location.href = res.authorization_url;
+      } else {
+        window.location.assign(res.authorization_url);
+      }
+      showSnackbar('已開啟授權頁面，完成登入後回到這裡重新探索工具', 'info');
+    } catch (err) {
+      popup?.close();
+      console.warn('啟動 OAuth 授權失敗:', describeRequestError(err));
+      showSnackbar(getRequestErrorMessage(err, '啟動 OAuth 授權失敗'), 'error');
+    }
+  };
+  const handleRevokeOAuth = async (server) => {
+    try {
+      const res = await mcpService.revokeOAuth(server.id);
+      setMcpServers((prev) => prev.map((s) => (s.id === server.id ? res.server : s)));
+      showSnackbar(res.message, 'success');
+    } catch (err) {
+      console.warn('清除 OAuth 授權失敗:', describeRequestError(err));
+      showSnackbar(getRequestErrorMessage(err, '清除 OAuth 授權失敗'), 'error');
     }
   };
   const handleToggleSkill = async (skillId) => {
@@ -433,6 +471,7 @@ export default function AiTools() {
                         </div>
                         <div className={styles.toolStatusWrap}>
                           <span className={styles.categoryTag}>MCP Server</span>
+                          {server.oauth_authorized && <span className={styles.versionTag}>OAuth 已授權</span>}
                           <span className={`${styles.statusPill} ${isConnected ? styles.statusActive : isError ? styles.statusError : styles.statusDisabled}`}>
                             <span className={styles.statusDot} />
                             <span>
@@ -527,6 +566,36 @@ export default function AiTools() {
                           </ul>
                         )}
                       </div>
+                      {(server.discovered_resources?.length > 0 || server.discovered_prompts?.length > 0) && (
+                        <div className={`${styles.specBlock} ${styles.specBlockSpaced}`}>
+                          <div className={styles.specLabel}>
+                            <Icon name="description" size={14} color="var(--color-primary)" />
+                            <span>
+                              提供之 resources ({server.discovered_resources?.length || 0} 項) 與 prompts ({server.discovered_prompts?.length || 0} 項)
+                            </span>
+                          </div>
+                          <ul className={styles.mcpToolList} role="list">
+                            {(server.discovered_resources || []).map((r) => (
+                              <li key={`r-${r.uri}`} className={styles.mcpToolItem}>
+                                <div className={styles.mcpToolText}>
+                                  <div className={`${styles.mcpToolName} ${styles.monoText}`}>{r.uri}</div>
+                                  <div className={styles.mcpToolDescription}>{r.name}{r.description ? `：${r.description}` : ''}</div>
+                                </div>
+                                <span className={styles.versionTag}>resource</span>
+                              </li>
+                            ))}
+                            {(server.discovered_prompts || []).map((pr) => (
+                              <li key={`p-${pr.name}`} className={styles.mcpToolItem}>
+                                <div className={styles.mcpToolText}>
+                                  <div className={styles.mcpToolName}>{pr.name}</div>
+                                  <div className={styles.mcpToolDescription}>{pr.description || '無詳細說明'}</div>
+                                </div>
+                                <span className={styles.versionTag}>prompt</span>
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+                      )}
                       {/* 伺服器操作按鈕 */}
                       <div className={styles.toolActionsFooter}>
                         <div className={styles.toolActionGroup}>
@@ -537,6 +606,20 @@ export default function AiTools() {
                           >
                             編輯伺服器配置
                           </Button>
+                          {server.transport_type !== 'stdio' && (
+                            <Button
+                              variant="secondary"
+                              onClick={() => handleStartOAuth(server)}
+                              startIcon={<Icon name="lock" size={16} />}
+                            >
+                              {server.oauth_authorized ? '重新 OAuth 授權' : 'OAuth 授權'}
+                            </Button>
+                          )}
+                          {server.oauth_authorized && (
+                            <Button variant="secondary" onClick={() => handleRevokeOAuth(server)} startIcon={<Icon name="close" size={16} />}>
+                              清除授權
+                            </Button>
+                          )}
                         </div>
                         <Button
                           variant="danger"
@@ -601,6 +684,9 @@ export default function AiTools() {
                               <span>找不到技能檔案</span>
                             </span>
                           )}
+                          {skill.allowed_user_ids !== null && (
+                            <span className={styles.versionTag}>限 {skill.allowed_user_ids.length} 位使用者</span>
+                          )}
                           <div className={styles.switchGroup}>
                             <span className={`${styles.enabledText} ${isEnabled ? styles.enabledTextOn : ''}`}>
                               {isEnabled ? '已啟用' : '已停用'}
@@ -623,6 +709,22 @@ export default function AiTools() {
                           <div className={styles.specContent}>{skill.compatibility}</div>
                         </div>
                       )}
+                      <div className={`${styles.specBlock} ${styles.specBlockSpaced}`}>
+                        <div className={`${styles.specLabel} ${styles.specLabelSplit}`}>
+                          <div className={styles.inlineGroup}>
+                            <Icon name="terminal" size={14} color="var(--color-primary)" />
+                            <span>允許執行技能內的腳本</span>
+                          </div>
+                          <Switch
+                            checked={Boolean(skill.allow_scripts)}
+                            onChange={() => handleSkillScripts(skill)}
+                            aria-label={`允許技能「${skill.name}」執行腳本`}
+                          />
+                        </div>
+                        <div className={styles.specContent}>
+                          開啟後 AI 可以要求在主機上執行技能中的 .py、.sh、.js 腳本，每次都需要提問者在對話中核准（技能的 allowed-tools 列出 run_skill_script 時，載入技能後免核准）。腳本以後端帳號的權限執行，只對信任的技能開啟。
+                        </div>
+                      </div>
                       {skill.warnings.length > 0 && (
                         <div className={`${styles.specBlock} ${styles.specBlockSpaced} ${styles.specBlockError}`}>
                           <div className={styles.specLabel}>
@@ -649,6 +751,13 @@ export default function AiTools() {
                             startIcon={<Icon name="upload" size={16} />}
                           >
                             上傳新版本
+                          </Button>
+                          <Button
+                            variant="secondary"
+                            onClick={() => setDialog({ type: 'skillAccess', skill })}
+                            startIcon={<Icon name="people" size={16} />}
+                          >
+                            使用者範圍
                           </Button>
                           <Button
                             variant="secondary"
@@ -906,6 +1015,9 @@ export default function AiTools() {
         <SkillUploadDialog skill={dialog.skill} onClose={closeDialog} onSaved={handleDialogSaved} />
       )}
       {dialog?.type === 'skillDetail' && <SkillDetailDialog skill={dialog.skill} onClose={closeDialog} />}
+      {dialog?.type === 'skillAccess' && (
+        <SkillAccessDialog skill={dialog.skill} onClose={closeDialog} onSaved={handleDialogSaved} />
+      )}
       <ConfirmDialog
         open={Boolean(pendingDelete)}
         title={DELETE_TITLES[pendingDelete?.type]}

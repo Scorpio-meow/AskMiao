@@ -89,11 +89,15 @@
 | POST | `/api/mcp/servers/{server_id}/discover` | 管理員 | 重新探索工具 |
 | PATCH | `/api/mcp/servers/{server_id}/toggle` | 管理員 | 切換啟用狀態 |
 | POST | `/api/mcp/servers/{server_id}/tools/{tool_name}/test` | 管理員 | 實際呼叫一次 MCP 工具 |
-| GET | `/api/skills/enabled` | 登入 | 啟用中的技能名稱與描述 |
+| POST | `/api/mcp/servers/{server_id}/oauth/start` | 管理員 | 開始 OAuth 授權，取得授權網址 |
+| GET | `/api/mcp/oauth/callback` | 公開 | OAuth 授權伺服器導回的位址 |
+| DELETE | `/api/mcp/servers/{server_id}/oauth` | 管理員 | 清除已保存的 OAuth 權杖 |
+| GET | `/api/skills/enabled` | 登入 | 自己可用的啟用中技能名稱與描述 |
 | GET | `/api/skills` | 管理員 | 技能清單 |
 | GET | `/api/skills/{skill_id}` | 管理員 | 單一技能與 `SKILL.md` 內文 |
 | POST | `/api/skills/upload` | 管理員 | 上傳並安裝技能 |
 | PATCH | `/api/skills/{skill_id}/toggle` | 管理員 | 切換啟用狀態 |
+| PATCH | `/api/skills/{skill_id}/settings` | 管理員 | 設定腳本執行與可使用的帳號 |
 | DELETE | `/api/skills/{skill_id}` | 管理員 | 刪除技能與技能檔案 |
 | GET | `/api/tags` | 公開 | 相容 Ollama 格式的模型清單 |
 | GET | `/api/admin/users` | 管理員 | 使用者清單 |
@@ -394,7 +398,8 @@ data: {"message_id": 108, "conversation_id": 42, "answer": "特休假需先在�
 - 內建工具 `search_knowledge_base`、`filter_and_count_records`、`web_search`、`web_fetch`（`ENABLE_WEB_SEARCH=false` 時不含後兩者）。`search_knowledge_base` 的說明會列出知識庫中每份文件的檔名與 AI 摘要，幫助模型判斷該查哪份文件。
 - 啟用中的自訂 API 工具（說明前綴 `【外部自訂 API】`）。
 - 啟用中 MCP 伺服器的已探索工具，名稱為 `mcp_<伺服器>_<工具>`（說明前綴 `【MCP 協定工具】`）。
-- 有啟用且檔案存在的 Agent Skills 時，另有 `activate_skill` 與 `read_skill_resource`（見 [6. Agent Skills](#6-agent-skills-apiskills)）；沒有時兩者都不出現。
+- 啟用中的 MCP 伺服器有已探索的 resources 或 prompts 時，另有 `read_mcp_resource`（參數 `server`、`uri`）與 `get_mcp_prompt`（參數 `server`、`name`、`arguments`），說明中列出可用的項目（見 [伺服器物件](#伺服器物件)）。
+- 呼叫者看得到、啟用且檔案存在的 Agent Skills 時，另有 `activate_skill` 與 `read_skill_resource`；其中有開啟 `allow_scripts` 的技能時再加上 `run_skill_script`（見 [6. Agent Skills](#6-agent-skills-apiskills)）。沒有時這些工具都不出現。
 
 ```json
 {
@@ -495,6 +500,8 @@ data: {"message_id": 108, "conversation_id": 42, "answer": "特休假需先在�
 - 300 秒內沒有回覆視為拒絕；使用者中斷串流時，等待中的項目一併取消。
 - 拒絕或逾時時工具不會執行，Agent 收到「使用者未核准」的工具結果後改以已取得的資料回答。
 - 沒有可核准的使用者時（非互動式呼叫），需要核准的工具一律不執行。
+- `run_skill_script` 一律需要核准（`target` 為 `本機指令 <直譯器>`）；`read_mcp_resource`、`get_mcp_prompt` 依該 MCP 伺服器的 `requires_approval`。
+- 技能啟用後，其 `allowed-tools` 列出的工具名稱在同一次提問的其餘過程中不再要求核准（見 [技能物件](#技能物件)）。
 - 待核准項目存在後端行程的記憶體中，後端重啟後失效。
 
 ---
@@ -631,8 +638,9 @@ data: {"message_id": 108, "conversation_id": 42, "answer": "特休假需先在�
 | `url` | string | 完整請求網址，路徑參數以 `{名稱}` 表示 |
 | `base_url` / `path` | string | 基底位址與路徑；`url` 為空時以兩者組合 |
 | `headers` | object | 固定的請求標頭；回應中除了 `Accept`、`Accept-Encoding`、`Accept-Language`、`Cache-Control`、`Content-Type`、`User-Agent` 以外，每個標頭的值都以 `••••••••` 遮蔽 |
-| `auth_type` | string | `none`、`bearer`、`api_key`、`basic` |
-| `auth_config` | object | 認證設定，見下表；`token`、`key_value`、`password` 在回應中以 `••••••••` 遮蔽 |
+| `auth_type` | string | `none`、`bearer`、`api_key`、`basic`、`oauth2_client_credentials`；其他值回傳 `422` |
+| `auth_config` | object | 認證設定，見下表；`token`、`key_value`、`password`、`client_secret` 在回應中以 `••••••••` 遮蔽 |
+| `body_content_type` | string | 請求主體的格式：`application/json`（預設）、`application/x-www-form-urlencoded` 或 `multipart/form-data`；其他值回傳 `422` |
 | `parameters_schema` | object | 參數的 JSON Schema，直接作為模型看到的 `parameters`；呼叫時只接受其中 `properties` 宣告的參數 |
 | `request_body_schema` | object | 請求主體結構；有 `properties` 時也用來檢查 `request_body` 的欄位 |
 | `param_locations` | object | 每個參數的位置：`path`、`query`、`header`、`body` |
@@ -649,10 +657,13 @@ data: {"message_id": 108, "conversation_id": 42, "answer": "特休假需先在�
 | `bearer` | `token` |
 | `api_key` | `key_name`（預設 `X-API-Key`）、`key_value`、`key_in`（`header` 或 `query`） |
 | `basic` | `username`、`password` |
+| `oauth2_client_credentials` | `token_url`、`client_id`、`client_secret`、`scope`、`client_auth`（`basic` 以 HTTP Basic 送出 client 憑證，`post` 放在表單本文） |
+
+**OAuth2 client credentials**：呼叫前以 `grant_type=client_credentials`（與 `scope`）向 `token_url` POST 表單取得存取權杖，以 `Authorization: Bearer` 送出。權杖快取在後端行程中，到 `expires_in` 前 30 秒為止（沒有 `expires_in` 時為 300 秒）；API 回傳 `401` 時捨棄快取、重新取得權杖並重試一次。權杖端點的請求同樣經 SSRF 驗證，只跟隨同一來源的轉址，逾時 15 秒、回應最多 256 KiB；取不到權杖時不呼叫 API，`status_code` 為 `502`，`error` 只附錯誤代碼。存取權杖與 `client_secret` 出現在結果中時換成 `[已遮蔽]`。
 
 **憑證的加密與遮蔽**：`headers` 與 `auth_config` 以 `TOOL_SECRETS_KEY`（Fernet）加密後才寫入資料庫，後端啟動時也會把舊版以明文存放的資料改為加密。管理 API 的回應以 `••••••••` 取代秘密值（空值不遮蔽），憑證寫入後無法再從 API 讀出。更新時送出的 `headers` 或 `auth_config` 整個取代原值，其中值仍為 `••••••••` 的鍵沿用已儲存的值；該鍵沒有已儲存的值（包括已儲存的憑證無法解密）時回傳 `400` `欄位 <名稱> 沒有已儲存的值，請輸入實際內容`。更換 `TOOL_SECRETS_KEY` 後，已儲存的憑證都無法解密（`credentials_unreadable` 為 `true`），重新輸入之前該工具無法執行：Agent 呼叫時回傳附錯誤代碼的錯誤，[測試端點](#49-post-apiapi-toolstool_idtest) 回傳 `400` `無法以目前的 TOOL_SECRETS_KEY 解密工具憑證，請重新輸入`；金鑰與加密範圍見 [設定參考：工具憑證加密](configuration.md#工具憑證加密)。
 
-**參數組裝規則**：出現在網址 `{名稱}` 中或位置為 `path` 的參數會替換進網址；`header` 放進標頭；`query` 放進查詢字串；`body` 放進 JSON 主體。未指定位置的參數，`POST`、`PUT`、`PATCH` 放進主體，其他方法放進查詢字串。模型傳入 `request_body` 物件時，整個取代主體。
+**參數組裝規則**：出現在網址 `{名稱}` 中或位置為 `path` 的參數會替換進網址；`header` 放進標頭；`query` 放進查詢字串；`body` 放進主體。主體依 `body_content_type` 以 JSON、表單（`application/x-www-form-urlencoded`）或 `multipart/form-data` 欄位（不含檔案）送出；兩種表單格式中，物件與陣列值轉成 JSON 字串，布林值轉成 `true` / `false`。未指定位置的參數，`POST`、`PUT`、`PATCH` 放進主體，其他方法放進查詢字串。模型傳入 `request_body` 物件時，整個取代主體。
 
 **只接受宣告的參數**：呼叫端（Agent 或 [4.9](#49-post-apiapi-toolstool_idtest) 的測試）傳入的每個參數都必須列在 `parameters_schema.properties` 中，否則不送出請求，結果的 `status_code` 為 `400`（`工具參數無效：未宣告的參數 …`）；沒有宣告任何參數的工具不接受任何參數。`request_body` 同樣必須宣告；`request_body_schema` 有 `properties` 且 `additionalProperties` 不是 `true` 時，`request_body` 物件中的欄位也必須列在其中，未宣告的欄位以 `request_body.<欄位>` 列出。
 
@@ -694,6 +705,8 @@ data: {"message_id": 108, "conversation_id": 42, "answer": "特休假需先在�
         "full_url": "https://api.example.com/pets/{petId}",
         "has_body": false,
         "body_content_type": "application/json",
+        "auth_type": "api_key",
+        "auth_config": {"key_name": "X-API-Key", "key_in": "header", "key_value": ""},
         "param_locations": {"petId": "path"},
         "parameters_schema": {"type": "object", "properties": {"petId": {"type": "integer"}}, "required": ["petId"]},
         "function_definition": {"type": "function", "function": {"name": "get_pet_by_id", "...": "..."}},
@@ -707,6 +720,16 @@ data: {"message_id": 108, "conversation_id": 42, "answer": "特休假需先在�
 
 工具名稱取自 `operationId`（轉為小寫並把非英數字元換成底線）；沒有 `operationId` 時由方法與路徑組成，例如 `get_pets_petid`。
 
+`body_content_type` 依規格的請求主體格式依序選擇 `application/json`、`application/x-www-form-urlencoded`、`multipart/form-data`，其他格式（例如 XML）改用 JSON。`auth_type` 與 `auth_config` 取自端點的 `security`（沒有時用規格頂層的 `security`）與 `securitySchemes`（3.x 的 `components`）或 `securityDefinitions`（2.0），只填入設定欄位，憑證留空：
+
+| 規格中的認證 | `auth_type` | 填入的 `auth_config` |
+|---|---|---|
+| `apiKey`（`in` 為 `header` 或 `query`） | `api_key` | `key_name`、`key_in` |
+| `http` 的 `basic`、2.0 的 `basic` | `basic` | — |
+| `http` 的 `bearer` | `bearer` | — |
+| `oauth2` 的 `clientCredentials` flow、2.0 的 `application` flow | `oauth2_client_credentials` | `token_url`（`tokenUrl`）、`scope`（需求列出的 scopes，以空白分隔）、`client_auth` 為 `basic` |
+| `in: cookie` 的 `apiKey`、其他 OAuth flow、需同時滿足多個方案的需求 | `none` | — |
+
 | 狀態碼 | 情況 |
 |---|---|
 | `400` | 規格格式不合法（含使用 YAML 別名）、無法辨識版本或網址無法取得（訊息可直接顯示給使用者）；網址被 SSRF 防護拒絕時只說明遭拒並附錯誤代碼，完整原因只寫入伺服器日誌 |
@@ -718,11 +741,13 @@ data: {"message_id": 108, "conversation_id": 42, "answer": "特休假需先在�
 
 | 欄位 | 型態 | 必填 | 說明 |
 |---|---|---|---|
-| `tools` | array | 是 | 端點清單，欄位同解析結果：`name`、`display_name`、`description`、`method`、`path`、`full_url`（必填），以及選填的 `base_url`、`headers`、`auth_type`、`auth_config`、`parameters_schema`、`request_body_schema`、`param_locations`、`spec_version` |
+| `tools` | array | 是 | 端點清單，欄位同解析結果：`name`、`display_name`、`description`、`method`、`path`、`full_url`（必填），以及選填的 `base_url`、`headers`、`auth_type`、`auth_config`、`body_content_type`、`parameters_schema`、`request_body_schema`、`param_locations`、`spec_version` |
 | `global_base_url` | string | 否 | 端點沒有 `base_url` 時使用 |
 | `global_headers` | object | 否 | 共用標頭，端點的同名標頭優先 |
-| `global_auth_type` | string | 否 | 端點未指定認證時使用 |
-| `global_auth_config` | object | 否 | 端點未指定認證設定時使用 |
+| `global_auth_type` | string | 否 | 端點的 `auth_type` 為空或 `none` 時使用 |
+| `global_auth_config` | object | 否 | 端點的 `auth_type` 為空或 `none` 時整個使用；端點的 `auth_type` 與 `global_auth_type` 相同時，其中非空的值覆蓋端點的 `auth_config` |
+
+端點宣告的認證優先：前端匯入對話框的 Bearer Token 只會填進沒有宣告認證或宣告 Bearer 的端點，其他認證方式的憑證請在匯入後以 4.6 編輯工具填入。`auth_type` 或 `body_content_type` 不在允許的值中時回傳 `422`。
 
 新匯入的工具依方法決定 `requires_approval`（`GET`、`HEAD`、`OPTIONS` 以外為 `true`）。覆寫既有工具時，原本需要核准的仍維持需要核准；`headers` 與 `auth_config` 則改為這次匯入的內容（含 `global_headers`、`global_auth_config`），不沿用已儲存的憑證，沒有提供時即清空。匯入後可以 4.6 修改。
 
@@ -801,9 +826,9 @@ data: {"message_id": 108, "conversation_id": 42, "answer": "特休假需先在�
 
 ## 5. MCP 伺服器 `/api/mcp`
 
-管理 Model Context Protocol 伺服器，協定版本 `2025-06-18`（伺服器回覆的版本為準），以 JSON-RPC 2.0 進行 `initialize`、`notifications/initialized`、`tools/list`（依 `nextCursor` 讀完所有分頁，最多 50 頁）與 `tools/call`。交握不宣告任何用戶端 capability（不支援 sampling、roots）。交握時的 `clientInfo` 為 `AskMiao-MCP-Client` 與後端版本號。
+管理 Model Context Protocol 伺服器，協定版本 `2025-06-18`（伺服器回覆的版本為準），以 JSON-RPC 2.0 進行 `initialize`、`notifications/initialized`、`tools/list`（依 `nextCursor` 讀完所有分頁，最多 50 頁）與 `tools/call`；伺服器在 `initialize` 的 capabilities 宣告 `resources`、`prompts` 時，另以同樣的分頁方式讀取 `resources/list`、`prompts/list`，並以 `resources/read`、`prompts/get` 取用。交握不宣告任何用戶端 capability（不支援 sampling、roots）。交握時的 `clientInfo` 為 `AskMiao-MCP-Client` 與後端版本號。
 
-> 本模組所有端點（含查詢）都需要**管理員**權限：`stdio` 模式會在主機上執行指定的指令，伺服器設定也含環境變數與標頭等憑證（加密存放，回應中以 `••••••••` 遮蔽）。
+> 本模組除了 OAuth 回呼（[5.11](#511-get-apimcpoauthcallback)）以外的所有端點（含查詢）都需要**管理員**權限：`stdio` 模式會在主機上執行指定的指令，伺服器設定也含環境變數與標頭等憑證（加密存放，回應中以 `••••••••` 遮蔽）。
 
 ### 伺服器物件
 
@@ -812,7 +837,7 @@ data: {"message_id": 108, "conversation_id": 42, "answer": "特休假需先在�
 | `id` | integer | 伺服器 ID |
 | `name` | string | 唯一名稱（建立時轉為小寫），用於工具名稱 `mcp_<name>_<tool>` |
 | `display_name` / `description` | string | 顯示名稱與說明 |
-| `transport_type` | string | `stdio`，或 `http` / `sse`（兩者都使用 Streamable HTTP：以 POST 傳送 JSON-RPC，帶 `Accept: application/json, text/event-stream`，接受 JSON 或 SSE 回應，並在之後的請求帶上伺服器發的 `Mcp-Session-Id` 與 `MCP-Protocol-Version`；不支援舊版以 GET 開啟 SSE 的傳輸） |
+| `transport_type` | string | `stdio`，或 `http` / `sse`（兩者都先使用 Streamable HTTP：以 POST 傳送 JSON-RPC，帶 `Accept: application/json, text/event-stream`，接受 JSON 或 SSE 回應，並在之後的請求帶上伺服器發的 `Mcp-Session-Id` 與 `MCP-Protocol-Version`；帶工作階段的請求收到 `404` 時重新交握一次再重試，關閉時以 `DELETE` 結束工作階段。`initialize` 收到 `400`、`404` 或 `405` 時改用舊版 HTTP+SSE 傳輸，見下方說明） |
 | `command` / `args` | string / array | `stdio` 模式的執行指令與參數 |
 | `env_vars` | object | `stdio` 子行程的額外環境變數；一律視為憑證，回應中每個值都以 `••••••••` 遮蔽 |
 | `url` / `headers` | string / object | HTTP 模式的伺服器位址與請求標頭；`headers` 的遮蔽規則同自訂 API 工具 |
@@ -821,9 +846,15 @@ data: {"message_id": 108, "conversation_id": 42, "answer": "特休假需先在�
 | `status` | string | `connected`、`disconnected` 或 `error` |
 | `last_error` | string | 最近一次探索失敗的原因 |
 | `discovered_tools` | array | 最近一次探索到的工具快取（`name`、`description`、`inputSchema`）；名稱不符合 `[A-Za-z0-9_.-]{1,128}` 的工具會被略過 |
+| `discovered_resources` | array | 最近一次探索到的 resources（`uri`、`name`、`description`、`mimeType`），最多 200 項；沒有 `uri` 或 `uri` 超過 2,048 字元的項目會被略過 |
+| `discovered_prompts` | array | 最近一次探索到的 prompts（`name`、`description`、`arguments`），最多 200 項；名稱不符合 `[A-Za-z0-9_.-]{1,128}` 的 prompt 與參數會被略過 |
+| `oauth_authorized` | boolean | 只出現在回應中：是否已保存 OAuth 權杖（見 [5.10](#510-post-apimcpserversserver_idoauthstart)） |
+| `oauth_client` | object | 管理員填入的 OAuth client（`client_id`、`client_secret`、`scope`），`client_secret` 以 `••••••••` 遮蔽；沒有填入（或使用動態註冊）時為 `null` |
 | `timeout` | integer | 連線與呼叫逾時秒數，預設 30 |
 | `created_at` / `updated_at` | string | 時間戳記 |
-| `credentials_unreadable` | boolean | 只出現在回應中：`env_vars` 或 `headers` 無法以目前的 `TOOL_SECRETS_KEY` 解密時為 `true`，無法解密的欄位回傳 `null`，需要重新輸入 |
+| `credentials_unreadable` | boolean | 只出現在回應中：`env_vars`、`headers` 或 OAuth 設定無法以目前的 `TOOL_SECRETS_KEY` 解密時為 `true`，無法解密的欄位回傳 `null`，需要重新輸入 |
+
+resources 與 prompts 的說明截斷為 500 字元；伺服器沒有宣告對應的 capability，或讀取清單失敗（只寫入伺服器日誌）時為空陣列。Agent 以 `read_mcp_resource`、`get_mcp_prompt` 取用它們（見 [2.3](#23-get-apichattools)）：工具說明列出各伺服器的項目，合計最多 8,000 字元（`MAX_MCP_CATALOG_CHARS`），放不下的伺服器不列出並寫入警告日誌；只接受清單中的 `uri` 與 prompt 名稱，其他值直接拒絕、不連線到伺服器。結果與 MCP 工具結果一樣包上不可信標記，是否需要核准依伺服器的 `requires_approval`。
 
 `env_vars` 與 `headers` 的加密、遮蔽與更新規則同 [自訂 API 工具的憑證](#工具物件)：更新時值仍為 `••••••••` 的鍵沿用已儲存的值，沒有已儲存的值時回傳 `400`；憑證無法解密時，重新輸入之前無法連線或呼叫該伺服器的工具：探索與工具測試端點回傳 `400` `無法以目前的 TOOL_SECRETS_KEY 解密工具憑證，請重新輸入`。
 
@@ -832,6 +863,10 @@ data: {"message_id": 108, "conversation_id": 42, "answer": "特休假需先在�
 **`stdio` 子行程的生命週期**：每個子行程自成一個程序群組（Windows 為新的 process group，其他平台為新的 session），關閉時連同 `npx`、`uvx` 啟動的孫行程整棵終止（Windows 以 `taskkill /T /F`，其他平台送 `SIGTERM` 再 `SIGKILL` 給整個群組）。每次探索或工具呼叫都會啟動一個子行程，同時最多 4 個，其餘排隊等候，等候超過該伺服器的 `timeout` 秒即失敗。子行程在每次新建的空暫存目錄中執行（結束後刪除），以相對路徑讀不到後端目錄下的 `.env` 與 `keys/`；子行程仍以後端的系統帳號執行，能讀取該帳號可讀的檔案。stderr 持續讀出且只寫入伺服器日誌，單行 JSON-RPC 訊息最多 4 MiB。
 
 **HTTP 模式**的每個請求與轉址都經 SSRF 驗證並把連線固定在驗證過的 IP，指向本機或內網位址的伺服器會被拒絕；本機的 MCP 伺服器請改用 `stdio`。轉址由後端手動跟隨，只接受同一來源（scheme、主機與埠號相同）的轉址，最多 5 次，轉址回應的本文不讀取；轉址到其他來源時中止，管理員設定的標頭與 JSON-RPC 本文不會送往其他網域。每個 JSON-RPC 請求（含轉址）的總時限為該伺服器的 `timeout` 秒。單次回應最多 4 MiB，錯誤訊息不再夾帶對端的回應本文。
+
+**舊版 HTTP+SSE 傳輸**：Streamable HTTP 的 `initialize` 回傳 `400`、`404` 或 `405` 時，改以 GET（`Accept: text/event-stream`）開啟 SSE 串流，等待伺服器的 `endpoint` 事件，再把 JSON-RPC POST 到該位址、從 SSE 串流讀取回應。`endpoint` 必須與 SSE 網址同一來源，否則拒絕連線；整條串流最多讀取 4 MiB。
+
+**OAuth 權杖**：已授權的伺服器（見 [5.10](#510-post-apimcpserversserver_idoauthstart)），HTTP 請求帶 `Authorization: Bearer <存取權杖>`；權杖在到期前 60 秒內，或連線時收到 `401`，以 refresh token 換新一次（帶 `resource`）。探索收到 `401` 時，`last_error` 說明伺服器要求 OAuth 授權。
 
 ### 5.1 GET /api/mcp/presets
 
@@ -858,6 +893,7 @@ data: {"message_id": 108, "conversation_id": 42, "answer": "特休假需先在�
 | `is_enabled` | boolean | 否 | `true` |
 | `requires_approval` | boolean | 否 | `true` |
 | `timeout` | integer | 否 | `30` |
+| `oauth_client` | object | 否（HTTP 時使用） | `null`；`client_id`、`client_secret`、`scope`，授權伺服器不支援動態註冊時必須填入 `client_id` |
 
 **回應**：`{"status": "success", "message": "MCP 伺服器建立成功", "server": {...}}`。探索失敗時伺服器仍會建立，但 `status` 為 `error`，`last_error` 只記錄錯誤代碼；SSRF 拒絕時另註明遭 SSRF 防護拒絕，完整原因同樣只寫入伺服器日誌。同名時回傳 `400` `已存在同名 MCP 伺服器: <名稱>`。
 
@@ -867,7 +903,7 @@ data: {"message_id": 108, "conversation_id": 42, "answer": "特休假需先在�
 
 ### 5.5 PUT /api/mcp/servers/{server_id}
 
-只需帶入要變更的欄位（`name` 無法修改）。送出 `env_vars` 或 `headers` 時整個取代原值，值為 `••••••••` 的鍵沿用已儲存的值，沒有已儲存的值時回傳 `400`。更新後不會自動重新探索，請呼叫 5.7。**回應**：`{"status": "success", "message": "MCP 伺服器配置更新成功", "server": {...}}`。
+只需帶入要變更的欄位（`name` 無法修改）。送出 `env_vars` 或 `headers` 時整個取代原值，值為 `••••••••` 的鍵沿用已儲存的值，沒有已儲存的值時回傳 `400`。`oauth_client` 的 `client_secret` 同樣可以保留 `••••••••`；變更 `url` 或管理員填入的 client 時清除已保存的 OAuth 權杖，送出相同的 client 則保留；`client_id` 為空時移除管理員填入的 client。更新後不會自動重新探索，請呼叫 5.7。**回應**：`{"status": "success", "message": "MCP 伺服器配置更新成功", "server": {...}}`。
 
 ### 5.6 DELETE /api/mcp/servers/{server_id}
 
@@ -875,14 +911,16 @@ data: {"message_id": 108, "conversation_id": 42, "answer": "特休假需先在�
 
 ### 5.7 POST /api/mcp/servers/{server_id}/discover
 
-重新連線並探索工具，結果寫入 `discovered_tools`。名稱不符合 `[A-Za-z0-9_.-]{1,128}` 的工具會被略過（只寫入伺服器日誌），不會出現在 `tools` 中，也不會提供給 Agent。
+重新連線並探索工具、resources 與 prompts，結果寫入 `discovered_tools`、`discovered_resources`、`discovered_prompts`。名稱不符合 `[A-Za-z0-9_.-]{1,128}` 的工具會被略過（只寫入伺服器日誌），不會出現在 `tools` 中，也不會提供給 Agent。
 
 ```json
 {
   "status": "success",
-  "message": "成功連線並探索到 1 項 MCP 工具",
+  "message": "成功連線並探索到 1 項 MCP 工具、0 項 resource、0 項 prompt",
   "tools_count": 1,
   "tools": [{"name": "get_current_time", "description": "查詢指定時區或城市的當前精確時間", "inputSchema": {"type": "object", "properties": {"timezone": {"type": "string"}}}}],
+  "resources": [],
+  "prompts": [],
   "init_info": {"protocolVersion": "2024-11-05", "capabilities": {"tools": {}}, "serverInfo": {"name": "mcp-time-server", "version": "1.0"}},
   "server": {...}
 }
@@ -915,13 +953,43 @@ data: {"message_id": 108, "conversation_id": 42, "answer": "特休假需先在�
 
 呼叫失敗時 `result` 為 `{"is_success": false, "duration_seconds": ..., "error": "伺服器內部錯誤，請聯繫系統管理員並提供錯誤代碼（錯誤代碼：…）", "error_id": "…"}`；完整原因（例如子行程的 stderr、JSON-RPC 錯誤或 SSRF 拒絕原因）只寫入伺服器日誌。Agent 呼叫 MCP 工具失敗時收到相同的結果。
 
+### 5.10 POST /api/mcp/servers/{server_id}/oauth/start
+
+依 MCP 授權規格（`2025-06-18`）為 HTTP / SSE 伺服器開始授權碼流程，不需要請求主體；`stdio` 伺服器或沒有 `url` 時回傳 `400`。
+
+1. 對伺服器送出 `ping`，從回應的 `WWW-Authenticate` 讀取 `resource_metadata`；沒有時依序嘗試 `/.well-known/oauth-protected-resource<路徑>` 與 `/.well-known/oauth-protected-resource`。
+2. 讀取授權伺服器的中繼資料（RFC 8414 的 `/.well-known/oauth-authorization-server`，再退回 OpenID Connect 的位置）；找不到受保護資源的中繼資料時，以 MCP 伺服器的來源當作授權伺服器。中繼資料列出 `code_challenge_methods_supported` 但不含 `S256` 時拒絕。
+3. 使用 `oauth_client` 中管理員填入的 client；沒有時以動態註冊（RFC 7591，公開 client，`token_endpoint_auth_method` 為 `none`）取得 client。
+4. 產生 PKCE（S256）與一次性的 `state`，回傳授權網址，其中帶 `resource`（RFC 8707）與 `scope`（管理員填入的 scope，沒有時用 `scopes_supported`）。
+
+**回應**：`{"status": "success", "authorization_url": "https://auth.example.com/authorize?..."}`，由管理員在瀏覽器開啟。
+
+| 狀態碼 | 情況 |
+|---|---|
+| `400` | 授權伺服器沒有註冊端點、也沒有填入 `client_id`：`授權伺服器不支援動態註冊，請在 MCP 伺服器設定中填入 OAuth client_id`；網址被 SSRF 防護拒絕，或其他探索失敗（只附錯誤代碼） |
+| `404` | `找不到該 MCP 伺服器` |
+
+授權伺服器導回的 `redirect_uri` 是後端依本次請求的網址組出的 `/api/mcp/oauth/callback`；經過反向代理時，代理必須把用戶端看到的 scheme 與主機傳給後端，否則導回的位址會錯誤。OAuth 端點的請求經 SSRF 驗證、只跟隨同一來源的轉址，逾時 15 秒、回應最多 256 KiB。
+
+### 5.11 GET /api/mcp/oauth/callback
+
+**公開**：授權伺服器在瀏覽器中導回的位址，不需要存取權杖，以 5.10 產生的一次性 `state` 對應發起授權的管理員與伺服器。`state` 10 分鐘內有效、使用一次即失效；它存在後端行程的記憶體中，後端重啟後失效，執行多個 worker 時，回呼必須送到處理 5.10 的同一個行程（例如以 sticky routing）。
+
+**查詢參數**：`state`、`code`（或授權伺服器回傳的 `error`）。後端以 `code`、`code_verifier`、`redirect_uri` 與 `resource` 換取權杖並加密保存，寫入安全事件 `ADMIN_MCP_OAUTH_AUTHORIZED`，回傳簡短的 HTML 頁面（`200`）。`state` 無效或過期、沒有 `code`、換取權杖失敗時回傳 `400` 的 HTML 頁面（換取失敗只附錯誤代碼），伺服器已刪除時回傳 `404`。授權完成後請呼叫 5.7 重新探索。
+
+### 5.12 DELETE /api/mcp/servers/{server_id}/oauth
+
+清除已保存的 OAuth 權杖，保留 OAuth client 設定。**回應**：`{"status": "success", "message": "已清除 OAuth 授權", "server": {...}}`
+
 ---
 
 ## 6. Agent Skills `/api/skills`
 
 管理符合 [Agent Skills](https://agentskills.io/specification) 規格的技能。技能檔案存放在 `SKILLS_DIR/<name>/`，資料庫的 `agent_skills` 資料表只保存解析後的中繼資料與啟用狀態。除了 6.1，所有端點都需要**管理員**權限。
 
-Agent 以漸進揭露使用技能：有啟用且檔案存在的技能時，[`GET /api/chat/tools`](#23-get-apichattools) 多出 `activate_skill`（說明中列出技能名稱與描述）與 `read_skill_resource` 兩個內建工具；模型呼叫 `activate_skill` 才取得 `SKILL.md` 內文（去掉 frontmatter，包在 `<skill_content>` 中）與技能內的檔案清單，需要時再以 `read_skill_resource` 讀取單一 UTF-8 文字檔。技能內容是管理員安裝的指示，不包上 `<untrusted_tool_result>`，但不能推翻系統提示詞的資料安全與引用規則；技能中的腳本不會被執行。兩個技能工具都不需要核准。
+Agent 以漸進揭露使用技能：有啟用且檔案存在的技能時，[`GET /api/chat/tools`](#23-get-apichattools) 多出 `activate_skill`（說明中列出技能名稱與描述）與 `read_skill_resource` 兩個內建工具；模型呼叫 `activate_skill` 才取得 `SKILL.md` 內文（去掉 frontmatter，包在 `<skill_content>` 中）與技能內的檔案清單，需要時再以 `read_skill_resource` 讀取單一 UTF-8 文字檔。技能內容是管理員安裝的指示，不包上 `<untrusted_tool_result>`，但不能推翻系統提示詞的資料安全與引用規則。兩個技能工具都不需要核准。
+
+**腳本執行**：技能中的腳本預設不會執行。管理員以 [6.7](#67-patch-apiskillsskill_idsettings) 開啟技能的 `allow_scripts` 後，Agent 多出 `run_skill_script`（參數 `skill`、`path`、`args`、`stdin`），每次執行都需要發問的使用者核准（見 [2.9](#29-post-apichatapprovalsapproval_id)）。只執行 `.py`（後端的 Python，以 `-I` 執行）、`.sh`（`bash`）、`.js` 與 `.mjs`（`node`），主機上沒有對應的直譯器或其他副檔名時拒絕。腳本在技能目錄的暫存複本中執行（無法修改安裝的技能），環境變數與 `stdio` MCP 子行程相同（後端的設定與金鑰不會傳入），逾時時整個程序群組終止。結果為 `exit_code`、`timed_out`、`duration_seconds`、`stdout`、`stderr`、`output_truncated`，與外部工具一樣包上不可信標記；時間、輸出與參數上限見 [設定參考：資源上限](configuration.md#資源上限)。這**不是沙箱**：腳本以後端的系統帳號執行，能讀取該帳號可讀的檔案、也能連上網路，只對信任的技能開啟。
 
 ### 技能物件
 
@@ -930,7 +998,9 @@ Agent 以漸進揭露使用技能：有啟用且檔案存在的技能時，[`GET
 | `id` | integer | 技能 ID |
 | `name` | string | 技能名稱（取自 `SKILL.md` 的 `name`），同時是目錄名稱與 `/技能名稱` 指令 |
 | `description` | string | 何時使用此技能，列在 `activate_skill` 的工具說明中 |
-| `license` / `compatibility` / `allowed_tools` | string | `SKILL.md` 的選填欄位；`allowed_tools` 只保存，不影響工具權限 |
+| `license` / `compatibility` / `allowed_tools` | string | `SKILL.md` 的選填欄位；技能在一次提問中被啟用（模型呼叫 `activate_skill` 或訊息以 `/技能名稱` 開頭）後，`allowed_tools` 以空白分隔的每個工具名稱（`(` 之前的部分）在該次提問的其餘過程中不再要求核准 |
+| `allow_scripts` | boolean | 是否允許 `run_skill_script` 執行此技能的腳本，預設 `false` |
+| `allowed_user_ids` | array \| null | 可使用此技能的帳號 id；`null` 表示所有使用者，空陣列表示沒有人（例如清單中的帳號都已刪除） |
 | `metadata` | object | `SKILL.md` 的 `metadata`，值一律轉成字串 |
 | `warnings` | array | 解析時發現、但不影響載入的問題 |
 | `is_enabled` | boolean | 是否提供給 Agent |
@@ -939,7 +1009,7 @@ Agent 以漸進揭露使用技能：有啟用且檔案存在的技能時，[`GET
 
 ### 6.1 GET /api/skills/enabled
 
-需登入。列出啟用且檔案存在的技能，供輸入框的 `/` 技能提示使用。
+需登入。列出啟用、檔案存在且呼叫者可使用（`allowed_user_ids` 為 `null` 或包含呼叫者）的技能，供輸入框的 `/` 技能提示使用。限定給其他帳號的技能也不會出現在呼叫者的 Agent 工具中，啟用、讀取或執行時一律拒絕。
 
 **回應**：`{"status": "success", "skills": [{"name": "meeting-minutes", "description": "…"}]}`
 
@@ -949,7 +1019,7 @@ Agent 以漸進揭露使用技能：有啟用且檔案存在的技能時，[`GET
 
 ### 6.3 GET /api/skills/{skill_id}
 
-**回應**：`{"status": "success", "skill": {...}}`，在技能物件之外另有 `body`（`SKILL.md` 內文，讀不到時為 `null` 並附 `load_error`）、`resources`（`SKILL.md` 以外的檔案相對路徑，最多 100 個）與 `resources_truncated`。找不到時回傳 `404` `找不到該技能`。
+**回應**：`{"status": "success", "skill": {...}}`，在技能物件之外另有 `body`（`SKILL.md` 內文，讀不到時為 `null` 並附 `load_error`，內容為固定的說明與錯誤代碼，完整原因只寫入伺服器日誌）、`resources`（`SKILL.md` 以外的檔案相對路徑，最多 100 個）與 `resources_truncated`。找不到時回傳 `404` `找不到該技能`。
 
 ### 6.4 POST /api/skills/upload
 
@@ -966,6 +1036,17 @@ Agent 以漸進揭露使用技能：有啟用且檔案存在的技能時，[`GET
 ### 6.6 DELETE /api/skills/{skill_id}
 
 刪除資料庫紀錄與技能目錄。**回應**：`{"status": "success", "message": "已刪除技能「meeting-minutes」"}`
+
+### 6.7 PATCH /api/skills/{skill_id}/settings
+
+設定腳本執行與可使用的帳號，只需帶入要變更的欄位。
+
+| 欄位 | 型態 | 說明 |
+|---|---|---|
+| `allow_scripts` | boolean | 是否允許執行腳本（見上方「腳本執行」） |
+| `allowed_user_ids` | array | 可使用此技能的帳號 id；空陣列表示所有使用者（存為 `null`） |
+
+**回應**：`{"status": "success", "message": "技能設定已更新", "skill": 技能物件}`；`allowed_user_ids` 含不存在的帳號時回傳 `400` `找不到使用者：<id>`。成功時寫入安全事件 `ADMIN_SKILL_SETTINGS_UPDATED`。刪除帳號時，該帳號會從每個技能的 `allowed_user_ids` 中移除；清單因此變成空的技能不會改為所有人可用，而是沒有人能使用。
 
 ---
 
@@ -993,7 +1074,7 @@ Agent 以漸進揭露使用技能：有啟用且檔案存在的技能時，[`GET
 |---|---|---|
 | GET | `/api/admin/users` | 所有使用者，每筆為 `UserProfile`（`id`、`username`、`email`、`role`、`is_active`、`is_admin`、`created_at`、`last_login`），不含 `hashed_password` |
 | PUT | `/api/admin/users/{user_id}` | 更新 `username`、`email`、`is_active`、`is_admin`（只需帶入要變更的欄位）；名稱或電子郵件重複時回傳 `400`（`使用者名稱已存在`、`電子郵件已存在`） |
-| DELETE | `/api/admin/users/{user_id}` | 刪除使用者與其所有對話；該帳號上傳的文件與建立的工具保留，建立者欄位改為空值 |
+| DELETE | `/api/admin/users/{user_id}` | 刪除使用者與其所有對話；該帳號上傳的文件與建立的工具保留，建立者欄位改為空值；該帳號從技能的 `allowed_user_ids` 中移除（見 [6.7](#67-patch-apiskillsskill_idsettings)） |
 
 `PUT` 回傳 `{"message": "使用者更新成功", "user": {...}}`，`user` 是更新後的 `UserProfile`；`DELETE` 回傳 `{"message": "使用者刪除成功"}`。兩者找不到使用者時回傳 `404` `使用者不存在`，成功時都會清除統計快取。停用、刪除帳號或取消管理員身分在下一個請求立即生效：停用或刪除的帳號已簽發的權杖隨即失效，也無法再登入；取消管理員身分後，管理端點回傳 `403`。
 

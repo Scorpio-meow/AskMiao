@@ -1,9 +1,33 @@
 import { useState } from 'react';
 import { apiToolService } from '../../services/api';
 import { Alert, Button, Dialog, DialogActions, DialogContent, DialogForm, DialogTitle, Icon } from '../../components/ui';
-import { defaultRequiresApproval, toolFormToPayload, toolToForm } from './forms';
+import { BODY_CONTENT_TYPES, defaultRequiresApproval, toolFormToPayload, toolToForm } from './forms';
 import { CREDENTIALS_UNREADABLE_NOTICE, SECRET_FIELD_HINT, getRequestErrorMessage } from './shared';
 import styles from './AiTools.module.css';
+const AUTH_INPUTS = {
+  bearer: [{ key: 'token', label: 'Bearer Token', secret: true }],
+  api_key: [
+    { key: 'key_name', label: '金鑰名稱（標頭或查詢參數名）', placeholder: '例如 X-API-Key' },
+    { key: 'key_in', label: '金鑰位置', options: [['header', 'HTTP 標頭'], ['query', '查詢參數']] },
+    { key: 'key_value', label: 'API Key', secret: true },
+  ],
+  basic: [
+    { key: 'username', label: '使用者名稱' },
+    { key: 'password', label: '密碼', secret: true },
+  ],
+  oauth2_client_credentials: [
+    { key: 'token_url', label: 'Token 端點網址', placeholder: 'https://auth.example.com/oauth/token' },
+    { key: 'client_id', label: 'Client ID' },
+    { key: 'client_secret', label: 'Client Secret', secret: true },
+    { key: 'scope', label: 'Scope（選填，以空白分隔）' },
+    { key: 'client_auth', label: '用戶端驗證方式', options: [['basic', 'HTTP Basic（client_secret_basic）'], ['post', '放在表單本文（client_secret_post）']] },
+  ],
+};
+const BODY_CONTENT_TYPE_LABELS = {
+  'application/json': 'JSON',
+  'application/x-www-form-urlencoded': '表單（x-www-form-urlencoded）',
+  'multipart/form-data': '多部分表單（multipart/form-data）',
+};
 /** 手動新增或編輯自訂 API 工具；tool 為 null 時新增 */
 export default function ApiToolFormDialog({ tool, onClose, onSaved }) {
   const [form, setForm] = useState(() => toolToForm(tool));
@@ -121,24 +145,55 @@ export default function ApiToolFormDialog({ tool, onClose, onSaved }) {
               >
                 <option value="none">無認證 (None)</option>
                 <option value="bearer">Bearer Token</option>
-                <option value="api_key">API Key (Header)</option>
+                <option value="api_key">API Key</option>
+                <option value="basic">HTTP Basic</option>
+                <option value="oauth2_client_credentials">OAuth2 Client Credentials</option>
               </select>
             </div>
             <div className={styles.formGroup}>
-              <label className={styles.formLabel} htmlFor="tool-auth-token">認證金鑰 / Token</label>
-              <input
-                id="tool-auth-token"
-                type="password"
-                className={styles.formInput}
-                placeholder="例如 token_abc123"
-                value={form.auth_token}
-                onChange={(e) => setForm({ ...form, auth_token: e.target.value })}
-                autoComplete="off"
-                aria-describedby="tool-auth-token-hint"
-              />
-              <span id="tool-auth-token-hint" className={styles.credentialHint}>{SECRET_FIELD_HINT}</span>
+              <label className={styles.formLabel} htmlFor="tool-body-type">請求本文格式</label>
+              <select
+                id="tool-body-type"
+                className={styles.formSelect}
+                value={form.body_content_type}
+                onChange={(e) => setForm({ ...form, body_content_type: e.target.value })}
+              >
+                {BODY_CONTENT_TYPES.map((type) => (
+                  <option key={type} value={type}>{BODY_CONTENT_TYPE_LABELS[type]}</option>
+                ))}
+              </select>
             </div>
           </div>
+          {(AUTH_INPUTS[form.auth_type] || []).length > 0 && (
+            <div className={styles.formRow}>
+              {AUTH_INPUTS[form.auth_type].map((field) => {
+                const inputId = `tool-auth-${field.key}`;
+                const setValue = (value) => setForm({ ...form, auth: { ...form.auth, [field.key]: value } });
+                return (
+                  <div key={field.key} className={styles.formGroup}>
+                    <label className={styles.formLabel} htmlFor={inputId}>{field.label}</label>
+                    {field.options ? (
+                      <select id={inputId} className={styles.formSelect} value={form.auth[field.key]} onChange={(e) => setValue(e.target.value)}>
+                        {field.options.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+                      </select>
+                    ) : (
+                      <input
+                        id={inputId}
+                        type={field.secret ? 'password' : 'text'}
+                        className={styles.formInput}
+                        placeholder={field.placeholder}
+                        value={form.auth[field.key]}
+                        onChange={(e) => setValue(e.target.value)}
+                        autoComplete="off"
+                        aria-describedby={field.secret ? `${inputId}-hint` : undefined}
+                      />
+                    )}
+                    {field.secret && <span id={`${inputId}-hint`} className={styles.credentialHint}>{SECRET_FIELD_HINT}</span>}
+                  </div>
+                );
+              })}
+            </div>
+          )}
           <div className={styles.formGroup}>
             <label className={styles.formLabel} htmlFor="tool-parameters">參數 JSON Schema 定義 (Parameters Schema)</label>
             <textarea

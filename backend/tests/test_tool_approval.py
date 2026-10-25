@@ -55,14 +55,14 @@ def approval_agent(monkeypatch):
     agent, registry = make_agent(monkeypatch)
     executed = []
 
-    async def fake_execute(name, arguments):
+    async def fake_execute(name, arguments, user_id=None):
         executed.append((name, dict(arguments)))
         return {"ok": True}
 
     monkeypatch.setattr(
         registry,
         "approval_requirement",
-        lambda name: {"kind": "custom_api", "display_name": "建立訂單", "target": "POST api.example.com"} if name == "create_order" else None,
+        lambda name, arguments=None: {"kind": "custom_api", "display_name": "建立訂單", "target": "POST api.example.com"} if name == "create_order" else None,
     )
     monkeypatch.setattr(registry, "execute_tool", fake_execute)
     ScriptedLLM([tool_call("create_order", {"item": "A", "qty": 1}), answer("完成")]).install(monkeypatch)

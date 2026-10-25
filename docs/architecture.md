@@ -201,6 +201,7 @@ erDiagram
         text auth_config "加密 JSON"
         text parameters_schema "JSON"
         text param_locations "JSON"
+        string body_content_type
         bool is_enabled
         bool requires_approval
     }
@@ -213,6 +214,10 @@ erDiagram
         string url
         text headers "加密 JSON"
         text discovered_tools "JSON 工具快取"
+        text discovered_resources "JSON resources 快取"
+        text discovered_prompts "JSON prompts 快取"
+        text oauth_config "加密 JSON"
+        text oauth_tokens "加密 JSON"
         string status
         bool is_enabled
         bool requires_approval
@@ -223,10 +228,10 @@ erDiagram
 - **`messages.context_used`**：助理訊息存 `sources`、`sources_detail`、`research_trace`；使用者訊息存 `attachments`（含附件的 base64，每位使用者合計上限 200 MiB）。`/api/chat` 的回應只提供解析後的欄位，`context_used` 一律為 `null`。
 - **`requires_approval`**：自訂 API 工具與 MCP 伺服器的呼叫前核准旗標，見第 9 節。
 - **`users.tokens_valid_after`**：簽發時間早於此時刻的存取與重新整理權杖一律無效。建立帳號時等於 `created_at`（帳號刪除後 id 被重用時，舊權杖不會對應到新帳號），變更密碼時更新為當下，見第 10 節。
-- **工具憑證欄位**：`custom_api_tools` 的 `headers`、`auth_config` 與 `mcp_servers` 的 `env_vars`、`headers` 以 `TOOL_SECRETS_KEY`（Fernet）加密後存放，內容以 `fernet:` 開頭，見第 9 節。
+- **工具憑證欄位**：`custom_api_tools` 的 `headers`、`auth_config` 與 `mcp_servers` 的 `env_vars`、`headers`、`oauth_config`、`oauth_tokens` 以 `TOOL_SECRETS_KEY`（Fernet）加密後存放，內容以 `fernet:` 開頭，見第 9 節。
 - **資料庫以外的檔案**：`backend/data/`（`faiss_index.bin`、`index_metadata.json`、`bm25_index/`、`uploads/`、`jieba_cache/`）、`backend/keys/`（JWT 金鑰對）、`backend/mcp_filesystem_sandbox/`（檔案系統 MCP 範本的根目錄）與 `backend/logs/`（日誌）。
 
-資料表在後端啟動時以 SQLAlchemy `create_all` 建立，接著由 `upgrade_schema()` 為既有資料表補上後來新增的欄位並回填（目前為兩個 `requires_approval`：API 工具依方法回填，`GET`、`HEAD`、`OPTIONS` 以外為 `true`；MCP 伺服器一律為 `true`；以及 `users.tokens_valid_after`，以 `created_at` 回填；此欄位為空的帳號，例如回退到舊版期間建立的，每次啟動都會補值），再把仍以明文存放的工具憑證改為加密（無法解析為 JSON 的值會清空並記下警告）。新建立的 SQLite 資料庫中，`users` 與 `documents` 使用 `AUTOINCREMENT`，刪除後的 id 不會被新資料重用。`backend/init.sql` 是 PostgreSQL 容器的初始化結構，`backend/init-app-role.sh` 接著建立後端連線用的非超級使用者並把資料表交給它擁有（見第 13 節）。
+資料表在後端啟動時以 SQLAlchemy `create_all` 建立，接著由 `upgrade_schema()` 為既有資料表補上後來新增的欄位並回填（目前為兩個 `requires_approval`：API 工具依方法回填，`GET`、`HEAD`、`OPTIONS` 以外為 `true`；MCP 伺服器一律為 `true`；`custom_api_tools.body_content_type`，以 `application/json` 回填；`mcp_servers` 的 `discovered_resources`、`discovered_prompts`、`oauth_config`、`oauth_tokens` 與 `agent_skills` 的 `allow_scripts`、`allowed_user_ids`；以及 `users.tokens_valid_after`，以 `created_at` 回填；此欄位為空的帳號，例如回退到舊版期間建立的，每次啟動都會補值），再把仍以明文存放的工具憑證改為加密（無法解析為 JSON 的值會清空並記下警告）。新建立的 SQLite 資料庫中，`users` 與 `documents` 使用 `AUTOINCREMENT`，刪除後的 id 不會被新資料重用。`backend/init.sql` 是 PostgreSQL 容器的初始化結構，`backend/init-app-role.sh` 接著建立後端連線用的非超級使用者並把資料表交給它擁有（見第 13 節）。
 
 ---
 
@@ -389,7 +394,10 @@ flowchart TB
 | 自訂 API 工具 | 依工具設定組裝 HTTP 請求，見第 9 節；`requires_approval` 為 `true` 時先經使用者核准 |
 | `mcp_<伺服器>_<工具>` | 透過 `tools/call` 呼叫 MCP 伺服器；伺服器的 `requires_approval` 為 `true` 時先經使用者核准 |
 | `activate_skill` | 只在有啟用的 Agent Skills 時提供；工具說明列出技能名稱與描述（最多 8,000 字元），呼叫後重新讀取 `SKILL.md`，回傳去掉 frontmatter 的內文（包在 `<skill_content>`）與技能內的檔案清單，不讀取那些檔案；同一次提問重複啟用時只回覆已載入 |
-| `read_skill_resource` | 讀取已啟用技能目錄內的單一 UTF-8 文字檔（只接受相對路徑，拒絕 `..` 與符號連結），每次最多 20,000 字元；腳本只能讀取，不會執行 |
+| `read_skill_resource` | 讀取已啟用技能目錄內的單一 UTF-8 文字檔（只接受相對路徑，拒絕 `..` 與符號連結），每次最多 20,000 字元；讀取腳本不會執行它 |
+| `run_skill_script` | 只在使用者看得到、開啟 `allow_scripts` 的技能時提供；以後端的 Python（`-I`）、`bash` 或 `node` 在技能目錄的暫存複本中執行腳本，環境變數同 `stdio` MCP，最多 60 秒，`stdout`、`stderr` 各最多 20,000 字元，同時最多 2 個；一律需要使用者核准，除非已啟用的技能在 `allowed-tools` 列出它 |
+| `read_mcp_resource` | 只在啟用中的 MCP 伺服器有已探索的 resources 時提供；以 `resources/read` 讀取清單中的 uri，不在清單中的直接拒絕；核准依伺服器的 `requires_approval` |
+| `get_mcp_prompt` | 只在啟用中的 MCP 伺服器有已探索的 prompts 時提供；以 `prompts/get` 取得清單中的 prompt；核准依伺服器的 `requires_approval` |
 
 每次工具結果放進模型脈絡前最多 20,000 字元，附件抽出的文字每個最多 50,000 字元，超過的部分截斷。模型給的參數不是物件時當成空物件；工具執行時拋出例外（例如 `top_k` 為 `null`）會轉成錯誤代碼交給模型，不會中斷整個回答。工具清單（含知識庫目錄、自訂 API 工具與 MCP 工具）在執行緒中組成。
 
@@ -424,7 +432,7 @@ flowchart TB
 
 `app/rag/tool_approval.py` 的 `ToolApprovalBroker` 讓發問的使用者在對話中決定有副作用的工具是否執行，設計背景見 [ADR-0006](adr/0006-tool-call-approval.md)：
 
-1. Agent 準備執行工具時，`ResearchToolRegistry.approval_requirement()` 依名稱查詢對應的自訂 API 工具或 MCP 伺服器的 `requires_approval`；內建工具不需要核准。
+1. Agent 準備執行工具時，`ResearchToolRegistry.approval_requirement()` 依名稱查詢對應的自訂 API 工具或 MCP 伺服器的 `requires_approval`；內建工具不需要核准，`run_skill_script` 一律需要核准。同一次提問中已啟用的技能在 `allowed-tools` 列出的工具名稱記在 `ResearchSession.preapproved_tools`，這些工具略過核准。
 2. 需要核准時，Broker 建立一個綁定發問者 `user_id` 的待核准項目（隨機 `approval_id`），串流送出 `approval_required`（含工具名稱、顯示名稱、參數，以及實際送出的位置 `target`：自訂 API 工具為 HTTP 方法與主機，MCP 為傳輸方式與主機或本機指令名稱），Agent 暫停等待。
 3. 前端在該則回答中顯示確認卡片；使用者按下核准或拒絕後呼叫 `POST /api/chat/approvals/{approval_id}`。只有同一位使用者能處理，其他人或已處理、已逾時的項目回傳 `404`。
 4. 串流送出 `approval_resolved`。核准時照常執行工具；拒絕或 300 秒逾時時不執行，Agent 收到「使用者未核准」的工具結果並改以已取得的資料回答。
@@ -475,7 +483,7 @@ flowchart TB
     end
 
     subgraph McpFlow ["接入 MCP 伺服器"]
-        Server["伺服器設定（stdio / HTTP）"] --> Discover["initialize + tools/list"]
+        Server["伺服器設定（stdio / HTTP）"] --> Discover["initialize + tools/list<br/>resources/list、prompts/list"]
         Discover --> McpDB[(mcp_servers)]
     end
 
@@ -493,14 +501,16 @@ flowchart TB
 
 1. **動態載入**：每次組裝工具定義時查詢資料庫，工具異動即時生效。MCP 工具使用探索時寫入的快取，不必每次連線。
 2. **命名**：自訂 API 工具以 `name` 註冊（取自 `operationId` 或方法與路徑，只含英數與底線）；MCP 工具為 `mcp_<伺服器>_<工具>`，名稱中的非英數字元換成底線並轉小寫，`execute_tool` 依此前綴路由。
-3. **HTTP 執行器**：呼叫端（模型）只能使用 `parameters_schema` 宣告的參數，`request_body` 有宣告欄位的 `request_body_schema` 且 `additionalProperties` 不是 `true` 時一併檢查其中的欄位，未宣告的參數不送出，直接回傳 `400`。接著以百分比編碼替換路徑參數（拒絕 `.`、`..`，代入後的 scheme、主機與埠號必須與設定相同）、組裝查詢字串與標頭、注入認證（Bearer、API Key、Basic）、序列化 JSON 主體。工具網址中的查詢參數由管理員固定，呼叫端提供同名參數時回傳 `400`；查詢字串一律自行組好，不依賴 httpx 對既有查詢字串的處理。請求經 `SSRFSafeTransport` 在第一個請求與每次轉址前重新做 SSRF 驗證、把連線固定在驗證過的 IP；轉址由 `send_following_redirects` 手動跟隨（最多 5 次），轉址回應的本文不讀取，跨來源轉址時移除管理員設定的標頭與認證標頭。整個呼叫（含轉址與逐段讀取）以工具的 `timeout` 為總時限，逾時回傳 `504`；回應本文上限 1 MiB。結果與網址中出現的憑證值換成 `[已遮蔽]`，工具網址中固定的查詢參數值（可能是寫在網址裡的金鑰）也不出現在回傳的網址中。
-4. **MCP 傳輸**：`McpStdioClient` 以子行程的標準輸入輸出交換 JSON-RPC，單行訊息上限 4 MiB；`McpHttpClient` 以 HTTP POST 交換 JSON-RPC（`http` 與 `sse` 兩種設定都走這條路徑），同樣經 `SSRFSafeTransport` 逐跳驗證並固定 IP，單次回應上限 4 MiB。HTTP 轉址由 `send_following_redirects` 手動跟隨，只接受同一來源（最多 5 次），管理員設定的標頭與 JSON-RPC 本文不會送往其他網域；每次請求以伺服器的逾時設定為總時限。每次呼叫都會重新建立連線並完成 `initialize` 交握。探索時只保留名稱符合 `[A-Za-z0-9_.-]{1,128}` 的工具；工具失敗只回傳錯誤代碼（stderr、JSON-RPC 錯誤與 SSRF 拒絕原因只寫入日誌），啟動失敗的訊息只含指令名稱、不含參數。
+3. **HTTP 執行器**：呼叫端（模型）只能使用 `parameters_schema` 宣告的參數，`request_body` 有宣告欄位的 `request_body_schema` 且 `additionalProperties` 不是 `true` 時一併檢查其中的欄位，未宣告的參數不送出，直接回傳 `400`。接著以百分比編碼替換路徑參數（拒絕 `.`、`..`，代入後的 scheme、主機與埠號必須與設定相同）、組裝查詢字串與標頭、注入認證（Bearer、API Key、Basic，或以 OAuth2 client credentials 向 `token_url` 取得並快取的 Bearer 權杖，API 回傳 `401` 時重新取得並重試一次），依 `body_content_type` 把主體序列化為 JSON、表單或 `multipart/form-data` 欄位。工具網址中的查詢參數由管理員固定，呼叫端提供同名參數時回傳 `400`；查詢字串一律自行組好，不依賴 httpx 對既有查詢字串的處理。請求經 `SSRFSafeTransport` 在第一個請求與每次轉址前重新做 SSRF 驗證、把連線固定在驗證過的 IP；轉址由 `send_following_redirects` 手動跟隨（最多 5 次），轉址回應的本文不讀取，跨來源轉址時移除管理員設定的標頭與認證標頭。整個呼叫（含轉址與逐段讀取）以工具的 `timeout` 為總時限，逾時回傳 `504`；回應本文上限 1 MiB。結果與網址中出現的憑證值換成 `[已遮蔽]`，工具網址中固定的查詢參數值（可能是寫在網址裡的金鑰）也不出現在回傳的網址中。
+4. **MCP 傳輸**：`McpStdioClient` 以子行程的標準輸入輸出交換 JSON-RPC，單行訊息上限 4 MiB；`McpHttpClient` 以 Streamable HTTP 的 POST 交換 JSON-RPC（`http` 與 `sse` 兩種設定都先走這條路徑；帶工作階段的請求收到 `404` 時重新交握一次，關閉時以 `DELETE` 結束工作階段），`initialize` 收到 `400`、`404`、`405` 時改用 `McpLegacySseClient` 的舊版 HTTP+SSE（GET 開啟串流、等待同一來源的 `endpoint` 事件後 POST，串流最多 4 MiB）。兩者同樣經 `SSRFSafeTransport` 逐跳驗證並固定 IP，單次回應上限 4 MiB。HTTP 轉址由 `send_following_redirects` 手動跟隨，只接受同一來源（最多 5 次），管理員設定的標頭與 JSON-RPC 本文不會送往其他網域；每次請求以伺服器的逾時設定為總時限。每次呼叫都會重新建立連線並完成 `initialize` 交握。探索時只保留名稱符合 `[A-Za-z0-9_.-]{1,128}` 的工具；工具失敗只回傳錯誤代碼（stderr、JSON-RPC 錯誤與 SSRF 拒絕原因只寫入日誌），啟動失敗的訊息只含指令名稱、不含參數。
 5. **子行程隔離**：`build_stdio_env()` 只繼承 MCP 官方 SDK 預設清單中的系統變數，略過以 `()` 開頭的 shell 函式定義，再加上伺服器的 `env_vars`；後端的資料庫連線與模型金鑰不會傳給第三方 MCP 伺服器。子行程的工作目錄是每次新建的空暫存目錄，後端目錄下的 `.env` 與 `keys/` 不在其相對路徑範圍內（子行程仍以後端的系統帳號執行，能讀取該帳號可讀的檔案）。每個子行程自成一個程序群組，關閉時連同 `npx`、`uvx` 啟動的孫行程整棵終止；同時最多 4 個子行程，等待空位的時間不超過該伺服器的逾時設定。stderr 持續讀出以免管線寫滿卡住，只保留最後 2 KiB 供日誌診斷。
 6. **內建範本**：只提供 `mcp_time` 與 `mcp_filesystem`。檔案系統範本釘選 `@modelcontextprotocol/server-filesystem@2026.8.31`，根目錄是專屬的 `backend/mcp_filesystem_sandbox`（絕對路徑，與 `DATA_DIR` 分開，因為其中的 BM25 索引由 Whoosh 以 pickle 載入）。網頁擷取類範本已移除，因為 `stdio` 子行程的出站連線不受 `web_fetch` 的 SSRF、網域白名單與網址來源限制約束。
 7. **呼叫前核准**：自訂 API 工具與 MCP 伺服器各有 `requires_approval` 旗標；Agent 呼叫這類工具前須由發問的使用者核准，見第 7 節「工具呼叫核准」與 [ADR-0006](adr/0006-tool-call-approval.md)。
 8. **管理權限**：工具由所有使用者的 Agent 共用，`stdio` 模式還會在主機上執行指令，因此 `/api/api-tools` 與 `/api/mcp` 的所有端點（含查詢）只開放管理員。一般使用者只能在對話中讓 Agent 使用已啟用的工具。詳見 [ADR-0002](adr/0002-external-tools-and-outbound-safety.md) 與 [ADR-0004](adr/0004-tool-admin-permissions-and-subprocess-isolation.md)。
-9. **憑證加密與遮蔽**：`app/core/tool_secrets.py` 在寫入資料庫前以 `TOOL_SECRETS_KEY`（Fernet）加密自訂 API 工具的 `headers`、`auth_config` 與 MCP 伺服器的 `env_vars`、`headers`，執行工具時才解密。管理 API 的回應以 `••••••••` 取代秘密值：`accept`、`accept-encoding`、`accept-language`、`cache-control`、`content-type`、`user-agent` 以外的標頭，`auth_config` 的 `token`、`key_value`、`password`，以及 MCP 的所有環境變數；`key_name`、`username` 等設定照常顯示。更新時仍為遮蔽字樣的欄位沿用已儲存的值，沒有已儲存的值時回傳 `400`。無法以目前的金鑰解密時（例如更換了 `TOOL_SECRETS_KEY`），回應帶 `credentials_unreadable: true`，由管理員重新輸入。
-10. **規格解析**：`OpenApiParser` 拒絕含 YAML 別名的規格（別名在後續處理時會被逐一展開；先以事件串流檢查，沒有別名才以 `yaml.safe_load` 載入），`POST /api/api-tools/parse-spec` 的回應不含原始規格；規格網址同樣經 SSRF 驗證。
+9. **憑證加密與遮蔽**：`app/core/tool_secrets.py` 在寫入資料庫前以 `TOOL_SECRETS_KEY`（Fernet）加密自訂 API 工具的 `headers`、`auth_config` 與 MCP 伺服器的 `env_vars`、`headers`，執行工具時才解密。管理 API 的回應以 `••••••••` 取代秘密值：`accept`、`accept-encoding`、`accept-language`、`cache-control`、`content-type`、`user-agent` 以外的標頭，`auth_config` 的 `token`、`key_value`、`password`、`client_secret`，以及 MCP 的所有環境變數與 OAuth `client_secret`；`key_name`、`username` 等設定照常顯示，MCP 的 OAuth 權杖不出現在回應中。更新時仍為遮蔽字樣的欄位沿用已儲存的值，沒有已儲存的值時回傳 `400`。無法以目前的金鑰解密時（例如更換了 `TOOL_SECRETS_KEY`），回應帶 `credentials_unreadable: true`，由管理員重新輸入。
+10. **規格解析**：`OpenApiParser` 拒絕含 YAML 別名的規格（別名在後續處理時會被逐一展開；先以事件串流檢查，沒有別名才以 `yaml.safe_load` 載入），`POST /api/api-tools/parse-spec` 的回應不含原始規格；規格網址同樣經 SSRF 驗證。端點的 `security` 與 `securitySchemes` / `securityDefinitions` 轉成 `auth_type` 與不含憑證的 `auth_config`，請求主體格式轉成 `body_content_type`。
+11. **MCP resources 與 prompts**：探索時依伺服器宣告的 capability 讀取 `resources/list`、`prompts/list`（失敗只寫入日誌），各最多 200 項存入 `discovered_resources`、`discovered_prompts`。Agent 的 `read_mcp_resource`、`get_mcp_prompt` 說明列出這些項目（`MAX_MCP_CATALOG_CHARS`），執行前先比對清單，不在清單中的 uri 或 prompt 不會送到伺服器。
+12. **MCP 遠端 OAuth**（`app/services/mcp_oauth.py`）：依 MCP 授權規格 `2025-06-18`，從 `WWW-Authenticate` 或 `/.well-known/oauth-protected-resource` 找到授權伺服器，使用管理員填入的 client 或動態註冊，以授權碼 + PKCE（S256）與 `resource` 取得權杖。一次性的 `state` 存在行程記憶體中 10 分鐘，回呼 `GET /api/mcp/oauth/callback` 不需登入、只靠 `state` 對應管理員與伺服器。權杖加密存入 `oauth_tokens`，HTTP 請求帶 Bearer，快到期或連線收到 `401` 時以 refresh token 換新。OAuth 端點的請求共用 `app/services/oauth_client.py`（SSRF 驗證、只跟隨同一來源的轉址、15 秒、256 KiB），自訂 API 工具的 client credentials 也使用它。
 
 ---
 
@@ -608,7 +618,7 @@ flowchart LR
 2. **網域白名單**：`WEB_FETCH_ALLOWED_DOMAINS` 限定可讀取的網域（含子網域），明確寫 `*` 才表示不限制；白名單只檢查初始網址。
 3. **讀過知識庫後停用聯網**：`BLOCK_WEB_TOOLS_AFTER_KB=true` 時，同一次提問只要知識庫工具回傳過內容，之後的 `web_search` 與 `web_fetch` 一律拒絕。
 
-Agent Skills 的內容例外：技能由管理員上傳，`activate_skill` 與 `read_skill_resource` 的結果以 `<skill_content>`、`<skill_resource>` 原樣交給模型當作指示，其中出現的網址也列入網址來源；技能中的腳本不會執行。上傳的 zip 拒絕絕對路徑、`..` 與符號連結，並以實際解壓的位元組數計算上限。
+Agent Skills 的內容例外：技能由管理員上傳，`activate_skill` 與 `read_skill_resource` 的結果以 `<skill_content>`、`<skill_resource>` 原樣交給模型當作指示，其中出現的網址也列入網址來源。上傳的 zip 拒絕絕對路徑、`..` 與符號連結，並以實際解壓的位元組數計算上限。技能中的腳本預設不會執行；管理員為技能開啟 `allow_scripts` 後，`run_skill_script` 的結果包上不可信標記，每次執行都要使用者核准。腳本在暫存複本中以最小環境變數執行，但**不是沙箱**：它以後端的系統帳號執行，能讀取該帳號可讀的檔案並連上網路，不受上述三道限制，只應為信任的技能開啟。技能的 `allowed-tools` 會讓列出的工具在該次提問中略過核准（包括 `run_skill_script` 與有副作用的外部工具），因此安裝技能前也要檢查這個欄位。
 
 自訂 API 與 MCP 工具的結果同樣包上不可信標記，但不列入網址來源與引用編號，其出站請求不受上述三道限制（已知風險，見 [ADR-0003](adr/0003-rrf-relevance-citations-and-tool-trust.md)）。緩解方式是呼叫前核准：有副作用的工具由發問的使用者看過工具、送出的位置與參數後才執行（[ADR-0006](adr/0006-tool-call-approval.md)）；自訂 API 工具也只接受管理員在 `parameters_schema` 宣告的參數，不能夾帶其他查詢參數或本文欄位（第 9 節）。
 

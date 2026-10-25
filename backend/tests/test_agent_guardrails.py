@@ -67,7 +67,7 @@ class ScriptedLLM:
 
 def make_agent(monkeypatch, retriever=None):
     registry = ResearchToolRegistry(retriever=retriever or StaticRetriever())
-    monkeypatch.setattr(registry, "get_tool_definitions", lambda: [])
+    monkeypatch.setattr(registry, "get_tool_definitions", lambda user_id=None: [])
     return ResearchAgent(tool_registry=registry), registry
 
 
@@ -95,7 +95,7 @@ def step_statuses(events):
 async def test_pipeline_stream_stops_after_configured_max_turns(monkeypatch):
     monkeypatch.setattr(settings, "AGENT_MAX_TURNS", 3)
     pipeline = RAGPipeline(retriever=StaticRetriever())
-    monkeypatch.setattr(pipeline.tool_registry, "get_tool_definitions", lambda: [])
+    monkeypatch.setattr(pipeline.tool_registry, "get_tool_definitions", lambda user_id=None: [])
     llm = ScriptedLLM([tool_call("search_knowledge_base", {"query": "特休"}) for _ in range(3)], stream_text="依年資計算").install(monkeypatch)
 
     events = await asyncio.wait_for(
@@ -339,7 +339,7 @@ async def test_malformed_tool_arguments_do_not_abort_the_answer(monkeypatch, arg
 async def test_tool_definitions_are_loaded_off_the_event_loop(monkeypatch):
     agent, registry = make_agent(monkeypatch)
     loaded_in = []
-    monkeypatch.setattr(registry, "get_tool_definitions", lambda: loaded_in.append(threading.get_ident()) or [])
+    monkeypatch.setattr(registry, "get_tool_definitions", lambda user_id=None: loaded_in.append(threading.get_ident()) or [])
     ScriptedLLM([answer("你好")]).install(monkeypatch)
 
     await collect(agent.stream_research("你好", max_turns=1))

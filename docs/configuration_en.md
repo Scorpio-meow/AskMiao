@@ -317,8 +317,8 @@ The key format is validated at startup: it must be a Fernet key (32 bytes, URL-s
 python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
 ```
 
-- **What is encrypted**: custom API tools' `headers` and `auth_config` and MCP servers' `env_vars` and `headers` are encrypted with this key before they reach the database (stored with a `fernet:` prefix), so a leaked database or backup does not expose the credentials directly. Values stored in plaintext by older versions are encrypted automatically at backend startup; old values that are not JSON objects are cleared and must be entered again.
-- **Masking in the admin API**: tool and MCP server responses show `••••••••` in place of secret values, so saved credentials can no longer be read back through the API. Secret values are headers other than `Accept`, `Accept-Encoding`, `Accept-Language`, `Cache-Control`, `Content-Type`, and `User-Agent`; the `token`, `key_value`, and `password` keys of `auth_config`; and every MCP server environment variable. Settings such as `key_name`, `key_in`, and `username` are shown as before. On update, the submitted value replaces the whole field, and entries still set to `••••••••` keep their stored value; with no stored value to keep, the update returns `400`.
+- **What is encrypted**: custom API tools' `headers` and `auth_config` and MCP servers' `env_vars`, `headers`, `oauth_config`, and `oauth_tokens` are encrypted with this key before they reach the database (stored with a `fernet:` prefix), so a leaked database or backup does not expose the credentials directly. Values stored in plaintext by older versions are encrypted automatically at backend startup; old values that are not JSON objects are cleared and must be entered again.
+- **Masking in the admin API**: tool and MCP server responses show `••••••••` in place of secret values, so saved credentials can no longer be read back through the API. Secret values are headers other than `Accept`, `Accept-Encoding`, `Accept-Language`, `Cache-Control`, `Content-Type`, and `User-Agent`; the `token`, `key_value`, `password`, and `client_secret` keys of `auth_config`; and every MCP server environment variable and OAuth `client_secret` (MCP OAuth tokens never appear in responses). Settings such as `key_name`, `key_in`, and `username` are shown as before. On update, the submitted value replaces the whole field, and entries still set to `••••••••` keep their stored value; with no stored value to keep, the update returns `400`.
 - **Changing or losing the key**: stored credentials cannot be decrypted with another key. The admin API marks the affected tools and MCP servers with `credentials_unreadable: true` and returns `null` for the fields it cannot decrypt; enter those credentials again. Until then, the agent's calls to those tools fail. Keep `TOOL_SECRETS_KEY` safe together with your database backups: restoring the database without the original key means re-entering every tool credential.
 
 ## Network access control
@@ -380,6 +380,7 @@ The limits below protect a single backend process and the operator's paid usage.
 |---|---|---|
 | `MAX_TOOL_RESULT_CHARS` | 20,000 characters | Each tool call's result is truncated to this length before it enters the model context |
 | `MAX_KB_CATALOG_CHARS` | 4,000 characters | Length of the document catalog (file names and summaries) in the `search_knowledge_base` tool description; it is sent on every model call, so past this length only the first documents are listed and the rest are counted |
+| `MAX_MCP_CATALOG_CHARS` | 8,000 characters | Length of the MCP resource or prompt list in the `read_mcp_resource` and `get_mcp_prompt` tool descriptions (each tool separately); servers that do not fit are left out with a warning in the log |
 | `MAX_TEXT_CLEANUP_CHARS` | 2,000,000 characters | HTML is truncated to this length before `web_fetch` extracts text |
 | `MAX_DATE_RANGE_CHARS`, `MAX_TARGET_DATES`, `MAX_FILTER_RECORDS` (`rag/tools.py`) | 200 characters, 93 days, 50 records | Length of `filter_and_count_records`' `date_range`, the number of dates it may expand to, and the records returned (a larger `limit` is clamped to 50) |
 | `MAX_API_TOOL_RESPONSE_BYTES` (`api/api_tools.py`) | 1 MiB | Response body limit of custom API tools; reading stops and the call returns `502` |
@@ -426,6 +427,11 @@ The OOXML checks run before parsing and use the sizes the ZIP members declare. p
 | `MAX_SKILL_RESOURCE_LISTING` | 100 | Files listed to the model when a skill is activated |
 | `MAX_SKILL_RESOURCE_CHARS` | 20,000 characters | The `SKILL.md` body returned on activation and each `read_skill_resource` result; the rest is truncated |
 | `MAX_SKILL_CATALOG_CHARS` | 8,000 characters | Length of the skill catalog (names and descriptions) in the `activate_skill` tool description; skills that do not fit are left out with a warning in the log |
+| `MAX_SKILL_SCRIPT_SECONDS` | 60 seconds | Time limit for each `run_skill_script` run; on timeout the whole process group is killed and the result's `timed_out` is `true` |
+| `MAX_SKILL_SCRIPT_OUTPUT_CHARS` | 20,000 characters | How much of the script's `stdout` and of its `stderr` is kept, each; beyond it the output is truncated and `output_truncated` is set |
+| `MAX_SKILL_SCRIPT_ARGS`, `MAX_SKILL_SCRIPT_ARG_CHARS` | 20 arguments, 1,000 characters | Number of command-line arguments and length of each; past either, the script does not run |
+| `MAX_SKILL_SCRIPT_STDIN_CHARS` | 100,000 characters | Length of the text passed on the script's standard input; the rest is truncated |
+| `MAX_CONCURRENT_SKILL_SCRIPTS` | 2 | Skill scripts running at once in the whole process; the rest wait in line |
 
 **Accounts, logs, and rate limiting**
 

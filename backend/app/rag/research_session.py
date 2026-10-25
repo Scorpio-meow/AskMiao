@@ -69,6 +69,7 @@ class ResearchSession:
         self._citation_numbers: Dict[str, int] = {}
         self._citation_details: Dict[int, Dict[str, Any]] = {}
         self.activated_skills: Set[str] = set()
+        self.preapproved_tools: Set[str] = set()
 
     def refuse_tool_call(self, name: str, arguments: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """依聯網安全規則檢查工具呼叫；應拒絕時回傳要交給模型的錯誤結果"""
@@ -94,6 +95,7 @@ class ResearchSession:
         if name in SKILL_TOOL_NAMES:
             if name == "activate_skill" and output.get("skill"):
                 self.activated_skills.add(output["skill"])
+                self.preapproved_tools.update(output.get("allowed_tools") or [])
             self._add_url_source(output.get("content"))
         elif name == "search_knowledge_base":
             for doc in output.get("documents") or []:

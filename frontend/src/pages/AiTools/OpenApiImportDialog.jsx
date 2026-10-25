@@ -4,6 +4,12 @@ import { describeRequestError } from '../../utils/secureLogger';
 import { Alert, Button, Dialog, DialogActions, DialogContent, DialogTitle, Icon } from '../../components/ui';
 import { getMethodClass, getRequestErrorMessage } from './shared';
 import styles from './AiTools.module.css';
+const AUTH_TYPE_LABELS = {
+  bearer: 'Bearer',
+  api_key: 'API Key',
+  basic: 'Basic',
+  oauth2_client_credentials: 'OAuth2',
+};
 const SAMPLE_OAS_SPECS = {
   oas2: `swagger: '2.0'
 info:
@@ -197,7 +203,7 @@ export default function OpenApiImportDialog({ onClose, onImported }) {
               </Button>
             </div>
             <div className={styles.formGroup}>
-              <label className={styles.formLabel} htmlFor="oas-token">全域 Bearer Token（選填，將自動注入 Authorization Header）</label>
+              <label className={styles.formLabel} htmlFor="oas-token">全域 Bearer Token（選填，套用到規格宣告為 Bearer 或沒有宣告驗證的端點）</label>
               <input
                 id="oas-token"
                 type="password"
@@ -206,7 +212,11 @@ export default function OpenApiImportDialog({ onClose, onImported }) {
                 value={globalAuthToken}
                 onChange={(e) => setGlobalAuthToken(e.target.value)}
                 autoComplete="off"
+                aria-describedby="oas-token-hint"
               />
+              <span id="oas-token-hint" className={styles.credentialHint}>
+                規格中宣告的 API Key、Basic 與 OAuth2 client credentials 會自動帶入工具設定，匯入後請編輯工具填入金鑰。
+              </span>
             </div>
             <div className={styles.formGroup} role="group" aria-labelledby="oas-endpoints-label">
               <div className={styles.resultHeader}>
@@ -250,8 +260,13 @@ export default function OpenApiImportDialog({ onClose, onImported }) {
                           <span className={styles.endpointSummary}>{ep.display_name}</span>
                         </span>
                       </span>
-                      <span className={styles.versionTag}>
-                        {Object.keys(ep.parameters_schema?.properties || {}).length} 參數
+                      <span className={styles.inlineGroup}>
+                        {ep.auth_type && ep.auth_type !== 'none' && (
+                          <span className={styles.versionTag}>{AUTH_TYPE_LABELS[ep.auth_type] || ep.auth_type}</span>
+                        )}
+                        <span className={styles.versionTag}>
+                          {Object.keys(ep.parameters_schema?.properties || {}).length} 參數
+                        </span>
                       </span>
                     </label>
                   );

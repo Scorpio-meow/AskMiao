@@ -21,7 +21,7 @@ SECRET_MASK = "••••••••"
 # 這些標頭的值不是憑證：回應中不遮蔽，工具結果也不做替換（避免把回應中的一般字詞一併換掉）
 NON_SECRET_HEADER_NAMES = {"accept", "accept-encoding", "accept-language", "cache-control", "content-type", "user-agent"}
 # auth_config 中屬於憑證的鍵；key_name、key_in、username 等設定照常顯示
-SECRET_AUTH_CONFIG_KEYS = {"token", "key_value", "password"}
+SECRET_AUTH_CONFIG_KEYS = {"token", "key_value", "password", "client_secret"}
 
 _fernet = Fernet(settings.TOOL_SECRETS_KEY.encode("ascii"))
 

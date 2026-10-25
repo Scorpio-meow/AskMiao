@@ -34,6 +34,8 @@ def sse(*messages):
 
 def streamable_server(pages):
     def handler(request):
+        if request.method == "DELETE":
+            return httpx.Response(200, request=request)
         body = json.loads(request.content)
         method = body.get("method")
         if method == "initialize":
@@ -65,11 +67,12 @@ def streamable_server(pages):
 @pytest.mark.anyio
 async def test_streamable_http_handshake_session_and_paginated_sse(upstream):
     upstream["handler"] = streamable_server(pages=3)
-    tools, init = await McpManager.discover_server_tools({"transport_type": "http", "url": URL, "timeout": 5})
+    tools, init, _ = await McpManager.discover_server_tools({"transport_type": "http", "url": URL, "timeout": 5})
 
     assert [t["name"] for t in tools] == ["tool_0", "tool_1", "tool_2"]
     assert init["protocolVersion"] == "2025-06-18"
-    methods = [json.loads(r.content).get("method") for r in upstream["sent"]]
+    assert upstream["sent"][-1].method == "DELETE"
+    methods = [json.loads(r.content).get("method") for r in upstream["sent"][:-1]]
     assert methods == ["initialize", "notifications/initialized", "tools/list", "tools/list", "tools/list"]
     assert all(r.headers["accept"] == MCP_HTTP_ACCEPT for r in upstream["sent"])
     assert "mcp-session-id" not in upstream["sent"][0].headers
@@ -123,3 +126,84 @@ async def test_rejected_initialized_notification_fails(upstream):
     upstream["handler"] = handler
     with pytest.raises(RuntimeError, match="400"):
         await McpHttpClient(url=URL).initialize()
+
+
+@pytest.mark.anyio
+async def test_expired_session_is_reinitialized_once(upstream):
+    state = {"sessions": 0, "expired": True}
+
+    def handler(request):
+        body = json.loads(request.content)
+        if body.get("method") == "initialize":
+            state["sessions"] += 1
+            return httpx.Response(200, json={"jsonrpc": "2.0", "id": body["id"], "result": {}},
+                                  headers={"mcp-session-id": f"s{state['sessions']}"}, request=request)
+        if "id" not in body:
+            return httpx.Response(202, request=request)
+        if request.headers.get("mcp-session-id") == "s1" and state["expired"]:
+            return httpx.Response(404, request=request)
+        return httpx.Response(200, json={"jsonrpc": "2.0", "id": body["id"], "result": {"tools": [{"name": "t"}]}}, request=request)
+
+    upstream["handler"] = handler
+    client = McpHttpClient(url=URL)
+    await client.initialize()
+    tools = await client.list_tools()
+    assert [t["name"] for t in tools] == ["t"]
+    assert state["sessions"] == 2
+
+
+class LegacyStream(httpx.AsyncByteStream):
+    def __init__(self, posts):
+        self.posts = posts
+
+    async def __aiter__(self):
+        yield b"event: endpoint\ndata: /messages?session=1\n\n"
+        while True:
+            payload = await self.posts.get()
+            if payload is None:
+                return
+            yield f"event: message\ndata: {json.dumps(payload)}\n\n".encode()
+
+    async def aclose(self):
+        self.posts.put_nowait(None)
+
+
+@pytest.mark.anyio
+async def test_falls_back_to_legacy_sse_transport(upstream):
+    import asyncio
+    posts = asyncio.Queue()
+
+    def handler(request):
+        if request.method == "GET":
+            assert request.headers["accept"] == "text/event-stream"
+            return httpx.Response(200, headers={"content-type": "text/event-stream"}, stream=LegacyStream(posts), request=request)
+        if request.url.path == "/mcp":
+            return httpx.Response(405, request=request)
+        body = json.loads(request.content)
+        if "id" in body:
+            result = {"tools": [{"name": "legacy_tool"}]} if body["method"] == "tools/list" else {"protocolVersion": "2024-11-05"}
+            posts.put_nowait({"jsonrpc": "2.0", "id": body["id"], "result": result})
+        return httpx.Response(202, request=request)
+
+    upstream["handler"] = handler
+    tools, init, _ = await McpManager.discover_server_tools({"transport_type": "sse", "url": URL, "timeout": 5})
+    assert [t["name"] for t in tools] == ["legacy_tool"]
+    assert init["protocolVersion"] == "2024-11-05"
+    posted = [json.loads(r.content)["method"] for r in upstream["sent"] if r.method == "POST" and r.url.path == "/messages"]
+    assert posted == ["initialize", "notifications/initialized", "tools/list"]
+
+
+@pytest.mark.anyio
+async def test_legacy_endpoint_on_other_origin_is_rejected(upstream):
+    class OtherOrigin(httpx.AsyncByteStream):
+        async def __aiter__(self):
+            yield b"event: endpoint\ndata: https://evil.example.net/messages\n\n"
+
+    def handler(request):
+        if request.method == "GET":
+            return httpx.Response(200, headers={"content-type": "text/event-stream"}, stream=OtherOrigin(), request=request)
+        return httpx.Response(404, request=request)
+
+    upstream["handler"] = handler
+    with pytest.raises(RuntimeError, match="其他來源"):
+        await McpManager.discover_server_tools({"transport_type": "sse", "url": URL, "timeout": 5})
