@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 from typing import Callable, Iterable, List, Tuple, Dict, Optional, Sequence
+import os
 import re
 import threading
 import time
@@ -104,6 +105,8 @@ class HybridRetriever:
         rerank_weight: float,
         relevance_threshold: float,
         use_fp16: bool,
+        openvino_device: Optional[str],
+        openvino_max_length: Optional[int],
     ):
         self.vector_store = vector_store
         self.bm25_store = bm25_store
@@ -141,6 +144,56 @@ class HybridRetriever:
         self.reranker_outputs_probability = isinstance(activation_fn, torch.nn.Sigmoid)
         logger.info(f"Cross-Encoder 已載入至 {self.vector_store.device.upper()}: {reranker_model} (精度: {'FP16' if use_fp16 else 'FP32'})")
 
+        self.openvino_reranker = None
+        if openvino_device:
+            if openvino_max_length is None:
+                raise RuntimeError("設定 RERANKER_OPENVINO_DEVICE 時必須同時設定 RERANKER_OPENVINO_MAX_LENGTH")
+            self.openvino_batch_size = rerank_top_k
+            self.openvino_max_length = openvino_max_length
+            started = time.time()
+            self.openvino_reranker = self._compile_openvino_reranker(reranker_model, openvino_device)
+            logger.info(
+                f"Cross-Encoder 已以 OpenVINO 編譯至 {openvino_device}: 固定形狀 "
+                f"{self.openvino_batch_size}x{self.openvino_max_length}，耗時 {time.time() - started:.1f}s"
+            )
+
+    def _compile_openvino_reranker(self, reranker_model: str, device: str):
+        import openvino as ov
+        cache_dir = os.path.join(self.vector_store.data_dir, "openvino_cache")
+        os.makedirs(cache_dir, exist_ok=True)
+        shape = [self.openvino_batch_size, self.openvino_max_length]
+        model_path = os.path.join(cache_dir, f"{re.sub(r'[^\w.-]', '_', reranker_model)}_{shape[0]}x{shape[1]}.xml")
+        core = ov.Core()
+        core.set_property({"CACHE_DIR": cache_dir})
+        if os.path.exists(model_path):
+            model = core.read_model(model_path)
+        else:
+            example = self._tokenize([("", "")] * shape[0], "pt")
+            model = ov.convert_model(self.cross_encoder.model, example_input=dict(example))
+            model.reshape({name: shape for name in example})
+            ov.save_model(model, model_path)
+        return core.compile_model(model, device)
+
+    def _tokenize(self, pairs: Sequence[Tuple[str, str]], tensor_type: str):
+        return self.cross_encoder.tokenizer(
+            [query for query, _ in pairs],
+            [text for _, text in pairs],
+            padding="max_length",
+            truncation=True,
+            max_length=self.openvino_max_length,
+            return_tensors=tensor_type,
+        )
+
+    def _openvino_logits(self, pairs: List[Tuple[str, str]]) -> List[float]:
+        size = self.openvino_batch_size
+        logits: List[float] = []
+        for start in range(0, len(pairs), size):
+            batch = pairs[start:start + size]
+            encoded = self._tokenize(batch + [("", "")] * (size - len(batch)), "np")
+            output = self.openvino_reranker(dict(encoded))[0]
+            logits.extend(np.asarray(output, dtype=float).reshape(-1)[: len(batch)].tolist())
+        return logits
+
     def hybrid_search(
         self, query: str, allowed: Optional[Callable[[Document], bool]] = None
     ) -> List[Tuple[Document, float]]:
@@ -153,10 +206,14 @@ class HybridRetriever:
         return fused[: self.rerank_top_k]
 
     def _relevance(self, query: str, documents: List[Document]) -> List[float]:
+        pairs = [(query, doc.page_content) for doc in documents]
         with self._rerank_lock:
-            predicted = self.cross_encoder.predict([(query, doc.page_content) for doc in documents])
+            if self.openvino_reranker is None:
+                predicted = self.cross_encoder.predict(pairs)
+            else:
+                predicted = self._openvino_logits(pairs)
         scores = np.asarray(predicted, dtype=float)
-        if not self.reranker_outputs_probability:
+        if self.openvino_reranker is not None or not self.reranker_outputs_probability:
             scores = 1.0 / (1.0 + np.exp(-np.clip(scores, -20.0, 20.0)))
         return scores.tolist()
 

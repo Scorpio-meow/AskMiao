@@ -64,11 +64,11 @@ def test_json_array_keeps_nested_fields_and_original_keys():
 
     assert (result.kind, result.structured_format, result.warning) == ("json", True, None)
     assert blocks(result) == [
-        "【記錄 1】alice\nauthor: alice\ncontent: 第一則\npostLink: https://example.com/p/1\n"
+        "[記錄 1]alice\nauthor: alice\ncontent: 第一則\npostLink: https://example.com/p/1\n"
         "tags: review, good\nlikes: 12\ncontact.email: a@example.com",
-        "【記錄 2】退款流程\ntitle: 退款流程\nitems[0].name: a\nitems[1].name: b\nflag: true\nratio: 2",
-        "【記錄 3】\nnested.only: nested object",
-        "【記錄 4】\n純文字元素",
+        "[記錄 2]退款流程\ntitle: 退款流程\nitems[0].name: a\nitems[1].name: b\nflag: true\nratio: 2",
+        "[記錄 3]\nnested.only: nested object",
+        "[記錄 4]\n純文字元素",
     ]
     assert [record.record_index for record in result.records] == [1, 2, 3, 4]
     assert result.records[0].links == ("https://example.com/p/1",)
@@ -87,10 +87,10 @@ def test_object_with_record_arrays_becomes_groups_and_one_context_record():
     result = tree(".json", json.dumps(data, ensure_ascii=False))
 
     assert blocks(result) == [
-        "【上下文】\ntotal: 2\nsource: export\ntags: x, y",
-        "【data 記錄 1】7\nid: 7\ntext: 甲",
-        "【data 記錄 2】8\nid: 8\ntext: 乙",
-        "【users 記錄 1】喵\nname: 喵",
+        "[上下文]\ntotal: 2\nsource: export\ntags: x, y",
+        "[data 記錄 1]7\nid: 7\ntext: 甲",
+        "[data 記錄 2]8\nid: 8\ntext: 乙",
+        "[users 記錄 1]喵\nname: 喵",
     ]
     assert [record.group for record in result.records] == [None, "data", "data", "users"]
     assert [record.record_index for record in result.records] == [1, 2, 3, 4]
@@ -102,7 +102,7 @@ def test_object_without_record_arrays_is_a_single_record():
     result = tree(".json", json.dumps(data, ensure_ascii=False))
 
     assert blocks(result) == [
-        "【記錄 1】\nsite_name: 範例站\nmax_upload_mb: 10\nmaintenance: false\ncontact.email: s@example.com"
+        "[記錄 1]\nsite_name: 範例站\nmax_upload_mb: 10\nmaintenance: false\ncontact.email: s@example.com"
     ]
 
 
@@ -125,7 +125,7 @@ def test_invalid_json_and_over_limit_fall_back_to_plain_text_with_warning():
 def test_json_with_byte_order_mark_is_parsed():
     result = tree(".json", '﻿[{"title": "a"}]')
 
-    assert blocks(result) == ["【記錄 1】a\ntitle: a"]
+    assert blocks(result) == ["[記錄 1]a\ntitle: a"]
 
 
 def test_jsonl_lines_are_records_and_one_bad_line_falls_back():
@@ -133,7 +133,7 @@ def test_jsonl_lines_are_records_and_one_bad_line_falls_back():
     bad = tree(".jsonl", '{"title": "a"}\n{bad\n')
 
     assert good.kind == "jsonl"
-    assert blocks(good) == ["【記錄 1】a\ntitle: a", "【記錄 2】b\ntitle: b\nn: 1"]
+    assert blocks(good) == ["[記錄 1]a\ntitle: a", "[記錄 2]b\ntitle: b\nn: 1"]
     assert (bad.kind, bad.warning) == ("plain", WARNING_PARSE_FAILED)
 
 
@@ -142,7 +142,7 @@ def test_js_declaration_needs_strict_json_and_never_warns():
     literal = tree(".js", "const posts = [{title: 'x'}];")
     code = tree(".ts", "function f() { return 1; }")
 
-    assert declared.kind == "json" and blocks(declared) == ["【記錄 1】x\ntitle: x"]
+    assert declared.kind == "json" and blocks(declared) == ["[記錄 1]x\ntitle: x"]
     assert (literal.kind, literal.warning, literal.structured_format) == ("plain", None, False)
     assert (code.kind, code.warning, code.structured_format) == ("plain", None, False)
 
@@ -154,9 +154,9 @@ def test_yaml_is_parsed_with_dates_in_iso_format():
 
     assert result.kind == "yaml"
     assert blocks(result) == [
-        "【上下文】\nowner: hr",
-        "【items 記錄 1】年會\ntitle: 年會\ndate: 2026-08-01\nwhen: 2026-08-01 09:30:00",
-        "【items 記錄 2】尾牙\ntitle: 尾牙",
+        "[上下文]\nowner: hr",
+        "[items 記錄 1]年會\ntitle: 年會\ndate: 2026-08-01\nwhen: 2026-08-01 09:30:00",
+        "[items 記錄 2]尾牙\ntitle: 尾牙",
     ]
 
 
@@ -181,7 +181,7 @@ def test_noise_values_are_replaced_and_ignored_fields_are_dropped():
 
     result = tree(".json", json.dumps(data, ensure_ascii=False))
 
-    assert blocks(result) == ["【記錄 1】x\ntitle: x\nlogo: [BASE64_IMAGE_OMITTED]\nhtml: 前[SVG_ICON_OMITTED]後"]
+    assert blocks(result) == ["[記錄 1]x\ntitle: x\nlogo: [BASE64_IMAGE_OMITTED]\nhtml: 前[SVG_ICON_OMITTED]後"]
 
 
 def test_label_is_truncated_in_the_header_only():
@@ -200,8 +200,8 @@ def test_csv_rows_become_records_with_spreadsheet_row_numbers(tmp_path):
 
     assert result.kind == "csv"
     assert blocks(result) == [
-        "【第 3 列】退款\ntitle: 退款\n2: x\ndate: 2026-08-01\ntitle_2: 重複",
-        "【第 5 列】請假\ntitle: 請假\ndate: 2026-08-02\n5: 額外",
+        "[第 3 列]退款\ntitle: 退款\n2: x\ndate: 2026-08-01\ntitle_2: 重複",
+        "[第 5 列]請假\ntitle: 請假\ndate: 2026-08-02\n5: 額外",
     ]
     assert [record.row for record in result.records] == [3, 5]
 
@@ -231,8 +231,8 @@ def test_xlsx_rows_use_sheet_names_column_letters_and_iso_dates(tmp_path):
 
     assert result.kind == "xlsx"
     assert blocks(result) == [
-        "【員工 第 3 列】小明\nname: 小明\nB: x\n到職日: 2026-08-01\namount: 3",
-        "【員工 第 5 列】小華\nname: 小華\n到職日: 2026-08-02 09:30:00\namount: 2.5",
+        "[員工 第 3 列]小明\nname: 小明\nB: x\n到職日: 2026-08-01\namount: 3",
+        "[員工 第 5 列]小華\nname: 小華\n到職日: 2026-08-02 09:30:00\namount: 2.5",
     ]
     assert [(record.sheet, record.row, record.record_index) for record in result.records] == [("員工", 3, 1), ("員工", 5, 2)]
 
@@ -247,7 +247,7 @@ def test_long_record_is_split_into_parts_with_a_repeated_header():
     assert total > 2
     for index, (text, metadata) in enumerate(chunks, start=1):
         assert len(text) <= 120
-        assert text.startswith(f"【記錄 1】長記錄（{index}/{total}）\n")
+        assert text.startswith(f"[記錄 1]長記錄（{index}/{total}）\n")
         assert metadata == {
             "record_index": 1,
             "part": index,
@@ -257,7 +257,7 @@ def test_long_record_is_split_into_parts_with_a_repeated_header():
             "links": ["https://example.com/a"],
         }
     merged = merge_record_parts([text for text, _ in chunks])
-    assert merged.split("\n", 1)[0] == "【記錄 1】長記錄"
+    assert merged.split("\n", 1)[0] == "[記錄 1]長記錄"
     assert "a: " + "甲" * 50 in merged
     assert "丙" * 300 in merged.replace("\n", "")
 
@@ -336,7 +336,8 @@ async def test_filter_counts_split_records_once_and_matches_across_parts():
     record, plain = result["records"]
     assert (record["chunk_id"], record["record_index"], record["label"]) == (1, 1, "公告")
     assert record["links"] == ["https://example.com/a"]
-    assert record["content"].startswith("【記錄 1】公告\ntitle: 公告\ntimestamp: 2026-08-01")
+    assert record["content"].startswith("timestamp: 2026-08-01\nbody:")
+    assert "公告" not in record["content"] and "https://example.com/a" not in record["content"]
     assert (plain["chunk_id"], plain["label"], plain["links"]) == (99, None, [])
 
 
@@ -358,5 +359,5 @@ def test_fallback_summary_uses_the_extraction_or_counts_rendered_headers():
 
     assert with_extraction == "收錄 2 筆 JSON 結構化記錄，欄位包括：title、n。"
     assert text_only == "收錄約 2 筆結構化記錄。"
-    assert count_rendered_records("【第 3 列】a\nx: 1\n\n---\n\n【工作表 1 第 4 列】\ny: 2\n\n---\n\n【上下文】\nz: 3") == 3
-    assert count_rendered_records("【重點】\n內容") == 0
+    assert count_rendered_records("[第 3 列]a\nx: 1\n\n---\n\n[工作表 1 第 4 列]\ny: 2\n\n---\n\n[上下文]\nz: 3") == 3
+    assert count_rendered_records("[重點]\n內容") == 0

@@ -1,4 +1,4 @@
-from app.rag.research_session import ResearchSession, strip_citations
+from app.rag.research_session import ResearchSession, strip_citations, strip_tool_result_blocks
 
 
 def kb_output(*chunks):
@@ -88,3 +88,29 @@ def test_web_fetch_accepts_the_same_url_with_non_ascii_encoded():
     allowed, sent = fetch_allowed(session, "https://wiki.example.org/wiki/%E7%89%B9%E4%BC%91")
     assert allowed is True
     assert sent == "https://wiki.example.org/wiki/%E7%89%B9%E4%BC%91"
+
+
+def test_strip_tool_result_blocks_removes_blocks_and_stray_tags():
+    text = '前言<untrusted_tool_result id="ab12">{"a": 1}\n[1] 內容</untrusted_tool_result id="ab12">中段<untrusted_tool_result>x</untrusted_tool_result>結尾</untrusted_tool_result>'
+
+    assert strip_tool_result_blocks(text) == "前言中段結尾"
+
+
+def test_tool_result_filter_matches_full_strip_at_every_chunk_boundary():
+    from app.rag.research_session import ToolResultFilter
+
+    text = '答案 [1]<untrusted_tool_result id="ab">{"links": ["https://x.example"]}</untrusted_tool_result id="ab">，以及 <b>粗體</b> 結論'
+    expected = strip_tool_result_blocks(text)
+    for size in range(1, len(text) + 1):
+        stream_filter = ToolResultFilter()
+        out = "".join(stream_filter.feed(text[i:i + size]) for i in range(0, len(text), size)) + stream_filter.flush()
+        assert out == expected == "答案 [1]，以及 <b>粗體</b> 結論"
+
+
+def test_tool_result_filter_keeps_content_of_an_unclosed_block():
+    from app.rag.research_session import ToolResultFilter
+
+    stream_filter = ToolResultFilter()
+
+    assert stream_filter.feed("結論<untrusted_tool_result>沒有結尾") == "結論"
+    assert stream_filter.flush() == "沒有結尾"

@@ -68,7 +68,8 @@ export const SourceBadges: React.FC<SourceBadgesProps> = ({
               ? (hasCitation ? `（段落 ${detail.chunk}）` : ` (段落 ${detail.chunk})`)
               : '';
             if (detail.url) {
-              const label = hasCitation ? `[${detail.citation}] ${detail.source}` : detail.source;
+              const name = detail.label || detail.source;
+              const label = hasCitation ? `[${detail.citation}] ${name}` : name;
               return (
                 <Chip
                   key={idx}

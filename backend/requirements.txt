@@ -1522,6 +1522,7 @@ numpy==2.2.6 ; python_full_version < '3.11' \
     # via
     #   -r requirements.in
     #   faiss-cpu
+    #   openvino
     #   scikit-learn
     #   scipy
     #   sentence-transformers
@@ -1602,6 +1603,7 @@ numpy==2.4.6 ; python_full_version == '3.11.*' \
     # via
     #   -r requirements.in
     #   faiss-cpu
+    #   openvino
     #   scikit-learn
     #   scipy
     #   sentence-transformers
@@ -1676,6 +1678,7 @@ numpy==2.5.3 ; python_full_version >= '3.12' \
     # via
     #   -r requirements.in
     #   faiss-cpu
+    #   openvino
     #   scikit-learn
     #   scipy
     #   sentence-transformers
@@ -1772,6 +1775,36 @@ opentelemetry-api==1.45.1 \
     --hash=sha256:aa38ed19bcc084ba42782a73255b3582283eced7ad6dddbd6695189e69adfb75 \
     --hash=sha256:b31553efa588ae44bc306f863c785c5333a9ecc091248c6ee68b4b6c87fdedfb
     # via fastapi
+openvino==2026.4.1 \
+    --hash=sha256:24c73d3c61a8b71c09bf512a294d37ff8ea6e4b0c65c1b136bb842bbbd6c9c31 \
+    --hash=sha256:2d22b1da03f7caf74df30e9f6417d0ab2f637e4a38e08e1dcd294d2c37407aaf \
+    --hash=sha256:3631dd889dccf3d5087775948590a6609a662f90c24a9cf85bb4dfa0cdd7fd2f \
+    --hash=sha256:37c270c99d6de23439965e97cb5106389d3c8985f3b8bb90909a6ea0270db3f2 \
+    --hash=sha256:45ad6947f404049cb54807638ad35a67c66c0c90d1e89ee6cc45f92021cb6c45 \
+    --hash=sha256:47dcccbab40a23aed1dc4af7c43a9c813cc61f684d66498e1627d407d5f2770b \
+    --hash=sha256:4e04316abff1b99e29b8cbd38deaef9bde4739eba216d982d4b3981e456ecd87 \
+    --hash=sha256:60496e3153122913c8a2fa69d86b3a77ccc4e2469db87d76eb8acb49a5d22d63 \
+    --hash=sha256:645e8788370b1037cc21d19078f2f235478292e23938b00ab4fe0d2614a5f7d0 \
+    --hash=sha256:6b4375c17ddcac83a5180349e2e2bb811185c261066e2a920659892d58ef0e3b \
+    --hash=sha256:6c5672d6cc0fba4e22fd8d1352ffd7e395f6135da741e002bfad7a0344c183f2 \
+    --hash=sha256:6c6ad38aefc3b0a7d1dbc7189c2be92bb876853f4681e1b1b9fbe1a382d5876f \
+    --hash=sha256:726ac547b8474a5e7b145bc1ae5a8bb6fbcbb60b79bd9a611c67eec2c74b7a5f \
+    --hash=sha256:82efccb2f9f1bdc7e5a1996e05a3b719ebff9232dd54b44150d6d2e983a86b7d \
+    --hash=sha256:96d5ecb8cca4d61a3eee754c9e477702509cf782eb45596c653a00ddb2176d96 \
+    --hash=sha256:a9b637846c579d7b81b17b6585e0c7b1947574e8d13cf83d7307ce50cd2c352e \
+    --hash=sha256:b70a01f6961bf8fe4b647b14fb122be4d30ece02292a9831f9241a64be089676 \
+    --hash=sha256:bea1eb3733c34ef331adc945da0ccda5937865031139073663be84c517ffda22 \
+    --hash=sha256:bfddae6d6d3ad240157b946f180c33d0ddfaaae7487995d929a4e6b4bc12b283 \
+    --hash=sha256:c383422d3e7e457441ec88911da0b16ed5132f55b8c9fb21411749d3eff90a60 \
+    --hash=sha256:c9fed6c278b3f0314a53b4366fe8811bd784f24a60335b318dff1e3ae3bbb5c0 \
+    --hash=sha256:d3740853691ae4a9003bc3417a4625d848e2cc3251af4b815c59199b38be252a \
+    --hash=sha256:f57d1cc75c77c18b2be8ab628d8e0a8e01f4be44f521823b6fba7ede31d708d3 \
+    --hash=sha256:fc45339ff7d539de76e6d7b04135c120504c797cfc8c2a0dde3d2d616b30c758
+    # via -r requirements.in
+openvino-telemetry==2025.2.0 \
+    --hash=sha256:8bf8127218e51e99547bf38b8fb85a8b31c9bf96e6f3a82eb0b3b6a34155977c \
+    --hash=sha256:bcb667e83a44f202ecf4cfa49281715c6d7e21499daec04ff853b7f964833599
+    # via openvino
 orjson==3.13.0 ; platform_python_implementation != 'PyPy' \
     --hash=sha256:0526a3456db67b264c6d661b5f090077f326b6cd074d0ef53a72763595dec5d7 \
     --hash=sha256:08bf722f923d2100bc5e5a5dcf72c656db557049c1bea26582fdd5dd9d5395a1 \

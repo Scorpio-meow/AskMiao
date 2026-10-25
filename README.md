@@ -103,7 +103,7 @@
 
 ### Agentic RAG 自主研究
 
-- **ReAct 研究迴圈**：`ResearchAgent` 以原生工具呼叫（Native Tool Calling）多輪蒐集資料，輪數上限由 `AGENT_MAX_TURNS` 控制；模型不再呼叫工具時，該次內容就是最終答案。
+- **ReAct 研究迴圈**：`ResearchAgent` 以原生工具呼叫（Native Tool Calling）多輪蒐集資料，沒有輪數上限；模型不再呼叫工具時，該次內容就是最終答案。
 - **四個內建工具**：
 
   | 工具 | 用途 |
@@ -343,7 +343,7 @@ sequenceDiagram
     FE->>API: 送出訊息
     API->>API: 儲存使用者訊息、讀取最近前文
     API-->>FE: event: start
-    loop 最多 AGENT_MAX_TURNS 輪
+    loop 直到模型不再呼叫工具
         AG->>LLM: 對話與工具定義
         LLM-->>AG: 工具呼叫
         API-->>FE: event: step_start
@@ -510,7 +510,6 @@ docker compose up -d
 | `COOKIE_SECURE` | `false` | 重新整理權杖 Cookie 是否只經 HTTPS 傳送；以 HTTPS 提供服務時必須為 `true` |
 | `ENABLE_API_DOCS` | `false` | 是否提供 `/docs`、`/redoc` 與 `/openapi.json`；對外服務時請保持 `false` |
 | `ENABLE_WEB_SEARCH` | `true` | 是否提供 `web_search` 與 `web_fetch` |
-| `AGENT_MAX_TURNS` | `5` | 單次提問的工具呼叫輪數上限（≥ 1） |
 | `CONVERSATION_HISTORY_MESSAGES` | `6` | 帶入的前文訊息數（0 表示不帶） |
 | `WEB_FETCH_ALLOWED_DOMAINS` | `*` | `web_fetch` 可讀取的網域；明確寫 `*` 才表示不限制 |
 | `BLOCK_WEB_TOOLS_AFTER_KB` | `true` | 讀過知識庫內容後停用聯網工具 |

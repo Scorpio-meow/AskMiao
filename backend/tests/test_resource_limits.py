@@ -262,7 +262,7 @@ async def test_attachment_parsing_runs_off_the_event_loop(monkeypatch):
     monkeypatch.setattr(registry, "get_tool_definitions", lambda user_id=None: [])
     agent = agent_module.ResearchAgent(tool_registry=registry)
     attachment = FileAttachment(filename="a.txt", file_type="text/plain", data_url=data_url(10))
-    [event async for event in agent.stream_research("摘要", attachments=[attachment], max_turns=1)]
+    [event async for event in agent.stream_research("摘要", attachments=[attachment])]
 
     assert seen["thread"] != loop_thread
     assert len(seen["user_content"]) < agent_module.MAX_ATTACHMENT_TEXT_CHARS + 1000
@@ -368,7 +368,7 @@ def test_structured_parse_budget_skips_json_loads(tmp_path):
     path = tmp_path / "posts.json"
     path.write_text('[{"author": "喵", "content": "第一則"}]', encoding="utf-8")
     structured = DocumentProcessor.extract_text_from_file(str(path), "application/json", ADMIN_UPLOAD_EXTRACTION_LIMITS)
-    assert structured.startswith("【記錄 1】")
+    assert structured.startswith("[記錄 1]")
     raw = DocumentProcessor.extract_text_from_file(
         str(path), "application/json", replace(CHAT_ATTACHMENT_EXTRACTION_LIMITS, max_structured_parse_chars=10)
     )
@@ -412,7 +412,7 @@ async def test_attachment_extractions_are_bounded_process_wide(monkeypatch):
 
     async def ask():
         agent = agent_module.ResearchAgent(tool_registry=registry)
-        return [event async for event in agent.stream_research("摘要", attachments=attachments, max_turns=1)]
+        return [event async for event in agent.stream_research("摘要", attachments=attachments)]
 
     await asyncio.gather(*(ask() for _ in range(MAX_CONCURRENT_ATTACHMENT_EXTRACTIONS + 2)))
     assert running["peak"] == MAX_CONCURRENT_ATTACHMENT_EXTRACTIONS
@@ -446,10 +446,10 @@ def test_split_faq_is_linear_and_keeps_semantics():
 
 
 def test_rendered_record_scans_are_linear():
-    assert count_rendered_records("【記錄 1】a\nauthor: a\n\n---\n\n【data 記錄 2】b\nauthor: b") == 2
-    assert_fast(count_rendered_records, "【" + "a " * 200_000)
-    assert_fast(count_rendered_records, "【記錄 1】---" + "\n" * 200_000 + "x")
-    assert_fast(merge_record_parts, ["【記錄 1】（1/2）" + "（" * 200_000, "【記錄 1】（2/2）\nx"])
+    assert count_rendered_records("[記錄 1]a\nauthor: a\n\n---\n\n[data 記錄 2]b\nauthor: b") == 2
+    assert_fast(count_rendered_records, "[" + "a " * 200_000)
+    assert_fast(count_rendered_records, "[記錄 1]---" + "\n" * 200_000 + "x")
+    assert_fast(merge_record_parts, ["[記錄 1]（1/2）" + "（" * 200_000, "[記錄 1]（2/2）\nx"])
 
 
 def test_fallback_summary_toc_cleanup_is_linear():

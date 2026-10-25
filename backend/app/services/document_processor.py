@@ -416,21 +416,23 @@ class DocumentProcessor:
         prompt = (
             "你是一個頂級的知識庫文件分析與大綱生成專家。請根據以下文件的檔名與內文摘錄，"
             "產出一份高水準、專業、客觀且條理分明的「文件主題與大綱摘要」（繁體中文，約 70~150 字）。\n\n"
-            "【嚴格準則】\n"
+            "[嚴格準則]\n"
             "1. 核心定位：準確指明文件類型與核心主題（例如：產品規格說明書、宣傳型錄DM、LINE工作討論紀錄、社群貼文資料集、技術手冊等）。\n"
             "2. 內容大綱：提煉出主要涵蓋的章節、核心架構、功能特色或討論焦點。\n"
             "3. 噪音過濾：嚴格禁止將通訊對話人名/任務待辦（如「1. @某某」）、純頁碼、版權宣告或公司電話地址誤當作章節標題。\n"
             "4. 輸出要求：請直接輸出摘要文字本身，語句通順精煉，嚴禁客套話或前言標籤。\n\n"
-            f"【文件檔名】{filename}\n"
-            f"【文件類型】{file_type}\n"
-            + (f"【結構化資料】{overview}\n" if overview else "")
-            + f"【內容摘錄】\n{sample_content}"
+            f"[文件檔名]{filename}\n"
+            f"[文件類型]{file_type}\n"
+            + (f"[結構化資料]{overview}\n" if overview else "")
+            + f"[內容摘錄]\n{sample_content}"
         )
         try:
             from app.core.llm_client import call_llm
+            from app.api.tags import models_and_default
+            _, default_model = await models_and_default()
             response = await call_llm(
                 messages=[{"role": "user", "content": prompt}],
-                timeout=18.0
+                model_name=default_model or None
             )
             cleaned = response.strip()
             for prefix in ("好的，", "這是該文件的摘要：", "這是一份", "文件摘要：", "摘要：", "以下是"):
@@ -506,7 +508,7 @@ class DocumentProcessor:
         def clean_toc_line(text: str) -> str:
             cleaned = text[:MAX_TOC_LINE_CHARS].lstrip("#*- •\t ")
             cleaned = strip_toc_leader(cleaned).strip()
-            cleaned = re.sub(r'^(?:[0-9]+(?:\.[0-9]+)*\.?|[一二三四五六七八九十]+[、\.]|第[0-9一二三四五六七八九十]+[章節點條項篇]|【[^】]+】)\s*', '', cleaned).strip()
+            cleaned = re.sub(r'^(?:[0-9]+(?:\.[0-9]+)*\.?|[一二三四五六七八九十]+[、\.]|第[0-9一二三四五六七八九十]+[章節點條項篇]|[\[【][^\]】]+[\]】])\s*', '', cleaned).strip()
             return re.sub(r'\s+', ' ', cleaned)
         headers = []
         for line in cleaned_lines[:120]:

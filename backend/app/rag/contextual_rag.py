@@ -75,6 +75,8 @@ class HybridContextualRAG:
             rerank_weight=self.rerank_weight,
             relevance_threshold=self.relevance_threshold,
             use_fp16=self.use_fp16,
+            openvino_device=settings.RERANKER_OPENVINO_DEVICE,
+            openvino_max_length=settings.RERANKER_OPENVINO_MAX_LENGTH,
         )
 
 

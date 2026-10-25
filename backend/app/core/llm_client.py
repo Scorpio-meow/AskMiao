@@ -225,9 +225,12 @@ def _ollama_payload(
     messages: List[Dict[str, Any]],
     model: str,
     tools: Optional[List[Dict[str, Any]]],
-    stream: bool
+    stream: bool,
+    reasoning_effort: Optional[str]
 ) -> Dict[str, Any]:
     payload: Dict[str, Any] = {"model": model, "messages": _ollama_messages(messages), "stream": stream}
+    if reasoning_effort is not None:
+        payload["think"] = False if reasoning_effort == "none" else reasoning_effort
     options = _ollama_options()
     if options:
         payload["options"] = options
@@ -254,21 +257,22 @@ async def _ollama_chat(
     messages: List[Dict[str, Any]],
     model: str,
     tools: Optional[List[Dict[str, Any]]],
+    reasoning_effort: Optional[str],
     timeout: float
 ) -> Dict[str, Any]:
     client = await get_llm_http_client()
     response = await client.post(
         f"{settings.LLM_API_BASE.rstrip('/')}/api/chat",
-        json=_ollama_payload(messages, model, tools, stream=False),
+        json=_ollama_payload(messages, model, tools, stream=False, reasoning_effort=reasoning_effort),
         headers=OLLAMA_HEADERS,
         timeout=httpx.Timeout(timeout, pool=LLM_POOL_ACQUIRE_TIMEOUT_SECONDS)
     )
     if response.status_code != 200:
         raise RuntimeError(f"Ollama API 錯誤 ({response.status_code}): {response.text[:500]}")
     return _normalize_ollama_message(response.json().get("message", {}))
-async def _ollama_stream(messages: List[Dict[str, Any]], model: str) -> AsyncIterator[str]:
+async def _ollama_stream(messages: List[Dict[str, Any]], model: str, reasoning_effort: Optional[str]) -> AsyncIterator[str]:
     client = await get_llm_http_client()
-    payload = _ollama_payload(messages, model, None, stream=True)
+    payload = _ollama_payload(messages, model, None, stream=True, reasoning_effort=reasoning_effort)
     async with client.stream(
         "POST",
         f"{settings.LLM_API_BASE.rstrip('/')}/api/chat",
@@ -441,7 +445,7 @@ async def chat_completion(
     if provider == "anthropic":
         return await _anthropic_chat(messages, model, tools, request_timeout)
     if provider == "ollama":
-        return await _ollama_chat(messages, model, tools, request_timeout)
+        return await _ollama_chat(messages, model, tools, reasoning_effort, request_timeout)
     return await _openai_chat(provider, messages, model, tools, reasoning_effort, request_timeout)
 async def stream_completion(
     messages: List[Dict[str, Any]],
@@ -456,7 +460,7 @@ async def stream_completion(
     if provider == "anthropic":
         stream = _anthropic_stream(messages, model, tools)
     elif provider == "ollama":
-        stream = _ollama_stream(messages, model)
+        stream = _ollama_stream(messages, model, reasoning_effort)
     else:
         stream = _openai_stream(provider, messages, model, reasoning_effort)
     async for chunk in stream:

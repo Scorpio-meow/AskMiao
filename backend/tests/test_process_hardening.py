@@ -101,10 +101,10 @@ def test_tools_list_requires_login():
 def test_knowledge_base_description_is_cached(monkeypatch):
     tools_module.invalidate_knowledge_base_description()
     builds = []
-    monkeypatch.setattr(ResearchToolRegistry, "_build_knowledge_base_description", lambda self: builds.append(1) or "desc")
+    monkeypatch.setattr(ResearchToolRegistry, "_build_knowledge_base_description", lambda self: builds.append(1) or ("desc", []))
     registry = ResearchToolRegistry()
-    assert registry._generate_knowledge_base_description() == "desc"
-    assert registry._generate_knowledge_base_description() == "desc"
+    assert registry._generate_knowledge_base_description() == ("desc", [])
+    assert registry._generate_knowledge_base_description() == ("desc", [])
     assert len(builds) == 1
     tools_module.invalidate_knowledge_base_description()
     registry._generate_knowledge_base_description()

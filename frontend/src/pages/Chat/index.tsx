@@ -7,7 +7,7 @@ import { copyText } from '../../utils/clipboard';
 import { describeRequestError } from '../../utils/secureLogger';
 import { SnackbarState, ModelDetail, ChatAttachment } from './types';
 import ChatSidebar from './ChatSidebar';
-import ChatHeader from './ChatHeader';
+import ChatHeader, { REASONING_EFFORT_OPTIONS } from './ChatHeader';
 import ChatMessageList from './ChatMessageList';
 import ChatInputArea from './ChatInputArea';
 import { Snackbar, Alert, ConfirmDialog } from '../../components/ui';
@@ -17,6 +17,22 @@ const describeSendError = (err: unknown): string => {
   if (err instanceof Error && err.message) return err.message;
   return '請稍後再試';
 };
+const MODEL_STORAGE_KEY = 'askmiao_selected_model';
+const REASONING_EFFORT_STORAGE_KEY = 'askmiao_reasoning_effort';
+const readStorage = (key: string): string | null => {
+  try {
+    return localStorage.getItem(key);
+  } catch {
+    return null;
+  }
+};
+const writeStorage = (key: string, value: string) => {
+  try {
+    localStorage.setItem(key, value);
+  } catch (e) {
+    console.warn('Failed to save preference to localStorage', e);
+  }
+};
 export const ChatPage: React.FC = () => {
   const location = useLocation();
   const navigate = useNavigate();
@@ -25,9 +41,12 @@ export const ChatPage: React.FC = () => {
   const [newMessage, setNewMessage] = useState('');
   const [availableModels, setAvailableModels] = useState<string[]>([]);
   const [, setModelDetails] = useState<ModelDetail[]>([]);
-  const [selectedModel, setSelectedModel] = useState('');
-  const [userSelectedModel, setUserSelectedModel] = useState(false);
-  const [reasoningEffort, setReasoningEffort] = useState<string>('medium');
+  const [selectedModel, setSelectedModel] = useState(() => readStorage(MODEL_STORAGE_KEY) || '');
+  const [userSelectedModel, setUserSelectedModel] = useState(() => !!readStorage(MODEL_STORAGE_KEY));
+  const [reasoningEffort, setReasoningEffort] = useState<string>(() => {
+    const saved = readStorage(REASONING_EFFORT_STORAGE_KEY);
+    return REASONING_EFFORT_OPTIONS.some((opt) => opt.value === saved) ? saved! : 'medium';
+  });
   const [modelsLoading, setModelsLoading] = useState(false);
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
   const [pendingDelete, setPendingDelete] = useState<Conversation | null>(null);
@@ -100,7 +119,7 @@ export const ChatPage: React.FC = () => {
             const cachedDetails = cachedData.details || [];
             setAvailableModels(cachedModels);
             setModelDetails(cachedDetails);
-            if (!selectedModelRef.current && cachedModels.length > 0) {
+            if (cachedModels.length > 0 && !cachedModels.includes(selectedModelRef.current)) {
               const defaultModel = cachedData.default?.split(',')[0].trim() || cachedModels[0];
               setSelectedModel(defaultModel);
             }
@@ -147,6 +166,11 @@ export const ChatPage: React.FC = () => {
   const handleSelectModel = (model: string) => {
     setSelectedModel(model);
     setUserSelectedModel(true);
+    writeStorage(MODEL_STORAGE_KEY, model);
+  };
+  const handleSelectReasoningEffort = (effort: string) => {
+    setReasoningEffort(effort);
+    writeStorage(REASONING_EFFORT_STORAGE_KEY, effort);
   };
   const handleToggleThinking = (id: number | string) => {
     setThinkOpenArr((prev) => ({
@@ -238,7 +262,7 @@ export const ChatPage: React.FC = () => {
           selectedModel={selectedModel}
           onSelectModel={handleSelectModel}
           reasoningEffort={reasoningEffort}
-          onSelectReasoningEffort={setReasoningEffort}
+          onSelectReasoningEffort={handleSelectReasoningEffort}
           modelsLoading={modelsLoading}
           onRefreshModels={() => loadAvailableModels(true)}
           currentConversation={currentConversation}

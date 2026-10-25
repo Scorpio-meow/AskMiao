@@ -374,7 +374,7 @@ data: {"message_id": 108, "conversation_id": 42, "answer": "特休假需先在�
 
 **Behavior details**
 
-- When the model stops calling tools, its answer arrives in **one** `token` event; only when the tool turns (`AGENT_MAX_TURNS`) run out or the model returns empty content is the answer streamed over several `token` events.
+- When the model stops calling tools, its answer arrives in **one** `token` event; only when the model returns empty content is the answer streamed over several `token` events.
 - A failed model call or an interrupted stream is reported inside a `token` event with an error code (for example 在執行自主研究時遇到連線異常（錯誤代碼：…）, "a connection error occurred during research"), not as an `error` event; the code maps to the full exception in the server log.
 - The assistant message is saved only after the stream completes. If the client disconnects mid-stream (for example by pressing stop), that answer is not saved, while the user message already is.
 - A new conversation takes the first 50 characters of its first message as its title.

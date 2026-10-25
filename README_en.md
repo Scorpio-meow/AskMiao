@@ -103,7 +103,7 @@ See the [4.0.0 changelog](CHANGELOG_en.md#400---2026-09-27) for everything that 
 
 ### Agentic RAG research
 
-- **ReAct research loop**: `ResearchAgent` gathers evidence over several rounds with native tool calling, capped by `AGENT_MAX_TURNS`; when the model stops calling tools, that response is the final answer.
+- **ReAct research loop**: `ResearchAgent` gathers evidence over several rounds with native tool calling, with no round limit; when the model stops calling tools, that response is the final answer.
 - **Four built-in tools**:
 
   | Tool | Purpose |
@@ -343,7 +343,7 @@ sequenceDiagram
     FE->>API: Send the message
     API->>API: Save the user message, load recent history
     API-->>FE: event: start
-    loop At most AGENT_MAX_TURNS rounds
+    loop Until the model stops calling tools
         AG->>LLM: Conversation and tool definitions
         LLM-->>AG: Tool calls
         API-->>FE: event: step_start
@@ -510,7 +510,6 @@ Backend settings live in `backend/.env`. These 20 have no defaults, and the back
 | `COOKIE_SECURE` | `false` | Whether the refresh token cookie is sent over HTTPS only; must be `true` when serving over HTTPS |
 | `ENABLE_API_DOCS` | `false` | Serve `/docs`, `/redoc`, and `/openapi.json`; keep `false` for public deployments |
 | `ENABLE_WEB_SEARCH` | `true` | Offer `web_search` and `web_fetch` |
-| `AGENT_MAX_TURNS` | `5` | Tool-calling turn limit per question (≥ 1) |
 | `CONVERSATION_HISTORY_MESSAGES` | `6` | Prior messages loaded as context (0 disables) |
 | `WEB_FETCH_ALLOWED_DOMAINS` | `*` | Domains `web_fetch` may read; only an explicit `*` means unrestricted |
 | `BLOCK_WEB_TOOLS_AFTER_KB` | `true` | Disable web tools once knowledge-base content has been read |

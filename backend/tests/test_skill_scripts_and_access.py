@@ -149,7 +149,7 @@ async def test_allowed_tools_preapprove_only_after_activation(env, monkeypatch):
         answer("完成"),
     ])
     llm.install(monkeypatch)
-    events = await collect(agent.stream_research("跑腳本", max_turns=5, approval_user_id=None))
+    events = await collect(agent.stream_research("跑腳本", approval_user_id=None))
     steps = [e["data"] for e in events if e["event"] == "step_end"]
     assert "核准" in steps[0]["output_preview"]
     assert steps[1]["status"] == "success"

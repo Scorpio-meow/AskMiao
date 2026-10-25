@@ -2,7 +2,7 @@ import React from 'react';
 import { ChatHeaderProps } from './types';
 import { IconButton, Tooltip, Spinner, Icon } from '../../components/ui';
 import styles from './ChatHeader.module.css';
-const REASONING_EFFORT_OPTIONS = [
+export const REASONING_EFFORT_OPTIONS = [
   { value: 'none', label: '無推理 (None / 快速)', shortLabel: '無 (None)' },
   { value: 'low', label: '輕度推理 (Low / 平衡)', shortLabel: '輕度 (Low)' },
   { value: 'medium', label: '標準推理 (Medium / 預設)', shortLabel: '標準 (Medium)' },

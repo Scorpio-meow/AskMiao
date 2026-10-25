@@ -39,7 +39,6 @@ class Settings(BaseSettings):
     WEB_FETCH_ALLOWED_DOMAINS: str
     # 同一次提問中知識庫工具回傳過內容後，是否拒絕 web_search 與 web_fetch
     BLOCK_WEB_TOOLS_AFTER_KB: bool
-    AGENT_MAX_TURNS: int = Field(ge=1)
     CONVERSATION_HISTORY_MESSAGES: int = Field(ge=0)
     AZURE_OPENAI_API_KEY: Optional[str] = None
     AZURE_OPENAI_ENDPOINT: Optional[str] = None
@@ -99,6 +98,8 @@ class Settings(BaseSettings):
     HF_HUB_DISABLE_SYMLINKS_WARNING: Optional[bool] = None
     FORCE_CPU: bool = True
     USE_FP16_QUANTIZATION: bool = False
+    RERANKER_OPENVINO_DEVICE: Optional[str] = None
+    RERANKER_OPENVINO_MAX_LENGTH: Optional[int] = Field(default=None, ge=1)
     GPU_BATCH_SIZE: int = 128
     CPU_BATCH_SIZE: int = 64
     USE_FAISS_GPU: bool = False

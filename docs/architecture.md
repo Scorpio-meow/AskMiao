@@ -377,10 +377,8 @@ flowchart TB
     Ask -->|拒絕或逾時| Record
     Exec --> Record["配引用編號<br/>記錄網址來源與是否讀過知識庫"]
     Record --> Wrap["包進 &lt;untrusted_tool_result&gt;"]
-    Wrap --> More{"輪數 < AGENT_MAX_TURNS？"}
-    More -->|是| Call
-    More -->|否| Stream["以串流生成最終答案"]
-    Answer & Stream --> Cite["解析 [n]<br/>sources_detail 只列被引用的來源"]
+    Wrap --> Call
+    Answer --> Cite["解析 [n]<br/>sources_detail 只列被引用的來源"]
 ```
 
 ### 工具

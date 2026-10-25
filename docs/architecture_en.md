@@ -377,10 +377,8 @@ flowchart TB
     Ask -->|denied or timed out| Record
     Exec --> Record["Assign citation numbers<br/>record URL sources and knowledge-base reads"]
     Record --> Wrap["Wrap in &lt;untrusted_tool_result&gt;"]
-    Wrap --> More{"Rounds < AGENT_MAX_TURNS?"}
-    More -->|yes| Call
-    More -->|no| Stream["Stream a final answer"]
-    Answer & Stream --> Cite["Parse [n]<br/>sources_detail lists cited sources only"]
+    Wrap --> Call
+    Answer --> Cite["Parse [n]<br/>sources_detail lists cited sources only"]
 ```
 
 ### Tools

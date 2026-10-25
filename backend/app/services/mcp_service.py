@@ -843,7 +843,7 @@ if __name__ == '__main__':
             "type": "function",
             "function": {
                 "name": fn_name,
-                "description": f"【MCP 協定工具】{server_display_name} -> {t_name}：{desc}",
+                "description": f"[MCP 協定工具]{server_display_name} -> {t_name}：{desc}",
                 "parameters": input_schema
             }
         }

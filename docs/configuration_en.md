@@ -29,7 +29,7 @@
 
 - **Source**: the backend reads `backend/.env` regardless of the startup directory, and process environment variables take precedence over `.env`. Unknown keys are ignored, so removed settings left in `.env` cause no errors.
 - **Required settings have no defaults**: if any is missing, the backend stops at startup with a `Field required` error that names the missing fields.
-- **Value ranges and formats**: `AGENT_MAX_TURNS ≥ 1`, `CONVERSATION_HISTORY_MESSAGES ≥ 0`, `RRF_K ≥ 1`, `0 ≤ RERANK_RELEVANCE_THRESHOLD ≤ 1`, and `ANTHROPIC_MAX_TOKENS ≥ 1`; `LOGIN_MAX_FAILURES_PER_ACCOUNT`, `LOGIN_MAX_FAILURES_PER_ADDRESS`, `LOGIN_FAILURE_WINDOW_SECONDS`, and `LOGIN_LOCKOUT_SECONDS` must all be ≥ 1, and `TOOL_SECRETS_KEY` must be a valid Fernet key; out-of-range or malformed values also stop startup.
+- **Value ranges and formats**: `CONVERSATION_HISTORY_MESSAGES ≥ 0`, `RRF_K ≥ 1`, `0 ≤ RERANK_RELEVANCE_THRESHOLD ≤ 1`, and `ANTHROPIC_MAX_TOKENS ≥ 1`; `LOGIN_MAX_FAILURES_PER_ACCOUNT`, `LOGIN_MAX_FAILURES_PER_ADDRESS`, `LOGIN_FAILURE_WINDOW_SECONDS`, and `LOGIN_LOCKOUT_SECONDS` must all be ≥ 1, and `TOOL_SECRETS_KEY` must be a valid Fernet key; out-of-range or malformed values also stop startup.
 - **Booleans**: `true` / `false`, `1` / `0`, and `yes` / `no` all work.
 - **Relative paths**: relative values of `DATA_DIR`, `UPLOAD_DIR`, `FAISS_INDEX_PATH`, `BM25_INDEX_DIR`, `METADATA_PATH`, `HF_HOME`, `HF_HUB_CACHE`, `SENTENCE_TRANSFORMERS_HOME`, `DOMAIN_PROFILE_PATH`, `JIEBA_DICTIONARY`, and `SKILLS_DIR` always resolve against `backend/`. `DATABASE_URL` is not one of them: a relative SQLite path depends on the startup directory.
 - **Code default versus template value**: in the tables below, "Code default" applies when `.env` does not set the key, and "Template" is the value suggested by `backend/.env.example`; your `.env` wins whenever they differ.
@@ -52,7 +52,6 @@ These 21 settings have no default; the backend does not start if any is missing.
 | `RELOAD` | `false` | Reload on code changes; set `true` only for development |
 | `ENABLE_API_DOCS` | `false` | Serve the interactive documentation at `/docs`, `/redoc`, and `/openapi.json` |
 | `ENABLE_WEB_SEARCH` | `true` | Offer the web tools |
-| `AGENT_MAX_TURNS` | `5` | Tool-calling turn limit per question |
 | `CONVERSATION_HISTORY_MESSAGES` | `6` | Prior messages loaded as context |
 | `WEB_FETCH_ALLOWED_DOMAINS` | `*` | `web_fetch` domain allowlist |
 | `BLOCK_WEB_TOOLS_AFTER_KB` | `true` | Disable web tools after knowledge-base content was read |
@@ -135,7 +134,6 @@ Each call picks a provider from the model name; the first matching rule wins:
 | Variable | Code default | Template | Description |
 |---|---|---|---|
 | `ENABLE_WEB_SEARCH` | — (required) | `true` | Controls both `web_search` and `web_fetch`; with `false` both are left out of the tool list and calls to them are refused |
-| `AGENT_MAX_TURNS` | — (required, ≥ 1) | `5` | Maximum model rounds per question (each round may call several tools); when they run out without an answer, the final answer is streamed from a fresh call |
 | `CONVERSATION_HISTORY_MESSAGES` | — (required, ≥ 0) | `6` | Prior messages loaded from the database as context (user and assistant messages combined; history always starts with a user message); `0` disables history |
 | `WEB_FETCH_ALLOWED_DOMAINS` | — (required) | `*` | Domains `web_fetch` may read, including subdomains, comma-separated; only an explicit `*` means unrestricted |
 | `BLOCK_WEB_TOOLS_AFTER_KB` | — (required) | `true` | Within one question, refuse `web_search` and `web_fetch` once a knowledge-base tool has returned content |
@@ -180,6 +178,8 @@ Each search runs: `TOP_K` candidates from vector search and from BM25 → RRF fu
 |---|---|---|---|
 | `FORCE_CPU` | `true` | `true` | Use the CPU even when CUDA is available; in CPU mode PyTorch uses min(16, CPU cores) threads |
 | `USE_FP16_QUANTIZATION` | `false` | `false` | CUDA only: run the embedding and reranker models in FP16 |
+| `RERANKER_OPENVINO_DEVICE` | empty | commented example | Device for running the reranker through OpenVINO (`GPU`, `CPU`; use `GPU` for Intel integrated graphics); empty uses PyTorch. The model is compiled with the fixed shape `RERANK_TOP_K` × `RERANKER_OPENVINO_MAX_LENGTH`; the first start converts it in about a minute and caches the result in `DATA_DIR/openvino_cache` |
+| `RERANKER_OPENVINO_MAX_LENGTH` | empty | commented example | Required when `RERANKER_OPENVINO_DEVICE` is set: fixed token length of each query + chunk pair; longer pairs are truncated |
 | `GPU_BATCH_SIZE` | `128` | `128` | Embedding batch size on GPU |
 | `CPU_BATCH_SIZE` | `64` | `32` | Embedding batch size on CPU |
 | `USE_FAISS_GPU` | `false` | `false` | Run FAISS on GPU (requires `faiss-gpu`; falls back to CPU if initialization fails) |

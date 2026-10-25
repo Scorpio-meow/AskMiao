@@ -58,7 +58,10 @@ class RankedBM25:
 
 def make_retriever(monkeypatch, documents, vector_ranking, bm25_ranking, encoder, **overrides):
     monkeypatch.setattr(hybrid_module, "CrossEncoder", lambda model_name, device=None: encoder)
-    options = dict(top_k=30, rrf_k=60, rerank_top_k=20, final_k=8, rerank_weight=0.85, relevance_threshold=0.5, use_fp16=False)
+    options = dict(
+        top_k=30, rrf_k=60, rerank_top_k=20, final_k=8, rerank_weight=0.85, relevance_threshold=0.5, use_fp16=False,
+        openvino_device=None, openvino_max_length=None,
+    )
     options.update(overrides)
     return HybridRetriever(
         vector_store=RankedVectorStore(documents, vector_ranking),
@@ -157,6 +160,7 @@ def test_reranker_load_failure_stops_startup(monkeypatch):
         HybridRetriever(
             vector_store=RankedVectorStore([], []), bm25_store=RankedBM25([]), reranker_model="missing-reranker",
             top_k=30, rrf_k=60, rerank_top_k=20, final_k=8, rerank_weight=0.85, relevance_threshold=0.5, use_fp16=False,
+            openvino_device=None, openvino_max_length=None,
         )
 
 
@@ -188,3 +192,37 @@ def test_exact_match_candidates_are_capped_and_reranked_outside_the_index_lock(m
 
     assert encoder.predicted_pairs == 20
     assert encoder.lock_free is True
+
+
+def test_openvino_reranker_pads_fixed_batches_and_applies_sigmoid(monkeypatch):
+    import numpy as np
+
+    texts = {"a": 2.0, "b": -2.0, "c": 0.0}
+    seen_shapes = []
+
+    class FakeTokenizer:
+        def __call__(self, queries, documents, padding, truncation, max_length, return_tensors):
+            assert (padding, truncation, return_tensors) == ("max_length", True, "np")
+            ids = np.array([[ord(d[0]) if d else 0] * max_length for d in documents])
+            return {"input_ids": ids, "attention_mask": np.ones_like(ids)}
+
+    def fake_compiled(feed):
+        seen_shapes.append(feed["input_ids"].shape)
+        return [np.array([[texts.get(chr(row[0]), 99.0)] for row in feed["input_ids"]])]
+
+    encoder = FakeCrossEncoder({}, 0.0)
+    encoder.tokenizer = FakeTokenizer()
+    monkeypatch.setattr(HybridRetriever, "_compile_openvino_reranker", lambda self, model, device: fake_compiled)
+    docs = [chunk(1, "a"), chunk(2, "b"), chunk(3, "c")]
+    retriever = make_retriever(monkeypatch, docs, docs, [], encoder, rerank_top_k=2, openvino_device="GPU", openvino_max_length=8)
+
+    scores = retriever._relevance("q", docs)
+
+    assert seen_shapes == [(2, 8), (2, 8)]
+    assert scores == pytest.approx([1 / (1 + np.exp(-2.0)), 1 / (1 + np.exp(2.0)), 0.5])
+    assert encoder.predicted_pairs == 0
+
+
+def test_openvino_reranker_requires_max_length(monkeypatch):
+    with pytest.raises(RuntimeError, match="RERANKER_OPENVINO_MAX_LENGTH"):
+        make_retriever(monkeypatch, [], [], [], FakeCrossEncoder({}, 0.0), openvino_device="GPU", openvino_max_length=None)

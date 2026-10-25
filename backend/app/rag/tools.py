@@ -17,6 +17,7 @@ from app.core.limits import MAX_KB_CATALOG_CHARS, MAX_MCP_CATALOG_CHARS, MAX_SKI
 from app.rag.retrievers.hybrid import matches_target_document
 from app.services import agent_skills
 from app.services.structured_data import merge_record_parts
+from app.services.structured_data.render import RENDERED_HEADER_PATTERN
 logger = logging.getLogger(__name__)
 WEB_TOOL_NAMES = ("web_search", "web_fetch")
 SKILL_TOOL_NAMES = ("activate_skill", "read_skill_resource")
@@ -33,7 +34,7 @@ def is_web_fetch_domain_allowed(url: str) -> bool:
 # 知識庫工具描述的快取：每次聊天與工具清單都會用到，重算需要讀出所有文件
 KB_DESCRIPTION_CACHE_SECONDS = 60.0
 _kb_description_lock = threading.Lock()
-_kb_description_cache: Optional[Tuple[float, str]] = None
+_kb_description_cache: Optional[Tuple[float, Tuple[str, List[str]]]] = None
 
 
 def _url_host(url: str) -> str:
@@ -42,6 +43,16 @@ def _url_host(url: str) -> str:
     if parsed.hostname is None:
         return ""
     return f"{parsed.hostname}:{parsed.port}" if parsed.port else parsed.hostname
+
+
+def _without_label_and_link_fields(content: str, label: Optional[str], links: List[str]) -> str:
+    duplicates = set(links) | ({label} if label else set())
+    if not duplicates:
+        return content
+    lines = content.split("\n")
+    if lines and RENDERED_HEADER_PATTERN.match(lines[0]):
+        lines = lines[1:]
+    return "\n".join(line for line in lines if line.partition(": ")[2].strip() not in duplicates)
 
 
 def invalidate_knowledge_base_description() -> None:
@@ -120,6 +131,8 @@ class ResearchToolRegistry:
                     "source": doc.metadata.get("source", "未知文件"),
                     "chunk_index": doc.metadata.get("chunk_index", 0),
                     "score": round(result.score, 4),
+                    "label": doc.metadata.get("label"),
+                    "links": doc.metadata.get("links", []),
                     "content": doc.page_content.strip()
                 })
 
@@ -172,6 +185,7 @@ class ResearchToolRegistry:
     ) -> Dict[str, Any]:
         docs = self.retriever.vector_store.documents
         target_dates = _expand_target_dates(date_range) if date_range else []
+        keywords = [k.strip() for k in re.split(r"[,，、]", (keyword or "").lower()) if k.strip()]
         if len(target_dates) > MAX_TARGET_DATES:
             return {"error": "date_range 包含的日期過多，請縮小範圍", "total_count": 0, "records": []}
         # 所有日期合併成一個正規式，每筆記錄只掃描一次
@@ -214,16 +228,17 @@ class ResearchToolRegistry:
                 if auth_clean not in c_lower:
                     continue
 
-            if keyword:
-                if keyword.lower() not in c_lower:
-                    continue
+            if keywords and not any(k in c_lower for k in keywords):
+                continue
+            label = first.metadata.get("label")
+            links = first.metadata.get("links", [])
             matched_records.append({
                 "chunk_id": first.metadata["chunk_id"],
                 "source": first.metadata.get("source", "未知文件"),
                 "record_index": first.metadata.get("record_index"),
-                "label": first.metadata.get("label"),
-                "links": first.metadata.get("links", []),
-                "content": content.strip()
+                "label": label,
+                "links": links,
+                "content": _without_label_and_link_fields(content, label, links).strip()
             })
         total_count = len(matched_records)
         returned_records = matched_records[:limit]
@@ -369,7 +384,7 @@ class ResearchToolRegistry:
         except Exception as e:
             error_id = log_and_get_error_id(logger, f"web_fetch 失敗 ({url})", e)
             return {"url": url, "error": f"無法存取該網址（錯誤代碼：{error_id}）", "content": ""}
-    def _generate_knowledge_base_description(self) -> str:
+    def _generate_knowledge_base_description(self) -> Tuple[str, List[str]]:
         """根據知識庫收錄的每一份文件內容結構，純動態生成互不相同且專屬之主題描述；
         結果快取 KB_DESCRIPTION_CACHE_SECONDS 秒，同時只有一個執行緒重算"""
         global _kb_description_cache
@@ -380,7 +395,7 @@ class ResearchToolRegistry:
             description = self._build_knowledge_base_description()
             _kb_description_cache = (now, description)
             return description
-    def _build_knowledge_base_description(self) -> str:
+    def _build_knowledge_base_description(self) -> Tuple[str, List[str]]:
         from app.services.document_processor import DocumentProcessor
         doc_items = []
         try:
@@ -411,8 +426,9 @@ class ResearchToolRegistry:
                     desc = DocumentProcessor.generate_document_summary(src, d.page_content)
                     doc_items.append((src, desc))
         if not doc_items:
-            return "檢索已上傳之內部知識庫與專業文件資料。當使用者提供特定網址連結、作者帳號或查詢內部檔案時必須優先調用。"
+            return "檢索已上傳之內部知識庫與專業文件資料。當使用者提供特定網址連結、作者帳號或查詢內部檔案時必須優先調用。", []
         doc_descriptions = []
+        filenames: List[str] = []
         catalog_chars = 0
         for idx, (filename, desc) in enumerate(doc_items, start=1):
             line = f"{idx}. 《{filename}》：{desc}"
@@ -421,17 +437,25 @@ class ResearchToolRegistry:
                 doc_descriptions.append(
                     f"另有 {len(doc_items) - idx + 1} 份文件未列出，仍可直接檢索，或以 target_document 指定檔名。"
                 )
+                filenames = []
                 break
             doc_descriptions.append(line)
+            filenames.append(filename)
         catalog_text = "\n".join(doc_descriptions)
         return (
             "檢索內部知識庫。目前知識庫收錄以下各具不同主題之專屬文件庫，調用時請針對相應主題檢索：\n"
             f"{catalog_text}\n"
             "當使用者提問涉及上述任一文件的專屬領域時，必須優先調用此工具。"
-        )
+        ), filenames
     def get_tool_definitions(self, user_id: Optional[int] = None) -> List[Dict[str, Any]]:
         """回傳 OpenAI / Ollama / Azure OpenAI 相容之 Function Calling 工具規格清單（包含內部預設工具與已啟用的自訂 API Tools）"""
-        kb_desc = self._generate_knowledge_base_description()
+        kb_desc, doc_names = self._generate_knowledge_base_description()
+        target_document_schema: Dict[str, Any] = {
+            "type": "string",
+            "description": "可選：限定只查這份文件，須與 search_knowledge_base 說明中《》內的檔名完全相同；不確定就留空查全庫。"
+        }
+        if doc_names:
+            target_document_schema["enum"] = doc_names
         base_tools = [
             {
                 "type": "function",
@@ -443,12 +467,9 @@ class ResearchToolRegistry:
                         "properties": {
                             "query": {
                                 "type": "string",
-                                "description": "要檢索的繁體中文、英文關鍵字、作者帳號或特定網址"
+                                "description": "要檢索的關鍵字、作者帳號或特定網址；中文一律用繁體字（知識庫是繁體中文，簡體字會查不到）"
                             },
-                            "target_document": {
-                                "type": "string",
-                                "description": "可選：指定要限定搜尋的特定文件名稱（例如 'config.js' 或特定檔案名稱）。若不確定可留空檢索全庫。"
-                            },
+                            "target_document": target_document_schema,
                             "top_k": {
                                 "type": "integer",
                                 "description": "返回的最相關文件片段數量（預設 3，最大 5）",
@@ -463,7 +484,7 @@ class ResearchToolRegistry:
                 "type": "function",
                 "function": {
                     "name": "filter_and_count_records",
-                    "description": "精準統計與條件篩選知識庫中的結構化貼文/記錄/文件。可用於計算特定發布月份/日期（如 '2026年8月'、'2025-10-22'）、特定作者（如 '@example_user'）、特定關鍵字或特定文件的總筆數（精確 count），並可取得符合條件的完整或批次清單。當使用者詢問『總共有幾則』、『統計』、『列出某年某月所有貼文』或『某作者的全部記錄』時【必須優先調用此工具】。",
+                    "description": "精準統計與條件篩選知識庫中的結構化貼文/記錄/文件。可用於計算特定發布月份/日期（如 '2026年8月'、'2025-10-22'）、特定作者（如 '@example_user'）、特定關鍵字或特定文件的總筆數（精確 count），並可取得符合條件的完整或批次清單。當使用者詢問『總共有幾則』、『統計』、『列出某年某月所有貼文』或『某作者的全部記錄』時[必須優先調用此工具]。",
                     "parameters": {
                         "type": "object",
                         "properties": {
@@ -479,10 +500,7 @@ class ResearchToolRegistry:
                                 "type": "string",
                                 "description": "篩選內容中包含的關鍵字"
                             },
-                            "target_document": {
-                                "type": "string",
-                                "description": "限定的文件名稱（例如 'posts-export.json'）"
-                            },
+                            "target_document": target_document_schema,
                             "limit": {
                                 "type": "integer",
                                 "description": "返回清單筆數上限（預設 50，最大 200）",
@@ -558,7 +576,7 @@ class ResearchToolRegistry:
                     "type": "function",
                     "function": {
                         "name": ct.name,
-                        "description": f"【外部自訂 API】{ct.display_name}：{desc}",
+                        "description": f"[外部自訂 API]{ct.display_name}：{desc}",
                         "parameters": p_schema
                     }
                 })
@@ -631,7 +649,7 @@ class ResearchToolRegistry:
                 "type": "function",
                 "function": {
                     "name": tool_name,
-                    "description": "【MCP 協定】" + header + "".join(lines),
+                    "description": "[MCP 協定]" + header + "".join(lines),
                     "parameters": {"type": "object", "properties": properties, "required": required},
                 },
             })

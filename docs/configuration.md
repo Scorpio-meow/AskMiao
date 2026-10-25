@@ -29,7 +29,7 @@
 
 - **來源**：後端從 `backend/.env` 讀取設定（與啟動目錄無關），行程環境變數優先於 `.env`。不認得的鍵會被忽略，所以已移除的舊設定留在 `.env` 中不會出錯。
 - **必填設定沒有預設值**：缺少任一項時，後端在啟動時就以 `Field required` 錯誤結束，並列出缺少的欄位。
-- **數值範圍與格式**：`AGENT_MAX_TURNS ≥ 1`、`CONVERSATION_HISTORY_MESSAGES ≥ 0`、`RRF_K ≥ 1`、`0 ≤ RERANK_RELEVANCE_THRESHOLD ≤ 1`、`ANTHROPIC_MAX_TOKENS ≥ 1`，`LOGIN_MAX_FAILURES_PER_ACCOUNT`、`LOGIN_MAX_FAILURES_PER_ADDRESS`、`LOGIN_FAILURE_WINDOW_SECONDS`、`LOGIN_LOCKOUT_SECONDS` 皆須 ≥ 1，`TOOL_SECRETS_KEY` 必須是有效的 Fernet 金鑰；超出範圍或格式不符同樣無法啟動。
+- **數值範圍與格式**：`CONVERSATION_HISTORY_MESSAGES ≥ 0`、`RRF_K ≥ 1`、`0 ≤ RERANK_RELEVANCE_THRESHOLD ≤ 1`、`ANTHROPIC_MAX_TOKENS ≥ 1`，`LOGIN_MAX_FAILURES_PER_ACCOUNT`、`LOGIN_MAX_FAILURES_PER_ADDRESS`、`LOGIN_FAILURE_WINDOW_SECONDS`、`LOGIN_LOCKOUT_SECONDS` 皆須 ≥ 1，`TOOL_SECRETS_KEY` 必須是有效的 Fernet 金鑰；超出範圍或格式不符同樣無法啟動。
 - **布林值**：`true` / `false`、`1` / `0`、`yes` / `no` 皆可。
 - **相對路徑**：`DATA_DIR`、`UPLOAD_DIR`、`FAISS_INDEX_PATH`、`BM25_INDEX_DIR`、`METADATA_PATH`、`HF_HOME`、`HF_HUB_CACHE`、`SENTENCE_TRANSFORMERS_HOME`、`DOMAIN_PROFILE_PATH`、`JIEBA_DICTIONARY`、`SKILLS_DIR` 的相對路徑一律以 `backend/` 為基準。`DATABASE_URL` 不在此列，SQLite 的相對路徑依啟動目錄而定。
 - **程式預設值與範本值**：下表的「程式預設值」是 `.env` 未設定時的值；「範本值」是 `backend/.env.example` 建議的值，兩者不同時以你的 `.env` 為準。
@@ -52,7 +52,6 @@
 | `RELOAD` | `false` | 程式碼變更時自動重新載入，只在開發時設為 `true` |
 | `ENABLE_API_DOCS` | `false` | 是否提供 `/docs`、`/redoc` 與 `/openapi.json` 互動式文件 |
 | `ENABLE_WEB_SEARCH` | `true` | 是否提供聯網工具 |
-| `AGENT_MAX_TURNS` | `5` | 單次提問的工具呼叫輪數上限 |
 | `CONVERSATION_HISTORY_MESSAGES` | `6` | 帶入的前文訊息數 |
 | `WEB_FETCH_ALLOWED_DOMAINS` | `*` | `web_fetch` 網域白名單 |
 | `BLOCK_WEB_TOOLS_AFTER_KB` | `true` | 讀過知識庫後停用聯網工具 |
@@ -135,7 +134,6 @@ python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().d
 | 變數 | 程式預設值 | 範本值 | 說明 |
 |---|---|---|---|
 | `ENABLE_WEB_SEARCH` | —（必填） | `true` | 同時控制 `web_search` 與 `web_fetch`；`false` 時兩者不會出現在工具清單中，呼叫也會被拒絕 |
-| `AGENT_MAX_TURNS` | —（必填，≥ 1） | `5` | 單次提問最多呼叫模型幾輪（每輪可同時呼叫多個工具）；用完仍未得到答案時，改以串流生成最終答案 |
 | `CONVERSATION_HISTORY_MESSAGES` | —（必填，≥ 0） | `6` | 提問時從資料庫帶入的前文訊息數（使用者與助理訊息合計，前文一律從使用者訊息開始）；`0` 表示不帶前文 |
 | `WEB_FETCH_ALLOWED_DOMAINS` | —（必填） | `*` | `web_fetch` 可讀取的網域，含子網域，逗號分隔；明確寫 `*` 才表示不限制 |
 | `BLOCK_WEB_TOOLS_AFTER_KB` | —（必填） | `true` | 同一次提問中，知識庫工具回傳過內容後，拒絕之後的 `web_search` 與 `web_fetch` |
@@ -180,6 +178,8 @@ python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().d
 |---|---|---|---|
 | `FORCE_CPU` | `true` | `true` | 即使有 CUDA 也使用 CPU；CPU 模式的 PyTorch 執行緒數為 min(16, CPU 核心數) |
 | `USE_FP16_QUANTIZATION` | `false` | `false` | 只在 CUDA 上生效：嵌入與重排模型改用 FP16 |
+| `RERANKER_OPENVINO_DEVICE` | 空 | 註解範例 | 重排改用 OpenVINO 執行的裝置（`GPU`、`CPU`，Intel 內顯填 `GPU`）；留空使用 PyTorch。模型以固定形狀 `RERANK_TOP_K` × `RERANKER_OPENVINO_MAX_LENGTH` 編譯，首次啟動轉換約 1 分鐘，結果快取在 `DATA_DIR/openvino_cache` |
+| `RERANKER_OPENVINO_MAX_LENGTH` | 空 | 註解範例 | 設定 `RERANKER_OPENVINO_DEVICE` 時必填：每組「查詢 + 片段」的固定 token 長度，超過會截斷 |
 | `GPU_BATCH_SIZE` | `128` | `128` | GPU 嵌入批次大小 |
 | `CPU_BATCH_SIZE` | `64` | `32` | CPU 嵌入批次大小 |
 | `USE_FAISS_GPU` | `false` | `false` | FAISS 使用 GPU（需安裝 `faiss-gpu`，初始化失敗時退回 CPU） |

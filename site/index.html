@@ -1096,7 +1096,7 @@ X-Api-Key: <b class="k">demo-key-41c9</b></pre>
               <li>巢狀欄位攤平成點路徑，不再被丟掉。</li>
               <li>過長的記錄以整行切段並重複標頭，統計時同一筆只算一次。</li>
             </ul>
-            <pre class="code code--tight" aria-label="結構化記錄切段範例"><span class="k">【data 記錄 3】</span>ORD-1042（2/3）
+            <pre class="code code--tight" aria-label="結構化記錄切段範例"><span class="k">[data 記錄 3]</span>ORD-1042（2/3）
 contact.email: lin@example.com
 items[0].name: 企業版年約</pre>
           </article>
@@ -1271,7 +1271,7 @@ items[0].name: 企業版年約</pre>
                 <use href="#i-brain"></use>
               </svg></div>
             <h3>Agentic RAG 自主研究</h3>
-            <p>ReAct Agent 依問題自行決定查知識庫、統計結構化記錄、上網搜尋或深讀網頁，最多 AGENT_MAX_TURNS 輪。每一步的參數、耗時與輸出都記在可折疊的研究歷程裡。</p>
+            <p>ReAct Agent 依問題自行決定查知識庫、統計結構化記錄、上網搜尋或深讀網頁，直到資料足夠為止。每一步的參數、耗時與輸出都記在可折疊的研究歷程裡。</p>
             <div class="cell__media">
               <picture data-theme-pic>
                 <source media="(prefers-color-scheme: dark)" srcset="assets/screens/feature-trace-dark.webp">
@@ -1416,8 +1416,7 @@ AZURE_OPENAI_DEPLOYMENT=gpt-6-sol,gpt-6-luna</pre>
             </article>
             <article class="step reveal" data-step="1">
               <h3>Agent 自主決策</h3>
-              <p>ResearchAgent 以 ReAct 模式決定下一步要用哪個工具，工具結果包進 &lt;untrusted_tool_result&gt; 後才回饋給模型，最多 AGENT_MAX_TURNS
-                輪。標記為需要核准的工具會先暫停，等發問者按下核准才執行。模型不再呼叫工具時，那一次的內容就是最終答案，不會重新生成。</p>
+              <p>ResearchAgent 以 ReAct 模式決定下一步要用哪個工具，工具結果包進 &lt;untrusted_tool_result&gt; 後才回饋給模型，直到模型不再呼叫工具。標記為需要核准的工具會先暫停，等發問者按下核准才執行。模型不再呼叫工具時，那一次的內容就是最終答案，不會重新生成。</p>
               <div class="chips" aria-label="可用工具">
                 <span class="chip">search_knowledge_base</span>
                 <span class="chip">filter_and_count_records</span>
@@ -2291,7 +2290,6 @@ AZURE_OPENAI_DEPLOYMENT=gpt-6-sol,gpt-6-luna</pre>
 <span data-cmd>ENABLE_API_DOCS=false</span>
 <span class="c"># Agent 與聯網</span>
 <span data-cmd>ENABLE_WEB_SEARCH=true</span>
-<span data-cmd>AGENT_MAX_TURNS=5</span>
 <span data-cmd>CONVERSATION_HISTORY_MESSAGES=6</span>
 <span data-cmd>WEB_FETCH_ALLOWED_DOMAINS=*</span>
 <span data-cmd>BLOCK_WEB_TOOLS_AFTER_KB=true</span>

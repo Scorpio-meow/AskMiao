@@ -6,18 +6,18 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter
 from .models import StructuredRecord
 
 RECORD_SEPARATOR = "\n\n---\n\n"
-CONTEXT_HEADER = "【上下文】"
-RENDERED_HEADER_PATTERN = re.compile(r"【(?:上下文|(?:[^】\n]+ )?(?:記錄 \d+|第 \d+ 列))】")
+CONTEXT_HEADER = "[上下文]"
+RENDERED_HEADER_PATTERN = re.compile(r"[\[【](?:上下文|(?:[^\]】\n]+ )?(?:記錄 \d+|第 \d+ 列))[\]】]")
 PART_SUFFIX_PATTERN = re.compile(r"（\d+/\d+）$")
 PIECE_SEPARATORS = ["\n\n", "\n", "。", "！", "？", "；", "：", "，", ". ", "! ", "? ", ", ", " ", ""]
 
 
 def array_header(position: int, group: Optional[str]) -> str:
-    return f"【{group} 記錄 {position}】" if group else f"【記錄 {position}】"
+    return f"[{group} 記錄 {position}]" if group else f"[記錄 {position}]"
 
 
 def row_header(row: int, sheet: Optional[str]) -> str:
-    return f"【{sheet} 第 {row} 列】" if sheet else f"【第 {row} 列】"
+    return f"[{sheet} 第 {row} 列]" if sheet else f"[第 {row} 列]"
 
 
 def field_line(path: Optional[str], value: str) -> str:

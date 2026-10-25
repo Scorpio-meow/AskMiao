@@ -360,7 +360,11 @@
     "base64",
     "style",
     "imagedata",
-    "svgdata"
+    "svgdata",
+    "savedat",
+    "embeddablecheckedat",
+    "expiredcheckedat",
+    "embeddable"
   ],
   "summary_fallback": {
     "chat_member_noise_words": [

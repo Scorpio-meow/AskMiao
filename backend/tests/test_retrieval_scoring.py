@@ -52,6 +52,8 @@ def reranker():
         rerank_weight=0.85,
         relevance_threshold=0.15,
         use_fp16=False,
+        openvino_device=None,
+        openvino_max_length=None,
     )
 
 

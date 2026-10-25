@@ -71,7 +71,7 @@ def approval_agent(monkeypatch):
 
 async def run_with_decision(agent, decision, user_id=5):
     events = []
-    async for event in agent.stream_research("幫我下單", max_turns=3, approval_user_id=user_id):
+    async for event in agent.stream_research("幫我下單", approval_user_id=user_id):
         events.append(event)
         if event["event"] == "approval_required" and decision is not None:
             assert approval_broker.resolve(event["data"]["approval_id"], user_id, decision)
@@ -94,7 +94,7 @@ async def test_agent_waits_for_the_users_decision(monkeypatch, decision):
 @pytest.mark.anyio
 async def test_agent_without_an_approver_never_runs_the_tool(monkeypatch):
     agent, executed = approval_agent(monkeypatch)
-    events = await collect(agent.stream_research("幫我下單", max_turns=3))
+    events = await collect(agent.stream_research("幫我下單"))
     assert executed == []
     assert not any(e["event"] == "approval_required" for e in events)
 
@@ -102,7 +102,7 @@ async def test_agent_without_an_approver_never_runs_the_tool(monkeypatch):
 @pytest.mark.anyio
 async def test_disconnect_while_waiting_discards_the_approval(monkeypatch):
     agent, executed = approval_agent(monkeypatch)
-    stream = agent.stream_research("幫我下單", max_turns=3, approval_user_id=5)
+    stream = agent.stream_research("幫我下單", approval_user_id=5)
     approval_id = None
     async for event in stream:
         if event["event"] == "approval_required":

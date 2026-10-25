@@ -110,6 +110,7 @@
 - `DocumentProcessor.split_structured_records`、`_clean_structured_data`、`_extract_from_code_or_data`，以及 `【設定模組: key】` 片段與 `json_key`、`tags` metadata。
 - 沒有任何呼叫端的程式碼：`security_monitor.py`、`audit_logger.py`、`batch_processor.py`、`models/payloads.py`、`healthcheck.py`（檢查不存在的 `/api/admin/stats`）、`intrusion_detection.py`（速率限制回 `429` 時改為只寫警告日誌）、`input_validator.py`（檔名檢查與 `documents.py` 重複，其中的 SSRF 檢查只有測試使用）、`ResearchAgent.run_research`、`RAGManager.reset_instance`、`redis_client` 的相容函式、`security_logging` 未使用的函式，以及前端的 `pages/Chat.jsx`（空檔）、`authService.refreshAccessToken`、`validateToken`、`chatService.sendMessage` 與 `networkMonitor.pingServer`。
 - 設定 `ADMIN_API_KEY`（必填卻沒有任何路由使用）、`ENABLE_BATCH_ACCUMULATION`、`BATCH_ACCUMULATOR_SIZE`、`BASE_URL`；留在 `.env` 中會被忽略。
+- Agent 的工具輪數上限與設定 `AGENT_MAX_TURNS`：研究迴圈改為直到模型不再呼叫工具才結束，留在 `.env` 中會被忽略。模型若一直呼叫工具，該次提問不會自行結束。
 - 後端直接依賴 `passlib`、`websockets`、`requests`（後兩者仍是其他套件的間接依賴）。
 - MCP 工具結果中與 `content` 重複的 `raw_result`。
 - `init.sql` 與遷移腳本中已無對應功能的 `custom_agents` 資料表（既有資料庫中的資料表不會被刪除）。

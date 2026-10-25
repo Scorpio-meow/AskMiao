@@ -15,7 +15,7 @@ CITATION_SEPARATOR = re.compile(r"\s*[,，、]\s*")
 SNIPPET_LENGTH = 200
 # 從來源文字抽出完整網址記號；網址結尾常接的標點與全形文字不屬於網址
 URL_TOKEN_PATTERN = re.compile(r"https?://[^\s<>\"'`]+", re.IGNORECASE)
-URL_TRAILING_PUNCTUATION = ".,;:!?)]}'\"，。、；：！？）」』】"
+URL_TRAILING_PUNCTUATION = ".,;:!?)]}'\"，。、；：！？）」』]"
 
 
 def canonical_url(url: str) -> Optional[str]:
@@ -48,6 +48,56 @@ def extract_url_tokens(text: str) -> Set[str]:
             if normalized:
                 tokens.add(normalized)
     return tokens
+
+
+def _record_link(item: Dict[str, Any]) -> Dict[str, Any]:
+    detail: Dict[str, Any] = {}
+    url = next((u for u in map(canonical_url, item.get("links") or []) if u), None)
+    if url:
+        detail["url"] = url
+    if item.get("label"):
+        detail["label"] = item["label"]
+    return detail
+
+
+TOOL_RESULT_OPEN = "<untrusted_tool_result"
+TOOL_RESULT_CLOSE = "</untrusted_tool_result"
+TOOL_RESULT_BLOCK_PATTERN = re.compile(r"<untrusted_tool_result\b[^>]*>.*?</untrusted_tool_result\b[^>]*>", re.DOTALL)
+TOOL_RESULT_TAG_PATTERN = re.compile(r"</?untrusted_tool_result\b[^>]*>")
+TOOL_RESULT_OPEN_TAG_PATTERN = re.compile(r"<untrusted_tool_result\b[^>]*>")
+
+
+def strip_tool_result_blocks(text: str) -> str:
+    return TOOL_RESULT_TAG_PATTERN.sub("", TOOL_RESULT_BLOCK_PATTERN.sub("", text))
+
+
+def _pending_start(text: str) -> int:
+    cut = len(text)
+    last_lt = text.rfind("<")
+    if last_lt >= 0 and ">" not in text[last_lt:]:
+        tail = text[last_lt:]
+        if any(tag.startswith(tail) or tail.startswith(tag) for tag in (TOOL_RESULT_OPEN, TOOL_RESULT_CLOSE)):
+            cut = last_lt
+    unclosed = [m for m in TOOL_RESULT_OPEN_TAG_PATTERN.finditer(text, 0, cut) if TOOL_RESULT_CLOSE not in text[m.end():cut]]
+    return unclosed[0].start() if unclosed else cut
+
+
+class ToolResultFilter:
+    def __init__(self) -> None:
+        self._raw = ""
+        self._emitted = 0
+
+    def feed(self, chunk: str) -> str:
+        self._raw += chunk
+        return self._emit(strip_tool_result_blocks(self._raw[:_pending_start(self._raw)]))
+
+    def flush(self) -> str:
+        return self._emit(strip_tool_result_blocks(self._raw))
+
+    def _emit(self, clean: str) -> str:
+        delta = clean[self._emitted:]
+        self._emitted = max(self._emitted, len(clean))
+        return delta
 
 
 def strip_citations(text: str) -> str:
@@ -106,8 +156,9 @@ class ResearchSession:
                     "chunk": doc.get("chunk_index"),
                     "score": doc.get("score"),
                     "snippet": content[:SNIPPET_LENGTH],
+                    **_record_link(doc),
                 })
-                self._add_url_source(content)
+                self._add_url_source(content, *(doc.get("links") or []))
         elif name == "filter_and_count_records":
             for record in output.get("records") or []:
                 self.kb_content_returned = True
@@ -115,6 +166,7 @@ class ResearchSession:
                 record["citation"] = self._cite(f"chunk:{record['chunk_id']}", {
                     "source": record.get("source"),
                     "snippet": content[:SNIPPET_LENGTH],
+                    **_record_link(record),
                 })
                 self._add_url_source(content, *(record.get("links") or []))
         elif name == "web_search":

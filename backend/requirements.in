@@ -22,6 +22,7 @@ sentence-transformers
 huggingface_hub[hf_xet]
 numpy
 faiss-cpu
+openvino
 whoosh
 jieba
 filelock

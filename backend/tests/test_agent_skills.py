@@ -300,10 +300,10 @@ async def test_slash_command_activates_skill_before_model_call(skills_dir):
 
     agent = ResearchAgent(tool_registry=ResearchToolRegistry())
     with patch("app.rag.agent.chat_completion", fake_chat_completion):
-        events = [e async for e in agent.stream_research("/pdf-processing 幫我整理這份 PDF", max_turns=2)]
+        events = [e async for e in agent.stream_research("/pdf-processing 幫我整理這份 PDF")]
 
     system = captured["messages"][0]["content"]
-    assert "【技能規則】" in system
+    assert "[技能規則]" in system
     assert '<skill_content name="pdf-processing">' in system
     assert captured["messages"][-1]["content"] == "幫我整理這份 PDF"
     done = events[-1]["data"]
@@ -321,7 +321,7 @@ async def test_unknown_slash_command_is_left_as_is(skills_dir):
 
     agent = ResearchAgent(tool_registry=ResearchToolRegistry())
     with patch("app.rag.agent.chat_completion", fake_chat_completion):
-        [e async for e in agent.stream_research("/unknown 你好", max_turns=2)]
+        [e async for e in agent.stream_research("/unknown 你好")]
 
-    assert "【技能規則】" not in captured["messages"][0]["content"]
+    assert "[技能規則]" not in captured["messages"][0]["content"]
     assert captured["messages"][-1]["content"] == "/unknown 你好"

@@ -114,6 +114,7 @@ def index_dir(tmp_path, monkeypatch):
     monkeypatch.setattr(settings, "FINAL_K", 8)
     monkeypatch.setattr(settings, "RERANK_RELEVANCE_THRESHOLD", 0.5)
     monkeypatch.setattr(settings, "JIEBA_DICTIONARY", None)
+    monkeypatch.setattr(settings, "RERANKER_OPENVINO_DEVICE", None)
     monkeypatch.setattr(vector_store_module, "SentenceTransformer", FakeEmbedder)
     monkeypatch.setattr(hybrid_module, "CrossEncoder", ConstantCrossEncoder)
     return tmp_path
@@ -251,7 +252,7 @@ async def test_rebuild_index_reextracts_structured_files_into_record_chunks(rag,
 
     assert result["records_detected"] == 2
     assert result["missing_source_files"] == []
-    assert db_documents[0].content.startswith("【記錄 1】加班規定\ntitle: 加班規定")
+    assert db_documents[0].content.startswith("[記錄 1]加班規定\ntitle: 加班規定")
     assert len(summaries[0].records) == 2
     metadata = sorted((doc.metadata["record_index"], doc.metadata["label"]) for doc in rag.documents)
     assert metadata == [(1, "加班規定"), (2, "請假規定")]

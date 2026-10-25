@@ -81,7 +81,6 @@ class RAGPipeline:
             conversation_history=conversation_history,
             reasoning_effort=reasoning_effort,
             attachments=attachments,
-            max_turns=settings.AGENT_MAX_TURNS,
             approval_user_id=approval_user_id
         ):
             yield event_item

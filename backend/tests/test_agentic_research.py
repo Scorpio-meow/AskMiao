@@ -46,8 +46,7 @@ async def test_research_agent_run():
     agent = ResearchAgent(tool_registry=registry)
     result = await final_result(agent.stream_research(
         query="請幫我查詢特休規定",
-        model_name="gpt-5.6-luna",
-        max_turns=2
+        model_name="gpt-5.6-luna"
     ))
     assert "answer" in result
     assert "sources" in result
