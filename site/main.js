@@ -908,4 +908,227 @@
       }, 1800);
     });
   });
+  const SOUND_KEY = 'askmiao-site-sound';
+  const MUSIC_LEVEL = 0.3;
+  const SFX_LEVEL = 0.38;
+  const SFX_SPRITE = {
+    tap: [0, 0.32], hover: [0.37, 0.22], 'toggle-on': [0.64, 0.55], 'toggle-off': [1.24, 0.55],
+    tab: [1.84, 0.42], open: [2.31, 0.6], close: [2.96, 0.5], success: [3.51, 0.9],
+    cite: [4.46, 1.1], error: [5.61, 0.6], tick: [6.26, 0.12], approve: [6.43, 0.9],
+  };
+  const soundToggle = document.querySelector('[data-sound-toggle]');
+  const sound = (() => {
+    const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+    let enabled = (() => {
+      try { return localStorage.getItem(SOUND_KEY) !== 'off'; } catch { return true; }
+    })();
+    let ctx = null;
+    let musicGain = null;
+    let sfxGain = null;
+    let musicBuffer = null;
+    let sfxBuffer = null;
+    let musicSource = null;
+    let loading = null;
+    let ducked = false;
+    let stopTimer = 0;
+    const format = new Audio().canPlayType('audio/webm; codecs="opus"') ? 'webm' : 'm4a';
+    const load = (name) => fetch(`assets/audio/${name}.${format}`)
+      .then((response) => {
+        if (!response.ok) throw new Error(`${name}: ${response.status}`);
+        return response.arrayBuffer();
+      })
+      .then((data) => ctx.decodeAudioData(data));
+    const ensure = () => {
+      if (!AudioContextClass) return Promise.resolve();
+      if (!ctx) {
+        ctx = new AudioContextClass();
+        musicGain = ctx.createGain();
+        musicGain.gain.value = 0;
+        musicGain.connect(ctx.destination);
+        sfxGain = ctx.createGain();
+        sfxGain.gain.value = SFX_LEVEL;
+        sfxGain.connect(ctx.destination);
+        loading = Promise.all([
+          load('sfx').then((buffer) => { sfxBuffer = buffer; }),
+          load('bgm-loop').then((buffer) => { musicBuffer = buffer; }),
+        ]).catch((error) => console.warn('AskMiao 音訊載入失敗', error));
+      }
+      if (ctx.state === 'suspended' && !document.hidden) ctx.resume();
+      return loading;
+    };
+    const target = () => (enabled && !ducked && !document.hidden ? MUSIC_LEVEL : 0);
+    const reflect = () => {
+      if (!soundToggle) return;
+      soundToggle.setAttribute('aria-pressed', String(enabled));
+      soundToggle.setAttribute('aria-label', enabled ? '關閉背景音樂與音效' : '開啟背景音樂與音效');
+      soundToggle.dataset.playing = String(Boolean(musicSource) && target() > 0);
+    };
+    const updateMusic = (seconds) => {
+      if (!ctx || !musicBuffer) { reflect(); return; }
+      const level = target();
+      clearTimeout(stopTimer);
+      if (level > 0 && !musicSource) {
+        musicSource = ctx.createBufferSource();
+        musicSource.buffer = musicBuffer;
+        musicSource.loop = true;
+        musicSource.connect(musicGain);
+        musicSource.start();
+      }
+      const now = ctx.currentTime;
+      musicGain.gain.cancelScheduledValues(now);
+      musicGain.gain.setValueAtTime(musicGain.gain.value, now);
+      musicGain.gain.linearRampToValueAtTime(level, now + seconds);
+      if (level === 0 && musicSource && !enabled) {
+        stopTimer = setTimeout(() => {
+          musicSource?.stop();
+          musicSource = null;
+          reflect();
+        }, seconds * 1000 + 100);
+      }
+      reflect();
+    };
+    const play = (name) => {
+      if (!enabled || !ctx || !sfxBuffer || !SFX_SPRITE[name] || ctx.state !== 'running') return;
+      const [offset, duration] = SFX_SPRITE[name];
+      const source = ctx.createBufferSource();
+      source.buffer = sfxBuffer;
+      source.connect(sfxGain);
+      source.start(0, offset, duration);
+    };
+    const unlock = () => {
+      if (!enabled) return;
+      ensure().then(() => updateMusic(2.4));
+    };
+    ['pointerdown', 'keydown'].forEach((type) => document.addEventListener(type, unlock, { capture: true, passive: true }));
+    document.addEventListener('visibilitychange', () => {
+      if (!ctx) return;
+      if (document.hidden) {
+        updateMusic(0.3);
+        setTimeout(() => { if (document.hidden) ctx.suspend(); }, 400);
+      } else if (enabled) {
+        ctx.resume().then(() => updateMusic(1.2));
+      }
+    });
+    soundToggle?.addEventListener('click', () => {
+      if (enabled) {
+        play('toggle-off');
+        enabled = false;
+        try { localStorage.setItem(SOUND_KEY, 'off'); } catch { }
+        updateMusic(0.6);
+      } else {
+        enabled = true;
+        try { localStorage.setItem(SOUND_KEY, 'on'); } catch { }
+        ensure().then(() => {
+          play('toggle-on');
+          updateMusic(1.6);
+        });
+      }
+    });
+    reflect();
+    return {
+      play,
+      duck(on) {
+        ducked = on;
+        updateMusic(on ? 0.8 : 2);
+      },
+    };
+  })();
+  const SOUND_RULES = [
+    ['[data-sound-toggle], [data-film-play]', null],
+    ['[data-mascot]', 'cite'],
+    ['[data-theme-toggle]', () => (effectiveTheme() === 'dark' ? 'toggle-off' : 'toggle-on')],
+    ['[data-approval-decide="approve"]', 'approve'],
+    ['[data-approval-decide]', 'error'],
+    ['.cite-mark, .cite, [data-cite], [data-cite-badge], [data-ledger]', 'cite'],
+    ['[role="tab"], .seg button, [data-who], [data-method], [data-platform-vars], [data-url-example]', 'tab'],
+    ['[data-nav-toggle]', () => (navMenu?.dataset.open === 'true' ? 'open' : 'close')],
+    ['summary', (element) => (element.parentElement?.open ? 'close' : 'open')],
+    ['[data-copy]', 'success'],
+    ['input[type="checkbox"]', (element) => (element.checked ? 'toggle-on' : 'toggle-off')],
+    ['a[href], button', 'tap'],
+  ];
+  document.addEventListener('click', (event) => {
+    if (!(event.target instanceof Element)) return;
+    for (const [selector, effect] of SOUND_RULES) {
+      const element = event.target.closest(selector);
+      if (!element) continue;
+      const name = typeof effect === 'function' ? effect(element) : effect;
+      if (name) sound.play(name);
+      return;
+    }
+  });
+  let lastTick = 0;
+  document.addEventListener('input', (event) => {
+    if (!(event.target instanceof HTMLInputElement) || event.target.type !== 'range') return;
+    const now = performance.now();
+    if (now - lastTick < 70) return;
+    lastTick = now;
+    sound.play('tick');
+  });
+  let lastHover = 0;
+  document.addEventListener('pointerover', (event) => {
+    if (!finePointer.matches || !(event.target instanceof Element)) return;
+    const element = event.target.closest('.btn--primary, .nav__links a, .film__play, .mascot__btn, .release-pill');
+    if (!element || element.contains(event.relatedTarget)) return;
+    const now = performance.now();
+    if (now - lastHover < 120) return;
+    lastHover = now;
+    sound.play('hover');
+  });
+  const film = document.querySelector('[data-film]');
+  const filmPlay = document.querySelector('[data-film-play]');
+  if (film) {
+    const frame = film.closest('.film__frame');
+    const audible = () => !film.paused && !film.muted && film.volume > 0;
+    const sync = () => {
+      sound.duck(audible());
+      frame?.toggleAttribute('data-paused', !film.paused);
+    };
+    if (filmPlay) film.controls = false;
+    film.addEventListener('play', () => {
+      if (filmPlay) filmPlay.hidden = true;
+      film.controls = true;
+      sync();
+    });
+    ['pause', 'volumechange'].forEach((type) => film.addEventListener(type, sync));
+    film.addEventListener('ended', () => {
+      if (filmPlay) {
+        filmPlay.hidden = false;
+        film.controls = false;
+      }
+      sync();
+    });
+    filmPlay?.addEventListener('click', () => {
+      filmPlay.hidden = true;
+      film.play().catch(() => { filmPlay.hidden = false; });
+      film.focus();
+    });
+  }
+  const mascot = document.querySelector('.mascot');
+  const mascotButton = document.querySelector('[data-mascot]');
+  const mascotBubble = document.querySelector('[data-mascot-bubble]');
+  if (mascot && mascotButton && mascotBubble) {
+    const lines = ['喵～每句結論都標上 [n]', '點開 [n] 就對得回原文', '會改東西的工具，先問過你', '輸入 / 就能叫出技能', '我是天蠍喵喵，紅色那顆星是我的尾巴'];
+    let index = 0;
+    let hideTimer = 0;
+    mascotButton.addEventListener('click', () => {
+      mascotBubble.textContent = lines[index];
+      index = (index + 1) % lines.length;
+      mascot.removeAttribute('data-hop');
+      void mascot.offsetWidth;
+      mascot.setAttribute('data-hop', '');
+      mascot.setAttribute('data-talking', '');
+      clearTimeout(hideTimer);
+      hideTimer = setTimeout(() => mascot.removeAttribute('data-talking'), 2800);
+    });
+    mascotButton.addEventListener('animationend', () => mascot.removeAttribute('data-hop'));
+  }
+  if ('IntersectionObserver' in window) {
+    const pausable = [document.querySelector('.hero__sky'), document.querySelector('.film__frame')].filter(Boolean);
+    const offscreen = new IntersectionObserver((entries) => entries.forEach((entry) => {
+      if (entry.target.matches('.film__frame') && film && !film.paused) return;
+      entry.target.toggleAttribute('data-paused', !entry.isIntersecting);
+    }));
+    pausable.forEach((element) => offscreen.observe(element));
+  }
 })();

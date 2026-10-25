@@ -60,6 +60,9 @@
 - 自訂 API 工具支援 OAuth2 client credentials（`auth_type` 為 `oauth2_client_credentials`）：向 `token_url` 取得存取權杖並快取到到期前 30 秒，API 回傳 `401` 時重新取得權杖並重試一次；取不到權杖時回傳 `502` 與錯誤代碼。
 - OpenAPI 匯入會讀取規格的 `securitySchemes`（3.x）或 `securityDefinitions`（2.0）與 `security`，替每個端點填入對應的 `auth_type` 與 `auth_config` 欄位（API Key 的名稱與位置、Basic、Bearer、OAuth2 client credentials 的 `token_url` 與 scope），實際的憑證在匯入後編輯工具填入。
 - 自訂 API 工具新增 `body_content_type`：請求主體可用 `application/json`、`application/x-www-form-urlencoded` 或 `multipart/form-data`（不含檔案）送出，OpenAPI 匯入依規格選擇；`custom_api_tools` 新增此欄位（啟動時自動補上，既有工具為 `application/json`）。
+- 介紹頁新增 75 秒介紹影片（`site/assets/film/`）與文字稿：產品畫面取自實際執行的 AskMiao，畫面中的回答由本機 Ollama 模型產生；影片播放時背景音樂自動讓位。
+- 介紹頁加入背景音樂與互動音效：導覽列的聲音開關預設開啟並以 `localStorage` 記住選擇，瀏覽器會擋自動播放，所以在第一次點擊或按鍵後才開始播放，分頁切到背景時暫停。音樂與音效以 CC0 採樣原創編曲，提供 Opus 與 AAC 兩種格式（`site/assets/audio/`）。
+- 介紹頁新增「下一版預告」區段，介紹 Agent Skills、MCP 跟上 2025-06-18 規格、OpenAPI 匯入帶上認證、結構化資料重新解析與四項安全修正，並提醒升級前要補的設定。
 
 ### 變更 (Changed)
 
@@ -77,6 +80,7 @@
 - 密碼雜湊改用 `argon2-cffi` 的 `PasswordHasher`，雜湊格式與參數不變。
 - 前端換發存取權杖改為同一時間只送一個請求，axios 與聊天送出共用；權杖已過期時直接換發，不再先清除登入狀態。
 - 「AI 工具」頁拆成 `frontend/src/pages/AiTools/`：工具清單留在 `index.jsx`，OpenAPI 匯入、自訂 API 工具表單與測試、MCP 伺服器表單與 MCP 工具測試五個對話框各自一個元件，只在開啟時掛載；表單與 API 資料的轉換移到 `forms.js` 並補上測試。畫面與行為不變。
+- 介紹頁 Hero 加上天蠍座星圖（星點依序亮起並標上 [1]～[3]，心宿二呼應吉祥物的紅色尾巴）與可點擊的吉祥物；動態效果尊重 `prefers-reduced-motion`，離開畫面時暫停。可上傳格式的數字更新為 28 種。
 
 ### 修正 (Fixed)
 
