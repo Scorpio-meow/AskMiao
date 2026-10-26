@@ -2,7 +2,7 @@
 
 [繁體中文](api.md) | [English](api_en.md)
 
-> 本文件說明 AskMiao 後端 **5.0.0** 的 REST 與 SSE 串流端點，內容依 `backend/app/api/` 的實際路由撰寫。設定 `ENABLE_API_DOCS=true` 時，後端另外在 `http://localhost:8001/docs`（Swagger UI）與 `http://localhost:8001/redoc` 提供互動測試，OpenAPI 規格位於 `/openapi.json`；這三個路徑不需要登入且會列出所有端點與參數，對外服務時請保持 `ENABLE_API_DOCS=false`（範本值），此時三者一律回傳 `404`。
+> 本文件說明 AskMiao 後端 **6.0.0** 的 REST 與 SSE 串流端點，內容依 `backend/app/api/` 的實際路由撰寫。設定 `ENABLE_API_DOCS=true` 時，後端另外在 `http://localhost:8001/docs`（Swagger UI）與 `http://localhost:8001/redoc` 提供互動測試，OpenAPI 規格位於 `/openapi.json`；這三個路徑不需要登入且會列出所有端點與參數，對外服務時請保持 `ENABLE_API_DOCS=false`（範本值），此時三者一律回傳 `404`。
 
 ## 目錄
 
@@ -292,7 +292,7 @@
 | `content` | string | 是 | — | 使用者的問題，最多 20,000 字元；以 `/技能名稱` 開頭且該技能已啟用時，先載入該技能並去掉前綴，研究過程記錄一個 `activate_skill` 步驟 |
 | `conversation_id` | integer | 否 | `null` | 對話 ID；留空、不存在或不屬於自己時會建立新對話 |
 | `model_name` | string | 否 | 預設模型 | 要使用的模型，必須在 [可用模型清單](configuration.md#模型清單) 內或等於 `MODEL_NAME`，否則回傳 `400` `不支援的模型`；供應商依名稱自動路由 |
-| `reasoning_effort` | string | 否 | `medium` | 推理程度，只傳給 OpenAI 與 Azure OpenAI，見下方說明 |
+| `reasoning_effort` | string | 否 | `medium` | 推理程度，依供應商對應後傳給模型，見下方說明 |
 | `attachments` | array | 否 | `[]` | 附件，最多 5 個，見下表 |
 
 `attachments[]` 欄位：
@@ -314,7 +314,7 @@
 | `422` | 欄位驗證失敗：訊息過長、附件過多或過大、`data_url` 不是 base64 `data:` URL 等 |
 | `429` | 這位使用者已有 2 個回答正在串流 |
 
-**`reasoning_effort` 的處理**：前端提供 `none`、`low`、`medium`、`high`、`xhigh` 五檔；後端接受 `none`、`minimal`、`low`、`medium`、`high`、`xhigh`、`max`，其他值不會傳給模型。名稱含 `gpt-5` 的模型在帶工具呼叫時一律改送 `none`。
+**`reasoning_effort` 的處理**：前端提供 `none`、`low`、`medium`、`high`、`xhigh`、`max` 六檔；後端接受 `none`、`minimal`、`low`、`medium`、`high`、`xhigh`、`max`，其他值不會傳給模型。各供應商的對應：OpenAI 與 Microsoft Foundry 的 GPT 模型直接傳送（`gpt-6*` 與 Foundry 上的 GPT 走 Responses API，`none` 只有 `luna` 系列接受，其餘改送 `low`；`minimal` 一律改送 `low`），Claude 送 `output_config.effort`（`none` 不送、`minimal` 改 `low`），Gemini 對應到 `minimal` 至 `high`（`none` 改 `minimal`，`xhigh`、`max` 改 `high`），Ollama 對應到 `think`（`none` 為 `false`，`xhigh`、`max` 改 `high`）；Foundry 上非 OpenAI 的模型不送。使用 Chat Completions 的 OpenAI 模型中，名稱含 `gpt-5` 的在帶工具呼叫時一律改送 `none`。
 
 #### SSE 事件
 

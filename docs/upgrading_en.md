@@ -4,11 +4,11 @@
 
 > How to upgrade an existing deployment to a new release, with rollback steps and troubleshooting. See the [CHANGELOG](../CHANGELOG_en.md) for the full list of changes in each version.
 
-- [Upgrading from 5.0.0 to the next release](#upgrading-from-500-to-the-next-release)
-  - [Next release changes and required actions](#next-release-changes-and-required-actions)
-  - [Upgrade steps for the next release](#upgrade-steps-for-the-next-release)
+- [Upgrading from 5.0.0 to 6.0.0](#upgrading-from-500-to-600)
+  - [6.0.0 changes and required actions](#600-changes-and-required-actions)
+  - [Upgrade steps for 6.0.0](#upgrade-steps-for-600)
   - [Rolling back to 5.0.0](#rolling-back-to-500)
-  - [After upgrading to the next release](#after-upgrading-to-the-next-release)
+  - [After upgrading to 6.0.0](#after-upgrading-to-600)
 - [Upgrading from 4.0.0 to 5.0.0](#upgrading-from-400-to-500)
   - [5.0.0 changes and required actions](#500-changes-and-required-actions)
   - [Upgrade steps for 5.0.0](#upgrade-steps-for-500)
@@ -32,13 +32,13 @@
 
 ---
 
-## Upgrading from 5.0.0 to the next release
+## Upgrading from 5.0.0 to 6.0.0
 
-For upgrading from 5.0.0 to the upcoming, not yet released version; see the [CHANGELOG](../CHANGELOG_en.md#unreleased) for the changes. This release reworks how structured data is parsed and chunked and adds Agent Skills support. The database gains an `agent_skills` table and a few columns in `custom_api_tools` and `mcp_servers`, all created automatically at startup, and the backend drops the `passlib` dependency; what you need to do is add two new required fields to the domain profile, add one new required setting, `SKILLS_DIR`, to `.env`, reinstall the backend packages from the new `requirements.txt`, and rebuild the index once after upgrading. Index metadata is now stored as JSON, so update `METADATA_PATH` as well.
+For upgrading from 5.0.0 to 6.0.0 (2026-10-26); see the [CHANGELOG](../CHANGELOG_en.md#600---2026-10-26) for the changes. This release reworks how structured data is parsed and chunked and adds Agent Skills support. The database gains an `agent_skills` table and a few columns in `custom_api_tools` and `mcp_servers`, all created automatically at startup, and the backend drops the `passlib` dependency; what you need to do is add two new required fields to the domain profile, add one new required setting, `SKILLS_DIR`, to `.env`, reinstall the backend packages from the new `requirements.txt`, and rebuild the index once after upgrading. Index metadata is now stored as JSON, so update `METADATA_PATH` as well.
 
-### Next release changes and required actions
+### 6.0.0 changes and required actions
 
-| Item | 5.0.0 | Next release | Action |
+| Item | 5.0.0 | 6.0.0 | Action |
 |---|---|---|---|
 | Domain profile | `domain_words`, `record_date_fields`, `summary_fallback` | Adds the required `record_label_fields` and `record_ignore_fields` | Add both fields, or the backend will not start |
 | Structured records | `【記錄 N】` with Chinese labels for author, content, link, and tags; nested data dropped; one chunk per record regardless of length | Original field names and dotted paths; long records split into parts that repeat the header | Rebuild the index once |
@@ -53,13 +53,18 @@ For upgrading from 5.0.0 to the upcoming, not yet released version; see the [CHA
 | MCP tool results | Both `content` and a duplicate `raw_result` | `content` only | Integrations that read `raw_result` read `content` |
 | Password hashing package | `passlib` calling argon2 | `argon2-cffi` directly, with the same hash format and parameters | Reinstall from the new `requirements.txt`; existing passwords keep working |
 | `SKILLS_DIR` | None | Required; the Agent Skills file directory | Add `SKILLS_DIR=data/skills` to `.env`, or the backend will not start |
+| Azure OpenAI settings | `AZURE_OPENAI_API_KEY`, `AZURE_OPENAI_ENDPOINT`, `AZURE_OPENAI_DEPLOYMENT` | Renamed for Microsoft Foundry: `FOUNDRY_API_KEY`, `FOUNDRY_ENDPOINT`, `FOUNDRY_DEPLOYMENT`; the old names are still read (the new names win when both are set) | Move to the new names; to deploy Claude on Foundry, `FOUNDRY_ENDPOINT` must be `*.services.ai.azure.com` |
+| Call path for Foundry and gpt-6 | Everything uses Chat Completions | OpenAI `gpt-6*` and Foundry deployments whose names start with `gpt-`, `o3`, or `o4` use the Responses API; other Foundry models stay on Chat Completions; Foundry deployments starting with `claude-` use `/anthropic` | Keep Foundry deployment names equal to the model names, otherwise they are treated as generic models and take the wrong path; organizations must not enable zero data retention for the Responses API path |
+| Gemini default models | The list has `gemini-3.5-flash` and `gemini-3-pro`; `GEMINI_VISION_MODEL=gemini-3.5-flash` | The list is `gemini-4-argon`, `gemini-3.8-flash`, `gemini-3.6-flash`, `gemini-3.5-flash-lite`, `gemini-3.1-flash-lite`; `GEMINI_VISION_MODEL` defaults to `gemini-3.8-flash` | Nothing changes if you set `AVAILABLE_MODELS` or `GEMINI_VISION_MODEL` yourself; remove the retired `gemini-3-pro` if it is there |
+| Reasoning effort | `reasoning_effort` goes only to OpenAI and Azure OpenAI | Mapped per provider and also sent to Claude, Gemini, and Ollama; the frontend gains `max` | None; set the optional `OLLAMA_NUM_CTX` if Ollama's context is too small |
+| Python version | 3.10 or later | 3.12 or later | Install Python 3.12, recreate the virtual environment, and install packages from the new `requirements.txt`; 3.10 and 3.11 are no longer supported |
 | `agent_skills` table | None | Holds installed skills' metadata, enabled state, `allow_scripts`, and `allowed_user_ids` | None; created automatically at startup |
 | New columns in existing tables | None | `custom_api_tools.body_content_type`; `mcp_servers.discovered_resources`, `discovered_prompts`, `oauth_config`, and `oauth_tokens` (the last two encrypted) | None; added automatically at startup, and existing tools get `body_content_type` `application/json` |
 | HTTP MCP protocol | JSON-only POST, protocol version `2024-11-05` | Streamable HTTP, protocol version `2025-06-18`; falls back to legacy HTTP+SSE when `initialize` returns `400`, `404`, or `405` | None; rediscover servers whose discovery failed |
 | Remote MCP OAuth | Not supported | HTTP / SSE servers can be authorized with OAuth; the callback address is `/api/mcp/oauth/callback` | When the backend is behind a reverse proxy, the proxy must pass the scheme and host the client sees to the backend (`redirect_uri` is built from the request URL); with multiple workers, the authorization callback must reach the same process that started it |
 | Custom API tools | `auth_type` is not checked, and form bodies are sent as JSON too | `auth_type` accepts only `none`, `bearer`, `api_key`, `basic`, and `oauth2_client_credentials`, and the body is sent according to `body_content_type` | Integrations that create or import tools through the API with another `auth_type` get `422`; use an allowed value |
 
-### Upgrade steps for the next release
+### Upgrade steps for 6.0.0
 
 1. Stop the backend and back up the database and `backend/data/`.
 2. Update the code, run `pip install -r requirements.txt` in `backend/` to reinstall the backend packages (`passlib` is no longer needed; remove it with `pip uninstall passlib` if you like), and run `bun run build` for the frontend again. Add `SKILLS_DIR=data/skills` to `.env` (relative paths resolve against `backend/`); `ADMIN_API_KEY`, `ENABLE_BATCH_ACCUMULATION`, `BATCH_ACCUMULATOR_SIZE`, and `BASE_URL` can be deleted from `.env`.
@@ -85,19 +90,19 @@ For upgrading from 5.0.0 to the upcoming, not yet released version; see the [CHA
 6. The `agent_skills` table and the `SKILLS_DIR` directory can stay: 5.0.0 never reads them, and it ignores `SKILLS_DIR` in `.env`.
 7. The new columns in `custom_api_tools` and `mcp_servers` can stay, and 5.0.0 ignores them: MCP servers' OAuth authorization, resources, and prompts are no longer used; tools with `auth_type` `oauth2_client_credentials` are called without auth, and form bodies are sent as JSON again.
 
-### After upgrading to the next release
+### After upgrading to 6.0.0
 
 <details>
 <summary><b>Startup fails with an error naming <code>record_label_fields</code> or <code>record_ignore_fields</code></b></summary>
 
-The domain profile is missing a new required field; add it as in step 3 of the [upgrade steps](#upgrade-steps-for-the-next-release).
+The domain profile is missing a new required field; add it as in step 3 of the [upgrade steps](#upgrade-steps-for-600).
 
 </details>
 
 <details>
 <summary><b>Startup fails with an error naming <code>SKILLS_DIR</code></b></summary>
 
-`.env` is missing the new required setting; add `SKILLS_DIR=data/skills` as in step 2 of the [upgrade steps](#upgrade-steps-for-the-next-release).
+`.env` is missing the new required setting; add `SKILLS_DIR=data/skills` as in step 2 of the [upgrade steps](#upgrade-steps-for-600).
 
 </details>
 
@@ -168,7 +173,7 @@ For upgrading from 4.0.0 to 5.0.0; see the [CHANGELOG](../CHANGELOG_en.md#500---
    From now on, do not edit `requirements.txt` by hand to add or upgrade a backend package: edit `backend/requirements.in` (direct dependencies only) and regenerate it in `backend/`:
 
    ```bash
-   uv pip compile requirements.in --universal --python-version 3.10 --generate-hashes -o requirements.txt
+   uv pip compile requirements.in --universal --python-version 3.12 --generate-hashes -o requirements.txt
    ```
 
    For the frontend, temporarily set `frozenLockfile` in `frontend/bunfig.toml` to `false`, run `bun add` or `bun remove`, set it back to `true`, and commit `package.json` and `bun.lock` together.

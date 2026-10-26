@@ -2,7 +2,7 @@
 
 [繁體中文](configuration.md) | [English](configuration_en.md)
 
-> 本文件逐一說明後端 `backend/.env` 與前端 `frontend/.env` 的每個設定、預設值與實際作用，適用於 **5.0.0**（從 4.0.0 升級見 [升級指南](upgrading.md#從-400-升級到-500)）。設定以 `backend/app/core/config.py` 的 `Settings` 為準，範本見 [`backend/.env.example`](../backend/.env.example)。
+> 本文件逐一說明後端 `backend/.env` 與前端 `frontend/.env` 的每個設定、預設值與實際作用，適用於 **6.0.0**（從 5.0.0 升級見 [升級指南](upgrading.md#從-500-升級到-600)）。設定以 `backend/app/core/config.py` 的 `Settings` 為準，範本見 [`backend/.env.example`](../backend/.env.example)。
 
 - [讀取規則](#讀取規則)
 - [必填設定](#必填設定)
@@ -78,18 +78,19 @@ python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().d
 | `AVAILABLE_MODELS` | 空 | 註解範例 | 前端可選的模型清單（逗號分隔）；設定後完全取代自動產生的清單 |
 | `OLLAMA_TEMPERATURE` | 空 | `0.3` | Ollama 的 `temperature`，未設定時使用模型預設值 |
 | `OLLAMA_NUM_PREDICT` | 空 | `2048` | Ollama 的 `num_predict`，未設定時使用模型預設值 |
-| `AZURE_OPENAI_API_KEY` | 空 | 註解範例 | 與 `AZURE_OPENAI_ENDPOINT` 同時設定才啟用 Azure OpenAI |
-| `AZURE_OPENAI_ENDPOINT` | 空 | 註解範例 | 例如 `https://<資源名稱>.openai.azure.com`，呼叫 `/openai/v1/chat/completions` |
-| `AZURE_OPENAI_DEPLOYMENT` | 空 | 註解範例 | 部署名稱，逗號分隔可列多個，第一個為預設；啟用 Azure 但未設定時，清單列出 `gpt-6-sol` |
+| `OLLAMA_NUM_CTX` | 空 | 註解範例 | Ollama 的 `num_ctx`（上下文長度），未設定時使用模型預設值；檢索內容較長時預設值可能不夠 |
+| `FOUNDRY_API_KEY` | 空 | 註解範例 | 與 `FOUNDRY_ENDPOINT` 同時設定才啟用 Microsoft Foundry |
+| `FOUNDRY_ENDPOINT` | 空 | 註解範例 | 例如 `https://<資源名稱>.openai.azure.com`（Azure OpenAI 資源）或 `https://<資源名稱>.services.ai.azure.com`（Foundry 資源），呼叫 `/openai/v1/responses`；部署 Claude 時必須是後者；舊名稱 `AZURE_OPENAI_*` 仍可讀取 |
+| `FOUNDRY_DEPLOYMENT` | 空 | 註解範例 | 部署名稱，逗號分隔可列多個，第一個為預設；啟用 Foundry 但未設定時，清單列出 `gpt-6-sol` |
 | `OPENAI_API_KEY` | 空 | 註解範例 | OpenAI 金鑰 |
 | `OPENAI_API_BASE` | `https://api.openai.com/v1` | 註解範例 | OpenAI 或相容服務的基底位址 |
-| `OPENAI_VISION_MODEL` | `gpt-6-sol` | — | PDF 掃描頁 OCR 使用的 OpenAI 模型；Azure 未設定部署時也當作部署名稱 |
+| `OPENAI_VISION_MODEL` | `gpt-6-sol` | — | PDF 掃描頁 OCR 使用的 OpenAI 模型；Foundry 未設定部署時也當作部署名稱 |
 | `ANTHROPIC_API_KEY` | 空 | 註解範例 | Anthropic 金鑰 |
 | `ANTHROPIC_API_BASE` | `https://api.anthropic.com` | 註解範例 | Anthropic API 位址 |
 | `ANTHROPIC_MAX_TOKENS` | 空 | 註解範例 `16000` | Claude 單次回應的輸出 token 上限（使用 Claude 時必填）；工具呼叫參數被截斷時會回報錯誤，請調高 |
 | `GEMINI_API_KEY` | 空 | 註解範例 | Google Gemini 金鑰 |
 | `GEMINI_API_BASE` | `https://generativelanguage.googleapis.com` | 註解範例 | 呼叫 OpenAI 相容端點 `/v1beta/openai/chat/completions` |
-| `GEMINI_VISION_MODEL` | `gemini-3.5-flash` | — | PDF 掃描頁 OCR 使用的 Gemini 模型 |
+| `GEMINI_VISION_MODEL` | `gemini-3.8-flash` | — | PDF 掃描頁 OCR 使用的 Gemini 模型 |
 | `EXTERNAL_TAGS_URL` | 空 | — | 沒有任何雲端模型時，查詢遠端模型清單的網址；未設定時使用 `{LLM_API_BASE}/api/tags` |
 | `LLM_TAGS_TIMEOUT` | `10` | — | 查詢遠端模型清單的逾時秒數 |
 | `ADD_NGROK_HEADER` | `false` | — | 查詢遠端模型清單時加上 `ngrok-skip-browser-warning` 標頭（網址含 `ngrok-free.app` 時自動加上） |
@@ -99,20 +100,20 @@ python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().d
 `GET /api/chat/models` 與 `GET /api/tags` 依下列順序產生模型清單：
 
 1. 設定了 `AVAILABLE_MODELS`：直接使用這份清單。
-2. 否則依序合併：Azure 部署（未設定部署時為 `gpt-6-sol`）、有 `OPENAI_API_KEY` 時的 OpenAI 內建清單、有 `ANTHROPIC_API_KEY` 時的 Claude 內建清單、有 `GEMINI_API_KEY` 時的 Gemini 內建清單。
+2. 否則依序合併：Foundry 部署（未設定部署時為 `gpt-6-sol`）、有 `OPENAI_API_KEY` 時的 OpenAI 內建清單、有 `ANTHROPIC_API_KEY` 時的 Claude 內建清單、有 `GEMINI_API_KEY` 時的 Gemini 內建清單。
 3. 以上皆為空：向 `EXTERNAL_TAGS_URL`（或 `{LLM_API_BASE}/api/tags`）查詢遠端清單，例如本機 Ollama 已下載的模型。遠端查詢在執行緒中進行，結果（含失敗）快取 30 秒，同一時間只有一個查詢在進行。
 
-預設模型依序取 `MODEL_NAME`、第一個 Azure 部署、遠端清單回報的預設模型，不在清單內時改用清單第一個；兩個端點共用同一套規則。
+預設模型依序取 `MODEL_NAME`、第一個 Foundry 部署、遠端清單回報的預設模型，不在清單內時改用清單第一個；兩個端點共用同一套規則。
 
 `POST /api/chat/send` 指定的 `model_name` 必須在這份清單內（或等於 `MODEL_NAME`），否則回傳 `400`，避免以操作者的金鑰呼叫清單外的模型。
 
-| 供應商 | 內建清單（5.0.0） |
+| 供應商 | 內建清單（6.0.0） |
 |---|---|
-| OpenAI | `gpt-6-sol`、`gpt-6-luna`、`gpt-6-astra`、`gpt-5.6-sol`、`gpt-5.6-luna`、`gpt-5.6-terra`、`gpt-5.4`、`gpt-5.4-mini` |
-| Anthropic | `claude-opus-5-5`、`claude-fable-5-1`、`claude-sonnet-5`、`claude-opus-5`、`claude-fable-5`、`claude-opus-4-8`、`claude-haiku-4-5` |
-| Gemini | `gemini-3.5-flash`、`gemini-3.1-flash-lite`、`gemini-3-pro` |
+| OpenAI | `gpt-6.1-sol`、`gpt-6-sol`、`gpt-6-luna`、`gpt-6-astra`、`gpt-5.6-sol`、`gpt-5.6-luna`、`gpt-5.6-terra`、`gpt-5.4`、`gpt-5.4-mini` |
+| Anthropic | `claude-opus-5-5`、`claude-fable-5-1`、`claude-sonnet-5-5`、`claude-haiku-5-5`、`claude-sonnet-5`、`claude-opus-5`、`claude-fable-5`、`claude-opus-4-8`、`claude-haiku-4-5` |
+| Gemini | `gemini-4-argon`、`gemini-3.8-flash`、`gemini-3.6-flash`、`gemini-3.5-flash-lite`、`gemini-3.1-flash-lite` |
 
-**預設模型**：`MODEL_NAME` → 第一個 Azure 部署 → 清單第一個；選出的模型不在清單內時改用清單第一個。
+**預設模型**：`MODEL_NAME` → 第一個 Foundry 部署 → 清單第一個；選出的模型不在清單內時改用清單第一個。
 
 ### 供應商路由
 
@@ -120,14 +121,15 @@ python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().d
 
 | 條件 | 供應商 | 端點 |
 |---|---|---|
-| 已啟用 Azure，且模型名稱是 `AZURE_OPENAI_DEPLOYMENT` 中的一個 | Azure OpenAI | `{AZURE_OPENAI_ENDPOINT}/openai/v1/chat/completions` |
+| 已啟用 Foundry，且模型名稱是 `FOUNDRY_DEPLOYMENT` 中以 `claude-` 開頭的一個 | Anthropic（Foundry 上的 Claude） | `{FOUNDRY_ENDPOINT}/anthropic/v1/messages`，以 `x-api-key` 驗證；`FOUNDRY_ENDPOINT` 必須是 `*.services.ai.azure.com`，部署名稱需以 `claude-` 開頭 |
+| 已啟用 Foundry，且模型名稱是 `FOUNDRY_DEPLOYMENT` 中的其他一個 | Microsoft Foundry | 名稱以 `gpt-`、`o1`、`o3`、`o4` 開頭（`gpt-oss` 除外）走 `{FOUNDRY_ENDPOINT}/openai/v1/responses`；其餘（Kimi、Mistral、Grok、DeepSeek、Llama 等 chat-completion 模型）走 `{FOUNDRY_ENDPOINT}/openai/v1/chat/completions`，且不送 `reasoning_effort` |
 | 名稱以 `claude-` 開頭且有 `ANTHROPIC_API_KEY` | Anthropic | 官方 `anthropic` SDK（Messages API） |
 | 名稱以 `gemini-` 開頭且有 `GEMINI_API_KEY` | Google Gemini | `{GEMINI_API_BASE}/v1beta/openai/chat/completions` |
-| 名稱以 `gpt-`、`o1`、`o3`、`o4` 開頭 | 有 `OPENAI_API_KEY` 時為 OpenAI；否則在已啟用 Azure 時改走 Azure | `{OPENAI_API_BASE}/chat/completions` |
+| 名稱以 `gpt-`、`o1`、`o3`、`o4` 開頭 | 有 `OPENAI_API_KEY` 時為 OpenAI；否則在已啟用 Foundry 時改走 Foundry | `{OPENAI_API_BASE}/chat/completions`；`gpt-6*` 改用 `{OPENAI_API_BASE}/responses` |
 | 以上皆不符合 | Ollama | `{LLM_API_BASE}/api/chat` |
 
 > [!NOTE]
-> `reasoning_effort` 只會傳給 OpenAI 與 Azure OpenAI；名稱含 `gpt-5` 的模型在帶工具呼叫時一律改送 `none`，以符合推理模型與工具呼叫的相容性限制。
+> `reasoning_effort` 會依供應商對應後傳給模型（規則見 [API 參考](api.md)）；走 Chat Completions 且名稱含 `gpt-5` 的模型在帶工具呼叫時一律改送 `none`，以符合推理模型與工具呼叫的相容性限制。
 
 ## Agent 與聯網工具
 
@@ -137,7 +139,7 @@ python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().d
 | `CONVERSATION_HISTORY_MESSAGES` | —（必填，≥ 0） | `6` | 提問時從資料庫帶入的前文訊息數（使用者與助理訊息合計，前文一律從使用者訊息開始）；`0` 表示不帶前文 |
 | `WEB_FETCH_ALLOWED_DOMAINS` | —（必填） | `*` | `web_fetch` 可讀取的網域，含子網域，逗號分隔；明確寫 `*` 才表示不限制 |
 | `BLOCK_WEB_TOOLS_AFTER_KB` | —（必填） | `true` | 同一次提問中，知識庫工具回傳過內容後，拒絕之後的 `web_search` 與 `web_fetch` |
-| `OLLAMA_API_KEY` | 空 | 註解範例 | Ollama 官方 Web Search / Web Fetch API 的金鑰。設定後聯網工具優先使用 Ollama API，失敗時改用 DuckDuckGo 或直接抓取；與 LLM 呼叫無關 |
+| `OLLAMA_API_KEY` | 空 | 註解範例 | Ollama 官方 Web Search / Web Fetch API 的金鑰。設定後聯網工具優先使用 Ollama API，失敗時改用 DuckDuckGo 或直接抓取；當 `LLM_API_BASE` 指向 `ollama.com`（Ollama Cloud）時，也以 `Authorization: Bearer` 用於模型呼叫與模型清單查詢 |
 | `OLLAMA_SEARCH_ENDPOINT` | `https://ollama.com/api/web_search` | — | Ollama Web Search 端點 |
 | `OLLAMA_FETCH_ENDPOINT` | `https://ollama.com/api/web_fetch` | — | Ollama Web Fetch 端點 |
 | `DUCKDUCKGO_SEARCH_ENDPOINT` | `https://html.duckduckgo.com/html/` | — | `web_search` 的備援搜尋端點 |

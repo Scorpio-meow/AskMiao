@@ -2,7 +2,7 @@
 
 [繁體中文](llms.txt) | [English](llms_en.txt)
 
-> 會自己查證、答案附出處的企業知識庫對話系統（版本 5.0.0）。FastAPI 後端以混合檢索（FAISS + BM25 + Cross-Encoder）與 ReAct 研究 Agent 回答問題，答案以 `[n]` 對應實際引用的片段或網頁；React 前端以 SSE 串流顯示研究歷程與引用來源。
+> 會自己查證、答案附出處的企業知識庫對話系統（版本 6.0.0）。FastAPI 後端以混合檢索（FAISS + BM25 + Cross-Encoder）與 ReAct 研究 Agent 回答問題，答案以 `[n]` 對應實際引用的片段或網頁；React 前端以 SSE 串流顯示研究歷程與引用來源。
 
 本檔給 AI Agent 使用：修改程式前先讀「系統約束」，修改後依「驗證」執行檢查。
 
@@ -26,7 +26,7 @@
 ### 核心與服務
 
 - [backend/app/core/config.py](backend/app/core/config.py): 所有環境變數、必填設定與驗證規則
-- [backend/app/core/llm_client.py](backend/app/core/llm_client.py): 五家供應商（Azure OpenAI、OpenAI、Claude、Gemini、Ollama）的呼叫層、模型清單與路由
+- [backend/app/core/llm_client.py](backend/app/core/llm_client.py): 五家供應商（Microsoft Foundry、OpenAI、Claude、Gemini、Ollama）的呼叫層、模型清單與路由
 - [backend/app/core/jwt_auth.py](backend/app/core/jwt_auth.py): RSA JWT（PyJWT，解碼只接受 RS256）、`resolve_token_user`（權杖對應資料庫帳號，簽發時間早於 `users.tokens_valid_after` 的權杖無效）、Argon2 密碼、撤銷名單檢查、`get_current_admin_user`
 - [backend/app/core/login_throttle.py](backend/app/core/login_throttle.py): 登入失敗節流，依登入識別與來源位址分別計數，暫停期間回傳 `429` 與 `Retry-After`（行程記憶體）
 - [backend/app/core/tool_secrets.py](backend/app/core/tool_secrets.py): 工具憑證以 `TOOL_SECRETS_KEY`（Fernet）加密存放，管理 API 回應的遮蔽與更新時的 `merge_masked()`
@@ -85,7 +85,7 @@
 17. **資源上限集中在 `app/core/limits.py`**：新增或調整上限時改這裡，並同步更新 `docs/configuration.md`（中英）的「資源上限」一節；不要在各模組另寫魔術數字。文件文字抽取一律傳入 `ExtractionLimits`：管理員上傳用 `ADMIN_UPLOAD_EXTRACTION_LIMITS`，聊天附件用 `CHAT_ATTACHMENT_EXTRACTION_LIMITS`。
 18. **工具憑證一律加密存放**：`custom_api_tools.headers`、`auth_config` 與 `mcp_servers.env_vars`、`headers` 以 `tool_secrets.encrypt_json()` 寫入、`decrypt_json()` 讀出；管理 API 的回應經 `mask()` 遮蔽，更新經 `merge_masked()` 沿用遮蔽欄位的原值。新增含憑證的欄位時，一併加進 `database.py` 的 `ENCRYPTED_TOOL_SECRET_COLUMNS`。
 19. **權杖有效性看 `users.tokens_valid_after`**：變更密碼一律經 `crud_user.update_user_password()`（把此欄位更新為當下，先前簽發的權杖全部失效）；建立帳號一律經 `crud_user.create_user()`，它把此欄位設為建立時間；`upgrade_schema()` 每次啟動時替此欄位為 NULL 的帳號補值。
-20. **相依套件鎖定**：後端新增或升級套件時修改 `backend/requirements.in`，再於 `backend/` 執行 `uv pip compile requirements.in --universal --python-version 3.10 --generate-hashes -o requirements.txt`，不要手改 `requirements.txt`；前端的 `package.json` 與 `bun.lock` 一起更新並提交（`frozenLockfile = true`）。
+20. **相依套件鎖定**：後端新增或升級套件時修改 `backend/requirements.in`，再於 `backend/` 執行 `uv pip compile requirements.in --universal --python-version 3.12 --generate-hashes -o requirements.txt`，不要手改 `requirements.txt`；前端的 `package.json` 與 `bun.lock` 一起更新並提交（`frozenLockfile = true`）。
 21. **Markdown 一律經 `remarkGfmSafe`**：渲染模型回答等 Markdown 時使用 `frontend/src/pages/Chat/remarkGfmSafe.ts`，不要直接使用 `remark-gfm`；後者的自動連結轉換在一長串「.」「-」「_」或重複的「www.」上耗時隨長度平方成長。升級 remark-gfm 後執行 `remarkGfmSafe.test.tsx`，它比對一般內容的輸出並檢查病態輸入的耗時。
 
 ## 驗證
@@ -100,7 +100,7 @@
 - [API 參考](docs/api.md): 端點權限、請求與回應格式、SSE 事件、已知限制
 - [系統架構](docs/architecture.md): 啟動流程、資料模型、檢索管線、Agent 迴圈、LLM 呼叫層、安全設計
 - [設定參考](docs/configuration.md): 每個環境變數的預設值與作用、供應商路由、門檻校準、資源上限
-- [升級指南](docs/upgrading.md): 2.x 升級到 3.0.0、3.0.0 升級到 4.0.0、4.0.0 升級到 5.0.0 的步驟與回退
+- [升級指南](docs/upgrading.md): 2.x 升級到 3.0.0、3.0.0 升級到 4.0.0、4.0.0 升級到 5.0.0、5.0.0 升級到 6.0.0 的步驟與回退
 - [架構決策紀錄](docs/adr/README.md): ADR-0001 至 ADR-0006
 - [版本變更紀錄](CHANGELOG.md): 各版本變更
 - [貢獻指南](.github/CONTRIBUTING.md): 分支與 Commit 訊息、測試、相依套件、文件雙語與介紹頁同步

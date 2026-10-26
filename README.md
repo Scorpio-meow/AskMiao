@@ -10,8 +10,8 @@
 
 [繁體中文](README.md) | [English](README_en.md)
 
-[![Version](https://img.shields.io/badge/version-5.0.0-2563eb?style=flat)](CHANGELOG.md)
-[![Python](https://img.shields.io/badge/Python-3.10+-3776AB?style=flat&logo=python&logoColor=white)](https://www.python.org/)
+[![Version](https://img.shields.io/badge/version-6.0.0-2563eb?style=flat)](CHANGELOG.md)
+[![Python](https://img.shields.io/badge/Python-3.12+-3776AB?style=flat&logo=python&logoColor=white)](https://www.python.org/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-005571?style=flat&logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
 [![React](https://img.shields.io/badge/React-19.2-61DAFB?style=flat&logo=react&logoColor=black)](https://react.dev/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-7-3178C6?style=flat&logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
@@ -63,7 +63,7 @@
 | 2 | **查不到就照實說** | 重排機率低於門檻的片段一律濾除，全部未通過時明確回報「知識庫中查無相關資料」，不硬湊答案 |
 | 3 | **自主研究** | ReAct Agent 自行決定查知識庫、精確統計記錄、上網搜尋或深入閱讀網頁，研究歷程即時顯示 |
 | 4 | **混合檢索** | 向量與 BM25 每次必跑，以 RRF 依名次融合，再由 Cross-Encoder 重排；片段以資料庫 chunk_id 為準 |
-| 5 | **五家模型供應商** | Ollama、OpenAI、Azure OpenAI、Anthropic Claude、Google Gemini 都能呼叫工具與串流 |
+| 5 | **五家模型供應商** | Ollama、OpenAI、Microsoft Foundry、Anthropic Claude、Google Gemini 都能呼叫工具與串流 |
 | 6 | **外部工具與 MCP** | 貼上 OpenAPI 規格即可匯入 API 工具，也能接入 MCP 伺服器；只限管理員管理，有副作用的呼叫先經使用者核准 |
 | 7 | **防護完整** | RSA JWT、Argon2 密碼雜湊與登入失敗節流、逐跳 SSRF 驗證並固定連線 IP、工具憑證加密存放、工具輸出信任邊界、資源上限、對外只回錯誤代碼 |
 
@@ -146,14 +146,14 @@ flowchart LR
 
 ### 多供應商 LLM
 
-- 統一呼叫層支援 **Ollama、OpenAI、Azure OpenAI v1、Anthropic Claude（官方 SDK）、Google Gemini**，依模型名稱自動路由，五家都支援工具呼叫與串流。
-- 前端可切換模型與五檔推理程度：`無 (None)`、`輕度 (Low)`、`標準 (Medium)`、`深度 (High)`、`極致 (X-High)`；推理程度會傳給 OpenAI 與 Azure OpenAI 的推理模型。
+- 統一呼叫層支援 **Ollama、OpenAI、Microsoft Foundry、Anthropic Claude（官方 SDK）、Google Gemini**，依模型名稱自動路由，五家都支援工具呼叫與串流。
+- 前端可切換模型與六檔推理程度：`無 (None)`、`輕度 (Low)`、`標準 (Medium)`、`深度 (High)`、`極致 (X-High)`、`最大 (Max)`；推理程度會依各供應商的支援範圍對應後傳給模型（OpenAI、Microsoft Foundry、Claude、Gemini、Ollama），不支援的檔位在介面上停用。
 - 模型清單可由 `AVAILABLE_MODELS` 指定，或依已設定的金鑰自動產生，詳見 [設定參考](docs/configuration.md#llm-供應商與模型)。
 
 ### 知識庫與文件處理
 
 - 支援 28 種副檔名：`.txt`、`.md`、`.markdown`、`.pdf`、`.docx`、`.pptx`、`.xlsx`、`.csv`、`.json`、`.jsonl`、`.yaml`、`.yml`、`.xml`、`.html`、`.htm`、`.log`、`.py`、`.js`、`.ts`、`.tsx`、`.jsx`、`.java`、`.cpp`、`.c`、`.sql`、`.sh`、`.ini`、`.env`。
-- **PDF 強化擷取**：PyMuPDF 擷取並修復缺少 ToUnicode 的內嵌字型；空白或亂碼頁改以視覺模型 OCR（Azure OpenAI、OpenAI 或 Gemini），最後以 pypdf 備援。
+- **PDF 強化擷取**：PyMuPDF 擷取並修復缺少 ToUnicode 的內嵌字型；空白或亂碼頁改以視覺模型 OCR（Microsoft Foundry、OpenAI 或 Gemini），最後以 pypdf 備援。
 - **智慧切塊**：JSON、JSONL、YAML、CSV、XLSX 解析成結構化記錄逐筆成為片段（保留巢狀欄位，過長的記錄分段並重複標頭），Q&A 文件一問一答成一個片段，其餘依中文標點遞迴切塊。
 - **AI 大綱與摘要**：上傳時自動生成文件摘要，可重新生成或手動修訂；LLM 失敗時改用規則摘要。摘要也會組成知識庫目錄，幫助 Agent 判斷該查哪份文件。
 
@@ -285,7 +285,7 @@ flowchart TB
         AdminUI["管理後台（管理員）"]
     end
 
-    subgraph Backend ["後端 · FastAPI（Python 3.10+）"]
+    subgraph Backend ["後端 · FastAPI（Python 3.12+）"]
         MW["中介軟體<br/>安全標頭、速率限制、CORS"]
         Auth["認證 /api/auth<br/>RSA JWT、撤銷名單"]
         ChatAPI["對話 /api/chat（SSE）"]
@@ -297,7 +297,7 @@ flowchart TB
             Session["ResearchSession<br/>引用編號、網址來源、信任邊界"]
             Registry["ResearchToolRegistry<br/>內建、自訂 API、MCP 工具"]
             Retriever["HybridRetriever<br/>RRF、精確比對、重排、門檻"]
-            LLM["llm_client<br/>Ollama、OpenAI、Azure、Claude、Gemini"]
+            LLM["llm_client<br/>Ollama、OpenAI、Foundry、Claude、Gemini"]
         end
 
         SSRF["SSRF 防護<br/>逐跳驗證"]
@@ -372,11 +372,11 @@ sequenceDiagram
 
 | 項目 | 需求 | 說明 |
 |---|---|---|
-| Python | 3.10 以上 | 後端 |
+| Python | 3.12 以上 | 後端 |
 | Bun | 1.x | 前端套件管理、開發伺服器與建置 |
 | 資料庫 | SQLite（Python 內建）或 PostgreSQL | 預設可零依賴使用 SQLite |
 | 模型 | 首次啟動下載約 1.2 GB | 嵌入模型 `BAAI/bge-small-zh-v1.5` 與重排模型 `BAAI/bge-reranker-base` |
-| LLM | 擇一 | 本機 Ollama，或 OpenAI、Azure OpenAI、Anthropic、Gemini 的 API 金鑰 |
+| LLM | 擇一 | 本機 Ollama，或 OpenAI、Microsoft Foundry、Anthropic、Gemini 的 API 金鑰 |
 
 ### 1. 取得原始碼
 
@@ -522,7 +522,7 @@ docker compose up -d
 | 變數 | 說明 |
 |---|---|
 | `LLM_API_BASE` | Ollama 服務位址（範本 `http://localhost:11434`） |
-| `OPENAI_API_KEY`、`AZURE_OPENAI_*`、`ANTHROPIC_API_KEY`、`GEMINI_API_KEY` | 雲端模型金鑰；設定後自動加入模型清單 |
+| `OPENAI_API_KEY`、`FOUNDRY_*`、`ANTHROPIC_API_KEY`、`GEMINI_API_KEY` | 雲端模型金鑰；設定後自動加入模型清單 |
 | `ANTHROPIC_MAX_TOKENS` | Claude 單次回應的輸出上限（使用 Claude 時必填） |
 | `MODEL_NAME`、`AVAILABLE_MODELS` | 預設模型與自訂模型清單 |
 | `CHUNK_SIZE`、`CHUNK_OVERLAP` | 切塊長度與重疊（範本 300 / 100） |
@@ -635,7 +635,7 @@ bun run build        # 產出 build/
 - **後端**：`requirements.in` 只列直接依賴；`requirements.txt` 由它產生，鎖定每個套件（含間接依賴）的版本與雜湊，`pip install -r requirements.txt` 會逐一驗證。新增或升級套件時修改 `requirements.in`，在 `backend/` 以 uv 重新產生 `requirements.txt`，兩個檔案一起提交：
 
   ```bash
-  uv pip compile requirements.in --universal --python-version 3.10 --generate-hashes -o requirements.txt
+  uv pip compile requirements.in --universal --python-version 3.12 --generate-hashes -o requirements.txt
   ```
 
 - **前端**：`bun.lock` 隨版本庫提交，`frontend/bunfig.toml` 設定 `frozenLockfile = true`：`bun install` 只依 `bun.lock` 安裝，與 `package.json` 不一致時直接失敗，`bun add` 也無法改寫 `bun.lock`。新增或升級套件時，暫時把 `frozenLockfile` 改為 `false` 更新 `bun.lock`，再改回 `true`，並把 `package.json` 與 `bun.lock` 一起提交。
@@ -775,7 +775,7 @@ MCP 伺服器預設需要核准，自訂 API 工具則依 HTTP 方法決定。�
 
 ## 版本資訊
 
-- **目前版本**：5.0.0（2026-10-10），變更內容見 [CHANGELOG](CHANGELOG.md)。
+- **目前版本**：6.0.0（2026-10-26），變更內容見 [CHANGELOG](CHANGELOG.md)。
 - **版本規則**：遵循 [語意化版本](https://semver.org/lang/zh-TW/)。不相容的變更（例如新增必填設定、改變 API 權限或索引格式）升主版號。
 - **版本號位置**：後端 `backend/app/__init__.py` 的 `__version__`（OpenAPI 文件與 MCP 交握皆引用）、前端 `frontend/package.json`，發行時與 `CHANGELOG.md` 一併更新。
 

@@ -2,7 +2,7 @@
 
 [繁體中文](api.md) | [English](api_en.md)
 
-> REST and SSE streaming endpoints of the AskMiao **5.0.0** backend, written against the actual routers in `backend/app/api/`. With `ENABLE_API_DOCS=true` the backend also serves interactive docs at `http://localhost:8001/docs` (Swagger UI) and `http://localhost:8001/redoc`, and the OpenAPI document at `/openapi.json`. These three paths need no sign-in and list every endpoint and parameter, so keep `ENABLE_API_DOCS=false` (the template value) for public deployments; all three then return `404`.
+> REST and SSE streaming endpoints of the AskMiao **6.0.0** backend, written against the actual routers in `backend/app/api/`. With `ENABLE_API_DOCS=true` the backend also serves interactive docs at `http://localhost:8001/docs` (Swagger UI) and `http://localhost:8001/redoc`, and the OpenAPI document at `/openapi.json`. These three paths need no sign-in and list every endpoint and parameter, so keep `ENABLE_API_DOCS=false` (the template value) for public deployments; all three then return `404`.
 
 ## Contents
 
@@ -294,7 +294,7 @@ Send a message and start the `ResearchAgent`. The response is a **Server-Sent Ev
 | `content` | string | Yes | — | The user's question, at most 20,000 characters; when it starts with `/skill-name` for an enabled skill, that skill is loaded first, the prefix is removed, and an `activate_skill` step is recorded in the research trace |
 | `conversation_id` | integer | No | `null` | Conversation ID; a new conversation is created when it is empty, unknown, or not yours |
 | `model_name` | string | No | Default model | Model to use; it must be in the [available model list](configuration_en.md#model-list) or equal `MODEL_NAME`, otherwise `400` `不支援的模型` ("unsupported model"); the provider is routed by name |
-| `reasoning_effort` | string | No | `medium` | Reasoning level, sent only to OpenAI and Azure OpenAI; see below |
+| `reasoning_effort` | string | No | `medium` | Reasoning level, mapped per provider before it is sent; see below |
 | `attachments` | array | No | `[]` | Attachments, at most 5; see the table below |
 
 `attachments[]` fields:
@@ -316,7 +316,7 @@ At most 50,000 characters of each attachment's text go into the model context; t
 | `422` | Field validation failed: message too long, too many or too large attachments, a `data_url` that is not a base64 `data:` URL, and so on |
 | `429` | This user already has 2 answers streaming |
 
-**How `reasoning_effort` is handled**: the frontend offers `none`, `low`, `medium`, `high`, and `xhigh`; the backend accepts `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, and `max`, and drops any other value. Models whose name contains `gpt-5` always get `none` when tools are attached.
+**How `reasoning_effort` is handled**: the frontend offers `none`, `low`, `medium`, `high`, `xhigh`, and `max`; the backend accepts `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, and `max`, and drops any other value. Per-provider mapping: GPT models on OpenAI and Microsoft Foundry get it as is (`gpt-6*` and GPT models on Foundry use the Responses API, where only `luna` models accept `none` and the rest get `low`, and `minimal` always becomes `low`); Claude gets `output_config.effort` (`none` is omitted, `minimal` becomes `low`); Gemini maps to `minimal` through `high` (`none` becomes `minimal`, `xhigh` and `max` become `high`); Ollama maps to `think` (`none` is `false`, `xhigh` and `max` become `high`); non-OpenAI models on Foundry get nothing. For OpenAI models on Chat Completions, those whose name contains `gpt-5` always get `none` when tools are attached.
 
 #### SSE events
 

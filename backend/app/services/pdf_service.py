@@ -141,7 +141,7 @@ class PDFService:
     def _is_vision_available() -> bool:
         """檢查是否配置了可用的 Vision 模型端點"""
         return bool(
-            (settings.AZURE_OPENAI_ENDPOINT and settings.AZURE_OPENAI_API_KEY)
+            (settings.FOUNDRY_ENDPOINT and settings.FOUNDRY_API_KEY)
             or settings.OPENAI_API_KEY
             or settings.GEMINI_API_KEY
         )
@@ -167,11 +167,11 @@ class PDFService:
             return f"[第 {page_num} 頁為掃描圖片或複雜版面]"
         try:
             b64_img = base64.b64encode(img_bytes).decode("utf-8")
-            if settings.AZURE_OPENAI_ENDPOINT and settings.AZURE_OPENAI_API_KEY:
-                endpoint = settings.AZURE_OPENAI_ENDPOINT.rstrip('/')
-                api_key = settings.AZURE_OPENAI_API_KEY
-                azure_deployments = [d.strip() for d in (settings.AZURE_OPENAI_DEPLOYMENT or "").split(",") if d.strip()]
-                deployment = azure_deployments[0] if azure_deployments else settings.OPENAI_VISION_MODEL
+            if settings.FOUNDRY_ENDPOINT and settings.FOUNDRY_API_KEY:
+                endpoint = settings.FOUNDRY_ENDPOINT.rstrip('/')
+                api_key = settings.FOUNDRY_API_KEY
+                foundry_deployments = [d.strip() for d in (settings.FOUNDRY_DEPLOYMENT or "").split(",") if d.strip()]
+                deployment = foundry_deployments[0] if foundry_deployments else settings.OPENAI_VISION_MODEL
                 
                 url = f"{endpoint}/openai/v1/chat/completions"
                 headers = {
@@ -201,10 +201,10 @@ class PDFService:
                     resp = client.post(url, headers=headers, json=payload)
                     if resp.status_code == 200:
                         content = resp.json()["choices"][0]["message"]["content"].strip()
-                        logger.info(f"第 {page_num} 頁使用 Azure Vision OCR 識別成功 ({len(content)} 字)")
+                        logger.info(f"第 {page_num} 頁使用 Foundry Vision OCR 識別成功 ({len(content)} 字)")
                         return content
                     else:
-                        logger.warning(f"第 {page_num} 頁 Azure Vision OCR 回傳錯誤 ({resp.status_code}): {resp.text[:200]}")
+                        logger.warning(f"第 {page_num} 頁 Foundry Vision OCR 回傳錯誤 ({resp.status_code}): {resp.text[:200]}")
             elif settings.OPENAI_API_KEY:
                 base_url = settings.OPENAI_API_BASE.rstrip('/')
                 url = f"{base_url}/chat/completions"

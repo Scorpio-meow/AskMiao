@@ -7,7 +7,7 @@ import { copyText } from '../../utils/clipboard';
 import { describeRequestError } from '../../utils/secureLogger';
 import { SnackbarState, ModelDetail, ChatAttachment } from './types';
 import ChatSidebar from './ChatSidebar';
-import ChatHeader, { REASONING_EFFORT_OPTIONS } from './ChatHeader';
+import ChatHeader, { REASONING_EFFORT_OPTIONS, resolveReasoningEffort } from './ChatHeader';
 import ChatMessageList from './ChatMessageList';
 import ChatInputArea from './ChatInputArea';
 import { Snackbar, Alert, ConfirmDialog } from '../../components/ui';
@@ -168,6 +168,7 @@ export const ChatPage: React.FC = () => {
     setUserSelectedModel(true);
     writeStorage(MODEL_STORAGE_KEY, model);
   };
+  const effectiveReasoningEffort = resolveReasoningEffort(selectedModel, reasoningEffort);
   const handleSelectReasoningEffort = (effort: string) => {
     setReasoningEffort(effort);
     writeStorage(REASONING_EFFORT_STORAGE_KEY, effort);
@@ -191,7 +192,7 @@ export const ChatPage: React.FC = () => {
     setNewMessage('');
     setAttachments([]);
     try {
-      await sendChatMessage(toSend, selectedModel, reasoningEffort, toSendAttachments);
+      await sendChatMessage(toSend, selectedModel, effectiveReasoningEffort, toSendAttachments);
     } catch (err) {
       // 訊息沒送出去：把內容放回輸入框，使用者已開始輸入新內容時則不覆蓋
       setNewMessage((current) => current || toSend);
@@ -203,7 +204,7 @@ export const ChatPage: React.FC = () => {
     const index = messages.indexOf(failedMessage);
     const question = messages.slice(0, index).reverse().find((m) => m.is_user);
     if (!question || sending) return;
-    sendChatMessage(question.content, selectedModel, reasoningEffort, question.attachments).catch((err) => {
+    sendChatMessage(question.content, selectedModel, effectiveReasoningEffort, question.attachments).catch((err) => {
       showSnackbar(`訊息沒有送出：${describeSendError(err)}`, 'error');
     });
   };
@@ -261,7 +262,7 @@ export const ChatPage: React.FC = () => {
           availableModels={availableModels}
           selectedModel={selectedModel}
           onSelectModel={handleSelectModel}
-          reasoningEffort={reasoningEffort}
+          reasoningEffort={effectiveReasoningEffort}
           onSelectReasoningEffort={handleSelectReasoningEffort}
           modelsLoading={modelsLoading}
           onRefreshModels={() => loadAvailableModels(true)}

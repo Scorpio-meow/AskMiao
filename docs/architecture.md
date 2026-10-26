@@ -2,7 +2,7 @@
 
 [繁體中文](architecture.md) | [English](architecture_en.md)
 
-> 本文件說明 AskMiao **5.0.0** 的整體架構、啟動流程、資料模型、文件處理與檢索管線、Agentic RAG 研究迴圈、LLM 呼叫層、外部工具整合、認證與安全設計，以及前端架構（與 4.0.0 的差異見 [CHANGELOG](../CHANGELOG.md#500---2026-10-10)）。設計背後的取捨記錄在 [架構決策紀錄（ADR）](adr/README.md)。
+> 本文件說明 AskMiao **6.0.0** 的整體架構、啟動流程、資料模型、文件處理與檢索管線、Agentic RAG 研究迴圈、LLM 呼叫層、外部工具整合、認證與安全設計，以及前端架構（與 5.0.0 的差異見 [CHANGELOG](../CHANGELOG.md#600---2026-10-26)）。設計背後的取捨記錄在 [架構決策紀錄（ADR）](adr/README.md)。
 
 ## 目錄
 
@@ -257,7 +257,7 @@ flowchart TB
 
 | 格式 | 擷取方式 |
 |---|---|
-| PDF | PyMuPDF 擷取並修復缺少 ToUnicode 對照表的內嵌字型；空白或判定為亂碼的頁面，以 150 DPI 轉成圖片交給視覺模型 OCR（依序使用 Azure OpenAI、OpenAI 或 Gemini）。點陣化在文件執行緒上逐頁進行、每頁最多 25 MP（超過時降低解析度），只有視覺模型呼叫最多 4 頁平行；聊天附件最多 OCR 20 頁，管理員上傳不限。最後以 pypdf 備援 |
+| PDF | PyMuPDF 擷取並修復缺少 ToUnicode 對照表的內嵌字型；空白或判定為亂碼的頁面，以 150 DPI 轉成圖片交給視覺模型 OCR（依序使用 Microsoft Foundry、OpenAI 或 Gemini）。點陣化在文件執行緒上逐頁進行、每頁最多 25 MP（超過時降低解析度），只有視覺模型呼叫最多 4 頁平行；聊天附件最多 OCR 20 頁，管理員上傳不限。最後以 pypdf 備援 |
 | DOCX | 段落文字加上表格（每列以 `\|` 串接） |
 | PPTX | 逐頁投影片文字 |
 | XLSX | 以唯讀模式逐工作表讀取，每個工作表的第一個非空列為表頭，其後每列成為一筆結構化記錄；沒有資料列時逐列以 `\|` 串接 |
@@ -447,14 +447,14 @@ flowchart TB
 
 | 供應商 | 端點 | 轉換重點 |
 |---|---|---|
-| Azure OpenAI v1 | `{AZURE_OPENAI_ENDPOINT}/openai/v1/chat/completions` | 同時帶 `api-key` 與 `Authorization` 標頭；模型名稱即部署名稱 |
+| Microsoft Foundry | `{FOUNDRY_ENDPOINT}/openai/v1/responses`（`gpt-` / `o` 系列）或 `/openai/v1/chat/completions`（其他模型） | 同時帶 `api-key` 與 `Authorization` 標頭；模型名稱即部署名稱 |
 | OpenAI | `{OPENAI_API_BASE}/chat/completions` | 原生格式 |
 | Google Gemini | `{GEMINI_API_BASE}/v1beta/openai/chat/completions` | 使用 OpenAI 相容端點 |
 | Anthropic Claude | 官方 `anthropic` SDK | system 訊息抽出；連續的工具結果併成一則 `tool_result`；工具呼叫回合原樣送回 `response.content`（含 thinking 區塊）；需要 `ANTHROPIC_MAX_TOKENS`；拒答（`refusal`）與工具參數被截斷時回報錯誤 |
 | Ollama | `{LLM_API_BASE}/api/chat` | 圖片轉為 `images` 欄位；工具呼叫參數轉為物件；可設定 `OLLAMA_TEMPERATURE`、`OLLAMA_NUM_PREDICT` |
 
-- **路由**：依模型名稱決定供應商（Azure 部署 → `claude-` → `gemini-` → `gpt-` / `o1` / `o3` / `o4` → Ollama），完整規則見 [設定參考：供應商路由](configuration.md#供應商路由)。
-- **推理程度**：`reasoning_effort` 只傳給 OpenAI 與 Azure OpenAI；名稱含 `gpt-5` 的模型帶工具時一律送 `none`。
+- **路由**：依模型名稱決定供應商（Foundry 部署 → `claude-` → `gemini-` → `gpt-` / `o1` / `o3` / `o4` → Ollama），完整規則見 [設定參考：供應商路由](configuration.md#供應商路由)。
+- **推理程度**：`reasoning_effort` 依供應商對應後傳給模型（對應規則見 [API 參考](api.md)）；走 Chat Completions 且名稱含 `gpt-5` 的模型帶工具時一律送 `none`，`gpt-6*` 與 Foundry 上的 GPT 改走 Responses API 以同時支援工具與推理。
 - **兩種呼叫**：`chat_completion` 用於研究迴圈的每一輪（非串流，回傳 `content` 與 `tool_calls`）；`stream_completion` 只在需要重新生成最終答案時使用，Claude 串流時以 `tool_choice: none` 避免再觸發工具。
 - **逾時**：共用的 httpx 用戶端以 `LLM_TIMEOUT` 為逾時，等待連線池名額另以 15 秒為上限（池被占滿時很快失敗），每次請求自帶的逾時也保留這個上限；文件摘要另以 18 秒為上限。
 - **影像輸入**：只接受內嵌的 `data:` URL，遠端圖片網址一律拒絕，避免模型供應商代為擷取使用者指定的任意位址。
@@ -669,7 +669,7 @@ Agent Skills 的內容例外：技能由管理員上傳，`activate_skill` 與 `
 - **對外提供**：後端以 `python main.py` 啟動時監聽 `HOST`（範本為 `127.0.0.1`），只有容器或其他主機上的反向代理需要連入時才改為 `0.0.0.0`；以 HTTPS 提供服務時 `COOKIE_SECURE` 必須為 `true`。Vite 開發與預覽伺服器只監聽 `localhost`。讓其他裝置使用時，請以 `bun run build` 建置，由正式的網頁伺服器提供 `frontend/build/`、送出反框架標頭並反向代理 `/api`；該代理會覆寫 `X-Forwarded-For` 時，可把它的位址設為 `FORWARDED_ALLOW_IPS`，速率限制與依位址的登入節流才會以真實用戶端 IP 計算。
 - **PostgreSQL 容器**：`backend/docker-compose.yml` 需要 `POSTGRES_PASSWORD`（超級使用者，只供管理用途）與 `POSTGRES_APP_USER`、`POSTGRES_APP_PASSWORD`（後端連線用的非超級使用者，`DATABASE_URL` 使用這組帳號），且只綁定 `127.0.0.1:7690`。資料卷第一次初始化時依序執行 `10-init.sql`（`backend/init.sql`）與 `20-app-role.sh`（`backend/init-app-role.sh`）；以舊版初始化的資料卷要執行一次 `docker compose exec postgres bash /docker-entrypoint-initdb.d/20-app-role.sh`（可重複執行）。
 - **資料與備份**：需要備份的是資料庫與 `backend/data/`（索引、上傳檔、模型快取）；索引可由資料庫重建，上傳原檔則用於重新擷取文字。`backend/keys/` 遺失時會產生新金鑰，所有既有權杖隨之失效；目錄無法寫入或金鑰損毀時後端無法啟動。`TOOL_SECRETS_KEY` 遺失或更換時，資料庫中已加密的工具憑證無法解密，需要重新輸入。
-- **相依套件**：後端依 `requirements.txt` 的雜湊安裝；新增或升級套件時修改 `requirements.in`，再於 `backend/` 執行 `uv pip compile requirements.in --universal --python-version 3.10 --generate-hashes -o requirements.txt` 重新產生。前端 `bun install` 依凍結的 `bun.lock` 安裝，與 `package.json` 不一致時失敗。
+- **相依套件**：後端依 `requirements.txt` 的雜湊安裝；新增或升級套件時修改 `requirements.in`，再於 `backend/` 執行 `uv pip compile requirements.in --universal --python-version 3.12 --generate-hashes -o requirements.txt` 重新產生。前端 `bun install` 依凍結的 `bun.lock` 安裝，與 `package.json` 不一致時失敗。
 - **日誌**：應用程式日誌寫入 `backend/logs/app.log`；安全事件只寫入啟動目錄下的 `logs/security.log`（在 `backend/` 啟動即為 `backend/logs/`），兩者都以 10 MiB × 5 份輪替。錯誤代碼可在日誌中搜尋對應的完整例外。
 - **介紹頁**：`.github/workflows/deploy-pages.yml` 在 `New` 分支的 `site/` 有變更時，把整個目錄部署到 GitHub Pages。
 - **版本號**：後端以 `backend/app/__init__.py` 的 `__version__` 為準（OpenAPI 文件與 MCP 交握皆引用），前端為 `frontend/package.json` 的 `version`，發行時與 `CHANGELOG.md` 一併更新。

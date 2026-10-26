@@ -21,19 +21,19 @@ async def run_tests():
     
     print("\n[測試 1] 驗證 get_available_models() 動態清單：")
     with patch.dict(os.environ, {"AVAILABLE_MODELS": ""}):
-        with patch.object(settings, "AZURE_OPENAI_API_KEY", "azure-key"), \
-             patch.object(settings, "AZURE_OPENAI_ENDPOINT", "https://azure.com"), \
-             patch.object(settings, "AZURE_OPENAI_DEPLOYMENT", "azure-gpt"), \
+        with patch.object(settings, "FOUNDRY_API_KEY", "foundry-key"), \
+             patch.object(settings, "FOUNDRY_ENDPOINT", "https://foundry.example.com"), \
+             patch.object(settings, "FOUNDRY_DEPLOYMENT", "foundry-gpt"), \
              patch.object(settings, "OPENAI_API_KEY", "openai-key"), \
              patch.object(settings, "ANTHROPIC_API_KEY", "anthropic-key"), \
              patch.object(settings, "GEMINI_API_KEY", "gemini-key"):
             
             models = get_available_models()
             print(f"啟動所有 Key 時的模型列表: {models}")
-            assert "azure-gpt" in models
+            assert "foundry-gpt" in models
             assert "gpt-6-sol" in models
             assert "claude-opus-5-5" in models
-            assert "gemini-3.5-flash" in models
+            assert "gemini-3.8-flash" in models
             print("=> 測試 1 成功！")
     print("\n[測試 2] 驗證 OpenAI 路由與調用格式：")
     mock_post = AsyncMock()
@@ -79,7 +79,7 @@ async def run_tests():
     with patch("httpx.AsyncClient.post", mock_post):
         with patch.object(settings, "GEMINI_API_KEY", "gemini-test-key"):
             messages = [{"role": "user", "content": "你好"}]
-            response = await call_llm(messages, model_name="gemini-3.5-flash")
+            response = await call_llm(messages, model_name="gemini-3.8-flash")
             print(f"LLM 回傳: {response}")
             assert response == "Hello from Gemini"
             
@@ -94,7 +94,7 @@ async def run_tests():
             
             assert url == "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
             assert headers["Authorization"] == "Bearer gemini-test-key"
-            assert json_payload["model"] == "gemini-3.5-flash"
+            assert json_payload["model"] == "gemini-3.8-flash"
             assert json_payload["messages"] == messages
             print("=> 測試 3 成功！")
     print("\n[測試 4] 驗證 Anthropic Claude 路由與調用格式（官方 anthropic SDK）：")

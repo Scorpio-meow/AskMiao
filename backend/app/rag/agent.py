@@ -312,6 +312,7 @@ class ResearchAgent:
                     "role": "tool",
                     "tool_call_id": tool_call_id,
                     "name": fn_name,
+                    "_is_error": "error" in tool_output,
                     "content": session.tool_message_content(fn_name, tool_output)
                 })
 

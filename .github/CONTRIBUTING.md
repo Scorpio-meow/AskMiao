@@ -38,7 +38,7 @@
 
 依 README 的 [快速開始](../README.md#快速開始) 安裝後端與前端。
 
-- 後端需要 Python 3.10 以上，套件以 `pip install -r requirements.txt` 安裝（會驗證雜湊）。
+- 後端需要 Python 3.12 以上，套件以 `pip install -r requirements.txt` 安裝（會驗證雜湊）。
 - 前端以 Bun 管理套件與執行指令，請不要用 npm 或 yarn 安裝，以免產生其他鎖定檔。
 - 首次啟動會下載約 1.2 GB 的嵌入與重排模型。
 
@@ -95,7 +95,7 @@ bun x tsc --noEmit
 - **後端**：`requirements.in` 只列直接依賴，`requirements.txt` 由它產生並鎖定版本與雜湊，請不要手動修改。新增或升級套件時修改 `requirements.in`，在 `backend/` 執行下列指令重新產生，兩個檔案一起提交：
 
   ```bash
-  uv pip compile requirements.in --universal --python-version 3.10 --generate-hashes -o requirements.txt
+  uv pip compile requirements.in --universal --python-version 3.12 --generate-hashes -o requirements.txt
   ```
 
 - **前端**：`frontend/bunfig.toml` 設定 `frozenLockfile = true`。新增或升級套件時，暫時把它改為 `false` 更新 `bun.lock`，再改回 `true`，並把 `package.json` 與 `bun.lock` 一起提交。

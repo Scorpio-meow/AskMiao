@@ -18,7 +18,7 @@ body:
     attributes:
       label: 版本 / Version
       description: "`backend/app/__init__.py` 的 `__version__`，或 commit hash / `__version__` in `backend/app/__init__.py`, or the commit hash"
-      placeholder: "5.0.0"
+      placeholder: "6.0.0"
     validations:
       required: true
   - type: dropdown

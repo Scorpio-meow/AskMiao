@@ -4,11 +4,11 @@
 
 > 本文件說明如何把既有部署升級到新版本，並附上回退步驟與常見問題。每個版本的完整變更見 [CHANGELOG](../CHANGELOG.md)。
 
-- [從 5.0.0 升級到下一版](#從-500-升級到下一版)
-  - [下一版的變更與需要的動作](#下一版的變更與需要的動作)
-  - [升級到下一版的步驟](#升級到下一版的步驟)
+- [從 5.0.0 升級到 6.0.0](#從-500-升級到-600)
+  - [6.0.0 的變更與需要的動作](#600-的變更與需要的動作)
+  - [升級到 6.0.0 的步驟](#升級到-600-的步驟)
   - [回退到 5.0.0](#回退到-500)
-  - [升級到下一版後的常見狀況](#升級到下一版後的常見狀況)
+  - [升級到 6.0.0 後的常見狀況](#升級到-600-後的常見狀況)
 - [從 4.0.0 升級到 5.0.0](#從-400-升級到-500)
   - [5.0.0 的變更與需要的動作](#500-的變更與需要的動作)
   - [升級到 5.0.0 的步驟](#升級到-500-的步驟)
@@ -32,13 +32,13 @@
 
 ---
 
-## 從 5.0.0 升級到下一版
+## 從 5.0.0 升級到 6.0.0
 
-適用於從 5.0.0 升級到尚未發行的下一版，變更見 [CHANGELOG](../CHANGELOG.md#unreleased)。這一版重做結構化資料的解析與切塊並支援 Agent Skills，資料庫新增 `agent_skills` 資料表，`custom_api_tools` 與 `mcp_servers` 新增幾個欄位（都在啟動時自動建立），後端相依套件移除 `passlib`；需要動手的是領域設定檔的兩個新必填欄位、`.env` 的一個新必填設定 `SKILLS_DIR`、依新的 `requirements.txt` 重新安裝後端套件，以及升級後執行一次重建索引。索引中繼資料改以 JSON 保存，建議一併更新 `METADATA_PATH`。
+適用於從 5.0.0 升級到 6.0.0（2026-10-26），變更見 [CHANGELOG](../CHANGELOG.md#600---2026-10-26)。這一版重做結構化資料的解析與切塊並支援 Agent Skills，資料庫新增 `agent_skills` 資料表，`custom_api_tools` 與 `mcp_servers` 新增幾個欄位（都在啟動時自動建立），後端相依套件移除 `passlib`；需要動手的是領域設定檔的兩個新必填欄位、`.env` 的一個新必填設定 `SKILLS_DIR`、依新的 `requirements.txt` 重新安裝後端套件，以及升級後執行一次重建索引。索引中繼資料改以 JSON 保存，建議一併更新 `METADATA_PATH`。
 
-### 下一版的變更與需要的動作
+### 6.0.0 的變更與需要的動作
 
-| 項目 | 5.0.0 | 下一版 | 需要的動作 |
+| 項目 | 5.0.0 | 6.0.0 | 需要的動作 |
 |---|---|---|---|
 | 領域設定檔 | `domain_words`、`record_date_fields`、`summary_fallback` | 新增必填的 `record_label_fields`、`record_ignore_fields` | 補上兩個欄位，否則後端無法啟動 |
 | 結構化記錄 | `【記錄 N】` 加上「作者 / 內容 / 連結 / 標籤」等中文標籤，巢狀資料被丟棄，每筆一個片段不論長短 | 原始欄位名與點路徑，過長的記錄切成多段並重複標頭 | 執行一次重建索引 |
@@ -53,13 +53,18 @@
 | MCP 工具結果 | 同時有 `content` 與重複內容的 `raw_result` | 只有 `content` | 讀取 `raw_result` 的整合改讀 `content` |
 | 密碼雜湊套件 | `passlib` 呼叫 argon2 | 直接使用 `argon2-cffi`，雜湊格式與參數相同 | 依新的 `requirements.txt` 重新安裝；既有密碼不需重設 |
 | `SKILLS_DIR` | 無 | 必填，Agent Skills 的技能檔案目錄 | 在 `.env` 加上 `SKILLS_DIR=data/skills`，否則後端無法啟動 |
+| Azure OpenAI 設定 | `AZURE_OPENAI_API_KEY`、`AZURE_OPENAI_ENDPOINT`、`AZURE_OPENAI_DEPLOYMENT` | 改名為 Microsoft Foundry：`FOUNDRY_API_KEY`、`FOUNDRY_ENDPOINT`、`FOUNDRY_DEPLOYMENT`，舊名稱仍可讀取（新舊並存時以新名稱為準） | 建議改成新名稱；要部署 Foundry 上的 Claude，`FOUNDRY_ENDPOINT` 必須是 `*.services.ai.azure.com` |
+| Foundry 與 gpt-6 的呼叫路徑 | 全部走 Chat Completions | OpenAI 的 `gpt-6*` 與 Foundry 上名稱以 `gpt-`、`o3`、`o4` 開頭的部署走 Responses API；其他 Foundry 模型維持 Chat Completions；`claude-` 開頭的 Foundry 部署走 `/anthropic` | Foundry 部署名稱請沿用模型名稱，否則會被當成一般模型而走錯路徑；需要 Responses API 的組織不可啟用零資料保留 |
+| Gemini 預設模型 | 清單含 `gemini-3.5-flash`、`gemini-3-pro`；`GEMINI_VISION_MODEL=gemini-3.5-flash` | 清單為 `gemini-4-argon`、`gemini-3.8-flash`、`gemini-3.6-flash`、`gemini-3.5-flash-lite`、`gemini-3.1-flash-lite`；`GEMINI_VISION_MODEL` 預設 `gemini-3.8-flash` | 以 `AVAILABLE_MODELS` 或 `GEMINI_VISION_MODEL` 自行指定模型的不受影響；其中含已停用的 `gemini-3-pro` 時請移除 |
+| 推理強度 | `reasoning_effort` 只傳給 OpenAI 與 Azure OpenAI | 依供應商對應後也傳給 Claude、Gemini、Ollama；前端新增 `max` | 無；Ollama 上下文較小時可設選填的 `OLLAMA_NUM_CTX` |
+| Python 版本 | 3.10 以上 | 3.12 以上 | 先安裝 Python 3.12 並重建虛擬環境，再依新的 `requirements.txt` 安裝套件；3.10、3.11 不再受支援 |
 | `agent_skills` 資料表 | 無 | 保存已安裝技能的中繼資料、啟用狀態、`allow_scripts` 與 `allowed_user_ids` | 無，啟動時自動建立 |
 | 既有資料表的新欄位 | 無 | `custom_api_tools.body_content_type`；`mcp_servers` 的 `discovered_resources`、`discovered_prompts`、`oauth_config`、`oauth_tokens`（後兩者加密存放） | 無，啟動時自動補上；既有工具的 `body_content_type` 填入 `application/json` |
 | HTTP MCP 協定 | 只送 JSON 的 POST，協定版本 `2024-11-05` | Streamable HTTP，協定版本 `2025-06-18`；`initialize` 回傳 `400`、`404`、`405` 時改用舊版 HTTP+SSE | 無；探索失敗的伺服器可以重新探索一次 |
 | MCP 遠端 OAuth | 不支援 | HTTP / SSE 伺服器可以 OAuth 授權，回呼位址為 `/api/mcp/oauth/callback` | 後端在反向代理之後時，代理必須把用戶端看到的 scheme 與主機傳給後端（`redirect_uri` 依請求網址組成）；執行多個 worker 時，授權回呼必須回到發起授權的同一個行程 |
 | 自訂 API 工具 | `auth_type` 不檢查，表單格式的主體也以 JSON 送出 | `auth_type` 只接受 `none`、`bearer`、`api_key`、`basic`、`oauth2_client_credentials`，主體依 `body_content_type` 送出 | 以 API 建立或匯入工具、帶其他 `auth_type` 的整合會收到 `422`，請改用允許的值 |
 
-### 升級到下一版的步驟
+### 升級到 6.0.0 的步驟
 
 1. 停止後端，備份資料庫與 `backend/data/`。
 2. 更新程式碼，在 `backend/` 執行 `pip install -r requirements.txt` 重新安裝後端套件（`passlib` 已不再需要，可以 `pip uninstall passlib` 移除），前端重新執行 `bun run build`。在 `.env` 加上 `SKILLS_DIR=data/skills`（相對路徑以 `backend/` 為基準）；`ADMIN_API_KEY`、`ENABLE_BATCH_ACCUMULATION`、`BATCH_ACCUMULATOR_SIZE`、`BASE_URL` 可以刪除。
@@ -85,19 +90,19 @@
 6. `agent_skills` 資料表與 `SKILLS_DIR` 目錄可以保留：5.0.0 不會讀取它們，`.env` 中的 `SKILLS_DIR` 也會被忽略。
 7. `custom_api_tools` 與 `mcp_servers` 的新欄位可以保留，5.0.0 會忽略它們：MCP 伺服器的 OAuth 授權與 resources、prompts 不再使用；`auth_type` 為 `oauth2_client_credentials` 的工具呼叫時不帶認證，表單格式的主體改以 JSON 送出。
 
-### 升級到下一版後的常見狀況
+### 升級到 6.0.0 後的常見狀況
 
 <details>
 <summary><b>後端啟動失敗，錯誤訊息提到 <code>record_label_fields</code> 或 <code>record_ignore_fields</code></b></summary>
 
-領域設定檔缺少新的必填欄位，依 [升級步驟](#升級到下一版的步驟) 第 3 點補上。
+領域設定檔缺少新的必填欄位，依 [升級步驟](#升級到-600-的步驟) 第 3 點補上。
 
 </details>
 
 <details>
 <summary><b>後端啟動失敗，錯誤訊息提到 <code>SKILLS_DIR</code></b></summary>
 
-`.env` 缺少新的必填設定，依 [升級步驟](#升級到下一版的步驟) 第 2 點加上 `SKILLS_DIR=data/skills`。
+`.env` 缺少新的必填設定，依 [升級步驟](#升級到-600-的步驟) 第 2 點加上 `SKILLS_DIR=data/skills`。
 
 </details>
 
@@ -168,7 +173,7 @@
    之後新增或升級後端套件時，不要手動編輯 `requirements.txt`：修改 `backend/requirements.in`（只列直接依賴），再於 `backend/` 重新產生：
 
    ```bash
-   uv pip compile requirements.in --universal --python-version 3.10 --generate-hashes -o requirements.txt
+   uv pip compile requirements.in --universal --python-version 3.12 --generate-hashes -o requirements.txt
    ```
 
    前端則先把 `frontend/bunfig.toml` 的 `frozenLockfile` 暫時改為 `false`，以 `bun add` 或 `bun remove` 更新後改回 `true`，並一併提交 `package.json` 與 `bun.lock`。

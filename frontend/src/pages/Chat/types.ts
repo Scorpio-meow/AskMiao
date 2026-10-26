@@ -30,7 +30,7 @@ export interface SnackbarState {
   /** 每則通知的序號，讓新通知重新開始自動關閉的計時 */
   key: number;
 }
-export type ReasoningEffort = 'none' | 'low' | 'medium' | 'high' | 'xhigh';
+export type ReasoningEffort = 'none' | 'low' | 'medium' | 'high' | 'xhigh' | 'max';
 export interface ChatHeaderProps {
   availableModels: string[];
   selectedModel: string;

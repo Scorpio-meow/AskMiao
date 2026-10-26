@@ -2,7 +2,7 @@
 
 [繁體中文](architecture.md) | [English](architecture_en.md)
 
-> The architecture of AskMiao **5.0.0**: layers, startup, data model, document processing and retrieval, the agentic RAG research loop, the LLM layer, external tool integration, authentication and security, and the frontend (see the [changelog](../CHANGELOG_en.md#500---2026-10-10) for the differences from 4.0.0). The trade-offs behind these designs are recorded in the [Architecture Decision Records](adr/README_en.md).
+> The architecture of AskMiao **6.0.0**: layers, startup, data model, document processing and retrieval, the agentic RAG research loop, the LLM layer, external tool integration, authentication and security, and the frontend (see the [changelog](../CHANGELOG_en.md#600---2026-10-26) for the differences from 5.0.0). The trade-offs behind these designs are recorded in the [Architecture Decision Records](adr/README_en.md).
 
 ## Contents
 
@@ -257,7 +257,7 @@ flowchart TB
 
 | Format | How |
 |---|---|
-| PDF | PyMuPDF extraction with repair of embedded fonts missing ToUnicode maps; blank or garbled pages are rendered at 150 DPI and OCR'd by a vision model (Azure OpenAI, OpenAI, or Gemini, in that order). Pages are rasterized one at a time on the document's thread, at most 25 MP each (larger pages get a lower resolution), and only the vision calls run up to 4 pages in parallel; chat attachments are OCR'd for at most 20 pages, admin uploads without a limit. pypdf is the last fallback |
+| PDF | PyMuPDF extraction with repair of embedded fonts missing ToUnicode maps; blank or garbled pages are rendered at 150 DPI and OCR'd by a vision model (Microsoft Foundry, OpenAI, or Gemini, in that order). Pages are rasterized one at a time on the document's thread, at most 25 MP each (larger pages get a lower resolution), and only the vision calls run up to 4 pages in parallel; chat attachments are OCR'd for at most 20 pages, admin uploads without a limit. pypdf is the last fallback |
 | DOCX | Paragraph text plus tables (cells of each row joined with `\|`) |
 | PPTX | Text of each slide |
 | XLSX | Opened read-only, sheet by sheet; the first non-empty row of each sheet is the header and every later row becomes a structured record; a sheet with no data rows is joined row by row with `\|` |
@@ -447,14 +447,14 @@ Pending items live only in process memory; when the user interrupts the stream, 
 
 | Provider | Endpoint | Conversion notes |
 |---|---|---|
-| Azure OpenAI v1 | `{AZURE_OPENAI_ENDPOINT}/openai/v1/chat/completions` | Sends both the `api-key` and `Authorization` headers; the model name is the deployment name |
+| Microsoft Foundry | `{FOUNDRY_ENDPOINT}/openai/v1/responses` (`gpt-` / `o` series) or `/openai/v1/chat/completions` (other models) | Sends both the `api-key` and `Authorization` headers; the model name is the deployment name |
 | OpenAI | `{OPENAI_API_BASE}/chat/completions` | Native format |
 | Google Gemini | `{GEMINI_API_BASE}/v1beta/openai/chat/completions` | OpenAI-compatible endpoint |
 | Anthropic Claude | Official `anthropic` SDK | The system message is extracted; consecutive tool results merge into one `tool_result` message; tool-call turns send `response.content` back verbatim (including thinking blocks); requires `ANTHROPIC_MAX_TOKENS`; refusals and truncated tool arguments raise errors |
 | Ollama | `{LLM_API_BASE}/api/chat` | Images move to the `images` field; tool-call arguments become objects; `OLLAMA_TEMPERATURE` and `OLLAMA_NUM_PREDICT` are optional |
 
-- **Routing**: the provider follows the model name (Azure deployment → `claude-` → `gemini-` → `gpt-` / `o1` / `o3` / `o4` → Ollama); see [configuration reference: provider routing](configuration_en.md#provider-routing) for the full rules.
-- **Reasoning effort**: `reasoning_effort` goes only to OpenAI and Azure OpenAI; models whose name contains `gpt-5` always get `none` when tools are attached.
+- **Routing**: the provider follows the model name (Foundry deployment → `claude-` → `gemini-` → `gpt-` / `o1` / `o3` / `o4` → Ollama); see [configuration reference: provider routing](configuration_en.md#provider-routing) for the full rules.
+- **Reasoning effort**: `reasoning_effort` is mapped per provider before it is sent (see the [API reference](api_en.md) for the rules); models on Chat Completions whose name contains `gpt-5` always get `none` when tools are attached, while `gpt-6*` and GPT models on Foundry use the Responses API so tools and reasoning work together.
 - **Two call types**: `chat_completion` serves each research round (non-streaming, returning `content` and `tool_calls`); `stream_completion` is used only to regenerate a final answer, and Claude streams with `tool_choice: none` so no further tools fire.
 - **Timeouts**: the shared httpx client uses `LLM_TIMEOUT`, and waiting for a connection pool slot has its own 15-second limit so a saturated pool fails fast, which per-request timeouts keep as well; document summaries are capped at 18 seconds.
 - **Image input**: only inline `data:` URLs are accepted; remote image URLs are rejected so model providers never fetch arbitrary user-chosen addresses on our behalf.
@@ -669,7 +669,7 @@ Results from custom API and MCP tools are wrapped as untrusted too, but they are
 - **Serving other devices**: `python main.py` listens on `HOST` (the template has `127.0.0.1`); change it to `0.0.0.0` only when a container or a reverse proxy on another host must connect, and set `COOKIE_SECURE` to `true` when serving over HTTPS. The Vite dev and preview servers listen on `localhost` only. To serve other devices, build with `bun run build` and let a real web server serve `frontend/build/`, send anti-framing headers, and reverse-proxy `/api`; if that proxy overwrites `X-Forwarded-For`, set its address as `FORWARDED_ALLOW_IPS` so rate limiting and per-address login throttling count real client IPs.
 - **PostgreSQL container**: `backend/docker-compose.yml` requires `POSTGRES_PASSWORD` (the superuser, for administration only) plus `POSTGRES_APP_USER` and `POSTGRES_APP_PASSWORD` (the non-superuser account the backend connects with, used in `DATABASE_URL`), and binds `127.0.0.1:7690` only. A new data volume runs `10-init.sql` (`backend/init.sql`) and then `20-app-role.sh` (`backend/init-app-role.sh`); a volume initialized by an older release needs a one-time `docker compose exec postgres bash /docker-entrypoint-initdb.d/20-app-role.sh` (safe to rerun).
 - **Data and backups**: back up the database and `backend/data/` (indexes, uploads, model cache); indexes can be rebuilt from the database, and the uploaded originals are used to re-extract text. If `backend/keys/` is lost, a new key pair is generated and every existing token becomes invalid; if the directory is not writable or the keys are corrupt, the backend cannot start. If `TOOL_SECRETS_KEY` is lost or changed, the encrypted tool credentials in the database can no longer be decrypted and must be entered again.
-- **Dependencies**: the backend installs `requirements.txt` by hash; to add or upgrade a package, edit `requirements.in` and regenerate the file in `backend/` with `uv pip compile requirements.in --universal --python-version 3.10 --generate-hashes -o requirements.txt`. The frontend's `bun install` installs from the frozen `bun.lock` and fails when it disagrees with `package.json`.
+- **Dependencies**: the backend installs `requirements.txt` by hash; to add or upgrade a package, edit `requirements.in` and regenerate the file in `backend/` with `uv pip compile requirements.in --universal --python-version 3.12 --generate-hashes -o requirements.txt`. The frontend's `bun install` installs from the frozen `bun.lock` and fails when it disagrees with `package.json`.
 - **Logs**: application logs go to `backend/logs/app.log`; security events go only to `logs/security.log` under the startup directory (`backend/logs/` when started in `backend/`), and both rotate at 10 MiB × 5 files. Search the logs for an error code to find the full exception.
 - **Intro site**: `.github/workflows/deploy-pages.yml` deploys the whole `site/` directory to GitHub Pages when it changes on the `New` branch.
 - **Version**: the backend reads `__version__` from `backend/app/__init__.py` (used by the OpenAPI document and the MCP handshake) and the frontend uses `version` in `frontend/package.json`; both are updated with `CHANGELOG.md` for each release.

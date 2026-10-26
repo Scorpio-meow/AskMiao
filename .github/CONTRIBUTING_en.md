@@ -38,7 +38,7 @@ The backend only returns an error code to clients; the full stack trace is writt
 
 Install the backend and frontend by following [Quick Start](../README_en.md#quick-start) in the README.
 
-- The backend needs Python 3.10 or later; install packages with `pip install -r requirements.txt` (hashes are verified).
+- The backend needs Python 3.12 or later; install packages with `pip install -r requirements.txt` (hashes are verified).
 - The frontend uses Bun for packages and scripts. Do not install with npm or yarn, which would create another lockfile.
 - The first start downloads about 1.2 GB of embedding and reranker models.
 
@@ -95,7 +95,7 @@ When fixing a bug, add a test that reproduces it and passes after the fix whenev
 - **Backend**: `requirements.in` lists only direct dependencies; `requirements.txt` is generated from it with pinned versions and hashes, so do not edit it by hand. To add or upgrade a package, edit `requirements.in`, regenerate in `backend/` with the command below, and commit both files:
 
   ```bash
-  uv pip compile requirements.in --universal --python-version 3.10 --generate-hashes -o requirements.txt
+  uv pip compile requirements.in --universal --python-version 3.12 --generate-hashes -o requirements.txt
   ```
 
 - **Frontend**: `frontend/bunfig.toml` sets `frozenLockfile = true`. To add or upgrade a package, temporarily set it to `false`, update `bun.lock`, set it back to `true`, and commit `package.json` together with `bun.lock`.

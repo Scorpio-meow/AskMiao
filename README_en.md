@@ -10,8 +10,8 @@ AskMiao answers with hybrid retrieval (FAISS + BM25 + Cross-Encoder) and agentic
 
 [繁體中文](README.md) | [English](README_en.md)
 
-[![Version](https://img.shields.io/badge/version-5.0.0-2563eb?style=flat)](CHANGELOG_en.md)
-[![Python](https://img.shields.io/badge/Python-3.10+-3776AB?style=flat&logo=python&logoColor=white)](https://www.python.org/)
+[![Version](https://img.shields.io/badge/version-6.0.0-2563eb?style=flat)](CHANGELOG_en.md)
+[![Python](https://img.shields.io/badge/Python-3.12+-3776AB?style=flat&logo=python&logoColor=white)](https://www.python.org/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-005571?style=flat&logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
 [![React](https://img.shields.io/badge/React-19.2-61DAFB?style=flat&logo=react&logoColor=black)](https://react.dev/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-7-3178C6?style=flat&logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
@@ -63,7 +63,7 @@ AskMiao answers with hybrid retrieval (FAISS + BM25 + Cross-Encoder) and agentic
 | 2 | **Honest "nothing found"** | Chunks below the reranker probability threshold are dropped, and when nothing passes the agent says so instead of improvising |
 | 3 | **Autonomous research** | A ReAct agent decides whether to search the knowledge base, count records precisely, search the web, or read a page, with the research trace shown live |
 | 4 | **Hybrid retrieval** | Vector search and BM25 always both run, fused by rank with RRF and reranked by a Cross-Encoder; chunks are keyed by a database chunk_id |
-| 5 | **Five LLM providers** | Ollama, OpenAI, Azure OpenAI, Anthropic Claude, and Google Gemini all support tool calling and streaming |
+| 5 | **Five LLM providers** | Ollama, OpenAI, Microsoft Foundry, Anthropic Claude, and Google Gemini all support tool calling and streaming |
 | 6 | **External tools and MCP** | Paste an OpenAPI spec to import API tools or connect MCP servers; managed by admins only, and calls with side effects need the user's approval first |
 | 7 | **Defense in depth** | RSA JWT, Argon2 password hashing with login failure throttling, per-hop SSRF validation with the connection pinned to the checked IP, tool credentials encrypted at rest, a trust boundary for tool output, resource limits, and error codes instead of stack traces |
 
@@ -146,14 +146,14 @@ flowchart LR
 
 ### Multi-provider LLM
 
-- One calling layer supports **Ollama, OpenAI, Azure OpenAI v1, Anthropic Claude (official SDK), and Google Gemini**, routed by model name, all with tool calling and streaming.
-- The frontend switches models and five reasoning levels: `None`, `Low`, `Medium`, `High`, and `X-High`; the level is passed to OpenAI and Azure OpenAI reasoning models.
+- One calling layer supports **Ollama, OpenAI, Microsoft Foundry, Anthropic Claude (official SDK), and Google Gemini**, routed by model name, all with tool calling and streaming.
+- The frontend switches models and six reasoning levels: `None`, `Low`, `Medium`, `High`, `X-High`, and `Max`; the level is mapped to what each provider supports and passed to the model (OpenAI, Microsoft Foundry, Claude, Gemini, Ollama), and levels a model does not support are disabled in the UI.
 - The model list comes from `AVAILABLE_MODELS` or is built from the configured keys; see the [configuration reference](docs/configuration_en.md#llm-providers-and-models).
 
 ### Knowledge base and document processing
 
 - 28 file extensions: `.txt`, `.md`, `.markdown`, `.pdf`, `.docx`, `.pptx`, `.xlsx`, `.csv`, `.json`, `.jsonl`, `.yaml`, `.yml`, `.xml`, `.html`, `.htm`, `.log`, `.py`, `.js`, `.ts`, `.tsx`, `.jsx`, `.java`, `.cpp`, `.c`, `.sql`, `.sh`, `.ini`, `.env`.
-- **Robust PDF extraction**: PyMuPDF extracts text and repairs embedded fonts missing ToUnicode maps; blank or garbled pages go through vision-model OCR (Azure OpenAI, OpenAI, or Gemini), with pypdf as the last fallback.
+- **Robust PDF extraction**: PyMuPDF extracts text and repairs embedded fonts missing ToUnicode maps; blank or garbled pages go through vision-model OCR (Microsoft Foundry, OpenAI, or Gemini), with pypdf as the last fallback.
 - **Smart chunking**: JSON, JSONL, YAML, CSV, and XLSX are parsed into structured records that become one chunk each (nested fields kept, long records split into parts that repeat the header), Q&A documents become one chunk per question-answer pair, and everything else is split recursively on Chinese punctuation.
 - **AI outlines and summaries**: uploads get an AI summary that can be regenerated or edited; rule-based summaries take over when the LLM fails. The summaries also form the knowledge-base catalog the agent uses to decide which document to search.
 
@@ -285,7 +285,7 @@ flowchart TB
         AdminUI["Admin dashboard (admin)"]
     end
 
-    subgraph Backend ["Backend · FastAPI (Python 3.10+)"]
+    subgraph Backend ["Backend · FastAPI (Python 3.12+)"]
         MW["Middleware<br/>security headers, rate limit, CORS"]
         Auth["Auth /api/auth<br/>RSA JWT, revocation list"]
         ChatAPI["Chat /api/chat (SSE)"]
@@ -297,7 +297,7 @@ flowchart TB
             Session["ResearchSession<br/>citations, URL provenance, trust boundary"]
             Registry["ResearchToolRegistry<br/>built-in, custom API, MCP tools"]
             Retriever["HybridRetriever<br/>RRF, exact matches, rerank, threshold"]
-            LLM["llm_client<br/>Ollama, OpenAI, Azure, Claude, Gemini"]
+            LLM["llm_client<br/>Ollama, OpenAI, Foundry, Claude, Gemini"]
         end
 
         SSRF["SSRF guard<br/>per-hop validation"]
@@ -372,11 +372,11 @@ See [Architecture & Design](docs/architecture_en.md) for module-level details.
 
 | Item | Requirement | Notes |
 |---|---|---|
-| Python | 3.10 or later | Backend |
+| Python | 3.12 or later | Backend |
 | Bun | 1.x | Frontend package manager, dev server, and build |
 | Database | SQLite (bundled with Python) or PostgreSQL | SQLite works with zero dependencies |
 | Models | About 1.2 GB downloaded on first start | Embedding model `BAAI/bge-small-zh-v1.5` and reranker `BAAI/bge-reranker-base` |
-| LLM | Any one | A local Ollama, or an OpenAI, Azure OpenAI, Anthropic, or Gemini API key |
+| LLM | Any one | A local Ollama, or an OpenAI, Microsoft Foundry, Anthropic, or Gemini API key |
 
 ### 1. Get the source
 
@@ -522,7 +522,7 @@ Common optional settings:
 | Variable | Description |
 |---|---|
 | `LLM_API_BASE` | Ollama base URL (template `http://localhost:11434`) |
-| `OPENAI_API_KEY`, `AZURE_OPENAI_*`, `ANTHROPIC_API_KEY`, `GEMINI_API_KEY` | Cloud model keys; their models join the list automatically |
+| `OPENAI_API_KEY`, `FOUNDRY_*`, `ANTHROPIC_API_KEY`, `GEMINI_API_KEY` | Cloud model keys; their models join the list automatically |
 | `ANTHROPIC_MAX_TOKENS` | Output cap per Claude response (required for Claude) |
 | `MODEL_NAME`, `AVAILABLE_MODELS` | Default model and a custom model list |
 | `CHUNK_SIZE`, `CHUNK_OVERLAP` | Chunk length and overlap (template 300 / 100) |
@@ -635,7 +635,7 @@ bun run build        # Build into build/
 - **Backend**: `requirements.in` lists only direct dependencies; `requirements.txt` is generated from it and pins every package (transitive ones included) by version and hash, and `pip install -r requirements.txt` verifies each one. To add or upgrade a package, edit `requirements.in`, regenerate `requirements.txt` with uv in `backend/`, and commit both files:
 
   ```bash
-  uv pip compile requirements.in --universal --python-version 3.10 --generate-hashes -o requirements.txt
+  uv pip compile requirements.in --universal --python-version 3.12 --generate-hashes -o requirements.txt
   ```
 
 - **Frontend**: `bun.lock` is committed and `frontend/bunfig.toml` sets `frozenLockfile = true`: `bun install` installs only what `bun.lock` records and fails when it disagrees with `package.json`, and `bun add` cannot rewrite `bun.lock` either. To add or upgrade a package, temporarily set `frozenLockfile` to `false` to update `bun.lock`, set it back to `true`, and commit `package.json` and `bun.lock` together.
@@ -775,7 +775,7 @@ Once one login identifier (user name or email, case-insensitive) fails `LOGIN_MA
 
 ## Versioning
 
-- **Current version**: 5.0.0 (2026-10-10); see the [changelog](CHANGELOG_en.md).
+- **Current version**: 6.0.0 (2026-10-26); see the [changelog](CHANGELOG_en.md).
 - **Policy**: [Semantic Versioning](https://semver.org/). Incompatible changes, such as new required settings or changes to API permissions or the index format, bump the major version.
 - **Where the version lives**: `__version__` in `backend/app/__init__.py` (used by the OpenAPI document and the MCP handshake) and `frontend/package.json`, updated together with `CHANGELOG.md` for each release.
 

@@ -2,7 +2,7 @@ import os
 import re
 from pathlib import Path
 from typing import List, Optional
-from pydantic import Field, field_validator
+from pydantic import AliasChoices, Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 BACKEND_DIR = Path(__file__).resolve().parents[2]
 ENV_PATH = BACKEND_DIR / ".env"
@@ -34,15 +34,16 @@ class Settings(BaseSettings):
     OLLAMA_API_KEY: Optional[str] = None
     OLLAMA_TEMPERATURE: Optional[float] = None
     OLLAMA_NUM_PREDICT: Optional[int] = None
+    OLLAMA_NUM_CTX: Optional[int] = Field(default=None, ge=1)
     ENABLE_WEB_SEARCH: bool
     # web_fetch 可讀取的網域（含子網域），逗號分隔；明確寫 * 才表示不限制
     WEB_FETCH_ALLOWED_DOMAINS: str
     # 同一次提問中知識庫工具回傳過內容後，是否拒絕 web_search 與 web_fetch
     BLOCK_WEB_TOOLS_AFTER_KB: bool
     CONVERSATION_HISTORY_MESSAGES: int = Field(ge=0)
-    AZURE_OPENAI_API_KEY: Optional[str] = None
-    AZURE_OPENAI_ENDPOINT: Optional[str] = None
-    AZURE_OPENAI_DEPLOYMENT: Optional[str] = None
+    FOUNDRY_API_KEY: Optional[str] = Field(default=None, validation_alias=AliasChoices("FOUNDRY_API_KEY", "AZURE_OPENAI_API_KEY"))
+    FOUNDRY_ENDPOINT: Optional[str] = Field(default=None, validation_alias=AliasChoices("FOUNDRY_ENDPOINT", "AZURE_OPENAI_ENDPOINT"))
+    FOUNDRY_DEPLOYMENT: Optional[str] = Field(default=None, validation_alias=AliasChoices("FOUNDRY_DEPLOYMENT", "AZURE_OPENAI_DEPLOYMENT"))
     AVAILABLE_MODELS: Optional[str] = None
     OPENAI_API_KEY: Optional[str] = None
     OPENAI_API_BASE: str = "https://api.openai.com/v1"
@@ -52,7 +53,7 @@ class Settings(BaseSettings):
     ANTHROPIC_MAX_TOKENS: Optional[int] = Field(default=None, ge=1)
     GEMINI_API_KEY: Optional[str] = None
     GEMINI_API_BASE: str = "https://generativelanguage.googleapis.com"
-    GEMINI_VISION_MODEL: str = "gemini-3.5-flash"
+    GEMINI_VISION_MODEL: str = "gemini-3.8-flash"
     OLLAMA_SEARCH_ENDPOINT: str = "https://ollama.com/api/web_search"
     OLLAMA_FETCH_ENDPOINT: str = "https://ollama.com/api/web_fetch"
     DUCKDUCKGO_SEARCH_ENDPOINT: str = "https://html.duckduckgo.com/html/"

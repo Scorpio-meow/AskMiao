@@ -2,7 +2,7 @@
 
 [繁體中文](configuration.md) | [English](configuration_en.md)
 
-> Every setting in the backend `backend/.env` and the frontend `frontend/.env`, with its default and what it actually does, as of **5.0.0** (to upgrade from 4.0.0, see the [upgrade guide](upgrading_en.md#upgrading-from-400-to-500)). The source of truth is `Settings` in `backend/app/core/config.py`; the template is [`backend/.env.example`](../backend/.env.example).
+> Every setting in the backend `backend/.env` and the frontend `frontend/.env`, with its default and what it actually does, as of **6.0.0** (to upgrade from 5.0.0, see the [upgrade guide](upgrading_en.md#upgrading-from-500-to-600)). The source of truth is `Settings` in `backend/app/core/config.py`; the template is [`backend/.env.example`](../backend/.env.example).
 
 - [How settings are read](#how-settings-are-read)
 - [Required settings](#required-settings)
@@ -78,18 +78,19 @@ Claude models also require `ANTHROPIC_MAX_TOKENS` (without it Claude calls fail,
 | `AVAILABLE_MODELS` | empty | commented example | Models offered to the frontend (comma-separated); when set, it fully replaces the generated list |
 | `OLLAMA_TEMPERATURE` | empty | `0.3` | Ollama `temperature`; model default when unset |
 | `OLLAMA_NUM_PREDICT` | empty | `2048` | Ollama `num_predict`; model default when unset |
-| `AZURE_OPENAI_API_KEY` | empty | commented example | Azure OpenAI is enabled only when this and `AZURE_OPENAI_ENDPOINT` are both set |
-| `AZURE_OPENAI_ENDPOINT` | empty | commented example | For example `https://<resource>.openai.azure.com`; calls `/openai/v1/chat/completions` |
-| `AZURE_OPENAI_DEPLOYMENT` | empty | commented example | Deployment names, comma-separated, the first being the default; with Azure enabled but no deployment, the list shows `gpt-6-sol` |
+| `OLLAMA_NUM_CTX` | empty | commented example | Ollama `num_ctx` (context length); model default when unset; the default may be too small for long retrieved context |
+| `FOUNDRY_API_KEY` | empty | commented example | Microsoft Foundry is enabled only when this and `FOUNDRY_ENDPOINT` are both set |
+| `FOUNDRY_ENDPOINT` | empty | commented example | For example `https://<resource>.openai.azure.com` (Azure OpenAI resource) or `https://<resource>.services.ai.azure.com` (Foundry resource); calls `/openai/v1/responses`; deploying Claude requires the latter; the old `AZURE_OPENAI_*` names are still read |
+| `FOUNDRY_DEPLOYMENT` | empty | commented example | Deployment names, comma-separated, the first being the default; with Foundry enabled but no deployment, the list shows `gpt-6-sol` |
 | `OPENAI_API_KEY` | empty | commented example | OpenAI key |
 | `OPENAI_API_BASE` | `https://api.openai.com/v1` | commented example | Base URL of OpenAI or a compatible service |
-| `OPENAI_VISION_MODEL` | `gpt-6-sol` | — | OpenAI model for OCR of scanned PDF pages; also used as the Azure deployment name when no deployment is set |
+| `OPENAI_VISION_MODEL` | `gpt-6-sol` | — | OpenAI model for OCR of scanned PDF pages; also used as the Foundry deployment name when no deployment is set |
 | `ANTHROPIC_API_KEY` | empty | commented example | Anthropic key |
 | `ANTHROPIC_API_BASE` | `https://api.anthropic.com` | commented example | Anthropic API URL |
 | `ANTHROPIC_MAX_TOKENS` | empty | commented example `16000` | Output token cap per Claude response (required for Claude); a truncated tool call is reported as an error, so raise it if that happens |
 | `GEMINI_API_KEY` | empty | commented example | Google Gemini key |
 | `GEMINI_API_BASE` | `https://generativelanguage.googleapis.com` | commented example | Calls the OpenAI-compatible endpoint `/v1beta/openai/chat/completions` |
-| `GEMINI_VISION_MODEL` | `gemini-3.5-flash` | — | Gemini model for OCR of scanned PDF pages |
+| `GEMINI_VISION_MODEL` | `gemini-3.8-flash` | — | Gemini model for OCR of scanned PDF pages |
 | `EXTERNAL_TAGS_URL` | empty | — | URL of a remote model list, queried when no cloud model is configured; defaults to `{LLM_API_BASE}/api/tags` |
 | `LLM_TAGS_TIMEOUT` | `10` | — | Timeout in seconds for the remote model list |
 | `ADD_NGROK_HEADER` | `false` | — | Adds the `ngrok-skip-browser-warning` header to remote model list requests (added automatically for `ngrok-free.app` URLs) |
@@ -99,20 +100,20 @@ Claude models also require `ANTHROPIC_MAX_TOKENS` (without it Claude calls fail,
 `GET /api/chat/models` and `GET /api/tags` build the model list in this order:
 
 1. `AVAILABLE_MODELS` is set: use it as is.
-2. Otherwise merge, in order: the Azure deployments (`gpt-6-sol` when none is set), the built-in OpenAI list if `OPENAI_API_KEY` is set, the built-in Claude list if `ANTHROPIC_API_KEY` is set, and the built-in Gemini list if `GEMINI_API_KEY` is set.
+2. Otherwise merge, in order: the Foundry deployments (`gpt-6-sol` when none is set), the built-in OpenAI list if `OPENAI_API_KEY` is set, the built-in Claude list if `ANTHROPIC_API_KEY` is set, and the built-in Gemini list if `GEMINI_API_KEY` is set.
 3. Still empty: query the remote list at `EXTERNAL_TAGS_URL` (or `{LLM_API_BASE}/api/tags`), such as the models pulled into a local Ollama. The remote query runs in a worker thread, its result (failures included) is cached for 30 seconds, and only one query runs at a time.
 
-The default model is `MODEL_NAME`, then the first Azure deployment, then the default the remote list reports; if it is not in the list, the first model in the list is used. Both endpoints share this rule.
+The default model is `MODEL_NAME`, then the first Foundry deployment, then the default the remote list reports; if it is not in the list, the first model in the list is used. Both endpoints share this rule.
 
 The `model_name` given to `POST /api/chat/send` must be in this list (or equal `MODEL_NAME`); otherwise the request fails with `400`, so nobody can call an unlisted model with the operator's keys.
 
-| Provider | Built-in list (5.0.0) |
+| Provider | Built-in list (6.0.0) |
 |---|---|
-| OpenAI | `gpt-6-sol`, `gpt-6-luna`, `gpt-6-astra`, `gpt-5.6-sol`, `gpt-5.6-luna`, `gpt-5.6-terra`, `gpt-5.4`, `gpt-5.4-mini` |
-| Anthropic | `claude-opus-5-5`, `claude-fable-5-1`, `claude-sonnet-5`, `claude-opus-5`, `claude-fable-5`, `claude-opus-4-8`, `claude-haiku-4-5` |
-| Gemini | `gemini-3.5-flash`, `gemini-3.1-flash-lite`, `gemini-3-pro` |
+| OpenAI | `gpt-6.1-sol`, `gpt-6-sol`, `gpt-6-luna`, `gpt-6-astra`, `gpt-5.6-sol`, `gpt-5.6-luna`, `gpt-5.6-terra`, `gpt-5.4`, `gpt-5.4-mini` |
+| Anthropic | `claude-opus-5-5`, `claude-fable-5-1`, `claude-sonnet-5-5`, `claude-haiku-5-5`, `claude-sonnet-5`, `claude-opus-5`, `claude-fable-5`, `claude-opus-4-8`, `claude-haiku-4-5` |
+| Gemini | `gemini-4-argon`, `gemini-3.8-flash`, `gemini-3.6-flash`, `gemini-3.5-flash-lite`, `gemini-3.1-flash-lite` |
 
-**Default model**: `MODEL_NAME` → the first Azure deployment → the first model in the list; a choice that is not in the list falls back to the first model in the list.
+**Default model**: `MODEL_NAME` → the first Foundry deployment → the first model in the list; a choice that is not in the list falls back to the first model in the list.
 
 ### Provider routing
 
@@ -120,14 +121,15 @@ Each call picks a provider from the model name; the first matching rule wins:
 
 | Condition | Provider | Endpoint |
 |---|---|---|
-| Azure is enabled and the model is one of `AZURE_OPENAI_DEPLOYMENT` | Azure OpenAI | `{AZURE_OPENAI_ENDPOINT}/openai/v1/chat/completions` |
+| Foundry is enabled and the model is one of `FOUNDRY_DEPLOYMENT` starting with `claude-` | Anthropic (Claude on Foundry) | `{FOUNDRY_ENDPOINT}/anthropic/v1/messages`, authenticated with `x-api-key`; `FOUNDRY_ENDPOINT` must be `*.services.ai.azure.com` and the deployment name must start with `claude-` |
+| Foundry is enabled and the model is another one of `FOUNDRY_DEPLOYMENT` | Microsoft Foundry | Names starting with `gpt-`, `o1`, `o3`, or `o4` (except `gpt-oss`) use `{FOUNDRY_ENDPOINT}/openai/v1/responses`; the rest (chat-completion models such as Kimi, Mistral, Grok, DeepSeek, Llama) use `{FOUNDRY_ENDPOINT}/openai/v1/chat/completions` and get no `reasoning_effort` |
 | The name starts with `claude-` and `ANTHROPIC_API_KEY` is set | Anthropic | Official `anthropic` SDK (Messages API) |
 | The name starts with `gemini-` and `GEMINI_API_KEY` is set | Google Gemini | `{GEMINI_API_BASE}/v1beta/openai/chat/completions` |
-| The name starts with `gpt-`, `o1`, `o3`, or `o4` | OpenAI when `OPENAI_API_KEY` is set; otherwise Azure when enabled | `{OPENAI_API_BASE}/chat/completions` |
+| The name starts with `gpt-`, `o1`, `o3`, or `o4` | OpenAI when `OPENAI_API_KEY` is set; otherwise Foundry when enabled | `{OPENAI_API_BASE}/chat/completions`; `gpt-6*` uses `{OPENAI_API_BASE}/responses` |
 | None of the above | Ollama | `{LLM_API_BASE}/api/chat` |
 
 > [!NOTE]
-> `reasoning_effort` is sent only to OpenAI and Azure OpenAI; models whose name contains `gpt-5` always get `none` when tools are attached, to respect the compatibility limits between reasoning and tool calling.
+> `reasoning_effort` is mapped per provider before it is sent (see the [API reference](api_en.md) for the rules); models on Chat Completions whose name contains `gpt-5` always get `none` when tools are attached, to respect the compatibility limits between reasoning and tool calling.
 
 ## Agent and web tools
 
@@ -137,7 +139,7 @@ Each call picks a provider from the model name; the first matching rule wins:
 | `CONVERSATION_HISTORY_MESSAGES` | — (required, ≥ 0) | `6` | Prior messages loaded from the database as context (user and assistant messages combined; history always starts with a user message); `0` disables history |
 | `WEB_FETCH_ALLOWED_DOMAINS` | — (required) | `*` | Domains `web_fetch` may read, including subdomains, comma-separated; only an explicit `*` means unrestricted |
 | `BLOCK_WEB_TOOLS_AFTER_KB` | — (required) | `true` | Within one question, refuse `web_search` and `web_fetch` once a knowledge-base tool has returned content |
-| `OLLAMA_API_KEY` | empty | commented example | Key for the Ollama Web Search / Web Fetch APIs. When set, the web tools try the Ollama APIs first and fall back to DuckDuckGo or a direct fetch; unrelated to LLM calls |
+| `OLLAMA_API_KEY` | empty | commented example | Key for the Ollama Web Search / Web Fetch APIs. When set, the web tools try the Ollama APIs first and fall back to DuckDuckGo or a direct fetch; when `LLM_API_BASE` points at `ollama.com` (Ollama Cloud) it is also sent as `Authorization: Bearer` for model calls and the model list |
 | `OLLAMA_SEARCH_ENDPOINT` | `https://ollama.com/api/web_search` | — | Ollama Web Search endpoint |
 | `OLLAMA_FETCH_ENDPOINT` | `https://ollama.com/api/web_fetch` | — | Ollama Web Fetch endpoint |
 | `DUCKDUCKGO_SEARCH_ENDPOINT` | `https://html.duckduckgo.com/html/` | — | Fallback search endpoint for `web_search` |

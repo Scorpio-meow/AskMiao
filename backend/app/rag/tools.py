@@ -448,7 +448,7 @@ class ResearchToolRegistry:
             "當使用者提問涉及上述任一文件的專屬領域時，必須優先調用此工具。"
         ), filenames
     def get_tool_definitions(self, user_id: Optional[int] = None) -> List[Dict[str, Any]]:
-        """回傳 OpenAI / Ollama / Azure OpenAI 相容之 Function Calling 工具規格清單（包含內部預設工具與已啟用的自訂 API Tools）"""
+        """回傳 OpenAI / Ollama / Microsoft Foundry 相容之 Function Calling 工具規格清單（包含內部預設工具與已啟用的自訂 API Tools）"""
         kb_desc, doc_names = self._generate_knowledge_base_description()
         target_document_schema: Dict[str, Any] = {
             "type": "string",

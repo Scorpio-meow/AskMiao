@@ -3,12 +3,15 @@ import uuid
 import logging
 import asyncio
 import httpx
+from urllib.parse import urlparse
 from typing import Any, AsyncIterator, Dict, List, Optional, Tuple
 from app.core.config import settings
 logger = logging.getLogger(__name__)
 _http_client: Optional[httpx.AsyncClient] = None
 _client_lock = asyncio.Lock()
 _anthropic_client = None
+_foundry_anthropic_client = None
+FOUNDRY_ANTHROPIC_HOST_SUFFIX = ".services.ai.azure.com"
 REASONING_EFFORT_VALUES = ("none", "minimal", "low", "medium", "high", "xhigh", "max")
 OPENAI_MODEL_PREFIXES = ("gpt-", "o1", "o3", "o4")
 # Claude 的工具呼叫回合需原樣送回 response.content（含 thinking 區塊），以此鍵附在標準化後的 assistant 訊息上
@@ -19,6 +22,9 @@ OLLAMA_HEADERS = {
 }
 # 等待連線池名額的上限與單次請求逾時分開：池被占滿時很快失敗，而不是排隊到 LLM_TIMEOUT
 LLM_POOL_ACQUIRE_TIMEOUT_SECONDS = 15.0
+OLLAMA_CLOUD_HOST = "ollama.com"
+OLLAMA_THINKING_KEY = "_ollama_thinking"
+OLLAMA_THINK_BY_REASONING = {"minimal": "low", "low": "low", "medium": "medium", "high": "high", "xhigh": "high", "max": "high"}
 async def get_llm_http_client() -> httpx.AsyncClient:
     global _http_client
     async with _client_lock:
@@ -33,11 +39,23 @@ async def close_llm_http_client():
     if _http_client is not None and not _http_client.is_closed:
         await _http_client.aclose()
         _http_client = None
-DEFAULT_OPENAI_MODELS = ["gpt-6-sol", "gpt-6-luna", "gpt-6-astra", "gpt-5.6-sol", "gpt-5.6-luna", "gpt-5.6-terra", "gpt-5.4", "gpt-5.4-mini"]
-DEFAULT_CLAUDE_MODELS = ["claude-opus-5-5", "claude-fable-5-1", "claude-sonnet-5", "claude-opus-5", "claude-fable-5", "claude-opus-4-8", "claude-haiku-4-5"]
-DEFAULT_GEMINI_MODELS = ["gemini-3.5-flash", "gemini-3.1-flash-lite", "gemini-3-pro"]
-def is_azure_openai_enabled() -> bool:
-    return bool(settings.AZURE_OPENAI_API_KEY and settings.AZURE_OPENAI_ENDPOINT)
+OPENAI_RESPONSES_MODEL_PREFIXES = ("gpt-6",)
+FOUNDRY_RESPONSES_MODEL_PREFIXES = ("gpt-", "o3", "o4")
+CHAT_COMPLETIONS_ONLY_PREFIXES = ("gpt-oss", "o3-mini")
+OPENAI_RESPONSES_NONE_EFFORT_MARKER = "luna"
+OPENAI_OUTPUT_KEY = "_openai_output"
+DEFAULT_OPENAI_MODELS = ["gpt-6.1-sol", "gpt-6-sol", "gpt-6-luna", "gpt-6-astra", "gpt-5.6-sol", "gpt-5.6-luna", "gpt-5.6-terra", "gpt-5.4", "gpt-5.4-mini"]
+DEFAULT_CLAUDE_MODELS = ["claude-opus-5-5", "claude-fable-5-1", "claude-sonnet-5-5", "claude-haiku-5-5", "claude-sonnet-5", "claude-opus-5", "claude-fable-5", "claude-opus-4-8", "claude-haiku-4-5"]
+ANTHROPIC_CACHE_CONTROL = {"type": "ephemeral"}
+ANTHROPIC_EFFORT_BY_REASONING = {"minimal": "low", "low": "low", "medium": "medium", "high": "high", "xhigh": "xhigh", "max": "max"}
+ANTHROPIC_INCOMPLETE_STOP_REASONS = {
+    "pause_turn": "Claude 回合被暫停（pause_turn），回應不完整",
+    "model_context_window_exceeded": "對話超出 Claude 的 context window，請縮短內容"
+}
+DEFAULT_GEMINI_MODELS = ["gemini-4-argon", "gemini-3.8-flash", "gemini-3.6-flash", "gemini-3.5-flash-lite", "gemini-3.1-flash-lite"]
+GEMINI_EFFORT_BY_REASONING = {"none": "minimal", "minimal": "minimal", "low": "low", "medium": "medium", "high": "high", "xhigh": "high", "max": "high"}
+def is_foundry_enabled() -> bool:
+    return bool(settings.FOUNDRY_API_KEY and settings.FOUNDRY_ENDPOINT)
 def get_available_models() -> List[str]:
     available = (settings.AVAILABLE_MODELS or "").strip()
     if available:
@@ -45,9 +63,9 @@ def get_available_models() -> List[str]:
 
     models: List[str] = []
 
-    if is_azure_openai_enabled():
-        if settings.AZURE_OPENAI_DEPLOYMENT:
-            deployments = [d.strip() for d in settings.AZURE_OPENAI_DEPLOYMENT.split(",") if d.strip()]
+    if is_foundry_enabled():
+        if settings.FOUNDRY_DEPLOYMENT:
+            deployments = [d.strip() for d in settings.FOUNDRY_DEPLOYMENT.split(",") if d.strip()]
             for dep in deployments:
                 if dep not in models:
                     models.append(dep)
@@ -70,8 +88,8 @@ def get_available_models() -> List[str]:
                 models.append(m)
 
     return models
-def _azure_deployments() -> List[str]:
-    return [d.strip() for d in (settings.AZURE_OPENAI_DEPLOYMENT or "").split(",") if d.strip()]
+def _foundry_deployments() -> List[str]:
+    return [d.strip() for d in (settings.FOUNDRY_DEPLOYMENT or "").split(",") if d.strip()]
 def resolve_model_name(model_name: Optional[str]) -> str:
     target = model_name or settings.MODEL_NAME
     if target:
@@ -81,9 +99,9 @@ def resolve_model_name(model_name: Optional[str]) -> str:
         raise ValueError("未指定模型，且未設定 MODEL_NAME、AVAILABLE_MODELS 或任何供應商金鑰")
     return available[0]
 def resolve_provider(model_name: str) -> str:
-    """依模型名稱決定供應商：azure、anthropic、gemini、openai 或 ollama"""
-    if is_azure_openai_enabled() and model_name in _azure_deployments():
-        return "azure"
+    """依模型名稱決定供應商：foundry、anthropic、gemini、openai 或 ollama"""
+    if is_foundry_enabled() and model_name in _foundry_deployments():
+        return "anthropic" if model_name.startswith("claude-") else "foundry"
     if model_name.startswith("claude-") and settings.ANTHROPIC_API_KEY:
         return "anthropic"
     if model_name.startswith("gemini-") and settings.GEMINI_API_KEY:
@@ -91,8 +109,8 @@ def resolve_provider(model_name: str) -> str:
     if model_name.startswith(OPENAI_MODEL_PREFIXES):
         if settings.OPENAI_API_KEY:
             return "openai"
-        if is_azure_openai_enabled():
-            return "azure"
+        if is_foundry_enabled():
+            return "foundry"
     return "ollama"
 def _public_message(message: Dict[str, Any]) -> Dict[str, Any]:
     return {key: value for key, value in message.items() if not key.startswith("_")}
@@ -111,10 +129,10 @@ def _as_arguments_dict(arguments: Any) -> Dict[str, Any]:
     return json.loads(arguments)
 def _openai_endpoint(provider: str) -> Tuple[str, Dict[str, str]]:
     headers = {"Content-Type": "application/json"}
-    if provider == "azure":
-        headers["api-key"] = settings.AZURE_OPENAI_API_KEY
-        headers["Authorization"] = f"Bearer {settings.AZURE_OPENAI_API_KEY}"
-        return f"{settings.AZURE_OPENAI_ENDPOINT.rstrip('/')}/openai/v1/chat/completions", headers
+    if provider == "foundry":
+        headers["api-key"] = settings.FOUNDRY_API_KEY
+        headers["Authorization"] = f"Bearer {settings.FOUNDRY_API_KEY}"
+        return f"{settings.FOUNDRY_ENDPOINT.rstrip('/')}/openai/v1/chat/completions", headers
     if provider == "gemini":
         headers["Authorization"] = f"Bearer {settings.GEMINI_API_KEY}"
         return f"{settings.GEMINI_API_BASE.rstrip('/')}/v1beta/openai/chat/completions", headers
@@ -136,10 +154,12 @@ def _openai_payload(
     if tools:
         payload["tools"] = tools
         payload["tool_choice"] = "auto"
-    if provider in ("openai", "azure"):
+    if provider == "openai" or (provider == "foundry" and model.startswith(OPENAI_MODEL_PREFIXES)):
         effort = "none" if tools and "gpt-5" in model.lower() else reasoning_effort
         if effort in REASONING_EFFORT_VALUES:
             payload["reasoning_effort"] = effort
+    if provider == "gemini" and reasoning_effort in GEMINI_EFFORT_BY_REASONING:
+        payload["reasoning_effort"] = GEMINI_EFFORT_BY_REASONING[reasoning_effort]
     return payload
 async def _openai_chat(
     provider: str,
@@ -189,16 +209,174 @@ async def _openai_stream(
                 continue
             if content:
                 yield content
+def uses_responses_api(provider: str, model: str) -> bool:
+    if provider == "foundry":
+        return model.startswith(FOUNDRY_RESPONSES_MODEL_PREFIXES) and not model.startswith(CHAT_COMPLETIONS_ONLY_PREFIXES)
+    return provider == "openai" and model.startswith(OPENAI_RESPONSES_MODEL_PREFIXES)
+def _responses_user_content(content: Any) -> Any:
+    if isinstance(content, str):
+        return content
+    parts: List[Dict[str, Any]] = []
+    for part in content:
+        if part.get("type") == "text" and part.get("text"):
+            parts.append({"type": "input_text", "text": part["text"]})
+        elif part.get("type") == "image_url":
+            media_type, data = _parse_image_url(part["image_url"]["url"])
+            parts.append({"type": "input_image", "image_url": f"data:{media_type};base64,{data}"})
+    return parts
+def _responses_input(messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    items: List[Dict[str, Any]] = []
+    for message in messages:
+        role = message.get("role")
+        if role == "tool":
+            items.append({
+                "type": "function_call_output",
+                "call_id": message["tool_call_id"],
+                "output": message.get("content") or ""
+            })
+        elif role == "assistant":
+            raw_output = message.get(OPENAI_OUTPUT_KEY)
+            if raw_output is not None:
+                items.extend(raw_output)
+                continue
+            if message.get("content"):
+                items.append({"role": "assistant", "content": message["content"]})
+            for call in message.get("tool_calls") or []:
+                items.append({
+                    "type": "function_call",
+                    "call_id": call["id"],
+                    "name": call["function"]["name"],
+                    "arguments": json.dumps(_as_arguments_dict(call["function"]["arguments"]), ensure_ascii=False)
+                })
+        elif role == "user":
+            items.append({"role": "user", "content": _responses_user_content(message.get("content") or "")})
+        else:
+            items.append({"role": role, "content": _anthropic_system_text(message.get("content") or "")})
+    return items
+def _responses_effort(model: str, reasoning_effort: Optional[str]) -> Optional[str]:
+    if reasoning_effort == "none":
+        return "none" if OPENAI_RESPONSES_NONE_EFFORT_MARKER in model else "low"
+    if reasoning_effort == "minimal":
+        return "low"
+    return reasoning_effort if reasoning_effort in REASONING_EFFORT_VALUES else None
+def _responses_payload(
+    messages: List[Dict[str, Any]],
+    model: str,
+    tools: Optional[List[Dict[str, Any]]],
+    reasoning_effort: Optional[str],
+    stream: bool
+) -> Dict[str, Any]:
+    payload: Dict[str, Any] = {"model": model, "input": _responses_input(messages), "stream": stream}
+    if tools:
+        payload["tools"] = [
+            {
+                "type": "function",
+                "name": tool["function"]["name"],
+                "description": tool["function"].get("description", ""),
+                "parameters": tool["function"].get("parameters") or {"type": "object", "properties": {}},
+                "strict": False
+            }
+            for tool in tools
+        ]
+        payload["tool_choice"] = "none" if stream else "auto"
+    effort = _responses_effort(model, reasoning_effort)
+    if effort:
+        payload["reasoning"] = {"effort": effort}
+    return payload
+def _responses_endpoint(provider: str) -> Tuple[str, Dict[str, str]]:
+    url, headers = _openai_endpoint(provider)
+    return url.rsplit("/chat/completions", 1)[0] + "/responses", headers
+def _responses_message(data: Dict[str, Any]) -> Dict[str, Any]:
+    status = data.get("status")
+    if status == "failed":
+        raise RuntimeError(f"openai Responses 失敗: {((data.get('error') or {}).get('message') or '')[:500]}")
+    if status == "incomplete":
+        raise RuntimeError(f"openai Responses 回應不完整（{(data.get('incomplete_details') or {}).get('reason')}）")
+    output = data.get("output") or []
+    texts: List[str] = []
+    tool_calls: List[Dict[str, Any]] = []
+    for item in output:
+        if item.get("type") == "message":
+            for part in item.get("content") or []:
+                if part.get("type") == "refusal":
+                    raise RuntimeError(f"openai 拒絕回應此請求：{(part.get('refusal') or '')[:200]}")
+                if part.get("type") == "output_text":
+                    texts.append(part.get("text") or "")
+        elif item.get("type") == "function_call":
+            tool_calls.append({
+                "id": item["call_id"],
+                "type": "function",
+                "function": {"name": item["name"], "arguments": item.get("arguments") or "{}"}
+            })
+    message: Dict[str, Any] = {"role": "assistant", "content": "".join(texts), OPENAI_OUTPUT_KEY: output}
+    if tool_calls:
+        message["tool_calls"] = tool_calls
+    return message
+async def _responses_chat(
+    provider: str,
+    messages: List[Dict[str, Any]],
+    model: str,
+    tools: Optional[List[Dict[str, Any]]],
+    reasoning_effort: Optional[str],
+    timeout: float
+) -> Dict[str, Any]:
+    url, headers = _responses_endpoint(provider)
+    client = await get_llm_http_client()
+    response = await client.post(
+        url,
+        json=_responses_payload(messages, model, tools, reasoning_effort, stream=False),
+        headers=headers,
+        timeout=httpx.Timeout(timeout, pool=LLM_POOL_ACQUIRE_TIMEOUT_SECONDS)
+    )
+    if response.status_code != 200:
+        raise RuntimeError(f"{provider} Responses API 錯誤 ({response.status_code}): {response.text[:500]}")
+    return _responses_message(response.json())
+async def _responses_stream(
+    provider: str,
+    messages: List[Dict[str, Any]],
+    model: str,
+    tools: Optional[List[Dict[str, Any]]],
+    reasoning_effort: Optional[str]
+) -> AsyncIterator[str]:
+    url, headers = _responses_endpoint(provider)
+    client = await get_llm_http_client()
+    payload = _responses_payload(messages, model, tools, reasoning_effort, stream=True)
+    async with client.stream("POST", url, json=payload, headers=headers) as response:
+        if response.status_code != 200:
+            body = await response.aread()
+            raise RuntimeError(f"{provider} Responses 串流錯誤 ({response.status_code}): {body.decode('utf-8', 'replace')[:500]}")
+        async for line in response.aiter_lines():
+            if not line.startswith("data: "):
+                continue
+            try:
+                event = json.loads(line[6:])
+            except ValueError:
+                continue
+            kind = event.get("type")
+            if kind == "response.output_text.delta":
+                if event.get("delta"):
+                    yield event["delta"]
+            elif kind in ("response.failed", "response.incomplete", "error"):
+                raise RuntimeError(f"openai Responses 串流中斷: {json.dumps(event, ensure_ascii=False)[:500]}")
+def ollama_auth_headers(url: str) -> Dict[str, str]:
+    if settings.OLLAMA_API_KEY and urlparse(url).hostname == OLLAMA_CLOUD_HOST:
+        return {"Authorization": f"Bearer {settings.OLLAMA_API_KEY}"}
+    return {}
+def _ollama_request_headers() -> Dict[str, str]:
+    return {**OLLAMA_HEADERS, **ollama_auth_headers(settings.LLM_API_BASE)}
 def _ollama_options() -> Dict[str, Any]:
     options: Dict[str, Any] = {}
     if settings.OLLAMA_TEMPERATURE is not None:
         options["temperature"] = settings.OLLAMA_TEMPERATURE
     if settings.OLLAMA_NUM_PREDICT is not None:
         options["num_predict"] = settings.OLLAMA_NUM_PREDICT
+    if settings.OLLAMA_NUM_CTX is not None:
+        options["num_ctx"] = settings.OLLAMA_NUM_CTX
     return options
 def _ollama_messages(messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     converted = []
     for message in messages:
+        thinking = message.get(OLLAMA_THINKING_KEY)
         message = _public_message(message)
         role = message.get("role")
         content = message.get("content")
@@ -217,6 +395,8 @@ def _ollama_messages(messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
                     for call in message["tool_calls"]
                 ]
             }
+            if thinking:
+                message["thinking"] = thinking
         elif role == "tool":
             message = {"role": "tool", "content": content, "tool_name": message.get("name")}
         converted.append(message)
@@ -229,8 +409,10 @@ def _ollama_payload(
     reasoning_effort: Optional[str]
 ) -> Dict[str, Any]:
     payload: Dict[str, Any] = {"model": model, "messages": _ollama_messages(messages), "stream": stream}
-    if reasoning_effort is not None:
-        payload["think"] = False if reasoning_effort == "none" else reasoning_effort
+    if reasoning_effort == "none":
+        payload["think"] = False
+    elif reasoning_effort in OLLAMA_THINK_BY_REASONING:
+        payload["think"] = OLLAMA_THINK_BY_REASONING[reasoning_effort]
     options = _ollama_options()
     if options:
         payload["options"] = options
@@ -241,6 +423,8 @@ def _normalize_ollama_message(message: Dict[str, Any]) -> Dict[str, Any]:
     normalized: Dict[str, Any] = {"role": "assistant", "content": message.get("content") or ""}
     tool_calls = message.get("tool_calls") or []
     if tool_calls:
+        if message.get("thinking"):
+            normalized[OLLAMA_THINKING_KEY] = message["thinking"]
         normalized["tool_calls"] = [
             {
                 "id": f"call_{uuid.uuid4().hex[:12]}",
@@ -264,7 +448,7 @@ async def _ollama_chat(
     response = await client.post(
         f"{settings.LLM_API_BASE.rstrip('/')}/api/chat",
         json=_ollama_payload(messages, model, tools, stream=False, reasoning_effort=reasoning_effort),
-        headers=OLLAMA_HEADERS,
+        headers=_ollama_request_headers(),
         timeout=httpx.Timeout(timeout, pool=LLM_POOL_ACQUIRE_TIMEOUT_SECONDS)
     )
     if response.status_code != 200:
@@ -277,7 +461,7 @@ async def _ollama_stream(messages: List[Dict[str, Any]], model: str, reasoning_e
         "POST",
         f"{settings.LLM_API_BASE.rstrip('/')}/api/chat",
         json=payload,
-        headers=OLLAMA_HEADERS,
+        headers=_ollama_request_headers(),
     ) as response:
         if response.status_code != 200:
             body = await response.aread()
@@ -286,9 +470,12 @@ async def _ollama_stream(messages: List[Dict[str, Any]], model: str, reasoning_e
             if not line:
                 continue
             try:
-                content = json.loads(line).get("message", {}).get("content", "")
+                chunk = json.loads(line)
             except ValueError:
                 continue
+            if chunk.get("error"):
+                raise RuntimeError(f"Ollama 串流中斷: {str(chunk['error'])[:500]}")
+            content = chunk.get("message", {}).get("content", "")
             if content:
                 yield content
 def _anthropic_client_instance():
@@ -301,6 +488,28 @@ def _anthropic_client_instance():
             timeout=settings.LLM_TIMEOUT
         )
     return _anthropic_client
+def is_foundry_claude(model: str) -> bool:
+    return is_foundry_enabled() and model in _foundry_deployments() and model.startswith("claude-")
+def _foundry_anthropic_client_instance():
+    global _foundry_anthropic_client
+    if _foundry_anthropic_client is None:
+        import anthropic
+        host = urlparse(settings.FOUNDRY_ENDPOINT).hostname or ""
+        if not host.endswith(FOUNDRY_ANTHROPIC_HOST_SUFFIX):
+            raise ValueError(
+                f"Foundry 上的 Claude 需要 Foundry 資源端點（*{FOUNDRY_ANTHROPIC_HOST_SUFFIX}），"
+                "目前的 FOUNDRY_ENDPOINT 不是；Azure OpenAI 資源只提供 /openai/v1 端點"
+            )
+        _foundry_anthropic_client = anthropic.AsyncAnthropic(
+            api_key=settings.FOUNDRY_API_KEY,
+            base_url=f"{settings.FOUNDRY_ENDPOINT.rstrip('/')}/anthropic",
+            timeout=settings.LLM_TIMEOUT
+        )
+    return _foundry_anthropic_client
+def _anthropic_client_for(model: str):
+    if is_foundry_claude(model):
+        return _foundry_anthropic_client_instance()
+    return _anthropic_client_instance()
 def _anthropic_max_tokens() -> int:
     if settings.ANTHROPIC_MAX_TOKENS is None:
         raise ValueError("使用 Claude 模型前需在 .env 設定 ANTHROPIC_MAX_TOKENS")
@@ -337,7 +546,8 @@ def _anthropic_request(
             tool_results.append({
                 "type": "tool_result",
                 "tool_use_id": message["tool_call_id"],
-                "content": message.get("content") or ""
+                "content": message.get("content") or "",
+                **({"is_error": True} if message.get("_is_error") else {})
             })
             continue
         if tool_results:
@@ -364,7 +574,7 @@ def _anthropic_request(
 
     request: Dict[str, Any] = {"messages": converted}
     if system_parts:
-        request["system"] = "\n\n".join(system_parts)
+        request["system"] = [{"type": "text", "text": "\n\n".join(system_parts), "cache_control": ANTHROPIC_CACHE_CONTROL}]
     if tools:
         request["tools"] = [
             {
@@ -374,12 +584,21 @@ def _anthropic_request(
             }
             for tool in tools
         ]
+        request["tools"][-1]["cache_control"] = ANTHROPIC_CACHE_CONTROL
     return request
+def _anthropic_effort_options(reasoning_effort: Optional[str]) -> Dict[str, Any]:
+    effort = ANTHROPIC_EFFORT_BY_REASONING.get(reasoning_effort or "")
+    if effort is None:
+        return {}
+    return {"extra_body": {"output_config": {"effort": effort}}}
 def _raise_if_refused(response) -> None:
     if response.stop_reason == "refusal":
         stop_details = getattr(response, "stop_details", None)
         category = getattr(stop_details, "category", None)
         raise RuntimeError(f"Claude 拒絕回應此請求（refusal，類別：{category}）")
+    incomplete = ANTHROPIC_INCOMPLETE_STOP_REASONS.get(response.stop_reason)
+    if incomplete:
+        raise RuntimeError(incomplete)
 def _anthropic_message(response) -> Dict[str, Any]:
     _raise_if_refused(response)
     tool_uses = [block for block in response.content if block.type == "tool_use"]
@@ -404,27 +623,31 @@ async def _anthropic_chat(
     messages: List[Dict[str, Any]],
     model: str,
     tools: Optional[List[Dict[str, Any]]],
+    reasoning_effort: Optional[str],
     timeout: float
 ) -> Dict[str, Any]:
-    client = _anthropic_client_instance().with_options(timeout=timeout)
+    client = _anthropic_client_for(model).with_options(timeout=timeout)
     response = await client.messages.create(
         model=model,
         max_tokens=_anthropic_max_tokens(),
-        **_anthropic_request(messages, tools)
+        **_anthropic_request(messages, tools),
+        **_anthropic_effort_options(reasoning_effort)
     )
     return _anthropic_message(response)
 async def _anthropic_stream(
     messages: List[Dict[str, Any]],
     model: str,
-    tools: Optional[List[Dict[str, Any]]]
+    tools: Optional[List[Dict[str, Any]]],
+    reasoning_effort: Optional[str]
 ) -> AsyncIterator[str]:
     request = _anthropic_request(messages, tools)
     if tools:
         request["tool_choice"] = {"type": "none"}
-    async with _anthropic_client_instance().messages.stream(
+    async with _anthropic_client_for(model).messages.stream(
         model=model,
         max_tokens=_anthropic_max_tokens(),
-        **request
+        **request,
+        **_anthropic_effort_options(reasoning_effort)
     ) as stream:
         async for text in stream.text_stream:
             yield text
@@ -443,7 +666,9 @@ async def chat_completion(
     request_timeout = timeout if timeout is not None else settings.LLM_TIMEOUT
     logger.info(f"Calling LLM: provider={provider}, model={model}, messages={len(messages)}, tools={len(tools or [])}")
     if provider == "anthropic":
-        return await _anthropic_chat(messages, model, tools, request_timeout)
+        return await _anthropic_chat(messages, model, tools, reasoning_effort, request_timeout)
+    if uses_responses_api(provider, model):
+        return await _responses_chat(provider, messages, model, tools, reasoning_effort, request_timeout)
     if provider == "ollama":
         return await _ollama_chat(messages, model, tools, reasoning_effort, request_timeout)
     return await _openai_chat(provider, messages, model, tools, reasoning_effort, request_timeout)
@@ -458,7 +683,9 @@ async def stream_completion(
     provider = resolve_provider(model)
     logger.info(f"Streaming LLM: provider={provider}, model={model}, messages={len(messages)}")
     if provider == "anthropic":
-        stream = _anthropic_stream(messages, model, tools)
+        stream = _anthropic_stream(messages, model, tools, reasoning_effort)
+    elif uses_responses_api(provider, model):
+        stream = _responses_stream(provider, messages, model, tools, reasoning_effort)
     elif provider == "ollama":
         stream = _ollama_stream(messages, model, reasoning_effort)
     else:

@@ -6,7 +6,7 @@ from collections.abc import Iterable, Mapping, Sequence
 from typing import Optional
 import httpx
 from app.core.config import settings
-from app.core.llm_client import get_available_models
+from app.core.llm_client import get_available_models, ollama_auth_headers
 logger = logging.getLogger(__name__)
 router = APIRouter()
 # 遠端模型清單的快取：此路由不需登入，每次請求都外連會讓匿名請求占滿執行緒並放大對外流量
@@ -32,7 +32,7 @@ async def fetch_remote_models_cached() -> tuple[list[str], Optional[str]]:
     return result
 async def models_and_default() -> tuple[list[str], str]:
     """可用模型與預設模型，/api/tags 與 /api/chat/models 共用。
-    有設定模型來源時用設定的清單，否則查詢遠端清單；預設模型依序取 MODEL_NAME、第一個 Azure 部署、遠端預設，
+    有設定模型來源時用設定的清單，否則查詢遠端清單；預設模型依序取 MODEL_NAME、第一個 Foundry 部署、遠端預設，
     不在清單內時改用清單第一個"""
     models = get_available_models()
     remote_default: Optional[str] = None
@@ -41,8 +41,8 @@ async def models_and_default() -> tuple[list[str], str]:
             models, remote_default = await fetch_remote_models_cached()
         except Exception:
             logger.exception("Failed to load models from LLM_API_BASE")
-    azure_dep = settings.AZURE_OPENAI_DEPLOYMENT.split(',')[0].strip() if settings.AZURE_OPENAI_DEPLOYMENT else None
-    default_model = settings.MODEL_NAME or azure_dep or remote_default or (models[0] if models else "")
+    foundry_dep = settings.FOUNDRY_DEPLOYMENT.split(',')[0].strip() if settings.FOUNDRY_DEPLOYMENT else None
+    default_model = settings.MODEL_NAME or foundry_dep or remote_default or (models[0] if models else "")
     if models and default_model not in models:
         default_model = models[0]
     return models, default_model
@@ -65,6 +65,7 @@ def _fetch_remote_models() -> tuple[list[str], Optional[str]]:
     headers: dict[str, str] = {}
     if "ngrok-free.app" in url or settings.ADD_NGROK_HEADER:
         headers["ngrok-skip-browser-warning"] = "true"
+    headers.update(ollama_auth_headers(url))
     response = httpx.get(url, headers=headers, timeout=timeout, follow_redirects=True)
     response.raise_for_status()
     payload = response.json()

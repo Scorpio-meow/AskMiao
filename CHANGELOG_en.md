@@ -6,6 +6,7 @@ All notable changes to AskMiao are documented in this file. The format is based 
 
 | Version | Release date | Highlights |
 |---|---|---|
+| [6.0.0](#600---2026-10-26) | 2026-10-26 | Agent Skills, MCP Streamable HTTP and OAuth, re-parsed structured data, the Responses API, Microsoft Foundry (including Claude), reasoning effort mapped across five providers, and Ollama and Gemini integration fixes |
 | [5.0.0](#500---2026-10-10) | 2026-10-10 | Second security audit fixes: login failure throttling, token revocation on password change, optional self-registration, encrypted tool credentials, PyJWT in place of python-jose, hash-pinned dependencies, a non-superuser PostgreSQL account |
 | [4.0.0](#400---2026-09-27) | 2026-09-27 | Security audit fixes: tokens bound to database accounts, user approval for tool calls, IP-pinned outbound connections, resource limits |
 | [3.0.0](#300---2026-09-25) | 2026-09-25 | chunk_id index, RRF with a relevance threshold, answer citations, tool trust boundary and admin-only tool management, frontend UI/UX overhaul |
@@ -17,11 +18,16 @@ All notable changes to AskMiao are documented in this file. The format is based 
 | [1.0.0](#100---2026-08-01) | 2026-08-01 | Hybrid RAG and security foundations |
 
 > [!TIP]
+> Upgrading from 5.0.0 to 6.0.0? Read the [upgrade guide](docs/upgrading_en.md#upgrading-from-500-to-600) first: the domain profile has two new required fields, `.env` has a new required `SKILLS_DIR`, and the Azure OpenAI settings are renamed for Microsoft Foundry (the old names are still read).
+
+> [!TIP]
 > Upgrading from 4.0.0 to 5.0.0? Read the [upgrade guide](docs/upgrading_en.md#upgrading-from-400-to-500) first: `.env` has 10 new required settings (including `TOOL_SECRETS_KEY`, a Fernet key each deployment generates itself), the compose PostgreSQL is accessed through a non-superuser account, and the backend packages must be reinstalled from the new `requirements.txt`, which pins versions with hashes. Coming from 3.0.0, first follow [upgrading to 4.0.0](docs/upgrading_en.md#upgrading-from-300-to-400) (RSA keys are now mandatory, compose needs `POSTGRES_PASSWORD`, and the dev server only accepts local connections); coming from 2.x, first follow [upgrading to 3.0.0](docs/upgrading_en.md#upgrading-from-2x-to-300).
 
 ---
 
 ## [Unreleased]
+
+## [6.0.0] - 2026-10-26
 
 ### Security
 
@@ -35,6 +41,11 @@ All notable changes to AskMiao are documented in this file. The format is based 
 
 ### Added
 
+- **Responses API**: `gpt-6*` (OpenAI) and Foundry deployments whose names start with `gpt-`, `o3`, or `o4` now use the Responses API, so tool calling works together with reasoning effort and reasoning items are sent back with tool results; other Foundry models (Kimi, Mistral, Grok, DeepSeek, Llama, `gpt-oss`) stay on Chat Completions and get no `reasoning_effort`.
+- **Claude on Foundry**: deployments in `FOUNDRY_DEPLOYMENT` starting with `claude-` use `{FOUNDRY_ENDPOINT}/anthropic` (authenticated with `x-api-key`); a `FOUNDRY_ENDPOINT` that is not `*.services.ai.azure.com` fails with a clear error.
+- The frontend reasoning levels gain `max`; levels a provider does not support are disabled and downgraded when sent (`xhigh` and `max` become `high` for Claude and Gemini, and `none` becomes `low` for Gemini 3 and later).
+- Claude uses prompt caching (the system prompt and the last tool definition) and supports `output_config.effort`.
+- Ollama: optional `OLLAMA_NUM_CTX`; when `LLM_API_BASE` points at `ollama.com`, `OLLAMA_API_KEY` is sent as `Authorization: Bearer` (including the model list query).
 - Community files: [Contributing](.github/CONTRIBUTING_en.md), [Code of Conduct](.github/CODE_OF_CONDUCT_en.md), [Security Policy](.github/SECURITY_en.md), and [Accessibility Statement](.github/ACCESSIBILITY_en.md), each with a Traditional Chinese version. Security vulnerabilities are reported through GitHub private vulnerability reporting or email, with a first reply within 14 days and public disclosure no later than 90 days after the report; only the latest major version receives security fixes.
 - Issue forms in `.github/ISSUE_TEMPLATE/` for bug reports, feature requests, documentation issues, and accessibility barriers, plus links to private security reporting and troubleshooting; a pull request template in `.github/pull_request_template.md` that lists the verification steps and the checks for documentation, the changelog, and intro site sync.
 - Structured data is now parsed once by the new `app/services/structured_data/` into rendered text plus a record list; chunking uses the records directly instead of parsing them back out of the text with regular expressions.
@@ -66,6 +77,10 @@ All notable changes to AskMiao are documented in this file. The format is based 
 
 ### Changed
 
+- **The minimum Python version moves from 3.10 to 3.12**: the code already uses 3.12-only syntax, and `requirements.txt` is regenerated with `--python-version 3.12` (dropping the 3.10 and 3.11 specific package versions and markers); an existing 3.10 or 3.11 environment must be replaced with 3.12 before reinstalling the packages.
+- **Azure OpenAI is renamed Microsoft Foundry**: the settings become `FOUNDRY_API_KEY`, `FOUNDRY_ENDPOINT`, and `FOUNDRY_DEPLOYMENT`; the old `AZURE_OPENAI_*` names are still read (the new names win when both are set); the internal provider id changes from `azure` to `foundry`.
+- Built-in model lists updated: OpenAI adds `gpt-6.1-sol`, Claude adds `claude-sonnet-5-5` and `claude-haiku-5-5`, and Gemini becomes `gemini-4-argon`, `gemini-3.8-flash`, `gemini-3.6-flash`, `gemini-3.5-flash-lite`, `gemini-3.1-flash-lite` (the retired `gemini-3-pro` and the unlisted `gemini-3.5-flash` are removed); `GEMINI_VISION_MODEL` now defaults to `gemini-3.8-flash`.
+- `reasoning_effort` is now also sent to Claude (`output_config.effort`), Gemini (mapped to `minimal` through `high`), and Ollama (mapped to `think`), not only to OpenAI and Foundry.
 - The README's Contributing section is now a summary; the full rules, including the intro site sync list, moved to `.github/CONTRIBUTING_en.md`.
 - Structured record text always uses the original field names, one `key: value` per line, with nested objects flattened into dotted paths (`contact.email`, `items[0].name`) instead of translating fields into Chinese labels for author, content, link, and tags; dates are written in ISO format. Headers read `【記錄 3】`, `【data 記錄 3】`, `【第 5 列】`, or `【工作表1 第 5 列】` depending on the source, followed by the label value.
 - Structured formats (JSON, JSONL, YAML, CSV, XLSX) no longer go through Q&A detection; `qa_pairs` and `qa_pairs_detected` count only real Q&A pairs.
@@ -84,6 +99,9 @@ All notable changes to AskMiao are documented in this file. The format is based 
 
 ### Fixed
 
+- Fixed `gpt-6` and `gpt-5.6` style models being rejected on Chat Completions when tools and reasoning are combined (they now use the Responses API).
+- Fixed Claude not seeing failed tool calls as errors (`is_error` is now set), and `pause_turn` and `model_context_window_exceeded` being treated as normal replies.
+- Fixed Ollama answers being silently cut off when an error arrives mid-stream, and `think` receiving effort names it does not accept; multi-turn tool calls now send `thinking` back.
 - **HTTP MCP servers use Streamable HTTP**: requests send `Accept: application/json, text/event-stream`, SSE responses are accepted, later requests carry the server-issued `Mcp-Session-Id` and `MCP-Protocol-Version`, and `notifications/initialized` is sent after the handshake; the protocol version is now `2025-06-18`. Previously only a JSON POST was sent, so most remote servers built to the current specification could not connect.
 - `tools/list` follows `nextCursor` through every page (at most 50), so servers with many tools no longer return only the first page.
 - The MCP handshake no longer declares the unimplemented `sampling` and `roots` capabilities; stdio skips server-initiated requests whose id happens to match while waiting for a response.

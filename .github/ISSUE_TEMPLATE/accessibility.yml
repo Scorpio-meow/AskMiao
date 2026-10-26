@@ -47,4 +47,4 @@ body:
     id: version
     attributes:
       label: AskMiao 版本 / AskMiao version
-      placeholder: "5.0.0"
+      placeholder: "6.0.0"

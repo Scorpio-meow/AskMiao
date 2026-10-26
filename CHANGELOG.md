@@ -6,6 +6,7 @@
 
 | 版本 | 發行日期 | 重點 |
 |---|---|---|
+| [6.0.0](#600---2026-10-26) | 2026-10-26 | Agent Skills、MCP Streamable HTTP 與 OAuth、結構化資料重新解析、Responses API、Microsoft Foundry（含 Claude）、推理強度對應五家供應商、Ollama 與 Gemini 串接修正 |
 | [5.0.0](#500---2026-10-10) | 2026-10-10 | 第二輪安全稽核修正：登入失敗節流、變更密碼撤銷權杖、可關閉自行註冊、工具憑證加密、改用 PyJWT、相依套件雜湊鎖定、PostgreSQL 非超級使用者 |
 | [4.0.0](#400---2026-09-27) | 2026-09-27 | 安全稽核修正：權杖綁定資料庫帳號、工具呼叫需使用者核准、出站連線固定 IP、資源上限 |
 | [3.0.0](#300---2026-09-25) | 2026-09-25 | chunk_id 索引、RRF 與相關性門檻、答案引用出處、工具信任邊界與管理權限、前端 UI/UX 全面修整 |
@@ -17,11 +18,16 @@
 | [1.0.0](#100---2026-08-01) | 2026-08-01 | 混合 RAG 與安全基礎 |
 
 > [!TIP]
+> 從 5.0.0 升級到 6.0.0 前，請先閱讀 [升級指南](docs/upgrading.md#從-500-升級到-600)：領域設定檔新增兩個必填欄位、`.env` 新增必填的 `SKILLS_DIR`、Azure OpenAI 設定改名為 Microsoft Foundry（舊名稱仍可讀取）。
+
+> [!TIP]
 > 從 4.0.0 升級到 5.0.0 前，請先閱讀 [升級指南](docs/upgrading.md#從-400-升級到-500)：`.env` 新增 10 個必填設定（含每個部署自行產生的 Fernet 金鑰 `TOOL_SECRETS_KEY`），compose 的 PostgreSQL 改以非超級使用者帳號連線，後端套件要依新的 `requirements.txt`（鎖定版本與雜湊）重新安裝。從 3.0.0 升級請先完成 [升級到 4.0.0](docs/upgrading.md#從-300-升級到-400) 的步驟（RSA 金鑰改為必要、compose 需設定 `POSTGRES_PASSWORD`，開發伺服器只接受本機連線），從 2.x 升級則先完成 [升級到 3.0.0](docs/upgrading.md#從-2x-升級到-300) 的步驟。
 
 ---
 
 ## [Unreleased]
+
+## [6.0.0] - 2026-10-26
 
 ### 安全性 (Security)
 
@@ -35,6 +41,11 @@
 
 ### 新增 (Added)
 
+- **Responses API**：`gpt-6*`（OpenAI）與 Foundry 上名稱以 `gpt-`、`o3`、`o4` 開頭的部署改走 Responses API，工具呼叫可搭配推理強度，並把 reasoning 項目隨工具結果送回；其餘 Foundry 模型（Kimi、Mistral、Grok、DeepSeek、Llama、`gpt-oss`）維持 Chat Completions，且不送 `reasoning_effort`。
+- **Foundry 上的 Claude**：`FOUNDRY_DEPLOYMENT` 中以 `claude-` 開頭的部署走 `{FOUNDRY_ENDPOINT}/anthropic`（`x-api-key` 驗證），`FOUNDRY_ENDPOINT` 不是 `*.services.ai.azure.com` 時明確報錯。
+- 前端推理強度新增 `max`（最大）；各供應商不支援的強度會停用，實際送出時自動降級（Claude 與 Gemini 的 `xhigh`、`max` 降為 `high`，Gemini 3 以上的 `none` 降為 `low`）。
+- Claude 啟用 prompt caching（system 與最後一個工具定義），並支援 `output_config.effort`。
+- Ollama：新增選填的 `OLLAMA_NUM_CTX`；`LLM_API_BASE` 指向 `ollama.com` 時以 `OLLAMA_API_KEY` 帶 `Authorization: Bearer`（含模型清單查詢）。
 - 社群檔案：[貢獻指南](.github/CONTRIBUTING.md)、[行為準則](.github/CODE_OF_CONDUCT.md)、[安全政策](.github/SECURITY.md) 與 [無障礙聲明](.github/ACCESSIBILITY.md)，皆附 `_en` 英文版。安全漏洞以 GitHub 私下回報或 Email 回報，14 天內首次回覆、最晚在回報後 90 天公開，只有最新主版本收到安全修正。
 - `.github/ISSUE_TEMPLATE/` 新增錯誤回報、功能建議、文件問題與無障礙問題的 Issue 表單，以及安全通報與疑難排解的連結；`.github/pull_request_template.md` 新增 Pull Request 範本，列出驗證方式與文件、CHANGELOG、介紹頁同步的檢查項目。
 - 結構化資料改由新的 `app/services/structured_data/` 解析一次，產生渲染後的文字與記錄清單，切塊直接使用記錄，不再以正規式從文字解析回來。
@@ -66,6 +77,10 @@
 
 ### 變更 (Changed)
 
+- **Python 最低版本由 3.10 改為 3.12**：程式碼已使用 3.12 才有的語法，`requirements.txt` 改以 `--python-version 3.12` 重新產生（移除 3.10、3.11 專用的套件版本與條件），既有的 3.10 或 3.11 環境需要先換成 3.12 再重新安裝套件。
+- **Azure OpenAI 改名為 Microsoft Foundry**：設定改為 `FOUNDRY_API_KEY`、`FOUNDRY_ENDPOINT`、`FOUNDRY_DEPLOYMENT`，舊的 `AZURE_OPENAI_*` 名稱仍可讀取（新舊並存時以新名稱為準）；內部供應商代號由 `azure` 改為 `foundry`。
+- 內建模型清單更新：OpenAI 新增 `gpt-6.1-sol`、Claude 新增 `claude-sonnet-5-5` 與 `claude-haiku-5-5`、Gemini 改為 `gemini-4-argon`、`gemini-3.8-flash`、`gemini-3.6-flash`、`gemini-3.5-flash-lite`、`gemini-3.1-flash-lite`（移除已停用的 `gemini-3-pro` 與查無的 `gemini-3.5-flash`）；`GEMINI_VISION_MODEL` 預設改為 `gemini-3.8-flash`。
+- `reasoning_effort` 現在也會傳給 Claude（`output_config.effort`）、Gemini（對應到 `minimal` 至 `high`）與 Ollama（對應到 `think`），不再只傳給 OpenAI 與 Foundry。
 - README 的「貢獻指南」改為摘要，完整規則（含介紹頁同步清單）移到 `.github/CONTRIBUTING.md`。
 - 結構化記錄的文字一律使用原始欄位名，以 `key: 值` 逐行輸出，巢狀物件攤平成點路徑（`contact.email`、`items[0].name`），不再把欄位翻成「作者 / 內容 / 連結 / 標籤」；日期輸出為 ISO 格式。標頭依來源寫成 `【記錄 3】`、`【data 記錄 3】`、`【第 5 列】` 或 `【工作表1 第 5 列】`，後面接上識別欄位的值。
 - 結構化格式（JSON、JSONL、YAML、CSV、XLSX）不再做 Q&A 偵測；`qa_pairs` 與 `qa_pairs_detected` 只計算真正的 Q&A 對。
@@ -84,6 +99,9 @@
 
 ### 修正 (Fixed)
 
+- 修正 `gpt-6` 與 `gpt-5.6` 類模型在 Chat Completions 帶工具與推理時被 API 拒絕的問題（改走 Responses API）。
+- 修正 Claude 工具失敗時模型看不出是錯誤的問題（現在會標記 `is_error`），以及 `pause_turn`、`model_context_window_exceeded` 被當成正常回應的問題。
+- 修正 Ollama 串流中途回傳錯誤時回答被默默截斷，以及 `think` 帶入不被接受的強度名稱；帶工具的多輪對話現在會把 `thinking` 一併送回。
 - **HTTP MCP 伺服器改用 Streamable HTTP**：請求帶 `Accept: application/json, text/event-stream`，接受 SSE 回應，之後的請求帶上伺服器發的 `Mcp-Session-Id` 與 `MCP-Protocol-Version`，交握後送出 `notifications/initialized`；協定版本改為 `2025-06-18`。先前只送 JSON 的 POST，依現行規格實作的遠端伺服器多半無法連線。
 - `tools/list` 依 `nextCursor` 讀完所有分頁（最多 50 頁），工具多的伺服器不再只取得第一頁。
 - MCP 交握不再宣告沒有實作的 `sampling` 與 `roots`；stdio 讀取回應時略過伺服器主動發出、id 剛好相同的請求。

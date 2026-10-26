@@ -38,8 +38,8 @@
     "license": "https://opensource.org/licenses/MIT",
     "programmingLanguage": ["Python", "TypeScript"],
     "runtimePlatform": ["FastAPI", "React"],
-    "version": "5.0.0",
-    "dateModified": "2026-10-10"
+    "version": "6.0.0",
+    "dateModified": "2026-10-26"
   }
   </script>
   <script>
@@ -376,7 +376,7 @@
       </a>
       <nav class="nav__links" aria-label="主要導覽">
         <a class="nav__release" href="#release"><span class="nav__pulse" aria-hidden="true"></span>5.0.0</a>
-        <a href="#next">下一版</a>
+        <a href="#next">6.0.0</a>
         <a href="#citations">引用出處</a>
         <a href="#features">功能</a>
         <a href="#how">運作方式</a>
@@ -421,7 +421,7 @@
     <nav class="nav__menu" id="nav-menu" data-nav-menu data-open="false" aria-label="行動版導覽">
       <a href="#film">介紹影片</a>
       <a href="#release">5.0.0 新功能</a>
-      <a href="#next">下一版預告</a>
+      <a href="#next">6.0.0 新功能</a>
       <a href="#citations">引用出處</a>
       <a href="#features">功能</a>
       <a href="#how">運作方式</a>
@@ -589,7 +589,7 @@
             <li><b>0:24</b>點開 [1]，看到原文段落與相關度。</li>
             <li><b>0:30</b>FAISS 向量與 BM25 兩軌檢索，以 RRF 依名次融合，Cross-Encoder 重排後只把過門檻的段落交給 Agent。</li>
             <li><b>0:36</b>會改動外部系統的工具，執行前先問過你；按下拒絕，請求就不會送出。</li>
-            <li><b>0:42</b>下一版預告：Agent Skills，輸入 / 叫出專業做法；MCP 支援 Streamable HTTP 與 OAuth，OpenAPI 匯入一併帶上認證。</li>
+            <li><b>0:42</b>6.0.0 新功能：Agent Skills，輸入 / 叫出專業做法；MCP 支援 Streamable HTTP 與 OAuth，OpenAPI 匯入一併帶上認證。</li>
             <li><b>0:48</b>每個出站請求都要過九道檢查，另有登入失敗節流、改密碼即撤銷權杖與工具憑證加密存放。</li>
             <li><b>0:54</b>五家模型共用一層介面；影片裡的回答都由本機 Ollama 的 nemotron-3.5-bolt 產生。</li>
             <li><b>1:00</b>自主研究，答案有出處。github.com/Scorpio-meow/AskMiao，MIT 授權。</li>
@@ -1037,9 +1037,9 @@ X-Api-Key: <b class="k">demo-key-41c9</b></pre>
     <section class="section next" id="next" aria-labelledby="next-title">
       <div class="container">
         <div class="section__head reveal">
-          <p class="eyebrow next__eyebrow"><span class="next__dot" aria-hidden="true"></span>下一版預告 · 已合併進 New 分支，尚未發行</p>
+          <p class="eyebrow next__eyebrow"><span class="next__dot" aria-hidden="true"></span>6.0.0 新功能 · 2026-10-26 發行</p>
           <h2 id="next-title">技能、授權與結構化資料，讓 Agent 更會做事</h2>
-          <p>以下變更會隨下一個版本發行，完整清單在 CHANGELOG 的 [Unreleased]。</p>
+          <p>以下變更隨 6.0.0 發行，完整清單在 CHANGELOG 的 6.0.0。</p>
         </div>
         <div class="next__grid">
           <article class="next__card next__card--skills spot reveal">
@@ -1119,7 +1119,7 @@ items[0].name: 企業版年約</pre>
           </svg>
           <p>升級前在領域設定檔補上 <span class="mono">record_label_fields</span> 與 <span class="mono">record_ignore_fields</span>、在
             <span class="mono">.env</span> 加上 <span class="mono">SKILLS_DIR</span>，否則後端無法啟動；升級後執行一次重建索引。</p>
-          <a class="link-more" href="https://github.com/Scorpio-meow/AskMiao/blob/HEAD/docs/upgrading.md#從-500-升級到下一版"
+          <a class="link-more" href="https://github.com/Scorpio-meow/AskMiao/blob/HEAD/docs/upgrading.md#從-500-升級到-600"
             target="_blank" rel="noopener">升級指南<span class="sr-only">（在新分頁開啟）</span><svg class="icon" aria-hidden="true">
               <use href="#i-arrow-up-right"></use>
             </svg></a>
@@ -1284,8 +1284,8 @@ items[0].name: 企業版年約</pre>
             <div class="cell__icon"><svg class="icon" aria-hidden="true">
                 <use href="#i-gauge"></use>
               </svg></div>
-            <h3>五檔推理深度，隨問題調整</h3>
-            <p>在對話頂欄切換，直接傳給 Azure OpenAI v1 與 OpenAI 推理模型，並依 Foundry 規範處理與工具呼叫的相容性。</p>
+            <h3>六檔推理深度，隨問題調整</h3>
+            <p>在對話頂欄切換，依各供應商的支援範圍對應後傳給 OpenAI、Microsoft Foundry、Claude、Gemini 與 Ollama，並處理推理與工具呼叫的相容性。</p>
             <div class="seg" data-seg role="group" aria-label="推理深度示意">
               <button type="button" aria-pressed="false" data-title="無推理（None / 快速）"
                 data-desc="不啟用推理，回應最快，適合簡單查詢與直接的工具呼叫。">無</button>
@@ -1297,6 +1297,8 @@ items[0].name: 企業版年約</pre>
                 data-desc="更長的思考鏈，適合需要交叉驗證與嚴密比較的問題。">深度</button>
               <button type="button" aria-pressed="false" data-title="極致推理（X-High / 長程）"
                 data-desc="最長程的推理預算，留給多步研究與複雜彙整。">極致</button>
+              <button type="button" aria-pressed="false" data-title="最大推理（Max / 無限制）"
+                data-desc="不限制推理花費，只在支援的模型上啟用，留給最困難的問題。">最大</button>
             </div>
             <p class="seg-desc" data-seg-desc aria-live="polite"><b>標準推理（Medium / 預設）</b><br>知識庫問答與一般研究的平衡點。</p>
           </article>
@@ -1333,16 +1335,16 @@ items[0].name: 企業版年約</pre>
                 <use href="#i-arrows-split"></use>
               </svg></div>
             <h3>五家模型，一層抽象</h3>
-            <p>Azure OpenAI v1、OpenAI、Anthropic Claude、Google Gemini 與本機 Ollama 共用同一套模型與工具呼叫介面。</p>
+            <p>Microsoft Foundry、OpenAI、Anthropic Claude、Google Gemini 與本機 Ollama 共用同一套模型與工具呼叫介面。</p>
             <pre class="code code--tight" aria-label="多模型設定範例"><span class="c"># 逗號分隔，對話頂欄就能切換</span>
-AZURE_OPENAI_DEPLOYMENT=gpt-6-sol,gpt-6-luna</pre>
+FOUNDRY_DEPLOYMENT=gpt-6-sol,gpt-6-luna</pre>
             <div class="providers">
               <span class="logo" style="--m:url(assets/logos/openai.svg)" role="img" aria-label="OpenAI"></span>
               <span class="logo" style="--m:url(assets/logos/anthropic.svg)" role="img" aria-label="Anthropic"></span>
               <span class="logo" style="--m:url(assets/logos/googlegemini.svg)" role="img"
                 aria-label="Google Gemini"></span>
               <span class="logo" style="--m:url(assets/logos/ollama.svg)" role="img" aria-label="Ollama"></span>
-              <span class="chip">Azure OpenAI v1</span>
+              <span class="chip">Microsoft Foundry</span>
             </div>
           </article>
           <article class="cell cell--tools reveal">
@@ -2183,7 +2185,7 @@ AZURE_OPENAI_DEPLOYMENT=gpt-6-sol,gpt-6-luna</pre>
       <div class="container">
         <div class="section__head reveal">
           <h2>三個步驟，本機跑起來</h2>
-          <p>預設使用 SQLite，不需要 Docker、PostgreSQL 或 Redis。環境需求：Python 3.10 以上、Bun 1.0 以上。</p>
+          <p>預設使用 SQLite，不需要 Docker、PostgreSQL 或 Redis。環境需求：Python 3.12 以上、Bun 1.0 以上。</p>
         </div>
         <ol class="qs">
           <li class="qs__step reveal">
@@ -2589,7 +2591,7 @@ AZURE_OPENAI_DEPLOYMENT=gpt-6-sol,gpt-6-luna</pre>
             授權條款</a></li>
       </ul>
       <p class="footer__meta">2026 Scorpio-meow。目前版本 <a class="footer__ver"
-          href="#release">5.0.0</a>（2026-10-10）。頁面截圖中的文件、對話與數字皆為示範資料。</p>
+          href="https://github.com/Scorpio-meow/AskMiao/blob/HEAD/CHANGELOG.md#600---2026-10-26">6.0.0</a>（2026-10-26）。頁面截圖中的文件、對話與數字皆為示範資料。</p>
     </div>
   </footer>
   <script src="main.js" defer></script>
