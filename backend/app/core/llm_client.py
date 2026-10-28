@@ -11,6 +11,8 @@ _http_client: Optional[httpx.AsyncClient] = None
 _client_lock = asyncio.Lock()
 _anthropic_client = None
 _foundry_anthropic_client = None
+_anthropic_output_limits: Dict[str, int] = {}
+_anthropic_output_limits_lock = asyncio.Lock()
 FOUNDRY_ANTHROPIC_HOST_SUFFIX = ".services.ai.azure.com"
 REASONING_EFFORT_VALUES = ("none", "minimal", "low", "medium", "high", "xhigh", "max")
 OPENAI_MODEL_PREFIXES = ("gpt-", "o1", "o3", "o4")
@@ -47,7 +49,12 @@ OPENAI_OUTPUT_KEY = "_openai_output"
 DEFAULT_OPENAI_MODELS = ["gpt-6.1-sol", "gpt-6-sol", "gpt-6-luna", "gpt-6-astra", "gpt-5.6-sol", "gpt-5.6-luna", "gpt-5.6-terra", "gpt-5.4", "gpt-5.4-mini"]
 DEFAULT_CLAUDE_MODELS = ["claude-opus-5-5", "claude-fable-5-1", "claude-sonnet-5-5", "claude-haiku-5-5", "claude-sonnet-5", "claude-opus-5", "claude-fable-5", "claude-opus-4-8", "claude-haiku-4-5"]
 ANTHROPIC_CACHE_CONTROL = {"type": "ephemeral"}
-ANTHROPIC_EFFORT_BY_REASONING = {"minimal": "low", "low": "low", "medium": "medium", "high": "high", "xhigh": "xhigh", "max": "max"}
+ANTHROPIC_EFFORT_BY_REASONING = {"none": "low", "minimal": "low", "low": "low", "medium": "medium", "high": "high", "xhigh": "xhigh", "max": "max"}
+ANTHROPIC_MODELS_WITHOUT_EFFORT = ("claude-haiku-4-5",)
+# 這些模型未送 thinking 時完全不思考，需明確啟用 adaptive；較新的模型未送 thinking 即為 adaptive
+ANTHROPIC_MODELS_WITH_OPT_IN_THINKING = ("claude-opus-4-8", "claude-opus-4-7", "claude-opus-4-6", "claude-sonnet-4-6")
+ANTHROPIC_FALLBACK_MODELS = ("claude-opus-5-5", "claude-opus-5", "claude-fable-5-1", "claude-sonnet-5-5")
+ANTHROPIC_FALLBACK_BETA = "server-side-fallback-2026-07-01"
 ANTHROPIC_INCOMPLETE_STOP_REASONS = {
     "pause_turn": "Claude 回合被暫停（pause_turn），回應不完整",
     "model_context_window_exceeded": "對話超出 Claude 的 context window，請縮短內容"
@@ -510,10 +517,25 @@ def _anthropic_client_for(model: str):
     if is_foundry_claude(model):
         return _foundry_anthropic_client_instance()
     return _anthropic_client_instance()
-def _anthropic_max_tokens() -> int:
+async def _anthropic_model_output_limit(model: str) -> Optional[int]:
+    """以 Models API 查詢模型的輸出 token 上限並快取；Foundry 不提供 Models API，回傳 None"""
+    if is_foundry_claude(model):
+        return None
+    if model in _anthropic_output_limits:
+        return _anthropic_output_limits[model]
+    async with _anthropic_output_limits_lock:
+        if model not in _anthropic_output_limits:
+            info = await _anthropic_client_instance().models.retrieve(model)
+            _anthropic_output_limits[model] = info.max_tokens
+    return _anthropic_output_limits[model]
+async def _anthropic_max_tokens(model: str) -> int:
+    """ANTHROPIC_MAX_TOKENS 與模型輸出上限取較小值，避免輸出上限較低的模型回傳 400"""
     if settings.ANTHROPIC_MAX_TOKENS is None:
         raise ValueError("使用 Claude 模型前需在 .env 設定 ANTHROPIC_MAX_TOKENS")
-    return settings.ANTHROPIC_MAX_TOKENS
+    limit = await _anthropic_model_output_limit(model)
+    if limit is None:
+        return settings.ANTHROPIC_MAX_TOKENS
+    return min(settings.ANTHROPIC_MAX_TOKENS, limit)
 def _anthropic_system_text(content: Any) -> str:
     if isinstance(content, str):
         return content
@@ -529,6 +551,30 @@ def _anthropic_user_content(content: Any) -> Any:
             media_type, data = _parse_image_url(part["image_url"]["url"])
             blocks.append({"type": "image", "source": {"type": "base64", "media_type": media_type, "data": data}})
     return blocks
+def _mark_history_cache_breakpoint(converted: List[Dict[str, Any]]) -> None:
+    """在最後一則使用者訊息的最後一個區塊加上快取標記，system、工具與先前的對話歷史都會成為可快取的前綴"""
+    if not converted or converted[-1].get("role") != "user":
+        return
+    last = converted[-1]
+    content = last["content"]
+    if isinstance(content, str):
+        if content:
+            last["content"] = [{"type": "text", "text": content, "cache_control": ANTHROPIC_CACHE_CONTROL}]
+        return
+    if content and isinstance(content[-1], dict):
+        last["content"] = [*content[:-1], {**content[-1], "cache_control": ANTHROPIC_CACHE_CONTROL}]
+def _log_anthropic_usage(response) -> None:
+    usage = getattr(response, "usage", None)
+    if usage is None:
+        return
+    logger.info(
+        "Claude usage: model=%s, input=%s, cache_read=%s, cache_creation=%s, output=%s",
+        getattr(response, "model", None),
+        getattr(usage, "input_tokens", None),
+        getattr(usage, "cache_read_input_tokens", None),
+        getattr(usage, "cache_creation_input_tokens", None),
+        getattr(usage, "output_tokens", None)
+    )
 def _anthropic_request(
     messages: List[Dict[str, Any]],
     tools: Optional[List[Dict[str, Any]]]
@@ -571,6 +617,7 @@ def _anthropic_request(
             converted.append({"role": "user", "content": _anthropic_user_content(message.get("content") or "")})
     if tool_results:
         converted.append({"role": "user", "content": tool_results})
+    _mark_history_cache_breakpoint(converted)
 
     request: Dict[str, Any] = {"messages": converted}
     if system_parts:
@@ -586,11 +633,21 @@ def _anthropic_request(
         ]
         request["tools"][-1]["cache_control"] = ANTHROPIC_CACHE_CONTROL
     return request
-def _anthropic_effort_options(reasoning_effort: Optional[str]) -> Dict[str, Any]:
+def _anthropic_effort_options(reasoning_effort: Optional[str], model: str) -> Dict[str, Any]:
+    """依模型組出 thinking、effort 與拒答備援參數；拒答備援只在直連 Claude API 時由伺服器端處理"""
+    options: Dict[str, Any] = {}
+    extra_body: Dict[str, Any] = {}
     effort = ANTHROPIC_EFFORT_BY_REASONING.get(reasoning_effort or "")
-    if effort is None:
-        return {}
-    return {"extra_body": {"output_config": {"effort": effort}}}
+    if effort is not None and model not in ANTHROPIC_MODELS_WITHOUT_EFFORT:
+        extra_body["output_config"] = {"effort": effort}
+    if model in ANTHROPIC_MODELS_WITH_OPT_IN_THINKING and reasoning_effort != "none":
+        options["thinking"] = {"type": "adaptive"}
+    if model in ANTHROPIC_FALLBACK_MODELS and not is_foundry_claude(model):
+        extra_body["fallbacks"] = "default"
+        options["extra_headers"] = {"anthropic-beta": ANTHROPIC_FALLBACK_BETA}
+    if extra_body:
+        options["extra_body"] = extra_body
+    return options
 def _raise_if_refused(response) -> None:
     if response.stop_reason == "refusal":
         stop_details = getattr(response, "stop_details", None)
@@ -627,12 +684,14 @@ async def _anthropic_chat(
     timeout: float
 ) -> Dict[str, Any]:
     client = _anthropic_client_for(model).with_options(timeout=timeout)
-    response = await client.messages.create(
+    async with client.messages.stream(
         model=model,
-        max_tokens=_anthropic_max_tokens(),
+        max_tokens=await _anthropic_max_tokens(model),
         **_anthropic_request(messages, tools),
-        **_anthropic_effort_options(reasoning_effort)
-    )
+        **_anthropic_effort_options(reasoning_effort, model)
+    ) as stream:
+        response = await stream.get_final_message()
+    _log_anthropic_usage(response)
     return _anthropic_message(response)
 async def _anthropic_stream(
     messages: List[Dict[str, Any]],
@@ -645,13 +704,14 @@ async def _anthropic_stream(
         request["tool_choice"] = {"type": "none"}
     async with _anthropic_client_for(model).messages.stream(
         model=model,
-        max_tokens=_anthropic_max_tokens(),
+        max_tokens=await _anthropic_max_tokens(model),
         **request,
-        **_anthropic_effort_options(reasoning_effort)
+        **_anthropic_effort_options(reasoning_effort, model)
     ) as stream:
         async for text in stream.text_stream:
             yield text
         final_message = await stream.get_final_message()
+    _log_anthropic_usage(final_message)
     _raise_if_refused(final_message)
 async def chat_completion(
     messages: List[Dict[str, Any]],

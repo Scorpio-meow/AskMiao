@@ -98,12 +98,16 @@ async def run_tests():
             assert json_payload["messages"] == messages
             print("=> 測試 3 成功！")
     print("\n[測試 4] 驗證 Anthropic Claude 路由與調用格式（官方 anthropic SDK）：")
-    mock_create = AsyncMock(return_value=MagicMock(
+    final_message = MagicMock(
         stop_reason="end_turn",
         content=[MagicMock(type="text", text="Hello from Claude")]
-    ))
+    )
+    stream_context = MagicMock()
+    stream_context.__aenter__ = AsyncMock(return_value=MagicMock(get_final_message=AsyncMock(return_value=final_message)))
+    stream_context.__aexit__ = AsyncMock(return_value=False)
+    mock_stream = MagicMock(return_value=stream_context)
     fake_client = MagicMock()
-    fake_client.with_options.return_value.messages.create = mock_create
+    fake_client.with_options.return_value.messages.stream = mock_stream
 
     with patch("app.core.llm_client._anthropic_client_instance", return_value=fake_client):
         with patch.object(settings, "ANTHROPIC_API_KEY", "claude-test-key"), \
@@ -116,13 +120,14 @@ async def run_tests():
             print(f"LLM 回傳: {response}")
             assert response == "Hello from Claude"
 
-            kwargs = mock_create.call_args.kwargs
+            kwargs = mock_stream.call_args.kwargs
             print(f"SDK 呼叫參數: {kwargs}")
 
             assert kwargs["model"] == "claude-opus-5-5"
             assert kwargs["max_tokens"] == 16000
-            assert kwargs["system"] == "你是繁體中文助手"
-            assert kwargs["messages"] == [{"role": "user", "content": "你好"}]
+            assert kwargs["system"] == [{"type": "text", "text": "你是繁體中文助手", "cache_control": {"type": "ephemeral"}}]
+            assert kwargs["messages"] == [{"role": "user", "content": [{"type": "text", "text": "你好", "cache_control": {"type": "ephemeral"}}]}]
+            assert kwargs["extra_body"]["fallbacks"] == "default"
             print("=> 測試 4 成功！")
     print("\n=== 所有測試皆通過！ ===")
 if __name__ == "__main__":

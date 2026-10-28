@@ -52,21 +52,31 @@ class FakeAnthropicMessages:
     def __init__(self, responses, stream_chunks=()):
         self.responses = list(responses)
         self.stream_chunks = list(stream_chunks)
-        self.create_calls = []
-        self.stream_calls = []
-
-    async def create(self, **kwargs):
-        self.create_calls.append(kwargs)
-        return self.responses.pop(0)
+        self.chat_calls = []
+        self.answer_stream_calls = []
 
     def stream(self, **kwargs):
-        self.stream_calls.append(kwargs)
-        return FakeStream(self.stream_chunks, SimpleNamespace(stop_reason="end_turn", stop_details=None, content=[]))
+        if kwargs.get("tool_choice") == {"type": "none"}:
+            self.answer_stream_calls.append(kwargs)
+            return FakeStream(self.stream_chunks, SimpleNamespace(stop_reason="end_turn", stop_details=None, content=[]))
+        self.chat_calls.append(kwargs)
+        return FakeStream([], self.responses.pop(0))
+
+
+class FakeAnthropicModels:
+    def __init__(self, output_limits):
+        self.output_limits = output_limits
+        self.retrieve_calls = []
+
+    async def retrieve(self, model):
+        self.retrieve_calls.append(model)
+        return SimpleNamespace(id=model, max_tokens=self.output_limits[model])
 
 
 class FakeAnthropicClient:
-    def __init__(self, messages):
+    def __init__(self, messages, models):
         self.messages = messages
+        self.models = models
 
     def with_options(self, **kwargs):
         return self
@@ -76,10 +86,13 @@ class FakeAnthropicClient:
 def claude(monkeypatch):
     monkeypatch.setattr(settings, "ANTHROPIC_API_KEY", "test-key")
     monkeypatch.setattr(settings, "ANTHROPIC_MAX_TOKENS", 16000)
+    monkeypatch.setattr(llm_client, "_anthropic_output_limits", {})
 
-    def install(responses, stream_chunks=()):
+    def install(responses, stream_chunks=(), output_limits=None):
         fake_messages = FakeAnthropicMessages(responses, stream_chunks)
-        monkeypatch.setattr(llm_client, "_anthropic_client_instance", lambda: FakeAnthropicClient(fake_messages))
+        fake_messages.models = FakeAnthropicModels(output_limits or {"claude-opus-5": 128000, "claude-opus-5-5": 128000})
+        client = FakeAnthropicClient(fake_messages, fake_messages.models)
+        monkeypatch.setattr(llm_client, "_anthropic_client_instance", lambda: client)
         return fake_messages
 
     return install
@@ -154,7 +167,7 @@ def test_anthropic_request_merges_tool_results_and_converts_images():
         ]},
         {"role": "user", "content": [
             {"type": "tool_result", "tool_use_id": "call_a", "content": "{\"documents\": []}"},
-            {"type": "tool_result", "tool_use_id": "call_b", "content": "{\"results\": []}"},
+            {"type": "tool_result", "tool_use_id": "call_b", "content": "{\"results\": []}", "cache_control": {"type": "ephemeral"}},
         ]},
     ]
     assert request["tools"] == [{
@@ -176,15 +189,72 @@ def test_anthropic_request_marks_failed_tool_results():
     request = llm_client._anthropic_request(messages, None)
 
     assert request["messages"][1]["content"] == [
-        {"type": "tool_result", "tool_use_id": "call_a", "content": "{\"error\": \"x\"}", "is_error": True},
+        {"type": "tool_result", "tool_use_id": "call_a", "content": "{\"error\": \"x\"}", "is_error": True, "cache_control": {"type": "ephemeral"}},
     ]
 
 
+def test_anthropic_request_marks_last_user_message_as_cache_breakpoint():
+    messages = [
+        {"role": "user", "content": "第一問"},
+        {"role": "assistant", "content": "第一答"},
+        {"role": "user", "content": "第二問"},
+    ]
+
+    request = llm_client._anthropic_request(messages, None)
+
+    assert request["messages"][0] == {"role": "user", "content": "第一問"}
+    assert request["messages"][1] == {"role": "assistant", "content": [{"type": "text", "text": "第一答"}]}
+    assert request["messages"][2] == {
+        "role": "user",
+        "content": [{"type": "text", "text": "第二問", "cache_control": {"type": "ephemeral"}}],
+    }
+
+
+def test_anthropic_request_skips_cache_breakpoint_for_empty_or_assistant_tail():
+    assert llm_client._anthropic_request([{"role": "user", "content": ""}], None)["messages"] == [{"role": "user", "content": ""}]
+    tail_assistant = llm_client._anthropic_request([{"role": "user", "content": "問"}, {"role": "assistant", "content": "答"}], None)
+    assert "cache_control" not in str(tail_assistant["messages"])
+
+
 def test_anthropic_effort_options_map_reasoning_effort():
-    assert llm_client._anthropic_effort_options("high") == {"extra_body": {"output_config": {"effort": "high"}}}
-    assert llm_client._anthropic_effort_options("minimal") == {"extra_body": {"output_config": {"effort": "low"}}}
-    assert llm_client._anthropic_effort_options("none") == {}
-    assert llm_client._anthropic_effort_options(None) == {}
+    assert llm_client._anthropic_effort_options("high", "claude-sonnet-5") == {"extra_body": {"output_config": {"effort": "high"}}}
+    assert llm_client._anthropic_effort_options("minimal", "claude-sonnet-5") == {"extra_body": {"output_config": {"effort": "low"}}}
+    assert llm_client._anthropic_effort_options("none", "claude-sonnet-5") == {"extra_body": {"output_config": {"effort": "low"}}}
+    assert llm_client._anthropic_effort_options(None, "claude-sonnet-5") == {}
+
+
+def test_anthropic_effort_options_skip_effort_on_haiku_4_5():
+    assert llm_client._anthropic_effort_options("high", "claude-haiku-4-5") == {}
+
+
+def test_anthropic_effort_options_enable_adaptive_thinking_on_opt_in_models():
+    assert llm_client._anthropic_effort_options("high", "claude-opus-4-8") == {
+        "thinking": {"type": "adaptive"},
+        "extra_body": {"output_config": {"effort": "high"}},
+    }
+    assert "thinking" not in llm_client._anthropic_effort_options("none", "claude-opus-4-8")
+    assert "thinking" not in llm_client._anthropic_effort_options("high", "claude-opus-5-5")
+
+
+def test_anthropic_effort_options_request_server_side_fallback(monkeypatch):
+    monkeypatch.setattr(settings, "FOUNDRY_API_KEY", None)
+
+    options = llm_client._anthropic_effort_options("low", "claude-opus-5-5")
+
+    assert options["extra_body"] == {"output_config": {"effort": "low"}, "fallbacks": "default"}
+    assert options["extra_headers"] == {"anthropic-beta": "server-side-fallback-2026-07-01"}
+    assert "fallbacks" not in llm_client._anthropic_effort_options("low", "claude-haiku-5-5").get("extra_body", {})
+
+
+def test_anthropic_effort_options_skip_fallback_on_foundry(monkeypatch):
+    monkeypatch.setattr(settings, "FOUNDRY_API_KEY", "foundry-key")
+    monkeypatch.setattr(settings, "FOUNDRY_ENDPOINT", "https://example.services.ai.azure.com")
+    monkeypatch.setattr(settings, "FOUNDRY_DEPLOYMENT", "claude-opus-5-5")
+
+    options = llm_client._anthropic_effort_options("low", "claude-opus-5-5")
+
+    assert "extra_headers" not in options
+    assert "fallbacks" not in options["extra_body"]
 
 
 CLAUDE_TOOL_USE_CONTENT = [
@@ -213,14 +283,14 @@ async def test_agent_tool_round_trip_with_claude_preserves_raw_content(claude, m
 
     result = await final_result(claude_agent(monkeypatch).stream_research("特休怎麼算？", model_name="claude-opus-5"))
 
-    first_call, second_call = fake_messages.create_calls
+    first_call, second_call = fake_messages.chat_calls
     assert first_call["model"] == "claude-opus-5"
     assert first_call["system"] == [{"type": "text", "text": agent_module.SYSTEM_PROMPT, "cache_control": {"type": "ephemeral"}}]
-    assert first_call["messages"] == [{"role": "user", "content": "特休怎麼算？"}]
+    assert first_call["messages"] == [{"role": "user", "content": [{"type": "text", "text": "特休怎麼算？", "cache_control": {"type": "ephemeral"}}]}]
     assert second_call["messages"][1] == {"role": "assistant", "content": CLAUDE_TOOL_USE_CONTENT}
     assert [block["tool_use_id"] for block in second_call["messages"][2]["content"]] == ["toolu_1"]
-    assert fake_messages.stream_calls == []
-    assert all("temperature" not in call for call in fake_messages.create_calls)
+    assert fake_messages.answer_stream_calls == []
+    assert all("temperature" not in call for call in fake_messages.chat_calls)
     assert result["answer"] == "特休依年資計算 [1]"
     assert result["sources"] == ["leave.txt"]
 
@@ -237,11 +307,11 @@ async def test_claude_streams_final_answer_when_answer_is_empty(claude, monkeypa
 
     result = await final_result(claude_agent(monkeypatch).stream_research("特休怎麼算？", model_name="claude-opus-5"))
 
-    first_call, _ = fake_messages.create_calls
-    (stream_call,) = fake_messages.stream_calls
+    first_call, _ = fake_messages.chat_calls
+    (stream_call,) = fake_messages.answer_stream_calls
     assert stream_call["tool_choice"] == {"type": "none"}
     assert stream_call["tools"] == first_call["tools"]
-    assert all("temperature" not in call for call in fake_messages.create_calls + fake_messages.stream_calls)
+    assert all("temperature" not in call for call in fake_messages.chat_calls + fake_messages.answer_stream_calls)
     assert result["answer"] == "特休依年資計算"
 
 
@@ -267,6 +337,31 @@ async def test_claude_refusal_raises(claude):
 
     with pytest.raises(RuntimeError, match="refusal"):
         await llm_client.chat_completion([{"role": "user", "content": "…"}], model_name="claude-opus-5")
+
+
+@pytest.mark.asyncio
+async def test_claude_max_tokens_capped_by_model_output_limit(claude, monkeypatch):
+    monkeypatch.setattr(settings, "FOUNDRY_API_KEY", None)
+    monkeypatch.setattr(settings, "ANTHROPIC_MAX_TOKENS", 128000)
+    end_turn = SimpleNamespace(stop_reason="end_turn", stop_details=None, content=[SimpleNamespace(type="text", text="OK")])
+    fake_messages = claude(responses=[end_turn, end_turn, end_turn], output_limits={"claude-haiku-4-5": 64000, "claude-opus-5-5": 128000})
+
+    await llm_client.chat_completion([{"role": "user", "content": "你好"}], model_name="claude-haiku-4-5")
+    await llm_client.chat_completion([{"role": "user", "content": "你好"}], model_name="claude-haiku-4-5")
+    await llm_client.chat_completion([{"role": "user", "content": "你好"}], model_name="claude-opus-5-5")
+
+    assert [call["max_tokens"] for call in fake_messages.chat_calls] == [64000, 64000, 128000]
+    assert fake_messages.models.retrieve_calls == ["claude-haiku-4-5", "claude-opus-5-5"]
+
+
+@pytest.mark.asyncio
+async def test_claude_max_tokens_on_foundry_uses_setting(monkeypatch):
+    monkeypatch.setattr(settings, "FOUNDRY_API_KEY", "foundry-key")
+    monkeypatch.setattr(settings, "FOUNDRY_ENDPOINT", "https://example.services.ai.azure.com")
+    monkeypatch.setattr(settings, "FOUNDRY_DEPLOYMENT", "claude-opus-5-5")
+    monkeypatch.setattr(settings, "ANTHROPIC_MAX_TOKENS", 32000)
+
+    assert await llm_client._anthropic_max_tokens("claude-opus-5-5") == 32000
 
 
 @pytest.mark.asyncio
