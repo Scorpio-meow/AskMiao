@@ -1,0 +1,16 @@
+FROM oven/bun:1 AS build
+
+WORKDIR /app
+
+COPY frontend/package.json frontend/bun.lock frontend/bunfig.toml ./
+RUN bun install
+
+COPY frontend/ ./
+RUN sed -i 's/\r$//' index.html
+ENV GENERATE_SOURCEMAP=false
+RUN bun run build
+
+FROM nginx:1.27-alpine
+
+COPY deploy/nginx.conf /etc/nginx/conf.d/default.conf
+COPY --from=build /app/build /usr/share/nginx/html
