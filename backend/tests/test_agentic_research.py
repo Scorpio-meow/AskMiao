@@ -1,5 +1,6 @@
 import pytest
 from app.core.config import settings
+from app.core.llm_client import LlmEndpoint
 from app.rag.retrievers.hybrid import RetrievedChunk
 from app.rag.types import Document
 from app.rag.tools import ResearchToolRegistry
@@ -46,6 +47,7 @@ async def test_research_agent_run():
     agent = ResearchAgent(tool_registry=registry)
     result = await final_result(agent.stream_research(
         query="請幫我查詢特休規定",
+        endpoint=LlmEndpoint("openai", "http://127.0.0.1:9", None, None, False),
         model_name="gpt-5.6-luna"
     ))
     assert "answer" in result

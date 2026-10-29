@@ -27,6 +27,27 @@ All notable changes to AskMiao are documented in this file. The format is based 
 
 ## [Unreleased]
 
+> [!IMPORTANT]
+> Chat no longer uses the models and keys in `.env`. After upgrading, every account (admins included) needs an API connection to chat: an admin recreates the `.env` providers as shared connections under "Admin → Shared API connections" and picks the accounts that may use them, or each account adds its own key under "Profile → My API connections". `POST /api/chat/send` now requires `connection_id` and `model_name`.
+
+### Added
+
+- **Per-account API connections**: "Profile → My API connections" adds connections to OpenAI (or a compatible API), Anthropic Claude, Google Gemini, Microsoft Foundry, or Ollama, with an API address, key, model list, and the Claude output token limit. Only the owner sees and uses them. Keys are encrypted with `TOOL_SECRETS_KEY`; responses only say whether one is set (`has_api_key`). New endpoints: `GET/POST /api/llm-connections`, `PUT/DELETE /api/llm-connections/{id}`, `GET /api/llm-connections/providers`.
+- **Shared connections granted by admins**: "Admin → Shared API connections" creates shared connections and picks which accounts may use them (all accounts, or only the checked ones); other accounts never see them in the model list. New endpoints: `GET/POST /api/admin/llm-connections`, `PUT/DELETE /api/admin/llm-connections/{id}`. Deleting an account deletes its personal connections and removes it from shared connection lists.
+- **Connection test**: `POST /api/llm-connections/{id}/test` sends one short message with the chosen model and returns the reply or the reason it failed; owners test personal connections, admins test shared ones.
+- The chat model menu groups models by connection (personal / shared) and tells accounts without any model to add one in their profile.
+
+### Changed
+
+- **Chat only uses the connections an account may use**: `GET /api/chat/models` now requires sign-in and returns `{"connections": [{id, name, provider, scope, models}]}`; `connection_id` and `model_name` are required in `POST /api/chat/send`, which returns `400` when the connection is not the caller's own or granted to them, or the model is not in its list. It no longer falls back to `MODEL_NAME` or the keys in `.env`.
+- The LLM settings in `.env` (`MODEL_NAME`, `AVAILABLE_MODELS`, the provider keys, and `LLM_API_BASE`) only serve background system work: AI summaries of uploaded documents and `GET /api/tags`.
+- Self-registered accounts never use the operator's LLM keys; with `ALLOW_REGISTRATION=true`, remember that all accounts still share the knowledge base and the enabled tools.
+
+### Security
+
+- **Members' personal connections can only reach public addresses**: the API address is checked when a connection is saved, and every model call goes through the SSRF check and is pinned to the approved IP (the httpx2 client used by the Anthropic SDK included), so nobody can use their own connection to make the backend reach the internal network or cloud metadata services. Error messages never reveal the internal address a name resolved to. Admins' personal connections and shared connections may point at the internal network (for example a local Ollama).
+
+
 ## [6.0.0] - 2026-10-26
 
 ### Security

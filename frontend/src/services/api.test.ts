@@ -36,13 +36,14 @@ describe('chatService.sendMessageStream', () => {
     vi.stubGlobal('fetch', fetchMock);
     const events: unknown[] = [];
 
-    await chatService.sendMessageStream('你好', null, null, 'medium', (event) => events.push(event));
+    await chatService.sendMessageStream('你好', null, 3, 'gpt-6-sol', 'medium', (event) => events.push(event));
 
     expect(refresh).toHaveBeenCalledTimes(1);
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(authorizationOf(fetchMock.mock.calls[0])).toBe('Bearer fresh-token');
     expect(storage.get('access_token')).toBe('fresh-token');
     expect(events).toEqual([{ event: 'done', data: { answer: '好' } }]);
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toMatchObject({ connection_id: 3, model_name: 'gpt-6-sol' });
   });
 
   it('refreshes once and resends when the server rejects the token', async () => {
@@ -54,7 +55,7 @@ describe('chatService.sendMessageStream', () => {
       .mockResolvedValueOnce(sseResponse());
     vi.stubGlobal('fetch', fetchMock);
 
-    await chatService.sendMessageStream('你好', null, null, 'medium', () => {});
+    await chatService.sendMessageStream('你好', null, 3, 'gpt-6-sol', 'medium', () => {});
 
     expect(fetchMock.mock.calls.map(authorizationOf)).toEqual([`Bearer ${valid}`, 'Bearer fresh-token']);
   });

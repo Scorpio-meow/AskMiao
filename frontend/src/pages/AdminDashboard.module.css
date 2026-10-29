@@ -108,6 +108,25 @@
   margin-bottom: var(--space-4);
 }
 
+.cardHeaderRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin-bottom: var(--space-3);
+}
+
+.cardHeaderRow .cardTitle {
+  margin-bottom: 0;
+}
+
+.cardHint {
+  font-size: var(--font-size-sm);
+  color: var(--text-secondary);
+  margin-bottom: var(--space-4);
+}
+
 .tableWrapper {
   overflow-x: auto;
   width: 100%;

@@ -24,3 +24,7 @@
   min-height: 0;
   min-width: 0;
 }
+
+.noModelsNotice {
+  margin: var(--space-3) var(--space-4) 0;
+}

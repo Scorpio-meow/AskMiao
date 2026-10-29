@@ -183,12 +183,24 @@ export interface StreamEvent {
   event: 'start' | 'step_start' | 'step_end' | 'approval_required' | 'approval_resolved' | 'token' | 'think' | 'sources' | 'done' | 'error';
   data: any;
 }
+export interface ChatConnectionOption {
+  id: number;
+  name: string;
+  provider: string;
+  scope: 'personal' | 'shared';
+  models: string[];
+}
 export const chatService = {
+  async getConnections(): Promise<ChatConnectionOption[]> {
+    const response = await api.get<{ connections: ChatConnectionOption[] }>('/chat/models');
+    return response.data.connections;
+  },
   async sendMessageStream(
     content: string,
-    conversationId: number | null = null,
-    model_name: string | null = null,
-    reasoning_effort: string = 'medium',
+    conversationId: number | null,
+    connection_id: number,
+    model_name: string,
+    reasoning_effort: string,
     onEvent: (event: StreamEvent) => void,
     signal?: AbortSignal,
     attachments?: ChatAttachment[]
@@ -203,6 +215,7 @@ export const chatService = {
     const body = JSON.stringify({
       content,
       conversation_id: conversationId,
+      connection_id,
       model_name,
       reasoning_effort,
       attachments: payloadAttachments
@@ -326,6 +339,81 @@ export const adminService = {
   },
   async deleteUser(userId: number): Promise<any> {
     const response = await api.delete<any>(`/admin/users/${userId}`);
+    return response.data;
+  }
+};
+export interface LlmProviderPreset {
+  provider: string;
+  label: string;
+  api_base: string;
+  models: string[];
+  requires_api_key: boolean;
+  uses_max_output_tokens: boolean;
+}
+export interface LlmConnectionItem {
+  id: number;
+  name: string;
+  provider: string;
+  api_base: string;
+  models: string[];
+  max_output_tokens: number | null;
+  has_api_key: boolean;
+  scope: 'personal' | 'shared';
+  allowed_user_ids?: number[] | null;
+  created_at: string;
+  updated_at: string;
+}
+export interface LlmConnectionPayload {
+  name?: string;
+  provider?: string;
+  api_base?: string;
+  api_key?: string;
+  models?: string[];
+  max_output_tokens?: number | null;
+  allowed_user_ids?: number[];
+}
+export const llmConnectionService = {
+  async getProviders(): Promise<LlmProviderPreset[]> {
+    const response = await api.get<{ providers: LlmProviderPreset[] }>('/llm-connections/providers');
+    return response.data.providers;
+  },
+  async getMine(): Promise<{ personal: LlmConnectionItem[]; shared: ChatConnectionOption[] }> {
+    const response = await api.get<{ personal: LlmConnectionItem[]; shared: ChatConnectionOption[] }>('/llm-connections');
+    return response.data;
+  },
+  async create(payload: LlmConnectionPayload): Promise<LlmConnectionItem> {
+    const response = await api.post<LlmConnectionItem>('/llm-connections', payload);
+    return response.data;
+  },
+  async update(connectionId: number, payload: LlmConnectionPayload): Promise<LlmConnectionItem> {
+    const response = await api.put<LlmConnectionItem>(`/llm-connections/${connectionId}`, payload);
+    return response.data;
+  },
+  async remove(connectionId: number): Promise<{ message: string }> {
+    const response = await api.delete<{ message: string }>(`/llm-connections/${connectionId}`);
+    return response.data;
+  },
+  async test(connectionId: number, modelName: string): Promise<{ ok: boolean; reply?: string; error?: string }> {
+    const response = await api.post<{ ok: boolean; reply?: string; error?: string }>(
+      `/llm-connections/${connectionId}/test`,
+      { model_name: modelName }
+    );
+    return response.data;
+  },
+  async getShared(): Promise<LlmConnectionItem[]> {
+    const response = await api.get<{ connections: LlmConnectionItem[] }>('/admin/llm-connections');
+    return response.data.connections;
+  },
+  async createShared(payload: LlmConnectionPayload): Promise<LlmConnectionItem> {
+    const response = await api.post<LlmConnectionItem>('/admin/llm-connections', payload);
+    return response.data;
+  },
+  async updateShared(connectionId: number, payload: LlmConnectionPayload): Promise<LlmConnectionItem> {
+    const response = await api.put<LlmConnectionItem>(`/admin/llm-connections/${connectionId}`, payload);
+    return response.data;
+  },
+  async removeShared(connectionId: number): Promise<{ message: string }> {
+    const response = await api.delete<{ message: string }>(`/admin/llm-connections/${connectionId}`);
     return response.data;
   }
 };

@@ -27,6 +27,27 @@
 
 ## [Unreleased]
 
+> [!IMPORTANT]
+> 聊天不再使用 `.env` 的模型與金鑰。升級後每個帳號（含管理員）都要有 API 連線才能對話：管理員在「管理後台 → 共用 API 連線」把原本 `.env` 的供應商建成共用連線並指定可使用的帳號，或請各帳號在「個人資料 → 我的 API 連線」設定自己的金鑰。`POST /api/chat/send` 必須帶 `connection_id` 與 `model_name`。
+
+### 新增 (Added)
+
+- **每個帳號各自的 API 連線**：「個人資料 → 我的 API 連線」可新增 OpenAI（或相容 API）、Anthropic Claude、Google Gemini、Microsoft Foundry、Ollama 的連線，設定 API 位址、金鑰、模型清單與 Claude 的輸出 token 上限；只有本人看得到、用得到。金鑰以 `TOOL_SECRETS_KEY` 加密存放，API 回應只告知是否已設定（`has_api_key`）。新增 `GET/POST /api/llm-connections`、`PUT/DELETE /api/llm-connections/{id}`、`GET /api/llm-connections/providers`。
+- **管理員開放的共用連線**：「管理後台 → 共用 API 連線」建立共用連線，並指定可使用的帳號（所有帳號，或只限勾選的帳號）；沒被指定的帳號在模型清單裡看不到它。新增 `GET/POST /api/admin/llm-connections`、`PUT/DELETE /api/admin/llm-connections/{id}`。刪除帳號時一併刪除其個人連線，並從共用連線的名單移除。
+- **測試連線**：`POST /api/llm-connections/{id}/test` 以指定模型送出一則很短的訊息，回傳模型回覆或錯誤原因；個人連線由本人測試，共用連線只限管理員。
+- 聊天頁的模型選單依連線分組（個人／共用）；帳號沒有任何可用模型時提示到「個人資料」新增。
+
+### 變更 (Changed)
+
+- **聊天只使用帳號可用的連線**：`GET /api/chat/models` 改為需要登入，回傳 `{"connections": [{id, name, provider, scope, models}]}`；`POST /api/chat/send` 的 `connection_id` 與 `model_name` 改為必填，連線不屬於自己、未開放給自己或模型不在該連線的清單內時回傳 `400`，不再落回 `MODEL_NAME` 或 `.env` 的金鑰。
+- `.env` 的 LLM 設定（`MODEL_NAME`、`AVAILABLE_MODELS`、各供應商金鑰與 `LLM_API_BASE`）只用於系統背景工作：上傳文件時的 AI 摘要與 `GET /api/tags`。
+- 自行註冊的帳號不會用到營運者的 LLM 金鑰，開放註冊（`ALLOW_REGISTRATION=true`）時只需留意所有帳號仍共用知識庫與已啟用的工具。
+
+### 安全性 (Security)
+
+- **一般帳號的個人連線只能連到公開位址**：建立或修改時檢查 API 位址，每次呼叫模型也經 SSRF 檢查並把連線固定到核可的 IP（Anthropic SDK 使用的 httpx2 也一樣），無法藉由自己的連線讓後端連到內部網路或雲端中繼資料服務；錯誤訊息不透露解析出的內部位址。管理員的個人連線與共用連線可以指向內部網路（例如本機 Ollama）。
+
+
 ## [6.0.0] - 2026-10-26
 
 ### 安全性 (Security)

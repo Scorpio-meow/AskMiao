@@ -4,7 +4,7 @@ import sys
 from unittest.mock import AsyncMock, patch, MagicMock
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 from app.core.config import settings
-from app.core.llm_client import get_available_models, call_llm
+from app.core.llm_client import get_available_models, call_llm, system_endpoint
 class MockResponse:
     def __init__(self, json_data, status_code=200):
         self._json_data = json_data
@@ -48,7 +48,7 @@ async def run_tests():
     with patch("httpx.AsyncClient.post", mock_post):
         with patch.object(settings, "OPENAI_API_KEY", "openai-test-key"):
             messages = [{"role": "user", "content": "你好"}]
-            response = await call_llm(messages, model_name="gpt-6-sol")
+            response = await call_llm(messages, endpoint=system_endpoint("gpt-6-sol"), model_name="gpt-6-sol")
             print(f"LLM 回傳: {response}")
             assert response == "Hello from OpenAI"
             
@@ -79,7 +79,7 @@ async def run_tests():
     with patch("httpx.AsyncClient.post", mock_post):
         with patch.object(settings, "GEMINI_API_KEY", "gemini-test-key"):
             messages = [{"role": "user", "content": "你好"}]
-            response = await call_llm(messages, model_name="gemini-3.8-flash")
+            response = await call_llm(messages, endpoint=system_endpoint("gemini-3.8-flash"), model_name="gemini-3.8-flash")
             print(f"LLM 回傳: {response}")
             assert response == "Hello from Gemini"
             
@@ -109,14 +109,14 @@ async def run_tests():
     fake_client = MagicMock()
     fake_client.with_options.return_value.messages.stream = mock_stream
 
-    with patch("app.core.llm_client._anthropic_client_instance", return_value=fake_client):
+    with patch("app.core.llm_client._anthropic_client", return_value=fake_client):
         with patch.object(settings, "ANTHROPIC_API_KEY", "claude-test-key"), \
              patch.object(settings, "ANTHROPIC_MAX_TOKENS", 16000):
             messages = [
                 {"role": "system", "content": "你是繁體中文助手"},
                 {"role": "user", "content": "你好"}
             ]
-            response = await call_llm(messages, model_name="claude-opus-5-5")
+            response = await call_llm(messages, endpoint=system_endpoint("claude-opus-5-5"), model_name="claude-opus-5-5")
             print(f"LLM 回傳: {response}")
             assert response == "Hello from Claude"
 

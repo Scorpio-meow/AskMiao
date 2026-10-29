@@ -1,10 +1,12 @@
+import json
+
 import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from app.api import chat as chat_api
 from app.core.config import settings
-from app.models import Conversation, Message, MessageCreate
+from app.models import Conversation, LlmConnection, Message, MessageCreate
 from app.models.database import Base
 from app.services.chat_service import ChatService
 
@@ -50,8 +52,10 @@ async def test_send_message_passes_database_history_to_rag(db, monkeypatch):
     captured = {}
 
     class FakeRag:
-        async def generate_response_stream(self, query, conversation_history, model_name=None,
+        async def generate_response_stream(self, query, conversation_history, *, endpoint, model_name,
                                            reasoning_effort=None, attachments=None, approval_user_id=None):
+            captured["endpoint"] = endpoint
+            captured["model_name"] = model_name
             captured["query"] = query
             captured["history"] = conversation_history
             yield {"event": "token", "data": {"content": "滿一年七天。"}}
@@ -59,15 +63,20 @@ async def test_send_message_passes_database_history_to_rag(db, monkeypatch):
 
     monkeypatch.setattr(settings, "CONVERSATION_HISTORY_MESSAGES", 6)
     monkeypatch.setattr(chat_api, "get_rag_system", lambda: FakeRag())
+    connection = LlmConnection(name="本機", provider="ollama", api_base="https://ollama.example.com",
+                               models=json.dumps(["qwen3:8b"]), owner_id=1)
+    db.add(connection)
+    db.commit()
 
     response = await chat_api.send_message(
-        MessageCreate(content="那滿一年呢？", conversation_id=conversation_id),
+        MessageCreate(content="那滿一年呢？", conversation_id=conversation_id, connection_id=connection.id, model_name="qwen3:8b"),
         db=db,
         user_id=1,
     )
     body = "".join([chunk async for chunk in response.body_iterator])
 
     assert captured["query"] == "那滿一年呢？"
+    assert (captured["endpoint"].api_base, captured["model_name"]) == ("https://ollama.example.com", "qwen3:8b")
     assert captured["history"] == [
         {"role": "user", "content": "特休有幾天？"},
         {"role": "assistant", "content": "依年資計算。"},

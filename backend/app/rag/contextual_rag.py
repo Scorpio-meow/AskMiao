@@ -21,6 +21,7 @@ logger = logging.getLogger(__name__)
 
 from app.core.config import settings
 from app.core.domain_profile import domain_profile
+from app.core.llm_client import LlmEndpoint
 
 class HybridContextualRAG:
     """
@@ -37,7 +38,6 @@ class HybridContextualRAG:
         self.final_k = settings.FINAL_K
         self.rerank_weight = settings.RERANK_WEIGHT
         self.relevance_threshold = settings.RERANK_RELEVANCE_THRESHOLD
-        self.model_name = settings.MODEL_NAME or ""
         self.data_dir = settings.DATA_DIR
         self.use_fp16 = settings.USE_FP16_QUANTIZATION
         self.force_cpu = settings.FORCE_CPU
@@ -84,7 +84,6 @@ class HybridContextualRAG:
             retriever=self.retriever,
             chunk_size=self.chunk_size,
             chunk_overlap=self.chunk_overlap,
-            model_name=self.model_name,
         )
 
 
@@ -230,7 +229,9 @@ class HybridContextualRAG:
         self,
         query: str,
         conversation_history: List[Dict[str, str]],
-        model_name: Optional[str] = None,
+        *,
+        endpoint: LlmEndpoint,
+        model_name: str,
         reasoning_effort: Optional[str] = "medium",
         attachments: Optional[List[Any]] = None,
         approval_user_id: Optional[int] = None
@@ -238,6 +239,7 @@ class HybridContextualRAG:
         async for event in self.pipeline.generate_response_stream(
             query=query,
             conversation_history=conversation_history,
+            endpoint=endpoint,
             model_name=model_name,
             reasoning_effort=reasoning_effort,
             attachments=attachments,

@@ -1,5 +1,9 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
 import api, { chatService, ChatAttachment, Conversation, Message } from '../services/api';
+export interface ModelChoice {
+  connectionId: number;
+  model: string;
+}
 type ResearchStep = NonNullable<Message['research_trace']>[number];
 const INITIAL_PAGE_SIZE = 100;
 const OLDER_PAGE_SIZE = 50;
@@ -119,7 +123,7 @@ export function useChat(onError: (message: string) => void) {
   }, [currentConversation, loadingMore, hasMoreMessages, messagesOffset, reportError]);
   const sendChatMessage = useCallback(async (
     content: string,
-    selectedModel: string,
+    choice: ModelChoice,
     reasoningEffort: string,
     attachments?: ChatAttachment[]
   ) => {
@@ -143,7 +147,7 @@ export function useChat(onError: (message: string) => void) {
       content: '',
       is_user: false,
       created_at: new Date().toISOString(),
-      model_name: selectedModel,
+      model_name: choice.model,
       reasoning_effort: reasoningEffort,
       research_trace: [],
       sources: [],
@@ -178,7 +182,8 @@ export function useChat(onError: (message: string) => void) {
       await chatService.sendMessageStream(
         content,
         currentConversation?.id || null,
-        selectedModel,
+        choice.connectionId,
+        choice.model,
         reasoningEffort,
         (ev) => {
           if (ev.event === 'start') {

@@ -1,13 +1,13 @@
 import React, { useState, useEffect, useCallback, useRef, useId } from 'react';
-import { useLocation, useNavigate } from 'react-router-dom';
-import api, { Conversation, Message } from '../../services/api';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
+import { chatService, ChatConnectionOption, Conversation, Message } from '../../services/api';
 import { useChat } from '../../hooks/useChat';
 import { useDocumentTitle } from '../../hooks/useDocumentTitle';
 import { copyText } from '../../utils/clipboard';
 import { describeRequestError } from '../../utils/secureLogger';
-import { SnackbarState, ModelDetail, ChatAttachment } from './types';
+import { SnackbarState, ChatAttachment } from './types';
 import ChatSidebar from './ChatSidebar';
-import ChatHeader, { REASONING_EFFORT_OPTIONS, resolveReasoningEffort } from './ChatHeader';
+import ChatHeader, { REASONING_EFFORT_OPTIONS, choiceKey, parseChoice, resolveReasoningEffort } from './ChatHeader';
 import ChatMessageList from './ChatMessageList';
 import ChatInputArea from './ChatInputArea';
 import { Snackbar, Alert, ConfirmDialog } from '../../components/ui';
@@ -39,10 +39,8 @@ export const ChatPage: React.FC = () => {
   const sidebarId = useId();
   const [thinkOpenArr, setThinkOpenArr] = useState<Record<number | string, boolean>>({});
   const [newMessage, setNewMessage] = useState('');
-  const [availableModels, setAvailableModels] = useState<string[]>([]);
-  const [, setModelDetails] = useState<ModelDetail[]>([]);
-  const [selectedModel, setSelectedModel] = useState(() => readStorage(MODEL_STORAGE_KEY) || '');
-  const [userSelectedModel, setUserSelectedModel] = useState(() => !!readStorage(MODEL_STORAGE_KEY));
+  const [connections, setConnections] = useState<ChatConnectionOption[] | null>(null);
+  const [selectedChoice, setSelectedChoice] = useState(() => readStorage(MODEL_STORAGE_KEY) || '');
   const [reasoningEffort, setReasoningEffort] = useState<string>(() => {
     const saved = readStorage(REASONING_EFFORT_STORAGE_KEY);
     return REASONING_EFFORT_OPTIONS.some((opt) => opt.value === saved) ? saved! : 'medium';
@@ -81,94 +79,33 @@ export const ChatPage: React.FC = () => {
     startNewConversation,
   } = useChat((message) => showSnackbar(message, 'error'));
   useDocumentTitle(currentConversation?.title || '聊天');
-  const selectedModelRef = useRef(selectedModel);
-  const userSelectedModelRef = useRef(userSelectedModel);
+  const selectedChoiceRef = useRef(selectedChoice);
   useEffect(() => {
-    selectedModelRef.current = selectedModel;
-  }, [selectedModel]);
-  useEffect(() => {
-    userSelectedModelRef.current = userSelectedModel;
-  }, [userSelectedModel]);
-  const loadAvailableModels = useCallback(async (force = false) => {
-    if (!force && (window as any).__tagsLoading) {
-      return;
-    }
-    const normalizeModelList = (list: any[]): string[] => {
-      const result: string[] = [];
-      list.forEach((item) => {
-        if (typeof item === 'string') {
-          item.split(',').forEach((sub) => {
-            const trimmed = sub.trim();
-            if (trimmed && !result.includes(trimmed)) {
-              result.push(trimmed);
-            }
-          });
-        }
-      });
-      return result;
-    };
-    if (!force) {
-      const cached = localStorage.getItem('cached_tags');
-      const cacheTime = localStorage.getItem('cached_tags_time');
-      if (cached && cacheTime) {
-        const age = Date.now() - parseInt(cacheTime, 10);
-        if (age < 5 * 60 * 1000) {
-          try {
-            const cachedData = JSON.parse(cached);
-            const cachedModels = normalizeModelList(cachedData.models || []);
-            const cachedDetails = cachedData.details || [];
-            setAvailableModels(cachedModels);
-            setModelDetails(cachedDetails);
-            if (cachedModels.length > 0 && !cachedModels.includes(selectedModelRef.current)) {
-              const defaultModel = cachedData.default?.split(',')[0].trim() || cachedModels[0];
-              setSelectedModel(defaultModel);
-            }
-            return;
-          } catch (e) {
-            console.error('Failed to parse cached models', e);
-          }
-        }
-      }
-    }
-    (window as any).__tagsLoading = true;
+    selectedChoiceRef.current = selectedChoice;
+  }, [selectedChoice]);
+  const loadAvailableModels = useCallback(async () => {
     setModelsLoading(true);
     try {
-      const res = await api.get('/chat/models');
-      const models = normalizeModelList(res.data?.models || []);
-      const details = res.data?.details || [];
-      const rawDefault = res.data?.default || (models.length > 0 ? models[0] : '');
-      const defaultModel = typeof rawDefault === 'string' ? rawDefault.split(',')[0].trim() : (models[0] || '');
-      setAvailableModels(models);
-      setModelDetails(details);
-      try {
-        localStorage.setItem('cached_tags', JSON.stringify({ ...res.data, models, default: defaultModel }));
-        localStorage.setItem('cached_tags_time', Date.now().toString());
-      } catch (e) {
-        console.warn('Failed to save models to localStorage', e);
-      }
-      if (!userSelectedModelRef.current && !selectedModelRef.current) {
-        setSelectedModel(defaultModel);
-      } else if (selectedModelRef.current && !models.includes(selectedModelRef.current)) {
-        setSelectedModel(defaultModel);
+      const options = await chatService.getConnections();
+      const choices = options.flatMap((connection) => connection.models.map((model) => choiceKey(connection.id, model)));
+      setConnections(options);
+      if (!choices.includes(selectedChoiceRef.current)) {
+        setSelectedChoice(choices[0] || '');
       }
     } catch (err) {
       console.warn('載入可用模型失敗', describeRequestError(err));
-      setAvailableModels([]);
-      setModelDetails([]);
-      if (!userSelectedModelRef.current) {
-        setSelectedModel('');
-      }
+      setConnections([]);
     } finally {
-      (window as any).__tagsLoading = false;
       setModelsLoading(false);
     }
   }, []);
-  const handleSelectModel = (model: string) => {
-    setSelectedModel(model);
-    setUserSelectedModel(true);
-    writeStorage(MODEL_STORAGE_KEY, model);
+  const handleSelectChoice = (choice: string) => {
+    setSelectedChoice(choice);
+    writeStorage(MODEL_STORAGE_KEY, choice);
   };
-  const effectiveReasoningEffort = resolveReasoningEffort(selectedModel, reasoningEffort);
+  const availableChoices = (connections || []).flatMap((connection) => connection.models.map((model) => choiceKey(connection.id, model)));
+  const selectedModel = availableChoices.includes(selectedChoice) ? parseChoice(selectedChoice) : null;
+  const effectiveReasoningEffort = resolveReasoningEffort(selectedModel?.model || '', reasoningEffort);
   const handleSelectReasoningEffort = (effort: string) => {
     setReasoningEffort(effort);
     writeStorage(REASONING_EFFORT_STORAGE_KEY, effort);
@@ -187,6 +124,10 @@ export const ChatPage: React.FC = () => {
   const handleSend = async () => {
     if (sending) return;
     if (!newMessage.trim() && attachments.length === 0) return;
+    if (!selectedModel) {
+      showSnackbar('請先選擇模型；尚未設定 API 連線時，請到「個人資料」新增', 'error');
+      return;
+    }
     const toSend = newMessage;
     const toSendAttachments = [...attachments];
     setNewMessage('');
@@ -203,7 +144,7 @@ export const ChatPage: React.FC = () => {
   const handleRetry = (failedMessage: Message) => {
     const index = messages.indexOf(failedMessage);
     const question = messages.slice(0, index).reverse().find((m) => m.is_user);
-    if (!question || sending) return;
+    if (!question || sending || !selectedModel) return;
     sendChatMessage(question.content, selectedModel, effectiveReasoningEffort, question.attachments).catch((err) => {
       showSnackbar(`訊息沒有送出：${describeSendError(err)}`, 'error');
     });
@@ -259,18 +200,23 @@ export const ChatPage: React.FC = () => {
       />
       <div className={styles.mainArea}>
         <ChatHeader
-          availableModels={availableModels}
-          selectedModel={selectedModel}
-          onSelectModel={handleSelectModel}
+          connections={connections || []}
+          selectedChoice={selectedChoice}
+          onSelectChoice={handleSelectChoice}
           reasoningEffort={effectiveReasoningEffort}
           onSelectReasoningEffort={handleSelectReasoningEffort}
           modelsLoading={modelsLoading}
-          onRefreshModels={() => loadAvailableModels(true)}
+          onRefreshModels={loadAvailableModels}
           currentConversation={currentConversation}
           onOpenSidebar={() => setMobileSidebarOpen(true)}
           sidebarOpen={mobileSidebarOpen}
           sidebarId={sidebarId}
         />
+        {connections?.length === 0 && (
+          <Alert severity="info" className={styles.noModelsNotice}>
+            這個帳號還沒有可用的 AI 模型。請到<Link to="/profile">個人資料</Link>新增自己的 API 連線，或請管理員開放共用連線給你。
+          </Alert>
+        )}
         <ChatMessageList
           messages={messages}
           conversationLoading={conversationLoading}

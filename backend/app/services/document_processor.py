@@ -427,12 +427,14 @@ class DocumentProcessor:
             + f"[內容摘錄]\n{sample_content}"
         )
         try:
-            from app.core.llm_client import call_llm
+            from app.core.llm_client import call_llm, resolve_model_name, system_endpoint
             from app.api.tags import models_and_default
             _, default_model = await models_and_default()
+            model = resolve_model_name(default_model or None)
             response = await call_llm(
                 messages=[{"role": "user", "content": prompt}],
-                model_name=default_model or None
+                endpoint=system_endpoint(model),
+                model_name=model
             )
             cleaned = response.strip()
             for prefix in ("好的，", "這是該文件的摘要：", "這是一份", "文件摘要：", "摘要：", "以下是"):

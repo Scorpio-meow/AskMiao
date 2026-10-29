@@ -16,7 +16,7 @@ from app.models.database import Base, SessionLocal, engine
 from app.rag.agent import ResearchAgent
 from app.rag.tools import ResearchToolRegistry
 from app.services import agent_skills
-from test_agent_guardrails import ScriptedLLM, answer, collect, tool_call
+from test_agent_guardrails import ScriptedLLM, answer, collect, research, tool_call
 
 ADMIN_USER = {"user_id": 1, "username": "admin", "email": "admin@example.com", "role": "admin", "is_admin": True}
 USERNAMES = ("skill_member_a", "skill_member_b")
@@ -149,7 +149,7 @@ async def test_allowed_tools_preapprove_only_after_activation(env, monkeypatch):
         answer("完成"),
     ])
     llm.install(monkeypatch)
-    events = await collect(agent.stream_research("跑腳本", approval_user_id=None))
+    events = await collect(research(agent, "跑腳本", approval_user_id=None))
     steps = [e["data"] for e in events if e["event"] == "step_end"]
     assert "核准" in steps[0]["output_preview"]
     assert steps[1]["status"] == "success"

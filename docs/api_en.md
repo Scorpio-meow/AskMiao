@@ -59,7 +59,7 @@ API messages are in Traditional Chinese; the English glosses in this document ar
 | POST | `/api/auth/logout` | Access token (signature only) | Sign out and revoke tokens |
 | POST | `/api/auth/validate-token` | Signed in | Check that the access token is valid |
 | POST | `/api/chat/send` | Signed in | Send a message; the reply streams over SSE |
-| GET | `/api/chat/models` | Public | Available models and the default model |
+| GET | `/api/chat/models` | Signed in | The caller's API connections and models |
 | GET | `/api/chat/tools` | Signed in | Tool definitions currently available to the agent |
 | POST | `/api/chat/approvals/{approval_id}` | Signed in (asking user only) | Approve or deny a pending tool call |
 | GET | `/api/chat/conversations` | Signed in | Your conversations |
@@ -67,6 +67,12 @@ API messages are in Traditional Chinese; the English glosses in this document ar
 | GET | `/api/chat/conversations/{conversation_id}` | Signed in | One conversation with all messages |
 | GET | `/api/chat/conversations/{conversation_id}/messages` | Signed in | Paged messages |
 | DELETE | `/api/chat/conversations/{conversation_id}` | Signed in | Delete a conversation |
+| GET | `/api/llm-connections/providers` | Signed in | Supported providers with their default API address and models |
+| GET | `/api/llm-connections` | Signed in | The caller's personal connections and the shared connections granted to them |
+| POST | `/api/llm-connections` | Signed in | Add a personal connection |
+| PUT | `/api/llm-connections/{connection_id}` | Signed in (owner only) | Update a personal connection |
+| DELETE | `/api/llm-connections/{connection_id}` | Signed in (owner only) | Delete a personal connection |
+| POST | `/api/llm-connections/{connection_id}/test` | Signed in (owner for personal, admin for shared connections) | Test a connection with one model |
 | POST | `/api/documents/upload` | Admin | Upload and index documents |
 | GET | `/api/documents/` | Admin | List documents |
 | POST | `/api/documents/{document_id}/regenerate-summary` | Admin | Regenerate the AI summary |
@@ -105,6 +111,10 @@ API messages are in Traditional Chinese; the English glosses in this document ar
 | GET | `/api/admin/users` | Admin | List users |
 | PUT | `/api/admin/users/{user_id}` | Admin | Update a user |
 | DELETE | `/api/admin/users/{user_id}` | Admin | Delete a user |
+| GET | `/api/admin/llm-connections` | Admin | Shared connections, with the accounts allowed to use them |
+| POST | `/api/admin/llm-connections` | Admin | Add a shared connection |
+| PUT | `/api/admin/llm-connections/{connection_id}` | Admin | Update a shared connection or its accounts |
+| DELETE | `/api/admin/llm-connections/{connection_id}` | Admin | Delete a shared connection |
 | GET | `/api/admin/statistics` | Admin | System statistics (cached for 180 seconds) |
 | GET | `/api/admin/conversations` | Admin | The 50 most recent conversations |
 | GET | `/api/admin/conversations/{conversation_id}/messages` | Admin | Messages of any conversation |
@@ -293,7 +303,8 @@ Send a message and start the `ResearchAgent`. The response is a **Server-Sent Ev
 |---|---|---|---|---|
 | `content` | string | Yes | — | The user's question, at most 20,000 characters; when it starts with `/skill-name` for an enabled skill, that skill is loaded first, the prefix is removed, and an `activate_skill` step is recorded in the research trace |
 | `conversation_id` | integer | No | `null` | Conversation ID; a new conversation is created when it is empty, unknown, or not yours |
-| `model_name` | string | No | Default model | Model to use; it must be in the [available model list](configuration_en.md#model-list) or equal `MODEL_NAME`, otherwise `400` `不支援的模型` ("unsupported model"); the provider is routed by name |
+| `connection_id` | integer | Yes | — | API connection to use; it must be the caller's personal connection or a shared connection granted to them (see [2.2](#22-get-apichatmodels)), otherwise `400` `找不到這個 API 連線，或你沒有使用權限` ("connection not found or not allowed") |
+| `model_name` | string | Yes | — | Model to use; it must be in that connection's model list, otherwise `400` `這個 API 連線沒有提供此模型` ("model not offered by this connection"); never falls back to `MODEL_NAME` or the keys in `.env` |
 | `reasoning_effort` | string | No | `medium` | Reasoning level, mapped per provider before it is sent; see below |
 | `attachments` | array | No | `[]` | Attachments, at most 5; see the table below |
 
@@ -384,14 +395,37 @@ data: {"message_id": 108, "conversation_id": 42, "answer": "特休假需先在�
 
 ### 2.2 GET /api/chat/models
 
-Available models and the default model. See [configuration reference: model list](configuration_en.md#model-list) for how the list and the default are chosen; when the remote list is queried, the result (failures included) is cached for 30 seconds.
+Requires sign-in. Returns the API connections the account may use with their models: personal connections first, then the shared connections granted to it (see [configuration reference: API connections](configuration_en.md#api-connections)). Shared connections do not include their API address.
 
 ```json
 {
-  "models": ["gpt-6-sol", "gpt-6-luna"],
-  "default": "gpt-6-sol"
+  "connections": [
+    {"id": 3, "name": "My OpenAI", "provider": "openai", "scope": "personal", "models": ["gpt-6-sol"]},
+    {"id": 1, "name": "Company Ollama", "provider": "ollama", "scope": "shared", "models": ["qwen3:8b"]}
+  ]
 }
 ```
+
+### 2.10 API connections `/api/llm-connections`
+
+The account's own personal connections (sign-in required). Connection object:
+
+| Field | Description |
+|---|---|
+| `id`, `name`, `provider`, `api_base`, `models` | Connection ID, name, provider (`openai`, `anthropic`, `gemini`, `foundry`, `ollama`), API address, model list |
+| `max_output_tokens` | Claude output token limit, `null` when unset |
+| `has_api_key` | Whether a key is stored; the key itself is never returned |
+| `scope` | `personal` or `shared` |
+| `allowed_user_ids` | Only in [8.5](#85-shared-api-connections) responses; `null` means all accounts |
+
+- `GET /api/llm-connections/providers`: `{"providers": [{provider, label, api_base, models, requires_api_key, uses_max_output_tokens}]}`, used by the frontend to prefill new connections.
+- `GET /api/llm-connections`: `{"personal": [connection objects], "shared": [same shape as 2.2]}`.
+- `POST /api/llm-connections`: body with `name`, `provider`, `api_base`, `api_key` (optional), `models`, `max_output_tokens` (optional); returns `201` with the connection object.
+- `PUT /api/llm-connections/{connection_id}`: updates only the fields sent; a blank or missing `api_key` keeps the stored key. Someone else's connection returns `404`.
+- `DELETE /api/llm-connections/{connection_id}`: deletes the connection and its key.
+- `POST /api/llm-connections/{connection_id}/test`: body `{"model_name": "gpt-6-sol"}`; sends one short message with that model and returns `{"ok": true, "reply": "OK"}`, or `{"ok": false, "error": "reason"}` (still status `200`) when it fails.
+
+Saving checks that Anthropic, Gemini, and Foundry have a key; that Claude (including Claude deployments on Foundry) has `max_output_tokens`, and that Claude on Foundry uses a `*.services.ai.azure.com` endpoint; and that a member's `api_base` resolves to a public address. Failures return `400` with the reason; malformed fields return `422`.
 
 ### 2.3 GET /api/chat/tools
 
@@ -1058,7 +1092,7 @@ A model list in the Ollama `tags` format; no sign-in is required. The former `GE
 
 ### 7.1 GET /api/tags
 
-Returns the same list and default model as `GET /api/chat/models` (both share one rule; see [Configuration: model list](configuration_en.md#model-list)), under the field `tags`. With no model source configured (`AVAILABLE_MODELS` or a cloud key), it queries the remote list at `EXTERNAL_TAGS_URL` (or `{LLM_API_BASE}/api/tags`) and returns an empty list if that fails. The remote query runs in a worker thread, its result (failures included) is cached for 30 seconds, and only one query runs at a time, so anonymous requests do not trigger an outbound call each time.
+Returns the system model list and default model configured in `.env` (see [Configuration: model list](configuration_en.md#model-list)), under the field `tags`; chat does not use this list, see [2.2](#22-get-apichatmodels) for the models an account may use. With no model source configured (`AVAILABLE_MODELS` or a cloud key), it queries the remote list at `EXTERNAL_TAGS_URL` (or `{LLM_API_BASE}/api/tags`) and returns an empty list if that fails. The remote query runs in a worker thread, its result (failures included) is cached for 30 seconds, and only one query runs at a time, so anonymous requests do not trigger an outbound call each time.
 
 ```json
 {"tags": ["gpt-6-sol", "gpt-6-luna"], "default": "gpt-6-sol"}
@@ -1156,6 +1190,17 @@ Account changes and deletions are written to the security log along with the act
 
 `POST /api/admin/vector-store/reindex` returns `{"message": "索引重建已觸發", "ok": true, "info": {...}}`; `DELETE /api/admin/vector-store/clear` returns `{"message": "向量庫已清空"}`.
 
+### 8.5 Shared API connections
+
+Connections created by admins and granted to accounts; the fields match the [connection object in 2.10](#210-api-connections-apillm-connections), plus `allowed_user_ids`.
+
+- `GET /api/admin/llm-connections`: `{"connections": [connection objects]}`.
+- `POST /api/admin/llm-connections`: same body as creating in 2.10, plus the required `allowed_user_ids`: `[]` means all accounts (returned as `null`), a list of IDs limits it to those accounts; unknown account IDs return `400`.
+- `PUT /api/admin/llm-connections/{connection_id}`: updates only the fields sent; `allowed_user_ids` follows the same rule.
+- `DELETE /api/admin/llm-connections/{connection_id}`: deletes the connection for every account.
+
+The API address of a shared connection is not limited to public addresses and may point at the internal network (for example a local Ollama). Creating, updating, and deleting one writes `ADMIN_LLM_CONNECTION_*` to the security log.
+
 ---
 
 ## 9. Health checks
@@ -1223,7 +1268,7 @@ Every response carries `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY
 
 The current state, worth knowing when integrating:
 
-- `GET /api/chat/models` and `GET /api/tags` require no sign-in (`GET /api/chat/tools` now does). Restrict them at the reverse proxy when deploying on a public network.
+- `GET /api/tags` requires no sign-in (`GET /api/chat/models` and `GET /api/chat/tools` now do). Restrict it at the reverse proxy when deploying on a public network.
 - `expires_in` in token responses is always `1800`, regardless of `ACCESS_TOKEN_EXPIRE_MINUTES`.
 - The token revocation list, rate limit counters, login throttling counts and pauses, per-user concurrent streams, and pending tool approvals live in one backend process's memory; they are not shared across processes or hosts and are cleared on restart (which also lifts any login pause). Rate limiting tracks at most 10,000 source IPs and evicts the least recently active first; login throttling likewise tracks at most 10,000 login identifiers and 10,000 source IPs and evicts those that have gone longest without a new failure first.
 - Rate limiting and login throttling both work per source IP: without `FORWARDED_ALLOW_IPS`, every user who connects through the Vite dev proxy or a reverse proxy shares one source IP, so they share the rate limit and their failed logins add up toward the per-address threshold; once it is reached, every login through that proxy is paused.

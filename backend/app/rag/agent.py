@@ -12,7 +12,7 @@ from app.core.limits import (
     MAX_ATTACHMENT_TEXT_CHARS,
     MAX_CONCURRENT_ATTACHMENT_EXTRACTIONS,
 )
-from app.core.llm_client import chat_completion, stream_completion
+from app.core.llm_client import LlmEndpoint, chat_completion, stream_completion
 from app.rag.tools import ResearchToolRegistry
 from app.services.agent_skills import SKILL_NAME_PATTERN
 from app.rag.research_session import ResearchSession, ToolResultFilter, strip_citations, strip_tool_result_blocks
@@ -91,11 +91,12 @@ class ResearchAgent:
     async def stream_research(
         self,
         query: str,
-        model_name: Optional[str] = None,
+        *,
+        endpoint: LlmEndpoint,
+        model_name: str,
         conversation_history: Optional[List[Dict[str, str]]] = None,
         reasoning_effort: Optional[str] = "medium",
         attachments: Optional[List[Any]] = None,
-        *,
         approval_user_id: Optional[int] = None
     ) -> AsyncGenerator[Dict[str, Any], None]:
         """非同步生成器：即時產生研究步驟事件與回答。模型不再呼叫工具時，該次內容即為最終答案；
@@ -202,7 +203,7 @@ class ResearchAgent:
             turns_used += 1
             try:
                 assistant_msg = await chat_completion(
-                    messages, model_name=model_name, tools=tools_def, reasoning_effort=reasoning_effort
+                    messages, endpoint=endpoint, model_name=model_name, tools=tools_def, reasoning_effort=reasoning_effort
                 )
             except Exception as e:
                 error_id = log_and_get_error_id(logger, f"模型調用失敗 (第 {turns_used} 輪)", e)
@@ -321,7 +322,7 @@ class ResearchAgent:
             tool_result_filter = ToolResultFilter()
             try:
                 async for chunk in stream_completion(
-                    messages, model_name=model_name, tools=tools_def, reasoning_effort=reasoning_effort
+                    messages, endpoint=endpoint, model_name=model_name, tools=tools_def, reasoning_effort=reasoning_effort
                 ):
                     text = tool_result_filter.feed(chunk)
                     if text:

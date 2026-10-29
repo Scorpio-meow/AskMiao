@@ -2,17 +2,26 @@ import json
 import uuid
 import logging
 import asyncio
+from dataclasses import dataclass
 import httpx
 from urllib.parse import urlparse
 from typing import Any, AsyncIterator, Dict, List, Optional, Tuple
 from app.core.config import settings
+from app.core.ssrf_protection import DnsPool, SSRFSafeHttpx2Transport, SSRFSafeTransport
 logger = logging.getLogger(__name__)
 _http_client: Optional[httpx.AsyncClient] = None
+_public_http_client: Optional[httpx.AsyncClient] = None
 _client_lock = asyncio.Lock()
-_anthropic_client = None
-_foundry_anthropic_client = None
-_anthropic_output_limits: Dict[str, int] = {}
+_anthropic_http_clients: Dict[bool, Any] = {}
+_anthropic_output_limits: Dict[Tuple[str, str], int] = {}
 _anthropic_output_limits_lock = asyncio.Lock()
+@dataclass(frozen=True)
+class LlmEndpoint:
+    provider: str
+    api_base: str
+    api_key: Optional[str]
+    max_output_tokens: Optional[int]
+    public_only: bool
 FOUNDRY_ANTHROPIC_HOST_SUFFIX = ".services.ai.azure.com"
 REASONING_EFFORT_VALUES = ("none", "minimal", "low", "medium", "high", "xhigh", "max")
 OPENAI_MODEL_PREFIXES = ("gpt-", "o1", "o3", "o4")
@@ -27,20 +36,30 @@ LLM_POOL_ACQUIRE_TIMEOUT_SECONDS = 15.0
 OLLAMA_CLOUD_HOST = "ollama.com"
 OLLAMA_THINKING_KEY = "_ollama_thinking"
 OLLAMA_THINK_BY_REASONING = {"minimal": "low", "low": "low", "medium": "medium", "high": "high", "xhigh": "high", "max": "high"}
-async def get_llm_http_client() -> httpx.AsyncClient:
-    global _http_client
+def _new_llm_http_client(transport: Optional[httpx.AsyncBaseTransport]) -> httpx.AsyncClient:
+    return httpx.AsyncClient(
+        timeout=httpx.Timeout(settings.LLM_TIMEOUT, pool=LLM_POOL_ACQUIRE_TIMEOUT_SECONDS),
+        limits=httpx.Limits(max_keepalive_connections=10, max_connections=20),
+        transport=transport
+    )
+async def get_llm_http_client(public_only: bool) -> httpx.AsyncClient:
+    global _http_client, _public_http_client
     async with _client_lock:
+        if public_only:
+            if _public_http_client is None or _public_http_client.is_closed:
+                _public_http_client = _new_llm_http_client(SSRFSafeTransport(DnsPool.USER_URL))
+            return _public_http_client
         if _http_client is None or _http_client.is_closed:
-            _http_client = httpx.AsyncClient(
-                timeout=httpx.Timeout(settings.LLM_TIMEOUT, pool=LLM_POOL_ACQUIRE_TIMEOUT_SECONDS),
-                limits=httpx.Limits(max_keepalive_connections=10, max_connections=20)
-            )
+            _http_client = _new_llm_http_client(None)
         return _http_client
 async def close_llm_http_client():
-    global _http_client
-    if _http_client is not None and not _http_client.is_closed:
-        await _http_client.aclose()
-        _http_client = None
+    global _http_client, _public_http_client
+    for client in (_http_client, _public_http_client, *_anthropic_http_clients.values()):
+        if client is not None and not client.is_closed:
+            await client.aclose()
+    _http_client = None
+    _public_http_client = None
+    _anthropic_http_clients.clear()
 OPENAI_RESPONSES_MODEL_PREFIXES = ("gpt-6",)
 FOUNDRY_RESPONSES_MODEL_PREFIXES = ("gpt-", "o3", "o4")
 CHAT_COMPLETIONS_ONLY_PREFIXES = ("gpt-oss", "o3-mini")
@@ -119,6 +138,18 @@ def resolve_provider(model_name: str) -> str:
         if is_foundry_enabled():
             return "foundry"
     return "ollama"
+def system_endpoint(model_name: str) -> LlmEndpoint:
+    provider = resolve_provider(model_name)
+    if provider == "foundry" or is_foundry_claude(model_name):
+        return LlmEndpoint("foundry", settings.FOUNDRY_ENDPOINT, settings.FOUNDRY_API_KEY, settings.ANTHROPIC_MAX_TOKENS, False)
+    if provider == "anthropic":
+        return LlmEndpoint("anthropic", settings.ANTHROPIC_API_BASE, settings.ANTHROPIC_API_KEY, settings.ANTHROPIC_MAX_TOKENS, False)
+    if provider == "gemini":
+        return LlmEndpoint("gemini", settings.GEMINI_API_BASE, settings.GEMINI_API_KEY, None, False)
+    if provider == "openai":
+        return LlmEndpoint("openai", settings.OPENAI_API_BASE, settings.OPENAI_API_KEY, None, False)
+    ollama_key = settings.OLLAMA_API_KEY if urlparse(settings.LLM_API_BASE).hostname == OLLAMA_CLOUD_HOST else None
+    return LlmEndpoint("ollama", settings.LLM_API_BASE, ollama_key, None, False)
 def _public_message(message: Dict[str, Any]) -> Dict[str, Any]:
     return {key: value for key, value in message.items() if not key.startswith("_")}
 def _parse_image_url(url: str) -> Tuple[str, str]:
@@ -134,17 +165,17 @@ def _as_arguments_dict(arguments: Any) -> Dict[str, Any]:
     if not arguments:
         return {}
     return json.loads(arguments)
-def _openai_endpoint(provider: str) -> Tuple[str, Dict[str, str]]:
+def _openai_endpoint(endpoint: LlmEndpoint) -> Tuple[str, Dict[str, str]]:
     headers = {"Content-Type": "application/json"}
-    if provider == "foundry":
-        headers["api-key"] = settings.FOUNDRY_API_KEY
-        headers["Authorization"] = f"Bearer {settings.FOUNDRY_API_KEY}"
-        return f"{settings.FOUNDRY_ENDPOINT.rstrip('/')}/openai/v1/chat/completions", headers
-    if provider == "gemini":
-        headers["Authorization"] = f"Bearer {settings.GEMINI_API_KEY}"
-        return f"{settings.GEMINI_API_BASE.rstrip('/')}/v1beta/openai/chat/completions", headers
-    headers["Authorization"] = f"Bearer {settings.OPENAI_API_KEY}"
-    return f"{settings.OPENAI_API_BASE.rstrip('/')}/chat/completions", headers
+    base = endpoint.api_base.rstrip("/")
+    if endpoint.api_key:
+        headers["Authorization"] = f"Bearer {endpoint.api_key}"
+    if endpoint.provider == "foundry":
+        headers["api-key"] = endpoint.api_key
+        return f"{base}/openai/v1/chat/completions", headers
+    if endpoint.provider == "gemini":
+        return f"{base}/v1beta/openai/chat/completions", headers
+    return f"{base}/chat/completions", headers
 def _openai_payload(
     provider: str,
     messages: List[Dict[str, Any]],
@@ -169,15 +200,16 @@ def _openai_payload(
         payload["reasoning_effort"] = GEMINI_EFFORT_BY_REASONING[reasoning_effort]
     return payload
 async def _openai_chat(
-    provider: str,
+    endpoint: LlmEndpoint,
     messages: List[Dict[str, Any]],
     model: str,
     tools: Optional[List[Dict[str, Any]]],
     reasoning_effort: Optional[str],
     timeout: float
 ) -> Dict[str, Any]:
-    url, headers = _openai_endpoint(provider)
-    client = await get_llm_http_client()
+    provider = endpoint.provider
+    url, headers = _openai_endpoint(endpoint)
+    client = await get_llm_http_client(endpoint.public_only)
     response = await client.post(
         url,
         json=_openai_payload(provider, messages, model, tools, reasoning_effort, stream=False),
@@ -191,13 +223,14 @@ async def _openai_chat(
         raise RuntimeError(f"{provider} API 回傳空的 choices")
     return choices[0]["message"]
 async def _openai_stream(
-    provider: str,
+    endpoint: LlmEndpoint,
     messages: List[Dict[str, Any]],
     model: str,
     reasoning_effort: Optional[str]
 ) -> AsyncIterator[str]:
-    url, headers = _openai_endpoint(provider)
-    client = await get_llm_http_client()
+    provider = endpoint.provider
+    url, headers = _openai_endpoint(endpoint)
+    client = await get_llm_http_client(endpoint.public_only)
     payload = _openai_payload(provider, messages, model, None, reasoning_effort, stream=True)
     # 不另給 timeout：沿用連線池的設定，排隊等連線超過 LLM_POOL_ACQUIRE_TIMEOUT_SECONDS 即失敗
     async with client.stream("POST", url, json=payload, headers=headers) as response:
@@ -290,8 +323,8 @@ def _responses_payload(
     if effort:
         payload["reasoning"] = {"effort": effort}
     return payload
-def _responses_endpoint(provider: str) -> Tuple[str, Dict[str, str]]:
-    url, headers = _openai_endpoint(provider)
+def _responses_endpoint(endpoint: LlmEndpoint) -> Tuple[str, Dict[str, str]]:
+    url, headers = _openai_endpoint(endpoint)
     return url.rsplit("/chat/completions", 1)[0] + "/responses", headers
 def _responses_message(data: Dict[str, Any]) -> Dict[str, Any]:
     status = data.get("status")
@@ -320,15 +353,16 @@ def _responses_message(data: Dict[str, Any]) -> Dict[str, Any]:
         message["tool_calls"] = tool_calls
     return message
 async def _responses_chat(
-    provider: str,
+    endpoint: LlmEndpoint,
     messages: List[Dict[str, Any]],
     model: str,
     tools: Optional[List[Dict[str, Any]]],
     reasoning_effort: Optional[str],
     timeout: float
 ) -> Dict[str, Any]:
-    url, headers = _responses_endpoint(provider)
-    client = await get_llm_http_client()
+    provider = endpoint.provider
+    url, headers = _responses_endpoint(endpoint)
+    client = await get_llm_http_client(endpoint.public_only)
     response = await client.post(
         url,
         json=_responses_payload(messages, model, tools, reasoning_effort, stream=False),
@@ -339,14 +373,15 @@ async def _responses_chat(
         raise RuntimeError(f"{provider} Responses API 錯誤 ({response.status_code}): {response.text[:500]}")
     return _responses_message(response.json())
 async def _responses_stream(
-    provider: str,
+    endpoint: LlmEndpoint,
     messages: List[Dict[str, Any]],
     model: str,
     tools: Optional[List[Dict[str, Any]]],
     reasoning_effort: Optional[str]
 ) -> AsyncIterator[str]:
-    url, headers = _responses_endpoint(provider)
-    client = await get_llm_http_client()
+    provider = endpoint.provider
+    url, headers = _responses_endpoint(endpoint)
+    client = await get_llm_http_client(endpoint.public_only)
     payload = _responses_payload(messages, model, tools, reasoning_effort, stream=True)
     async with client.stream("POST", url, json=payload, headers=headers) as response:
         if response.status_code != 200:
@@ -369,8 +404,10 @@ def ollama_auth_headers(url: str) -> Dict[str, str]:
     if settings.OLLAMA_API_KEY and urlparse(url).hostname == OLLAMA_CLOUD_HOST:
         return {"Authorization": f"Bearer {settings.OLLAMA_API_KEY}"}
     return {}
-def _ollama_request_headers() -> Dict[str, str]:
-    return {**OLLAMA_HEADERS, **ollama_auth_headers(settings.LLM_API_BASE)}
+def _ollama_request_headers(endpoint: LlmEndpoint) -> Dict[str, str]:
+    if endpoint.api_key:
+        return {**OLLAMA_HEADERS, "Authorization": f"Bearer {endpoint.api_key}"}
+    return dict(OLLAMA_HEADERS)
 def _ollama_options() -> Dict[str, Any]:
     options: Dict[str, Any] = {}
     if settings.OLLAMA_TEMPERATURE is not None:
@@ -445,30 +482,36 @@ def _normalize_ollama_message(message: Dict[str, Any]) -> Dict[str, Any]:
         ]
     return normalized
 async def _ollama_chat(
+    endpoint: LlmEndpoint,
     messages: List[Dict[str, Any]],
     model: str,
     tools: Optional[List[Dict[str, Any]]],
     reasoning_effort: Optional[str],
     timeout: float
 ) -> Dict[str, Any]:
-    client = await get_llm_http_client()
+    client = await get_llm_http_client(endpoint.public_only)
     response = await client.post(
-        f"{settings.LLM_API_BASE.rstrip('/')}/api/chat",
+        f"{endpoint.api_base.rstrip('/')}/api/chat",
         json=_ollama_payload(messages, model, tools, stream=False, reasoning_effort=reasoning_effort),
-        headers=_ollama_request_headers(),
+        headers=_ollama_request_headers(endpoint),
         timeout=httpx.Timeout(timeout, pool=LLM_POOL_ACQUIRE_TIMEOUT_SECONDS)
     )
     if response.status_code != 200:
         raise RuntimeError(f"Ollama API 錯誤 ({response.status_code}): {response.text[:500]}")
     return _normalize_ollama_message(response.json().get("message", {}))
-async def _ollama_stream(messages: List[Dict[str, Any]], model: str, reasoning_effort: Optional[str]) -> AsyncIterator[str]:
-    client = await get_llm_http_client()
+async def _ollama_stream(
+    endpoint: LlmEndpoint,
+    messages: List[Dict[str, Any]],
+    model: str,
+    reasoning_effort: Optional[str]
+) -> AsyncIterator[str]:
+    client = await get_llm_http_client(endpoint.public_only)
     payload = _ollama_payload(messages, model, None, stream=True, reasoning_effort=reasoning_effort)
     async with client.stream(
         "POST",
-        f"{settings.LLM_API_BASE.rstrip('/')}/api/chat",
+        f"{endpoint.api_base.rstrip('/')}/api/chat",
         json=payload,
-        headers=_ollama_request_headers(),
+        headers=_ollama_request_headers(endpoint),
     ) as response:
         if response.status_code != 200:
             body = await response.aread()
@@ -485,57 +528,56 @@ async def _ollama_stream(messages: List[Dict[str, Any]], model: str, reasoning_e
             content = chunk.get("message", {}).get("content", "")
             if content:
                 yield content
-def _anthropic_client_instance():
-    global _anthropic_client
-    if _anthropic_client is None:
-        import anthropic
-        _anthropic_client = anthropic.AsyncAnthropic(
-            api_key=settings.ANTHROPIC_API_KEY,
-            base_url=settings.ANTHROPIC_API_BASE,
-            timeout=settings.LLM_TIMEOUT
-        )
-    return _anthropic_client
 def is_foundry_claude(model: str) -> bool:
     return is_foundry_enabled() and model in _foundry_deployments() and model.startswith("claude-")
-def _foundry_anthropic_client_instance():
-    global _foundry_anthropic_client
-    if _foundry_anthropic_client is None:
+def _uses_anthropic_api(endpoint: LlmEndpoint, model: str) -> bool:
+    return endpoint.provider == "anthropic" or (endpoint.provider == "foundry" and model.startswith("claude-"))
+def _anthropic_http_client(public_only: bool):
+    client = _anthropic_http_clients.get(public_only)
+    if client is None or client.is_closed:
         import anthropic
-        host = urlparse(settings.FOUNDRY_ENDPOINT).hostname or ""
-        if not host.endswith(FOUNDRY_ANTHROPIC_HOST_SUFFIX):
-            raise ValueError(
-                f"Foundry 上的 Claude 需要 Foundry 資源端點（*{FOUNDRY_ANTHROPIC_HOST_SUFFIX}），"
-                "目前的 FOUNDRY_ENDPOINT 不是；Azure OpenAI 資源只提供 /openai/v1 端點"
-            )
-        _foundry_anthropic_client = anthropic.AsyncAnthropic(
-            api_key=settings.FOUNDRY_API_KEY,
-            base_url=f"{settings.FOUNDRY_ENDPOINT.rstrip('/')}/anthropic",
-            timeout=settings.LLM_TIMEOUT
+        transport = SSRFSafeHttpx2Transport(DnsPool.USER_URL) if public_only else None
+        client = anthropic.DefaultAsyncHttpxClient(transport=transport) if transport else anthropic.DefaultAsyncHttpxClient()
+        _anthropic_http_clients[public_only] = client
+    return client
+def _anthropic_base_url(endpoint: LlmEndpoint) -> str:
+    if endpoint.provider != "foundry":
+        return endpoint.api_base
+    host = urlparse(endpoint.api_base).hostname or ""
+    if not host.endswith(FOUNDRY_ANTHROPIC_HOST_SUFFIX):
+        raise ValueError(
+            f"Foundry 上的 Claude 需要 Foundry 資源端點（*{FOUNDRY_ANTHROPIC_HOST_SUFFIX}），"
+            "目前的端點不是；Azure OpenAI 資源只提供 /openai/v1 端點"
         )
-    return _foundry_anthropic_client
-def _anthropic_client_for(model: str):
-    if is_foundry_claude(model):
-        return _foundry_anthropic_client_instance()
-    return _anthropic_client_instance()
-async def _anthropic_model_output_limit(model: str) -> Optional[int]:
+    return f"{endpoint.api_base.rstrip('/')}/anthropic"
+def _anthropic_client(endpoint: LlmEndpoint):
+    import anthropic
+    return anthropic.AsyncAnthropic(
+        api_key=endpoint.api_key,
+        base_url=_anthropic_base_url(endpoint),
+        timeout=settings.LLM_TIMEOUT,
+        http_client=_anthropic_http_client(endpoint.public_only)
+    )
+async def _anthropic_model_output_limit(endpoint: LlmEndpoint, model: str) -> Optional[int]:
     """以 Models API 查詢模型的輸出 token 上限並快取；Foundry 不提供 Models API，回傳 None"""
-    if is_foundry_claude(model):
+    if endpoint.provider == "foundry":
         return None
-    if model in _anthropic_output_limits:
-        return _anthropic_output_limits[model]
+    key = (endpoint.api_base, model)
+    if key in _anthropic_output_limits:
+        return _anthropic_output_limits[key]
     async with _anthropic_output_limits_lock:
-        if model not in _anthropic_output_limits:
-            info = await _anthropic_client_instance().models.retrieve(model)
-            _anthropic_output_limits[model] = info.max_tokens
-    return _anthropic_output_limits[model]
-async def _anthropic_max_tokens(model: str) -> int:
-    """ANTHROPIC_MAX_TOKENS 與模型輸出上限取較小值，避免輸出上限較低的模型回傳 400"""
-    if settings.ANTHROPIC_MAX_TOKENS is None:
-        raise ValueError("使用 Claude 模型前需在 .env 設定 ANTHROPIC_MAX_TOKENS")
-    limit = await _anthropic_model_output_limit(model)
+        if key not in _anthropic_output_limits:
+            info = await _anthropic_client(endpoint).models.retrieve(model)
+            _anthropic_output_limits[key] = info.max_tokens
+    return _anthropic_output_limits[key]
+async def _anthropic_max_tokens(endpoint: LlmEndpoint, model: str) -> int:
+    """連線設定的輸出 token 上限與模型輸出上限取較小值，避免輸出上限較低的模型回傳 400"""
+    if endpoint.max_output_tokens is None:
+        raise ValueError("使用 Claude 模型前需設定輸出 token 上限：API 連線的「輸出 token 上限」，系統模型則為 .env 的 ANTHROPIC_MAX_TOKENS")
+    limit = await _anthropic_model_output_limit(endpoint, model)
     if limit is None:
-        return settings.ANTHROPIC_MAX_TOKENS
-    return min(settings.ANTHROPIC_MAX_TOKENS, limit)
+        return endpoint.max_output_tokens
+    return min(endpoint.max_output_tokens, limit)
 def _anthropic_system_text(content: Any) -> str:
     if isinstance(content, str):
         return content
@@ -633,7 +675,7 @@ def _anthropic_request(
         ]
         request["tools"][-1]["cache_control"] = ANTHROPIC_CACHE_CONTROL
     return request
-def _anthropic_effort_options(reasoning_effort: Optional[str], model: str) -> Dict[str, Any]:
+def _anthropic_effort_options(reasoning_effort: Optional[str], model: str, provider: str) -> Dict[str, Any]:
     """依模型組出 thinking、effort 與拒答備援參數；拒答備援只在直連 Claude API 時由伺服器端處理"""
     options: Dict[str, Any] = {}
     extra_body: Dict[str, Any] = {}
@@ -642,7 +684,7 @@ def _anthropic_effort_options(reasoning_effort: Optional[str], model: str) -> Di
         extra_body["output_config"] = {"effort": effort}
     if model in ANTHROPIC_MODELS_WITH_OPT_IN_THINKING and reasoning_effort != "none":
         options["thinking"] = {"type": "adaptive"}
-    if model in ANTHROPIC_FALLBACK_MODELS and not is_foundry_claude(model):
+    if model in ANTHROPIC_FALLBACK_MODELS and provider == "anthropic":
         extra_body["fallbacks"] = "default"
         options["extra_headers"] = {"anthropic-beta": ANTHROPIC_FALLBACK_BETA}
     if extra_body:
@@ -660,7 +702,7 @@ def _anthropic_message(response) -> Dict[str, Any]:
     _raise_if_refused(response)
     tool_uses = [block for block in response.content if block.type == "tool_use"]
     if tool_uses and response.stop_reason == "max_tokens":
-        raise RuntimeError("Claude 的工具呼叫參數被 ANTHROPIC_MAX_TOKENS 截斷，請調高該設定")
+        raise RuntimeError("Claude 的工具呼叫參數被輸出 token 上限截斷，請調高 API 連線的輸出 token 上限（系統模型為 .env 的 ANTHROPIC_MAX_TOKENS）")
     message: Dict[str, Any] = {
         "role": "assistant",
         "content": "".join(block.text for block in response.content if block.type == "text"),
@@ -677,23 +719,25 @@ def _anthropic_message(response) -> Dict[str, Any]:
         ]
     return message
 async def _anthropic_chat(
+    endpoint: LlmEndpoint,
     messages: List[Dict[str, Any]],
     model: str,
     tools: Optional[List[Dict[str, Any]]],
     reasoning_effort: Optional[str],
     timeout: float
 ) -> Dict[str, Any]:
-    client = _anthropic_client_for(model).with_options(timeout=timeout)
+    client = _anthropic_client(endpoint).with_options(timeout=timeout)
     async with client.messages.stream(
         model=model,
-        max_tokens=await _anthropic_max_tokens(model),
+        max_tokens=await _anthropic_max_tokens(endpoint, model),
         **_anthropic_request(messages, tools),
-        **_anthropic_effort_options(reasoning_effort, model)
+        **_anthropic_effort_options(reasoning_effort, model, endpoint.provider)
     ) as stream:
         response = await stream.get_final_message()
     _log_anthropic_usage(response)
     return _anthropic_message(response)
 async def _anthropic_stream(
+    endpoint: LlmEndpoint,
     messages: List[Dict[str, Any]],
     model: str,
     tools: Optional[List[Dict[str, Any]]],
@@ -702,11 +746,11 @@ async def _anthropic_stream(
     request = _anthropic_request(messages, tools)
     if tools:
         request["tool_choice"] = {"type": "none"}
-    async with _anthropic_client_for(model).messages.stream(
+    async with _anthropic_client(endpoint).messages.stream(
         model=model,
-        max_tokens=await _anthropic_max_tokens(model),
+        max_tokens=await _anthropic_max_tokens(endpoint, model),
         **request,
-        **_anthropic_effort_options(reasoning_effort, model)
+        **_anthropic_effort_options(reasoning_effort, model, endpoint.provider)
     ) as stream:
         async for text in stream.text_stream:
             yield text
@@ -715,51 +759,56 @@ async def _anthropic_stream(
     _raise_if_refused(final_message)
 async def chat_completion(
     messages: List[Dict[str, Any]],
-    model_name: Optional[str] = None,
+    *,
+    endpoint: LlmEndpoint,
+    model_name: str,
     tools: Optional[List[Dict[str, Any]]] = None,
     reasoning_effort: Optional[str] = None,
     timeout: Optional[float] = None
 ) -> Dict[str, Any]:
-    """單次呼叫任一供應商，回傳 OpenAI 格式的 assistant 訊息（content、tool_calls）"""
-    model = resolve_model_name(model_name)
-    provider = resolve_provider(model)
+    """單次呼叫 endpoint 指定的供應商，回傳 OpenAI 格式的 assistant 訊息（content、tool_calls）"""
+    provider = endpoint.provider
     request_timeout = timeout if timeout is not None else settings.LLM_TIMEOUT
-    logger.info(f"Calling LLM: provider={provider}, model={model}, messages={len(messages)}, tools={len(tools or [])}")
-    if provider == "anthropic":
-        return await _anthropic_chat(messages, model, tools, reasoning_effort, request_timeout)
-    if uses_responses_api(provider, model):
-        return await _responses_chat(provider, messages, model, tools, reasoning_effort, request_timeout)
+    logger.info(f"Calling LLM: provider={provider}, model={model_name}, messages={len(messages)}, tools={len(tools or [])}")
+    if _uses_anthropic_api(endpoint, model_name):
+        return await _anthropic_chat(endpoint, messages, model_name, tools, reasoning_effort, request_timeout)
+    if uses_responses_api(provider, model_name):
+        return await _responses_chat(endpoint, messages, model_name, tools, reasoning_effort, request_timeout)
     if provider == "ollama":
-        return await _ollama_chat(messages, model, tools, reasoning_effort, request_timeout)
-    return await _openai_chat(provider, messages, model, tools, reasoning_effort, request_timeout)
+        return await _ollama_chat(endpoint, messages, model_name, tools, reasoning_effort, request_timeout)
+    return await _openai_chat(endpoint, messages, model_name, tools, reasoning_effort, request_timeout)
 async def stream_completion(
     messages: List[Dict[str, Any]],
-    model_name: Optional[str] = None,
+    *,
+    endpoint: LlmEndpoint,
+    model_name: str,
     tools: Optional[List[Dict[str, Any]]] = None,
     reasoning_effort: Optional[str] = None
 ) -> AsyncIterator[str]:
     """串流產生最終答案；tools 只在歷史含工具呼叫時提供給需要宣告工具的供應商，不會再觸發工具"""
-    model = resolve_model_name(model_name)
-    provider = resolve_provider(model)
-    logger.info(f"Streaming LLM: provider={provider}, model={model}, messages={len(messages)}")
-    if provider == "anthropic":
-        stream = _anthropic_stream(messages, model, tools, reasoning_effort)
-    elif uses_responses_api(provider, model):
-        stream = _responses_stream(provider, messages, model, tools, reasoning_effort)
+    provider = endpoint.provider
+    logger.info(f"Streaming LLM: provider={provider}, model={model_name}, messages={len(messages)}")
+    if _uses_anthropic_api(endpoint, model_name):
+        stream = _anthropic_stream(endpoint, messages, model_name, tools, reasoning_effort)
+    elif uses_responses_api(provider, model_name):
+        stream = _responses_stream(endpoint, messages, model_name, tools, reasoning_effort)
     elif provider == "ollama":
-        stream = _ollama_stream(messages, model, reasoning_effort)
+        stream = _ollama_stream(endpoint, messages, model_name, reasoning_effort)
     else:
-        stream = _openai_stream(provider, messages, model, reasoning_effort)
+        stream = _openai_stream(endpoint, messages, model_name, reasoning_effort)
     async for chunk in stream:
         yield chunk
 async def call_llm(
     messages: List[Dict[str, str]],
-    model_name: Optional[str] = None,
+    *,
+    endpoint: LlmEndpoint,
+    model_name: str,
     timeout: Optional[float] = None,
     reasoning_effort: Optional[str] = None
 ) -> str:
     message = await chat_completion(
         messages,
+        endpoint=endpoint,
         model_name=model_name,
         reasoning_effort=reasoning_effort,
         timeout=timeout

@@ -6,7 +6,7 @@ from .retrievers.hybrid import HybridRetriever
 
 from .tools import ResearchToolRegistry
 from .agent import ResearchAgent
-from app.core.config import settings
+from app.core.llm_client import LlmEndpoint
 
 logger = logging.getLogger(__name__)
 
@@ -17,12 +17,10 @@ class RAGPipeline:
         retriever: HybridRetriever,
         chunk_size: int = 300,
         chunk_overlap: int = 100,
-        model_name: Optional[str] = None,
     ):
         self.retriever = retriever
         self.chunk_size = chunk_size
         self.chunk_overlap = chunk_overlap
-        self.model_name = model_name or settings.MODEL_NAME or ""
 
         self.tool_registry = ResearchToolRegistry(retriever=self.retriever)
         self.agent = ResearchAgent(tool_registry=self.tool_registry)
@@ -69,7 +67,9 @@ class RAGPipeline:
         self,
         query: str,
         conversation_history: List[Dict[str, str]],
-        model_name: Optional[str] = None,
+        *,
+        endpoint: LlmEndpoint,
+        model_name: str,
         reasoning_effort: Optional[str] = "medium",
         attachments: Optional[List[Any]] = None,
         approval_user_id: Optional[int] = None
@@ -77,7 +77,8 @@ class RAGPipeline:
         """非同步生成器：向 API 層提供研究步驟與回答文字串流"""
         async for event_item in self.agent.stream_research(
             query=query,
-            model_name=model_name or self.model_name,
+            endpoint=endpoint,
+            model_name=model_name,
             conversation_history=conversation_history,
             reasoning_effort=reasoning_effort,
             attachments=attachments,

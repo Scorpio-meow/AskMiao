@@ -10,6 +10,7 @@ from app.core.jwt_auth import get_current_admin_user
 from app.core.cache import cache_response, invalidate_cache
 from app.core.security_logging import log_security_event
 from app.services.document_removal import remove_document
+from app.services.llm_connections import remove_user_connections
 from app.api.documents import DOCUMENT_LIST_COLUMNS
 from app.schemas.auth import UserProfile
 from typing import List, Dict, Any
@@ -238,6 +239,7 @@ async def delete_user(
     for skill in db.query(AgentSkill).filter(AgentSkill.allowed_user_ids.isnot(None)).all():
         remaining = [uid for uid in json.loads(skill.allowed_user_ids) if uid != user_id]
         skill.allowed_user_ids = json.dumps(remaining)
+    remove_user_connections(db, user_id)
     deleted = {"target_user_id": user_id, "username": user.username, "was_admin": bool(user.is_admin)}
     db.delete(user)
     db.commit()

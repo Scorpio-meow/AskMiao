@@ -148,6 +148,83 @@ class AgentSkill(Base):
 class AgentSkillSettingsUpdate(BaseModel):
     allow_scripts: Optional[bool] = None
     allowed_user_ids: Optional[List[int]] = None
+class LlmConnection(Base):
+    __tablename__ = "llm_connections"
+    __table_args__ = {"sqlite_autoincrement": True}
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, nullable=False)
+    provider = Column(String, nullable=False)
+    api_base = Column(String, nullable=False)
+    api_key = Column(Text, nullable=True)
+    models = Column(Text, nullable=False)
+    max_output_tokens = Column(Integer, nullable=True)
+    owner_id = Column(Integer, ForeignKey("users.id"), index=True, nullable=True)
+    allowed_user_ids = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+LLM_PROVIDER_PATTERN = r"^(openai|anthropic|gemini|foundry|ollama)$"
+MAX_LLM_CONNECTION_MODELS = 50
+
+
+class LlmConnectionValidator(BaseModel):
+    @field_validator("name", "api_base", check_fields=False)
+    @classmethod
+    def _strip(cls, value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return value
+        value = value.strip()
+        if not value:
+            raise ValueError("不可為空白")
+        return value
+
+    @field_validator("api_base", check_fields=False)
+    @classmethod
+    def _validate_api_base(cls, value: Optional[str]) -> Optional[str]:
+        if value is not None and not re.match(r"^https?://[^\s/]+", value, re.IGNORECASE):
+            raise ValueError("API 位址必須是 http:// 或 https:// 開頭的網址")
+        return value
+
+    @field_validator("models", check_fields=False)
+    @classmethod
+    def _normalize_models(cls, value: Optional[List[str]]) -> Optional[List[str]]:
+        if value is None:
+            return value
+        models = list(dict.fromkeys(m.strip() for m in value if m.strip()))
+        if not models:
+            raise ValueError("至少要填一個模型名稱")
+        if any(len(m) > 200 for m in models):
+            raise ValueError("模型名稱不可超過 200 個字元")
+        return models
+
+
+class LlmConnectionCreate(LlmConnectionValidator):
+    name: str = Field(max_length=100)
+    provider: str = Field(pattern=LLM_PROVIDER_PATTERN)
+    api_base: str = Field(max_length=500)
+    api_key: Optional[str] = Field(default=None, min_length=1, max_length=1000)
+    models: List[str] = Field(max_length=MAX_LLM_CONNECTION_MODELS)
+    max_output_tokens: Optional[int] = Field(default=None, ge=1)
+
+
+class LlmConnectionUpdate(LlmConnectionValidator):
+    name: Optional[str] = Field(default=None, max_length=100)
+    provider: Optional[str] = Field(default=None, pattern=LLM_PROVIDER_PATTERN)
+    api_base: Optional[str] = Field(default=None, max_length=500)
+    api_key: Optional[str] = Field(default=None, min_length=1, max_length=1000)
+    models: Optional[List[str]] = Field(default=None, max_length=MAX_LLM_CONNECTION_MODELS)
+    max_output_tokens: Optional[int] = Field(default=None, ge=1)
+
+
+class SharedLlmConnectionCreate(LlmConnectionCreate):
+    allowed_user_ids: List[int]
+
+
+class SharedLlmConnectionUpdate(LlmConnectionUpdate):
+    allowed_user_ids: Optional[List[int]] = None
+
+
+class LlmConnectionTestRequest(BaseModel):
+    model_name: str = Field(min_length=1, max_length=200)
 class UserCreate(BaseModel):
     username: str
     email: str
@@ -195,7 +272,8 @@ class FileAttachment(BaseModel):
 class MessageCreate(BaseModel):
     content: str = Field(max_length=MAX_CHAT_MESSAGE_CHARS)
     conversation_id: Optional[int] = None
-    model_name: Optional[str] = Field(default=None, max_length=200)
+    connection_id: int
+    model_name: str = Field(min_length=1, max_length=200)
     reasoning_effort: Optional[str] = "medium"
     attachments: Optional[List[FileAttachment]] = Field(default=[], max_length=MAX_CHAT_ATTACHMENTS)
 

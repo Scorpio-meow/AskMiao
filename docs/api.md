@@ -57,7 +57,7 @@
 | POST | `/api/auth/logout` | 存取權杖（只驗簽章） | 登出並撤銷權杖 |
 | POST | `/api/auth/validate-token` | 登入 | 檢查存取權杖是否有效 |
 | POST | `/api/chat/send` | 登入 | 送出訊息，以 SSE 串流回應 |
-| GET | `/api/chat/models` | 公開 | 可用模型與預設模型 |
+| GET | `/api/chat/models` | 登入 | 自己可用的 API 連線與模型 |
 | GET | `/api/chat/tools` | 登入 | Agent 目前可用的工具定義 |
 | POST | `/api/chat/approvals/{approval_id}` | 登入（僅限發問者） | 核准或拒絕等待中的工具呼叫 |
 | GET | `/api/chat/conversations` | 登入 | 自己的對話清單 |
@@ -65,6 +65,12 @@
 | GET | `/api/chat/conversations/{conversation_id}` | 登入 | 單一對話與全部訊息 |
 | GET | `/api/chat/conversations/{conversation_id}/messages` | 登入 | 分頁取得訊息 |
 | DELETE | `/api/chat/conversations/{conversation_id}` | 登入 | 刪除對話 |
+| GET | `/api/llm-connections/providers` | 登入 | 可選的供應商與預設 API 位址、模型 |
+| GET | `/api/llm-connections` | 登入 | 自己的個人連線與開放給自己的共用連線 |
+| POST | `/api/llm-connections` | 登入 | 新增個人連線 |
+| PUT | `/api/llm-connections/{connection_id}` | 登入（僅限本人） | 更新個人連線 |
+| DELETE | `/api/llm-connections/{connection_id}` | 登入（僅限本人） | 刪除個人連線 |
+| POST | `/api/llm-connections/{connection_id}/test` | 登入（個人連線限本人，共用連線限管理員） | 以指定模型測試連線 |
 | POST | `/api/documents/upload` | 管理員 | 上傳文件並建立索引 |
 | GET | `/api/documents/` | 管理員 | 文件清單 |
 | POST | `/api/documents/{document_id}/regenerate-summary` | 管理員 | 重新生成 AI 摘要 |
@@ -103,6 +109,10 @@
 | GET | `/api/admin/users` | 管理員 | 使用者清單 |
 | PUT | `/api/admin/users/{user_id}` | 管理員 | 更新使用者 |
 | DELETE | `/api/admin/users/{user_id}` | 管理員 | 刪除使用者 |
+| GET | `/api/admin/llm-connections` | 管理員 | 共用連線清單（含可使用的帳號） |
+| POST | `/api/admin/llm-connections` | 管理員 | 新增共用連線 |
+| PUT | `/api/admin/llm-connections/{connection_id}` | 管理員 | 更新共用連線或可使用的帳號 |
+| DELETE | `/api/admin/llm-connections/{connection_id}` | 管理員 | 刪除共用連線 |
 | GET | `/api/admin/statistics` | 管理員 | 系統統計（快取 180 秒） |
 | GET | `/api/admin/conversations` | 管理員 | 最近 50 段對話 |
 | GET | `/api/admin/conversations/{conversation_id}/messages` | 管理員 | 任一對話的訊息 |
@@ -291,7 +301,8 @@
 |---|---|---|---|---|
 | `content` | string | 是 | — | 使用者的問題，最多 20,000 字元；以 `/技能名稱` 開頭且該技能已啟用時，先載入該技能並去掉前綴，研究過程記錄一個 `activate_skill` 步驟 |
 | `conversation_id` | integer | 否 | `null` | 對話 ID；留空、不存在或不屬於自己時會建立新對話 |
-| `model_name` | string | 否 | 預設模型 | 要使用的模型，必須在 [可用模型清單](configuration.md#模型清單) 內或等於 `MODEL_NAME`，否則回傳 `400` `不支援的模型`；供應商依名稱自動路由 |
+| `connection_id` | integer | 是 | — | 要使用的 API 連線，必須是自己的個人連線或開放給自己的共用連線（見 [2.2](#22-get-apichatmodels)），否則回傳 `400` `找不到這個 API 連線，或你沒有使用權限` |
+| `model_name` | string | 是 | — | 要使用的模型，必須在該連線的模型清單內，否則回傳 `400` `這個 API 連線沒有提供此模型`；不會落回 `MODEL_NAME` 或 `.env` 的金鑰 |
 | `reasoning_effort` | string | 否 | `medium` | 推理程度，依供應商對應後傳給模型，見下方說明 |
 | `attachments` | array | 否 | `[]` | 附件，最多 5 個，見下表 |
 
@@ -382,14 +393,37 @@ data: {"message_id": 108, "conversation_id": 42, "answer": "特休假需先在�
 
 ### 2.2 GET /api/chat/models
 
-取得可用模型與預設模型。清單產生方式與預設模型規則見 [設定參考：模型清單](configuration.md#模型清單)；需要查詢遠端清單時，結果（含失敗）快取 30 秒。
+需要登入。回傳這個帳號可用的 API 連線與各自的模型：先列個人連線，再列開放給它的共用連線（見 [設定參考：API 連線](configuration.md#api-連線)）。共用連線不回傳 API 位址。
 
 ```json
 {
-  "models": ["gpt-6-sol", "gpt-6-luna"],
-  "default": "gpt-6-sol"
+  "connections": [
+    {"id": 3, "name": "我的 OpenAI", "provider": "openai", "scope": "personal", "models": ["gpt-6-sol"]},
+    {"id": 1, "name": "公司 Ollama", "provider": "ollama", "scope": "shared", "models": ["qwen3:8b"]}
+  ]
 }
 ```
+
+### 2.10 API 連線 `/api/llm-connections`
+
+帳號自己的個人連線（需要登入）。連線物件：
+
+| 欄位 | 說明 |
+|---|---|
+| `id`、`name`、`provider`、`api_base`、`models` | 連線 ID、名稱、供應商（`openai`、`anthropic`、`gemini`、`foundry`、`ollama`）、API 位址、模型清單 |
+| `max_output_tokens` | Claude 的輸出 token 上限，未設定為 `null` |
+| `has_api_key` | 是否已設定金鑰；金鑰本身不會回傳 |
+| `scope` | `personal` 或 `shared` |
+| `allowed_user_ids` | 只出現在 [8.5](#85-共用-api-連線) 的回應：`null` 為所有帳號 |
+
+- `GET /api/llm-connections/providers`：`{"providers": [{provider, label, api_base, models, requires_api_key, uses_max_output_tokens}]}`，前端新增連線時預先填入。
+- `GET /api/llm-connections`：`{"personal": [連線物件], "shared": [與 2.2 相同格式]}`。
+- `POST /api/llm-connections`：主體為 `name`、`provider`、`api_base`、`api_key`（選填）、`models`、`max_output_tokens`（選填），成功回傳 `201` 與連線物件。
+- `PUT /api/llm-connections/{connection_id}`：只更新有帶的欄位；`api_key` 留空或不帶即沿用原值。不是本人的連線回傳 `404`。
+- `DELETE /api/llm-connections/{connection_id}`：刪除連線與其金鑰。
+- `POST /api/llm-connections/{connection_id}/test`：主體 `{"model_name": "gpt-6-sol"}`，以該模型送出一則很短的訊息；成功回傳 `{"ok": true, "reply": "OK"}`，失敗回傳 `{"ok": false, "error": "原因"}`（狀態碼仍為 `200`）。
+
+儲存時檢查：Anthropic、Gemini、Foundry 必須有金鑰；Claude（含 Foundry 上的 Claude 部署）必須設定 `max_output_tokens`，Foundry 上的 Claude 部署必須使用 `*.services.ai.azure.com` 端點；一般帳號的 `api_base` 必須能解析到公開位址。不符合時回傳 `400` 與原因，欄位格式錯誤回傳 `422`。
 
 ### 2.3 GET /api/chat/tools
 
@@ -1056,7 +1090,7 @@ Agent 以漸進揭露使用技能：有啟用且檔案存在的技能時，[`GET
 
 ### 7.1 GET /api/tags
 
-回傳與 `GET /api/chat/models` 相同的清單與預設模型（兩者共用同一套規則，見 [設定參考：模型清單](configuration.md#模型清單)），欄位名稱為 `tags`。沒有設定任何模型來源（`AVAILABLE_MODELS` 或雲端金鑰）時，向 `EXTERNAL_TAGS_URL`（或 `{LLM_API_BASE}/api/tags`）查詢遠端清單；查詢失敗時回傳空清單。遠端查詢在執行緒中進行，結果（含失敗）快取 30 秒，同一時間只有一個查詢在進行，匿名請求不會每次都觸發對外連線。
+回傳 `.env` 設定的系統模型清單與預設模型（見 [設定參考：模型清單](configuration.md#模型清單)），欄位名稱為 `tags`；聊天不使用這份清單，帳號可用的模型見 [2.2](#22-get-apichatmodels)。沒有設定任何模型來源（`AVAILABLE_MODELS` 或雲端金鑰）時，向 `EXTERNAL_TAGS_URL`（或 `{LLM_API_BASE}/api/tags`）查詢遠端清單；查詢失敗時回傳空清單。遠端查詢在執行緒中進行，結果（含失敗）快取 30 秒，同一時間只有一個查詢在進行，匿名請求不會每次都觸發對外連線。
 
 ```json
 {"tags": ["gpt-6-sol", "gpt-6-luna"], "default": "gpt-6-sol"}
@@ -1154,6 +1188,17 @@ Agent 以漸進揭露使用技能：有啟用且檔案存在的技能時，[`GET
 
 `POST /api/admin/vector-store/reindex` 回傳 `{"message": "索引重建已觸發", "ok": true, "info": {...}}`；`DELETE /api/admin/vector-store/clear` 回傳 `{"message": "向量庫已清空"}`。
 
+### 8.5 共用 API 連線
+
+管理員建立、可指定給帳號使用的連線，欄位同 [2.10 的連線物件](#210-api-連線-apillm-connections)，另有 `allowed_user_ids`。
+
+- `GET /api/admin/llm-connections`：`{"connections": [連線物件]}`。
+- `POST /api/admin/llm-connections`：主體同 2.10 的新增，另加必填的 `allowed_user_ids`：`[]` 表示所有帳號（回應為 `null`），列出 ID 則只限這些帳號；不存在的帳號 ID 回傳 `400`。
+- `PUT /api/admin/llm-connections/{connection_id}`：只更新有帶的欄位，`allowed_user_ids` 的規則同上。
+- `DELETE /api/admin/llm-connections/{connection_id}`：刪除連線，所有帳號都無法再使用。
+
+共用連線的 API 位址不受公開位址的限制，可以指向內部網路（例如本機 Ollama）。新增、更新與刪除會以 `ADMIN_LLM_CONNECTION_*` 寫入安全日誌。
+
 ---
 
 ## 9. 健康檢查
@@ -1221,7 +1266,7 @@ Agent 以漸進揭露使用技能：有啟用且檔案存在的技能時，[`GET
 
 以下是目前的現況，整合時請留意：
 
-- `GET /api/chat/models` 與 `GET /api/tags` 不需要登入（`GET /api/chat/tools` 已改為需要登入）。部署在公開網路時，請在反向代理層限制存取。
+- `GET /api/tags` 不需要登入（`GET /api/chat/models` 與 `GET /api/chat/tools` 已改為需要登入）。部署在公開網路時，請在反向代理層限制存取。
 - 存取權杖回應的 `expires_in` 固定為 `1800`，不隨 `ACCESS_TOKEN_EXPIRE_MINUTES` 變動。
 - 權杖撤銷名單、速率限制計數、登入失敗節流的計數與暫停狀態、每位使用者的同時串流數與待核准的工具呼叫都存在單一後端行程的記憶體中；多行程或多台部署時彼此不共享，後端重啟後清空（暫停中的登入隨即解除）。速率限制追蹤的來源 IP 最多 10,000 個，最久未活動的先淘汰；登入節流追蹤的登入識別與來源 IP 也各最多 10,000 個，最久沒有新失敗的先淘汰。
 - 速率限制與登入節流都依來源 IP 計算：未設定 `FORWARDED_ALLOW_IPS` 時，經由 Vite 開發代理或反向代理連線的所有使用者共用同一個來源 IP，除了共用速率限制的額度，依位址的登入失敗次數也一起累計，達到門檻時經由該代理的所有登入都會暫停。

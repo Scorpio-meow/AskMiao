@@ -70,6 +70,8 @@ Claude models also require `ANTHROPIC_MAX_TOKENS` (without it Claude calls fail,
 
 ## LLM providers and models
 
+Chat only uses the [API connections](#api-connections) an account may use, never the settings in this section. The `.env` settings here are the "system models", used only for AI summaries of uploaded documents and `GET /api/tags`; OCR of scanned PDF pages also uses `OPENAI_VISION_MODEL`, `GEMINI_VISION_MODEL`, and the matching keys.
+
 | Variable | Code default | Template | Description |
 |---|---|---|---|
 | `LLM_API_BASE` | `http://localhost:5000` | `http://localhost:11434` | Ollama base URL, used to call Ollama models (`/api/chat`) and to query remote model lists (`/api/tags`) |
@@ -97,15 +99,13 @@ Claude models also require `ANTHROPIC_MAX_TOKENS` (without it Claude calls fail,
 
 ### Model list
 
-`GET /api/chat/models` and `GET /api/tags` build the model list in this order:
+The system model list (`GET /api/tags`, and the default model used for document summaries) is built in this order:
 
 1. `AVAILABLE_MODELS` is set: use it as is.
 2. Otherwise merge, in order: the Foundry deployments (`gpt-6-sol` when none is set), the built-in OpenAI list if `OPENAI_API_KEY` is set, the built-in Claude list if `ANTHROPIC_API_KEY` is set, and the built-in Gemini list if `GEMINI_API_KEY` is set.
 3. Still empty: query the remote list at `EXTERNAL_TAGS_URL` (or `{LLM_API_BASE}/api/tags`), such as the models pulled into a local Ollama. The remote query runs in a worker thread, its result (failures included) is cached for 30 seconds, and only one query runs at a time.
 
-The default model is `MODEL_NAME`, then the first Foundry deployment, then the default the remote list reports; if it is not in the list, the first model in the list is used. Both endpoints share this rule.
-
-The `model_name` given to `POST /api/chat/send` must be in this list (or equal `MODEL_NAME`); otherwise the request fails with `400`, so nobody can call an unlisted model with the operator's keys.
+The default model is `MODEL_NAME`, then the first Foundry deployment, then the default the remote list reports; if it is not in the list, the first model in the list is used.
 
 | Provider | Built-in list (6.0.0) |
 |---|---|
@@ -115,9 +115,28 @@ The `model_name` given to `POST /api/chat/send` must be in this list (or equal `
 
 **Default model**: `MODEL_NAME` → the first Foundry deployment → the first model in the list; a choice that is not in the list falls back to the first model in the list.
 
+### API connections
+
+Each account can only chat through two kinds of connection, and the model menu groups models by connection:
+
+- **Personal connections**: created by the account itself under "Profile → My API connections"; only the owner sees and uses them.
+- **Shared connections**: created by an admin under "Admin → Shared API connections", granted to all accounts (including accounts that register later) or only to the checked accounts. Other accounts never see them in the model list.
+
+| Field | Description |
+|---|---|
+| Provider | `openai` (OpenAI or a compatible API), `anthropic`, `gemini`, `foundry`, `ollama`; calls work like the provider of the same name in `.env`: `gpt-6*` uses the Responses API, and Foundry deployments whose names start with `claude-` use `{API address}/anthropic` |
+| API address | For example `https://api.openai.com/v1`, `https://api.anthropic.com`, `https://<resource>.services.ai.azure.com`, `https://ollama.com` |
+| API key | Required for Anthropic, Gemini, and Foundry, optional for OpenAI-compatible services and Ollama; encrypted with `TOOL_SECRETS_KEY` and never read back through the API; leave it blank when editing to keep the stored key |
+| Models | The model names offered by this connection (deployment names for Foundry), up to 50 |
+| Output token limit | Required for Claude (`anthropic`, or Claude deployments on Foundry); the smaller of it and the model's own output limit is used |
+
+Members' personal connections may only point at addresses that resolve to the public internet: this is checked when the connection is saved, and every call goes through the SSRF check and is pinned to the approved IP (the same as custom API tools; see [ADR-0002](adr/0002-external-tools-and-outbound-safety_en.md)). Services on the internal network (such as a local Ollama) should be set up by an admin as shared connections. Admins' personal connections and shared connections are not restricted.
+
+Deleting an account deletes its personal connections and removes it from shared connection lists.
+
 ### Provider routing
 
-Each call picks a provider from the model name; the first matching rule wins:
+The `.env` system models pick a provider from the model name (API connections use the provider set on the connection); the first matching rule wins:
 
 | Condition | Provider | Endpoint |
 |---|---|---|
@@ -289,7 +308,7 @@ The counters live in each backend process's memory: they reset when the backend 
 
 ### Registration and account creation
 
-All accounts share the whole knowledge base and the enabled tools, so keep `ALLOW_REGISTRATION=false` for deployments reachable from the public internet.
+Self-registered accounts can only use their own API connections and the shared connections granted to them, never the keys in `.env` (see [API connections](#api-connections)). All accounts still share the whole knowledge base and the enabled tools, though (custom API tools and MCP servers are called with the operator's credentials), so on deployments reachable from the public internet, open registration only once anyone who registers may use them.
 
 - `true`: anyone who can reach the API can create a regular account with `POST /api/auth/register`.
 - `false`: `POST /api/auth/register` returns `403` and writes `REGISTER_REJECTED` to the security log. The frontend checks `GET /api/auth/registration` (no login required; it returns `{"enabled": false}`), hides the sign-up link on the login page, and shows an explanation on the sign-up page.

@@ -13,6 +13,7 @@ import socket
 from typing import Dict, List, Optional, Set, Tuple, Union
 from urllib.parse import ParseResult, urljoin, urlparse
 import httpx
+import httpx2
 
 logger = logging.getLogger(__name__)
 
@@ -316,6 +317,21 @@ async def _check_url(
     return True, "", parsed, approved_ips
 
 
+async def _pin_to_approved_ip(request, request_class, dns_pool: DnsPool, allow_private_ips: bool):
+    is_safe, error_msg, _, approved_ips = await _check_url(str(request.url), dns_pool, allow_private_ips=allow_private_ips)
+    if not is_safe:
+        raise SSRFProtectionError(f"SSRF 防護拒絕連線: {error_msg}")
+    if not approved_ips:
+        return request
+    return request_class(
+        method=request.method,
+        url=request.url.copy_with(host=str(approved_ips[0])),
+        headers=request.headers,
+        stream=request.stream,
+        extensions={**request.extensions, "sni_hostname": request.url.host},
+    )
+
+
 class SSRFSafeTransport(httpx.AsyncBaseTransport):
     """每一跳（含自動轉址）送出前都做 SSRF 檢查，並把連線固定到檢查時核可的 IP。
 
@@ -332,22 +348,21 @@ class SSRFSafeTransport(httpx.AsyncBaseTransport):
         self._transport = httpx.AsyncHTTPTransport()
 
     async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
-        is_safe, error_msg, _, approved_ips = await _check_url(
-            str(request.url), self._dns_pool, allow_private_ips=self._allow_private_ips
-        )
-        if not is_safe:
-            raise SSRFProtectionError(f"SSRF 防護拒絕連線: {error_msg}")
-        if not approved_ips:
-            return await self._transport.handle_async_request(request)
-        hostname = request.url.host
-        pinned_request = httpx.Request(
-            method=request.method,
-            url=request.url.copy_with(host=str(approved_ips[0])),
-            headers=request.headers,
-            stream=request.stream,
-            extensions={**request.extensions, "sni_hostname": hostname},
-        )
-        return await self._transport.handle_async_request(pinned_request)
+        pinned = await _pin_to_approved_ip(request, httpx.Request, self._dns_pool, self._allow_private_ips)
+        return await self._transport.handle_async_request(pinned)
+
+    async def aclose(self) -> None:
+        await self._transport.aclose()
+
+
+class SSRFSafeHttpx2Transport(httpx2.AsyncBaseTransport):
+    def __init__(self, dns_pool: DnsPool) -> None:
+        self._dns_pool = dns_pool
+        self._transport = httpx2.AsyncHTTPTransport()
+
+    async def handle_async_request(self, request: httpx2.Request) -> httpx2.Response:
+        pinned = await _pin_to_approved_ip(request, httpx2.Request, self._dns_pool, False)
+        return await self._transport.handle_async_request(pinned)
 
     async def aclose(self) -> None:
         await self._transport.aclose()

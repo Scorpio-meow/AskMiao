@@ -1,6 +1,11 @@
-import { useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../hooks/useAuth';
+import { useLlmProviders } from '../hooks/useLlmProviders';
+import { llmConnectionService } from '../services/api';
+import ConnectionFormDialog from '../components/LlmConnections/ConnectionFormDialog';
+import ConnectionTestDialog from '../components/LlmConnections/ConnectionTestDialog';
+import ConnectionList from '../components/LlmConnections/ConnectionList';
 import { LOGOUT_UNCONFIRMED_NOTICE } from '../services/authService';
 import { useDocumentTitle } from '../hooks/useDocumentTitle';
 import { parseServerDate } from '../utils/serverDate';
@@ -14,6 +19,8 @@ import {
   DialogContent,
   DialogActions,
   DialogForm,
+  ConfirmDialog,
+  Spinner,
   Icon
 } from '../components/ui';
 import styles from './ProfilePage.module.css';
@@ -21,6 +28,114 @@ const EMPTY_PASSWORD_FORM = {
   currentPassword: '',
   newPassword: '',
   confirmPassword: ''
+};
+const LlmConnectionsCard = ({ isAdmin }) => {
+  const providers = useLlmProviders();
+  const [data, setData] = useState(null);
+  const [loadError, setLoadError] = useState('');
+  const [notice, setNotice] = useState('');
+  const [editing, setEditing] = useState(null);
+  const [testing, setTesting] = useState(null);
+  const [pendingDelete, setPendingDelete] = useState(null);
+  const [deleting, setDeleting] = useState(false);
+  const load = useCallback(async () => {
+    try {
+      setLoadError('');
+      setData(await llmConnectionService.getMine());
+    } catch {
+      setLoadError('無法載入 API 連線，請稍後再試');
+    }
+  }, []);
+  useEffect(() => {
+    queueMicrotask(load);
+  }, [load]);
+  const handleSaved = (message) => {
+    setEditing(null);
+    setNotice(message);
+    load();
+  };
+  const handleConfirmDelete = async () => {
+    setDeleting(true);
+    try {
+      await llmConnectionService.remove(pendingDelete.id);
+      setNotice(`已刪除「${pendingDelete.name}」`);
+      load();
+    } catch (err) {
+      setLoadError(err?.response?.data?.detail || '刪除失敗，請稍後再試');
+    } finally {
+      setDeleting(false);
+      setPendingDelete(null);
+    }
+  };
+  return (
+    <div className={styles.card}>
+      <div className={styles.cardHeader}>
+        <h2 className={styles.cardTitle}>
+          <Icon name="key" size={20} />
+          <span>我的 API 連線</span>
+        </h2>
+        <Button
+          size="sm"
+          variant="primary"
+          startIcon={<Icon name="add" size={16} />}
+          onClick={() => setEditing({ connection: null })}
+          disabled={!providers?.length}
+        >
+          新增
+        </Button>
+      </div>
+      <p className={styles.sectionHint}>
+        對話時使用你自己的 API 金鑰與模型，其他帳號看不到也用不到。金鑰加密存放，儲存後不會再顯示。
+      </p>
+      {notice && <Alert severity="success" onClose={() => setNotice('')} style={{ marginBottom: '16px' }}>{notice}</Alert>}
+      {loadError && <Alert severity="error" style={{ marginBottom: '16px' }}>{loadError}</Alert>}
+      {data === null && !loadError ? (
+        <Spinner size={24} color="var(--color-primary)" />
+      ) : data && (
+        <>
+          {data.personal.length === 0 ? (
+            <p className={styles.sectionHint}>還沒有個人 API 連線。</p>
+          ) : (
+            <ConnectionList
+              connections={data.personal}
+              providers={providers}
+              label="我的 API 連線"
+              onTest={setTesting}
+              onEdit={(connection) => setEditing({ connection })}
+              onDelete={setPendingDelete}
+            />
+          )}
+          <h3 className={styles.sectionTitle}>管理員開放給你的共用連線</h3>
+          {data.shared.length === 0 ? (
+            <p className={styles.sectionHint}>目前沒有。</p>
+          ) : (
+            <ConnectionList connections={data.shared} providers={providers} label="共用 API 連線" />
+          )}
+        </>
+      )}
+      {editing && providers?.length > 0 && (
+        <ConnectionFormDialog
+          connection={editing.connection}
+          shared={false}
+          providers={providers}
+          publicOnly={!isAdmin}
+          onClose={() => setEditing(null)}
+          onSaved={handleSaved}
+        />
+      )}
+      {testing && <ConnectionTestDialog connection={testing} onClose={() => setTesting(null)} />}
+      <ConfirmDialog
+        open={Boolean(pendingDelete)}
+        title="刪除這個 API 連線？"
+        description={`「${pendingDelete?.name}」與其中儲存的金鑰會被刪除，之後無法再用它的模型對話。`}
+        confirmLabel="刪除"
+        destructive
+        loading={deleting}
+        onConfirm={handleConfirmDelete}
+        onCancel={() => setPendingDelete(null)}
+      />
+    </div>
+  );
 };
 const ProfilePage = () => {
   const navigate = useNavigate();
@@ -137,6 +252,7 @@ const ProfilePage = () => {
           )}
         </dl>
       </div>
+      <LlmConnectionsCard isAdmin={user.is_admin} />
       <div className={styles.card}>
         <h2 className={styles.cardTitle} style={{ marginBottom: '16px' }}>
           <Icon name="lock" size={20} />

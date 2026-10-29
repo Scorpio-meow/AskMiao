@@ -70,6 +70,8 @@ python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().d
 
 ## LLM 供應商與模型
 
+聊天只使用帳號可用的 [API 連線](#api-連線)，不會使用本節的設定。本節的 `.env` 設定是「系統模型」，只用於上傳文件時產生 AI 摘要與 `GET /api/tags`；PDF 掃描頁 OCR 另外使用 `OPENAI_VISION_MODEL`、`GEMINI_VISION_MODEL` 與對應的金鑰。
+
 | 變數 | 程式預設值 | 範本值 | 說明 |
 |---|---|---|---|
 | `LLM_API_BASE` | `http://localhost:5000` | `http://localhost:11434` | Ollama 服務位址：呼叫 Ollama 模型（`/api/chat`）與查詢遠端模型清單（`/api/tags`）時使用 |
@@ -97,15 +99,13 @@ python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().d
 
 ### 模型清單
 
-`GET /api/chat/models` 與 `GET /api/tags` 依下列順序產生模型清單：
+系統模型的清單（`GET /api/tags`，以及文件摘要選用的預設模型）依下列順序產生：
 
 1. 設定了 `AVAILABLE_MODELS`：直接使用這份清單。
 2. 否則依序合併：Foundry 部署（未設定部署時為 `gpt-6-sol`）、有 `OPENAI_API_KEY` 時的 OpenAI 內建清單、有 `ANTHROPIC_API_KEY` 時的 Claude 內建清單、有 `GEMINI_API_KEY` 時的 Gemini 內建清單。
 3. 以上皆為空：向 `EXTERNAL_TAGS_URL`（或 `{LLM_API_BASE}/api/tags`）查詢遠端清單，例如本機 Ollama 已下載的模型。遠端查詢在執行緒中進行，結果（含失敗）快取 30 秒，同一時間只有一個查詢在進行。
 
-預設模型依序取 `MODEL_NAME`、第一個 Foundry 部署、遠端清單回報的預設模型，不在清單內時改用清單第一個；兩個端點共用同一套規則。
-
-`POST /api/chat/send` 指定的 `model_name` 必須在這份清單內（或等於 `MODEL_NAME`），否則回傳 `400`，避免以操作者的金鑰呼叫清單外的模型。
+預設模型依序取 `MODEL_NAME`、第一個 Foundry 部署、遠端清單回報的預設模型，不在清單內時改用清單第一個。
 
 | 供應商 | 內建清單（6.0.0） |
 |---|---|
@@ -115,9 +115,28 @@ python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().d
 
 **預設模型**：`MODEL_NAME` → 第一個 Foundry 部署 → 清單第一個；選出的模型不在清單內時改用清單第一個。
 
+### API 連線
+
+每個帳號對話時只能使用兩種連線，模型選單依連線分組：
+
+- **個人連線**：帳號在「個人資料 → 我的 API 連線」自己建立，只有本人看得到、用得到。
+- **共用連線**：管理員在「管理後台 → 共用 API 連線」建立，並指定可使用的帳號：所有帳號（包含之後自行註冊的帳號），或只限勾選的帳號。沒被指定的帳號在模型清單裡看不到它。
+
+| 欄位 | 說明 |
+|---|---|
+| 供應商 | `openai`（OpenAI 或相容的 API）、`anthropic`、`gemini`、`foundry`、`ollama`；呼叫方式與 `.env` 的同名供應商相同，`gpt-6*` 走 Responses API，Foundry 上以 `claude-` 開頭的部署走 `{API 位址}/anthropic` |
+| API 位址 | 例如 `https://api.openai.com/v1`、`https://api.anthropic.com`、`https://<資源名稱>.services.ai.azure.com`、`https://ollama.com` |
+| API 金鑰 | Anthropic、Gemini、Foundry 必填，OpenAI 相容服務與 Ollama 選填；以 `TOOL_SECRETS_KEY` 加密存放，儲存後不會再從 API 讀出，編輯時留空即沿用原值 |
+| 模型 | 這個連線可選的模型名稱（Foundry 為部署名稱），最多 50 個 |
+| 輸出 token 上限 | Claude（`anthropic`，或 Foundry 上的 Claude 部署）必填，與模型的輸出上限取較小值 |
+
+一般帳號的個人連線只能指向可從網際網路解析的公開位址：建立與修改時檢查，每次呼叫也經 SSRF 檢查並固定到核可的 IP（與自訂 API 工具相同，見 [ADR-0002](adr/0002-external-tools-and-outbound-safety.md)），內部網路的服務（例如本機 Ollama）請由管理員設為共用連線。管理員的個人連線與共用連線不受此限制。
+
+刪除帳號時，該帳號的個人連線一併刪除，並從共用連線的名單移除。
+
 ### 供應商路由
 
-每次呼叫依模型名稱決定供應商，規則由上而下取第一個符合者：
+`.env` 的系統模型依模型名稱決定供應商（API 連線則依連線設定的供應商），規則由上而下取第一個符合者：
 
 | 條件 | 供應商 | 端點 |
 |---|---|---|
@@ -289,7 +308,7 @@ docker compose exec postgres bash /docker-entrypoint-initdb.d/20-app-role.sh
 
 ### 註冊與建立帳號
 
-所有帳號共用整個知識庫與已啟用的工具，部署在可公開連線的環境時請保持 `ALLOW_REGISTRATION=false`。
+自行註冊的帳號只能使用自己設定的 API 連線與管理員開放給它的共用連線，不會用到 `.env` 的金鑰（見 [API 連線](#api-連線)）。但所有帳號仍共用整個知識庫與已啟用的工具（自訂 API 工具與 MCP 以營運者的憑證呼叫），部署在可公開連線的環境時，請確認這些內容可以讓任何註冊者使用後再開放。
 
 - `true`：任何能連到 API 的人都能以 `POST /api/auth/register` 建立一般使用者帳號。
 - `false`：`POST /api/auth/register` 回傳 `403`，並以 `REGISTER_REJECTED` 寫入安全日誌。前端依 `GET /api/auth/registration`（不需登入，回傳 `{"enabled": false}`）隱藏登入頁的註冊入口，註冊頁改為顯示說明。

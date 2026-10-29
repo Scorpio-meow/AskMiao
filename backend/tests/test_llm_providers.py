@@ -7,6 +7,8 @@ import pytest
 
 from app.core import llm_client
 from app.core.config import settings
+from app.core.llm_client import LlmEndpoint
+from app.core.ssrf_protection import SSRFProtectionError, SSRFSafeHttpx2Transport, SSRFSafeTransport
 from app.rag import agent as agent_module
 from app.rag.agent import ResearchAgent
 from app.rag.retrievers.hybrid import RetrievedChunk
@@ -21,6 +23,10 @@ KB_TOOL = {
         "parameters": {"type": "object", "properties": {"query": {"type": "string"}}, "required": ["query"]},
     },
 }
+
+
+CLAUDE = LlmEndpoint("anthropic", "https://api.anthropic.com", "test-key", 16000, False)
+LOCAL_OLLAMA = LlmEndpoint("ollama", "http://localhost:11434", None, None, False)
 
 
 class StaticRetriever:
@@ -84,15 +90,13 @@ class FakeAnthropicClient:
 
 @pytest.fixture
 def claude(monkeypatch):
-    monkeypatch.setattr(settings, "ANTHROPIC_API_KEY", "test-key")
-    monkeypatch.setattr(settings, "ANTHROPIC_MAX_TOKENS", 16000)
     monkeypatch.setattr(llm_client, "_anthropic_output_limits", {})
 
     def install(responses, stream_chunks=(), output_limits=None):
         fake_messages = FakeAnthropicMessages(responses, stream_chunks)
         fake_messages.models = FakeAnthropicModels(output_limits or {"claude-opus-5": 128000, "claude-opus-5-5": 128000})
         client = FakeAnthropicClient(fake_messages, fake_messages.models)
-        monkeypatch.setattr(llm_client, "_anthropic_client_instance", lambda: client)
+        monkeypatch.setattr(llm_client, "_anthropic_client", lambda endpoint: client)
         return fake_messages
 
     return install
@@ -217,41 +221,35 @@ def test_anthropic_request_skips_cache_breakpoint_for_empty_or_assistant_tail():
 
 
 def test_anthropic_effort_options_map_reasoning_effort():
-    assert llm_client._anthropic_effort_options("high", "claude-sonnet-5") == {"extra_body": {"output_config": {"effort": "high"}}}
-    assert llm_client._anthropic_effort_options("minimal", "claude-sonnet-5") == {"extra_body": {"output_config": {"effort": "low"}}}
-    assert llm_client._anthropic_effort_options("none", "claude-sonnet-5") == {"extra_body": {"output_config": {"effort": "low"}}}
-    assert llm_client._anthropic_effort_options(None, "claude-sonnet-5") == {}
+    assert llm_client._anthropic_effort_options("high", "claude-sonnet-5", "anthropic") == {"extra_body": {"output_config": {"effort": "high"}}}
+    assert llm_client._anthropic_effort_options("minimal", "claude-sonnet-5", "anthropic") == {"extra_body": {"output_config": {"effort": "low"}}}
+    assert llm_client._anthropic_effort_options("none", "claude-sonnet-5", "anthropic") == {"extra_body": {"output_config": {"effort": "low"}}}
+    assert llm_client._anthropic_effort_options(None, "claude-sonnet-5", "anthropic") == {}
 
 
 def test_anthropic_effort_options_skip_effort_on_haiku_4_5():
-    assert llm_client._anthropic_effort_options("high", "claude-haiku-4-5") == {}
+    assert llm_client._anthropic_effort_options("high", "claude-haiku-4-5", "anthropic") == {}
 
 
 def test_anthropic_effort_options_enable_adaptive_thinking_on_opt_in_models():
-    assert llm_client._anthropic_effort_options("high", "claude-opus-4-8") == {
+    assert llm_client._anthropic_effort_options("high", "claude-opus-4-8", "anthropic") == {
         "thinking": {"type": "adaptive"},
         "extra_body": {"output_config": {"effort": "high"}},
     }
-    assert "thinking" not in llm_client._anthropic_effort_options("none", "claude-opus-4-8")
-    assert "thinking" not in llm_client._anthropic_effort_options("high", "claude-opus-5-5")
+    assert "thinking" not in llm_client._anthropic_effort_options("none", "claude-opus-4-8", "anthropic")
+    assert "thinking" not in llm_client._anthropic_effort_options("high", "claude-opus-5-5", "anthropic")
 
 
-def test_anthropic_effort_options_request_server_side_fallback(monkeypatch):
-    monkeypatch.setattr(settings, "FOUNDRY_API_KEY", None)
-
-    options = llm_client._anthropic_effort_options("low", "claude-opus-5-5")
+def test_anthropic_effort_options_request_server_side_fallback():
+    options = llm_client._anthropic_effort_options("low", "claude-opus-5-5", "anthropic")
 
     assert options["extra_body"] == {"output_config": {"effort": "low"}, "fallbacks": "default"}
     assert options["extra_headers"] == {"anthropic-beta": "server-side-fallback-2026-07-01"}
-    assert "fallbacks" not in llm_client._anthropic_effort_options("low", "claude-haiku-5-5").get("extra_body", {})
+    assert "fallbacks" not in llm_client._anthropic_effort_options("low", "claude-haiku-5-5", "anthropic").get("extra_body", {})
 
 
-def test_anthropic_effort_options_skip_fallback_on_foundry(monkeypatch):
-    monkeypatch.setattr(settings, "FOUNDRY_API_KEY", "foundry-key")
-    monkeypatch.setattr(settings, "FOUNDRY_ENDPOINT", "https://example.services.ai.azure.com")
-    monkeypatch.setattr(settings, "FOUNDRY_DEPLOYMENT", "claude-opus-5-5")
-
-    options = llm_client._anthropic_effort_options("low", "claude-opus-5-5")
+def test_anthropic_effort_options_skip_fallback_on_foundry():
+    options = llm_client._anthropic_effort_options("low", "claude-opus-5-5", "foundry")
 
     assert "extra_headers" not in options
     assert "fallbacks" not in options["extra_body"]
@@ -281,7 +279,7 @@ async def test_agent_tool_round_trip_with_claude_preserves_raw_content(claude, m
         SimpleNamespace(stop_reason="end_turn", stop_details=None, content=[SimpleNamespace(type="text", text="特休依年資計算 [1]")]),
     ])
 
-    result = await final_result(claude_agent(monkeypatch).stream_research("特休怎麼算？", model_name="claude-opus-5"))
+    result = await final_result(claude_agent(monkeypatch).stream_research("特休怎麼算？", endpoint=CLAUDE, model_name="claude-opus-5"))
 
     first_call, second_call = fake_messages.chat_calls
     assert first_call["model"] == "claude-opus-5"
@@ -305,7 +303,7 @@ async def test_claude_streams_final_answer_when_answer_is_empty(claude, monkeypa
         stream_chunks=["特休", "依年資計算"],
     )
 
-    result = await final_result(claude_agent(monkeypatch).stream_research("特休怎麼算？", model_name="claude-opus-5"))
+    result = await final_result(claude_agent(monkeypatch).stream_research("特休怎麼算？", endpoint=CLAUDE, model_name="claude-opus-5"))
 
     first_call, _ = fake_messages.chat_calls
     (stream_call,) = fake_messages.answer_stream_calls
@@ -322,7 +320,7 @@ async def test_call_llm_returns_text_blocks_after_thinking(claude):
         SimpleNamespace(type="text", text="文件摘要"),
     ])])
 
-    answer = await llm_client.call_llm([{"role": "user", "content": "摘要"}], model_name="claude-opus-5")
+    answer = await llm_client.call_llm([{"role": "user", "content": "摘要"}], endpoint=CLAUDE, model_name="claude-opus-5")
 
     assert answer == "文件摘要"
 
@@ -336,41 +334,47 @@ async def test_claude_refusal_raises(claude):
     )])
 
     with pytest.raises(RuntimeError, match="refusal"):
-        await llm_client.chat_completion([{"role": "user", "content": "…"}], model_name="claude-opus-5")
+        await llm_client.chat_completion([{"role": "user", "content": "…"}], endpoint=CLAUDE, model_name="claude-opus-5")
 
 
 @pytest.mark.asyncio
-async def test_claude_max_tokens_capped_by_model_output_limit(claude, monkeypatch):
-    monkeypatch.setattr(settings, "FOUNDRY_API_KEY", None)
-    monkeypatch.setattr(settings, "ANTHROPIC_MAX_TOKENS", 128000)
+async def test_claude_max_tokens_capped_by_model_output_limit(claude):
+    endpoint = LlmEndpoint("anthropic", "https://api.anthropic.com", "test-key", 128000, False)
     end_turn = SimpleNamespace(stop_reason="end_turn", stop_details=None, content=[SimpleNamespace(type="text", text="OK")])
     fake_messages = claude(responses=[end_turn, end_turn, end_turn], output_limits={"claude-haiku-4-5": 64000, "claude-opus-5-5": 128000})
 
-    await llm_client.chat_completion([{"role": "user", "content": "你好"}], model_name="claude-haiku-4-5")
-    await llm_client.chat_completion([{"role": "user", "content": "你好"}], model_name="claude-haiku-4-5")
-    await llm_client.chat_completion([{"role": "user", "content": "你好"}], model_name="claude-opus-5-5")
+    await llm_client.chat_completion([{"role": "user", "content": "你好"}], endpoint=endpoint, model_name="claude-haiku-4-5")
+    await llm_client.chat_completion([{"role": "user", "content": "你好"}], endpoint=endpoint, model_name="claude-haiku-4-5")
+    await llm_client.chat_completion([{"role": "user", "content": "你好"}], endpoint=endpoint, model_name="claude-opus-5-5")
 
     assert [call["max_tokens"] for call in fake_messages.chat_calls] == [64000, 64000, 128000]
     assert fake_messages.models.retrieve_calls == ["claude-haiku-4-5", "claude-opus-5-5"]
 
 
 @pytest.mark.asyncio
-async def test_claude_max_tokens_on_foundry_uses_setting(monkeypatch):
-    monkeypatch.setattr(settings, "FOUNDRY_API_KEY", "foundry-key")
-    monkeypatch.setattr(settings, "FOUNDRY_ENDPOINT", "https://example.services.ai.azure.com")
-    monkeypatch.setattr(settings, "FOUNDRY_DEPLOYMENT", "claude-opus-5-5")
-    monkeypatch.setattr(settings, "ANTHROPIC_MAX_TOKENS", 32000)
+async def test_claude_max_tokens_on_foundry_uses_connection_limit():
+    endpoint = LlmEndpoint("foundry", "https://example.services.ai.azure.com", "foundry-key", 32000, False)
 
-    assert await llm_client._anthropic_max_tokens("claude-opus-5-5") == 32000
+    assert await llm_client._anthropic_max_tokens(endpoint, "claude-opus-5-5") == 32000
 
 
 @pytest.mark.asyncio
-async def test_claude_requires_max_tokens_setting(claude, monkeypatch):
+async def test_claude_requires_max_output_tokens(claude):
     claude(responses=[])
-    monkeypatch.setattr(settings, "ANTHROPIC_MAX_TOKENS", None)
+    endpoint = LlmEndpoint("anthropic", "https://api.anthropic.com", "test-key", None, False)
 
-    with pytest.raises(ValueError, match="ANTHROPIC_MAX_TOKENS"):
-        await llm_client.chat_completion([{"role": "user", "content": "你好"}], model_name="claude-opus-5")
+    with pytest.raises(ValueError, match="輸出 token 上限"):
+        await llm_client.chat_completion([{"role": "user", "content": "你好"}], endpoint=endpoint, model_name="claude-opus-5")
+
+
+def test_system_endpoint_carries_env_max_tokens_for_claude(monkeypatch):
+    monkeypatch.setattr(settings, "FOUNDRY_API_KEY", None)
+    monkeypatch.setattr(settings, "ANTHROPIC_API_KEY", "anthropic-key")
+    monkeypatch.setattr(settings, "ANTHROPIC_MAX_TOKENS", 24000)
+
+    assert llm_client.system_endpoint("claude-opus-5") == LlmEndpoint(
+        "anthropic", settings.ANTHROPIC_API_BASE, "anthropic-key", 24000, False
+    )
 
 
 def test_ollama_conversion_and_response_normalization():
@@ -457,8 +461,8 @@ async def test_llm_requests_keep_the_pool_acquire_timeout(monkeypatch):
     monkeypatch.setattr(llm_client, "_http_client", client)
     messages = [{"role": "user", "content": "你好"}]
 
-    await llm_client.chat_completion(messages, model_name="local-model", timeout=18.0)
-    assert [chunk async for chunk in llm_client.stream_completion(messages, model_name="local-model")] == ["好"]
+    await llm_client.chat_completion(messages, endpoint=LOCAL_OLLAMA, model_name="local-model", timeout=18.0)
+    assert [chunk async for chunk in llm_client.stream_completion(messages, endpoint=LOCAL_OLLAMA, model_name="local-model")] == ["好"]
 
     # 每次請求自帶的逾時不能把等待連線池名額的上限一起拉長到整個請求的逾時
     assert pool_timeouts == [llm_client.LLM_POOL_ACQUIRE_TIMEOUT_SECONDS] * 2
@@ -552,14 +556,12 @@ def test_responses_message_collects_text_and_rejects_incomplete_or_refusal():
         })
 
 
-def test_responses_endpoint_per_provider(monkeypatch):
-    monkeypatch.setattr(settings, "OPENAI_API_KEY", "openai-key")
-    monkeypatch.setattr(settings, "OPENAI_API_BASE", "https://api.openai.com/v1")
-    monkeypatch.setattr(settings, "FOUNDRY_API_KEY", "foundry-key")
-    monkeypatch.setattr(settings, "FOUNDRY_ENDPOINT", "https://res.openai.azure.com/")
+def test_responses_endpoint_per_provider():
+    openai = LlmEndpoint("openai", "https://api.openai.com/v1", "openai-key", None, False)
+    foundry = LlmEndpoint("foundry", "https://res.openai.azure.com/", "foundry-key", None, False)
 
-    openai_url, openai_headers = llm_client._responses_endpoint("openai")
-    foundry_url, foundry_headers = llm_client._responses_endpoint("foundry")
+    openai_url, openai_headers = llm_client._responses_endpoint(openai)
+    foundry_url, foundry_headers = llm_client._responses_endpoint(foundry)
 
     assert openai_url == "https://api.openai.com/v1/responses"
     assert openai_headers["Authorization"] == "Bearer openai-key"
@@ -595,7 +597,6 @@ def configure_foundry(monkeypatch, endpoint):
     monkeypatch.setattr(settings, "FOUNDRY_ENDPOINT", endpoint)
     monkeypatch.setattr(settings, "FOUNDRY_DEPLOYMENT", "claude-sonnet-4-6,my-gpt")
     monkeypatch.setattr(settings, "ANTHROPIC_API_KEY", None)
-    monkeypatch.setattr(llm_client, "_foundry_anthropic_client", None)
 
 
 def test_foundry_claude_deployment_routes_to_anthropic_and_other_deployments_stay_on_foundry(monkeypatch):
@@ -605,31 +606,36 @@ def test_foundry_claude_deployment_routes_to_anthropic_and_other_deployments_sta
     assert llm_client.resolve_provider("my-gpt") == "foundry"
     assert llm_client.is_foundry_claude("claude-sonnet-4-6")
     assert not llm_client.is_foundry_claude("my-gpt")
+    for model in ("claude-sonnet-4-6", "my-gpt"):
+        endpoint = llm_client.system_endpoint(model)
+        assert (endpoint.provider, endpoint.api_base, endpoint.api_key) == ("foundry", "https://res.services.ai.azure.com", "foundry-key")
+    assert llm_client._uses_anthropic_api(llm_client.system_endpoint("claude-sonnet-4-6"), "claude-sonnet-4-6")
+    assert not llm_client._uses_anthropic_api(llm_client.system_endpoint("my-gpt"), "my-gpt")
 
 
-def test_foundry_claude_client_uses_anthropic_endpoint_and_api_key(monkeypatch):
-    configure_foundry(monkeypatch, "https://res.services.ai.azure.com/")
+def test_foundry_claude_client_uses_anthropic_endpoint_and_api_key():
+    endpoint = LlmEndpoint("foundry", "https://res.services.ai.azure.com/", "foundry-key", 32000, False)
 
-    client = llm_client._anthropic_client_for("claude-sonnet-4-6")
+    client = llm_client._anthropic_client(endpoint)
 
     assert str(client.base_url).rstrip("/") == "https://res.services.ai.azure.com/anthropic"
     assert client.api_key == "foundry-key"
-    assert llm_client._anthropic_client_for("claude-sonnet-4-6") is client
 
 
-def test_foundry_claude_rejects_azure_openai_resource_endpoint(monkeypatch):
-    configure_foundry(monkeypatch, "https://res.openai.azure.com")
+def test_foundry_claude_rejects_azure_openai_resource_endpoint():
+    endpoint = LlmEndpoint("foundry", "https://res.openai.azure.com", "foundry-key", 32000, False)
 
     with pytest.raises(ValueError, match="services.ai.azure.com"):
-        llm_client._anthropic_client_for("claude-sonnet-4-6")
+        llm_client._anthropic_client(endpoint)
 
 
-def test_direct_claude_uses_the_anthropic_client_even_when_foundry_is_enabled(monkeypatch):
+def test_direct_claude_in_env_uses_the_anthropic_api_even_when_foundry_is_enabled(monkeypatch):
     configure_foundry(monkeypatch, "https://res.services.ai.azure.com")
-    sentinel = object()
-    monkeypatch.setattr(llm_client, "_anthropic_client_instance", lambda: sentinel)
+    monkeypatch.setattr(settings, "ANTHROPIC_API_KEY", "anthropic-key")
 
-    assert llm_client._anthropic_client_for("claude-opus-5-5") is sentinel
+    endpoint = llm_client.system_endpoint("claude-opus-5-5")
+
+    assert (endpoint.provider, endpoint.api_base, endpoint.api_key) == ("anthropic", settings.ANTHROPIC_API_BASE, "anthropic-key")
 
 
 def test_foundry_chat_completions_skips_reasoning_effort_for_non_openai_models():
@@ -674,6 +680,37 @@ def test_ollama_cloud_requests_carry_bearer_key_only_for_ollama_com(monkeypatch)
     assert llm_client.ollama_auth_headers("http://localhost:11434/api/chat") == {}
     assert llm_client.ollama_auth_headers("https://abc.ngrok-free.app/api/chat") == {}
     assert llm_client.ollama_auth_headers("https://ollama.com.evil.example/api/chat") == {}
+    monkeypatch.setattr(settings, "LLM_API_BASE", "https://ollama.com")
+    assert llm_client.system_endpoint("qwen3:8b").api_key == "ollama-key"
+    monkeypatch.setattr(settings, "LLM_API_BASE", "http://localhost:11434")
+    assert llm_client.system_endpoint("qwen3:8b").api_key is None
+
+
+def test_connection_api_key_is_sent_to_its_own_ollama_endpoint():
+    endpoint = LlmEndpoint("ollama", "https://my-ollama.example.com", "user-key", None, True)
+
+    assert llm_client._ollama_request_headers(endpoint)["Authorization"] == "Bearer user-key"
+    assert "Authorization" not in llm_client._ollama_request_headers(LOCAL_OLLAMA)
+
+
+@pytest.mark.asyncio
+async def test_public_only_endpoints_cannot_reach_private_addresses(monkeypatch):
+    monkeypatch.setattr(llm_client, "_public_http_client", None)
+    endpoint = LlmEndpoint("ollama", "http://127.0.0.1:11434", None, None, True)
+    try:
+        assert isinstance((await llm_client.get_llm_http_client(True))._transport, SSRFSafeTransport)
+        with pytest.raises(SSRFProtectionError):
+            await llm_client.chat_completion([{"role": "user", "content": "hi"}], endpoint=endpoint, model_name="qwen3:8b")
+    finally:
+        await llm_client._public_http_client.aclose()
+
+
+def test_public_only_claude_endpoints_use_the_ssrf_safe_httpx2_transport(monkeypatch):
+    monkeypatch.setattr(llm_client, "_anthropic_http_clients", {})
+    public = LlmEndpoint("anthropic", "https://claude-proxy.example.com", "k", 1000, True)
+
+    assert isinstance(llm_client._anthropic_client(public)._client._transport, SSRFSafeHttpx2Transport)
+    assert not isinstance(llm_client._anthropic_client(CLAUDE)._client._transport, SSRFSafeHttpx2Transport)
 
 
 @pytest.mark.asyncio
@@ -685,7 +722,7 @@ async def test_ollama_stream_raises_on_error_line(monkeypatch):
     received = []
 
     with pytest.raises(RuntimeError, match="model crashed"):
-        async for chunk in llm_client._ollama_stream([{"role": "user", "content": "hi"}], "qwen3:8b", None):
+        async for chunk in llm_client._ollama_stream(LOCAL_OLLAMA, [{"role": "user", "content": "hi"}], "qwen3:8b", None):
             received.append(chunk)
 
     assert received == ["ab"]

@@ -1,4 +1,4 @@
-import { Message, Conversation } from '../../services/api';
+import { ChatConnectionOption, Message, Conversation } from '../../services/api';
 export interface SourceDetail {
   source: string;
   chunk?: number;
@@ -17,12 +17,6 @@ export interface ResearchTraceStep {
   duration_seconds?: number;
   status?: 'success' | 'error' | string;
 }
-export interface ModelDetail {
-  name: string;
-  description?: string;
-  context_window?: number;
-  pricing?: string;
-}
 export interface SnackbarState {
   open: boolean;
   message: string;
@@ -32,9 +26,9 @@ export interface SnackbarState {
 }
 export type ReasoningEffort = 'none' | 'low' | 'medium' | 'high' | 'xhigh' | 'max';
 export interface ChatHeaderProps {
-  availableModels: string[];
-  selectedModel: string;
-  onSelectModel: (model: string) => void;
+  connections: ChatConnectionOption[];
+  selectedChoice: string;
+  onSelectChoice: (choice: string) => void;
   reasoningEffort: string;
   onSelectReasoningEffort: (effort: string) => void;
   modelsLoading: boolean;

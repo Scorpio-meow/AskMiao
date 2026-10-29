@@ -43,7 +43,7 @@ from app.core.limits import (
     MAX_TOOL_RESULT_CHARS,
     MIB,
 )
-from app.models import Conversation, FileAttachment, Message, MessageCreate
+from app.models import Conversation, FileAttachment, LlmConnection, Message, MessageCreate
 from app.models.database import Base
 from app.rag import agent as agent_module
 from app.rag.research_session import ResearchSession
@@ -52,6 +52,7 @@ from app.services import chat_service as chat_service_module
 from app.services import pdf_service
 from app.services.chat_service import AttachmentQuotaExceeded, ChatService
 from app.services.document_processor import DocumentLimitExceeded, DocumentProcessor
+from test_agent_guardrails import research
 from app.services.structured_data import (
     _extract_declared_json,
     _replace_svg_blocks,
@@ -134,12 +135,12 @@ def test_attachment_count_size_and_message_length_are_bounded():
         FileAttachment(filename="big.txt", file_type="text/plain", data_url=data_url(MAX_CHAT_ATTACHMENT_BYTES + 3))
     small = {"filename": "a.txt", "file_type": "text/plain", "data_url": data_url(10)}
     with pytest.raises(ValidationError):
-        MessageCreate(content="hi", attachments=[small] * (MAX_CHAT_ATTACHMENTS + 1))
+        MessageCreate(content="hi", connection_id=1, model_name="m", attachments=[small] * (MAX_CHAT_ATTACHMENTS + 1))
     near_max = {"filename": "a.txt", "file_type": "text/plain", "data_url": data_url(MAX_CHAT_ATTACHMENT_BYTES - 3)}
     with pytest.raises(ValidationError):
-        MessageCreate(content="hi", attachments=[near_max, near_max])
+        MessageCreate(content="hi", connection_id=1, model_name="m", attachments=[near_max, near_max])
     with pytest.raises(ValidationError):
-        MessageCreate(content="x" * (MAX_CHAT_MESSAGE_CHARS + 1))
+        MessageCreate(content="x" * (MAX_CHAT_MESSAGE_CHARS + 1), connection_id=1, model_name="m")
 
 
 # ---------- 3. 模型、並行與配額 ----------
@@ -155,23 +156,31 @@ def db():
     engine.dispose()
 
 
+def add_connection(db, owner_id, models=("model-a",)):
+    connection = LlmConnection(name="測試連線", provider="ollama", api_base="http://127.0.0.1:9",
+                               models=json.dumps(list(models)), owner_id=owner_id)
+    db.add(connection)
+    db.commit()
+    return connection
+
+
 @pytest.mark.anyio
-async def test_unlisted_model_is_rejected(monkeypatch, db):
-    monkeypatch.setattr(settings, "AVAILABLE_MODELS", "model-a,model-b")
-    monkeypatch.setattr(settings, "MODEL_NAME", None)
-    with pytest.raises(HTTPException) as exc_info:
-        await chat_api.send_message(MessageCreate(content="hi", model_name="expensive-model"), db=db, user_id=1)
-    assert exc_info.value.status_code == 400
+async def test_connections_and_models_the_user_cannot_use_are_rejected(db):
+    own = add_connection(db, owner_id=1)
+    others = add_connection(db, owner_id=2)
+    for connection_id, model in ((others.id, "model-a"), (own.id, "expensive-model"), (own.id + 100, "model-a")):
+        with pytest.raises(HTTPException) as exc_info:
+            await chat_api.send_message(MessageCreate(content="hi", connection_id=connection_id, model_name=model), db=db, user_id=1)
+        assert exc_info.value.status_code == 400
     assert db.query(Message).count() == 0
-    await chat_api._ensure_model_allowed("model-b")
 
 
 @pytest.mark.anyio
 async def test_concurrent_stream_limit_per_user(monkeypatch, db):
-    monkeypatch.setattr(settings, "AVAILABLE_MODELS", "model-a")
+    connection = add_connection(db, owner_id=7)
     monkeypatch.setattr(chat_api, "_active_streams", {7: chat_api.MAX_CONCURRENT_CHAT_STREAMS_PER_USER})
     with pytest.raises(HTTPException) as exc_info:
-        await chat_api.send_message(MessageCreate(content="hi"), db=db, user_id=7)
+        await chat_api.send_message(MessageCreate(content="hi", connection_id=connection.id, model_name="model-a"), db=db, user_id=7)
     assert exc_info.value.status_code == 429
 
 
@@ -201,10 +210,13 @@ async def test_concurrent_attachment_messages_cannot_exceed_the_quota(monkeypatc
         time.sleep(0.05)
 
     monkeypatch.setattr(chat_api.chat_service, "ensure_attachment_quota", slow_check)
+    with Session() as session:
+        connection_id = add_connection(session, owner_id=1).id
 
     async def send():
         try:
-            await chat_api.send_message(MessageCreate(content="看附件", attachments=[attachment]), db=Session(), user_id=1)
+            message = MessageCreate(content="看附件", connection_id=connection_id, model_name="model-a", attachments=[attachment])
+            await chat_api.send_message(message, db=Session(), user_id=1)
             return 200
         except HTTPException as exc:
             return exc.status_code
@@ -262,7 +274,7 @@ async def test_attachment_parsing_runs_off_the_event_loop(monkeypatch):
     monkeypatch.setattr(registry, "get_tool_definitions", lambda user_id=None: [])
     agent = agent_module.ResearchAgent(tool_registry=registry)
     attachment = FileAttachment(filename="a.txt", file_type="text/plain", data_url=data_url(10))
-    [event async for event in agent.stream_research("摘要", attachments=[attachment])]
+    [event async for event in research(agent, "摘要", attachments=[attachment])]
 
     assert seen["thread"] != loop_thread
     assert len(seen["user_content"]) < agent_module.MAX_ATTACHMENT_TEXT_CHARS + 1000
@@ -412,7 +424,7 @@ async def test_attachment_extractions_are_bounded_process_wide(monkeypatch):
 
     async def ask():
         agent = agent_module.ResearchAgent(tool_registry=registry)
-        return [event async for event in agent.stream_research("摘要", attachments=attachments)]
+        return [event async for event in research(agent, "摘要", attachments=attachments)]
 
     await asyncio.gather(*(ask() for _ in range(MAX_CONCURRENT_ATTACHMENT_EXTRACTIONS + 2)))
     assert running["peak"] == MAX_CONCURRENT_ATTACHMENT_EXTRACTIONS

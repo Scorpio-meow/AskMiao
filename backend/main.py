@@ -9,7 +9,7 @@ from app.core.config import settings
 from app.core.limits import LOG_FILE_BACKUP_COUNT, LOG_FILE_MAX_BYTES
 from app.core.lifespan import lifespan
 from app.middleware import setup_middlewares
-from app.api import chat, admin, documents, tags as tags_router, auth, api_tools, mcp, skills
+from app.api import chat, admin, documents, tags as tags_router, auth, api_tools, mcp, skills, llm_connections
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 LOGS_DIR = os.path.join(BASE_DIR, 'logs')
 os.makedirs(LOGS_DIR, exist_ok=True)
@@ -52,6 +52,8 @@ app.include_router(api_tools.router, prefix="/api/api-tools", tags=["api_tools"]
 app.include_router(mcp.router, prefix="/api/mcp", tags=["mcp"])
 app.include_router(mcp.oauth_callback_router, prefix="/api/mcp", tags=["mcp"])
 app.include_router(skills.router, prefix="/api/skills", tags=["skills"])
+app.include_router(llm_connections.router)
+app.include_router(llm_connections.admin_router)
 app.include_router(tags_router.router, prefix="/api", tags=["tags"])
 @app.get("/")
 async def root():

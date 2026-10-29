@@ -6,8 +6,8 @@ from app.models import MessageCreate, MessageResponse, ChatResponse, Conversatio
 from app.services.chat_service import AttachmentQuotaExceeded, ChatService
 from app.core.rag_manager import get_rag_system
 from app.core.user_context import get_current_user_id
-from app.core.error_response import build_error_payload
-from typing import Dict, List, Optional
+from app.core.error_response import SafeClientError, build_error_payload
+from typing import Dict, List
 import asyncio
 import contextlib
 import logging
@@ -17,6 +17,7 @@ import os
 from app.core.config import settings
 from app.core.limits import MAX_CONCURRENT_CHAT_STREAMS_PER_USER
 from app.rag.tool_approval import approval_broker
+from app.services.llm_connections import chat_option, connections_for_user, resolve_chat_endpoint
 from pydantic import BaseModel
 router = APIRouter()
 chat_service = ChatService()
@@ -45,32 +46,12 @@ def _release_stream_slot(user_id: int) -> None:
         _active_streams.pop(user_id, None)
 
 
-async def _allowed_models() -> List[str]:
-    from app.core.llm_client import get_available_models as get_configured_models
-    allowed = list(get_configured_models())
-    if not allowed:
-        from app.api.tags import fetch_remote_models_cached
-        try:
-            remote_models, _ = await fetch_remote_models_cached()
-            allowed = list(remote_models)
-        except Exception:
-            logger.warning("無法取得遠端模型清單，只允許 MODEL_NAME")
-    if settings.MODEL_NAME and settings.MODEL_NAME not in allowed:
-        allowed.append(settings.MODEL_NAME)
-    return allowed
-
-
-async def _ensure_model_allowed(model_name: Optional[str]) -> None:
-    """使用者指定的模型必須在可用清單內，否則會以操作者的金鑰呼叫清單外的模型"""
-    if not model_name:
-        return
-    if model_name not in await _allowed_models():
-        raise HTTPException(status_code=400, detail="不支援的模型")
 @router.get("/models")
-async def get_available_models():
-    from app.api.tags import models_and_default
-    models, default_model = await models_and_default()
-    return {"models": models, "default": default_model}
+def get_available_models(
+    db: Session = Depends(get_db),
+    user_id: int = Depends(get_current_user_id)
+):
+    return {"connections": [chat_option(c) for c in connections_for_user(db, user_id)]}
 @router.get("/tools")
 def get_available_tools(user_id: int = Depends(get_current_user_id)):
     """獲取 AI 系統當前已註冊並啟用的所有工具定義清單與說明（需登入；同步函式在執行緒池執行）"""
@@ -96,7 +77,12 @@ async def send_message(
     db: Session = Depends(get_db),
     user_id: int = Depends(get_current_user_id)
 ):
-    await _ensure_model_allowed(message_data.model_name)
+    try:
+        endpoint = await asyncio.to_thread(
+            resolve_chat_endpoint, db, user_id, message_data.connection_id, message_data.model_name
+        )
+    except SafeClientError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     if not _has_stream_slot(user_id):
         raise HTTPException(
             status_code=429,
@@ -151,6 +137,7 @@ async def send_message(
                 async for event_item in rag_system.generate_response_stream(
                     message_data.content,
                     conversation_history=conversation_history,
+                    endpoint=endpoint,
                     model_name=message_data.model_name,
                     reasoning_effort=message_data.reasoning_effort,
                     attachments=message_data.attachments,

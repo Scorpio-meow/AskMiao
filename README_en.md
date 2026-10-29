@@ -148,7 +148,7 @@ flowchart LR
 
 - One calling layer supports **Ollama, OpenAI, Microsoft Foundry, Anthropic Claude (official SDK), and Google Gemini**, routed by model name, all with tool calling and streaming.
 - The frontend switches models and six reasoning levels: `None`, `Low`, `Medium`, `High`, `X-High`, and `Max`; the level is mapped to what each provider supports and passed to the model (OpenAI, Microsoft Foundry, Claude, Gemini, Ollama), and levels a model does not support are disabled in the UI.
-- The model list comes from `AVAILABLE_MODELS` or is built from the configured keys; see the [configuration reference](docs/configuration_en.md#llm-providers-and-models).
+- Each account sets up its own API connections (address, key, models) in its profile, and admins can create shared connections and choose which accounts may use them; chat never uses the keys in `.env`. See [configuration reference: API connections](docs/configuration_en.md#api-connections).
 
 ### Knowledge base and document processing
 

@@ -148,7 +148,7 @@ flowchart LR
 
 - 統一呼叫層支援 **Ollama、OpenAI、Microsoft Foundry、Anthropic Claude（官方 SDK）、Google Gemini**，依模型名稱自動路由，五家都支援工具呼叫與串流。
 - 前端可切換模型與六檔推理程度：`無 (None)`、`輕度 (Low)`、`標準 (Medium)`、`深度 (High)`、`極致 (X-High)`、`最大 (Max)`；推理程度會依各供應商的支援範圍對應後傳給模型（OpenAI、Microsoft Foundry、Claude、Gemini、Ollama），不支援的檔位在介面上停用。
-- 模型清單可由 `AVAILABLE_MODELS` 指定，或依已設定的金鑰自動產生，詳見 [設定參考](docs/configuration.md#llm-供應商與模型)。
+- 每個帳號在「個人資料」設定自己的 API 連線（位址、金鑰、模型），管理員可建立共用連線並指定哪些帳號能用；聊天不使用 `.env` 的金鑰，詳見 [設定參考：API 連線](docs/configuration.md#api-連線)。
 
 ### 知識庫與文件處理
 

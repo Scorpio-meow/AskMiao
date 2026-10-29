@@ -19,7 +19,7 @@ from app.models import CustomApiTool, McpServer
 from app.models.database import Base, SessionLocal, engine, upgrade_schema
 from app.rag import tool_approval
 from app.rag.tool_approval import ToolApprovalBroker, approval_broker, default_requires_approval
-from test_agent_guardrails import ScriptedLLM, answer, collect, make_agent, tool_call
+from test_agent_guardrails import ScriptedLLM, answer, collect, research, make_agent, tool_call
 
 ADMIN_USER = {"user_id": 1, "username": "admin", "email": "admin@example.com", "role": "admin", "is_admin": True}
 
@@ -71,7 +71,7 @@ def approval_agent(monkeypatch):
 
 async def run_with_decision(agent, decision, user_id=5):
     events = []
-    async for event in agent.stream_research("幫我下單", approval_user_id=user_id):
+    async for event in research(agent, "幫我下單", approval_user_id=user_id):
         events.append(event)
         if event["event"] == "approval_required" and decision is not None:
             assert approval_broker.resolve(event["data"]["approval_id"], user_id, decision)
@@ -94,7 +94,7 @@ async def test_agent_waits_for_the_users_decision(monkeypatch, decision):
 @pytest.mark.anyio
 async def test_agent_without_an_approver_never_runs_the_tool(monkeypatch):
     agent, executed = approval_agent(monkeypatch)
-    events = await collect(agent.stream_research("幫我下單"))
+    events = await collect(research(agent, "幫我下單"))
     assert executed == []
     assert not any(e["event"] == "approval_required" for e in events)
 
@@ -102,7 +102,7 @@ async def test_agent_without_an_approver_never_runs_the_tool(monkeypatch):
 @pytest.mark.anyio
 async def test_disconnect_while_waiting_discards_the_approval(monkeypatch):
     agent, executed = approval_agent(monkeypatch)
-    stream = agent.stream_research("幫我下單", approval_user_id=5)
+    stream = research(agent, "幫我下單", approval_user_id=5)
     approval_id = None
     async for event in stream:
         if event["event"] == "approval_required":

@@ -36,6 +36,13 @@ export const supportsReasoningEffort = (model: string, effort: string): boolean 
   }
   return true;
 };
+export const choiceKey = (connectionId: number, model: string): string => `${connectionId}::${model}`;
+export const parseChoice = (choice: string): { connectionId: number; model: string } | null => {
+  const separator = choice.indexOf('::');
+  if (separator <= 0) return null;
+  const connectionId = Number(choice.slice(0, separator));
+  return Number.isInteger(connectionId) ? { connectionId, model: choice.slice(separator + 2) } : null;
+};
 export const resolveReasoningEffort = (model: string, effort: string): string => {
   if (supportsReasoningEffort(model, effort)) {
     return effort;
@@ -43,9 +50,9 @@ export const resolveReasoningEffort = (model: string, effort: string): string =>
   return effort === 'none' ? 'low' : 'high';
 };
 export const ChatHeader: React.FC<ChatHeaderProps> = ({
-  availableModels,
-  selectedModel,
-  onSelectModel,
+  connections,
+  selectedChoice,
+  onSelectChoice,
   reasoningEffort,
   onSelectReasoningEffort,
   modelsLoading,
@@ -55,9 +62,9 @@ export const ChatHeader: React.FC<ChatHeaderProps> = ({
   sidebarOpen = false,
   sidebarId,
 }) => {
-  const currentModelValue = availableModels.includes(selectedModel)
-    ? selectedModel
-    : availableModels[0] || '';
+  const choices = connections.flatMap((connection) => connection.models.map((model) => choiceKey(connection.id, model)));
+  const currentChoice = choices.includes(selectedChoice) ? selectedChoice : choices[0] || '';
+  const currentModelValue = parseChoice(currentChoice)?.model || '';
   const title = currentConversation?.title || '新對話';
   return (
     <header className={styles.header}>
@@ -82,20 +89,27 @@ export const ChatHeader: React.FC<ChatHeaderProps> = ({
         <div className={styles.selectWrapper}>
           <select
             className={styles.select}
-            value={currentModelValue}
-            onChange={(e) => onSelectModel(e.target.value)}
+            value={currentChoice}
+            onChange={(e) => onSelectChoice(e.target.value)}
             disabled={modelsLoading}
             aria-label="選擇 AI 模型"
           >
-            {availableModels.length === 0 ? (
+            {choices.length === 0 ? (
               <option value="" disabled>
-                {modelsLoading ? '載入模型中...' : '無可用模型'}
+                {modelsLoading ? '載入模型中...' : '尚未設定 API 連線'}
               </option>
             ) : (
-              availableModels.map((model) => (
-                <option key={model} value={model}>
-                  {model}
-                </option>
+              connections.map((connection) => (
+                <optgroup
+                  key={connection.id}
+                  label={`${connection.name}（${connection.scope === 'shared' ? '共用' : '個人'}）`}
+                >
+                  {connection.models.map((model) => (
+                    <option key={model} value={choiceKey(connection.id, model)}>
+                      {model}
+                    </option>
+                  ))}
+                </optgroup>
               ))
             )}
           </select>
