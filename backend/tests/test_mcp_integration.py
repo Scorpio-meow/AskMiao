@@ -1,11 +1,9 @@
 import pytest
-import anyio
 import json
 from app.models.database import Base, engine, SessionLocal
 from app.models import McpServer
 from app.services.mcp_service import McpManager
 from app.rag.tools import ResearchToolRegistry
-from app.api.mcp import _serialize_mcp_server
 @pytest.mark.anyio
 async def test_mcp_stdio_lifecycle():
     Base.metadata.create_all(bind=engine)
@@ -53,3 +51,40 @@ async def test_mcp_stdio_lifecycle():
     db.commit()
     db.close()
     print("MCP 完整生命週期與調用測試順利通過！")
+
+
+def test_long_mcp_function_names_are_valid_and_still_dispatch():
+    import re
+    from app.core.limits import MAX_TOOL_NAME_CHARS
+
+    Base.metadata.create_all(bind=engine)
+    server_name = "company-knowledge-graph-production-cluster"
+    tool_name = "search_entities_by_relationship_and_attribute_filters"
+    db = SessionLocal()
+    db.query(McpServer).filter(McpServer.name == server_name).delete()
+    db.commit()
+    server = McpServer(
+        name=server_name,
+        display_name="長名稱伺服器",
+        transport_type="stdio",
+        command="unused",
+        discovered_tools=json.dumps([{"name": tool_name}, {"name": tool_name + "_v2"}]),
+        is_enabled=True,
+        requires_approval=True,
+        status="connected",
+    )
+    db.add(server)
+    db.commit()
+    try:
+        registry = ResearchToolRegistry()
+        names = [t["function"]["name"] for t in registry.get_tool_definitions() if t["function"]["name"].startswith("mcp_company")]
+        assert len(names) == 2 and len(set(names)) == 2
+        for name in names:
+            assert re.fullmatch(rf"[a-zA-Z0-9_-]{{1,{MAX_TOOL_NAME_CHARS}}}", name)
+        found_server, found_tool = ResearchToolRegistry._find_mcp_tool(db, names[0])
+        assert (found_server.name, found_tool) == (server_name, tool_name)
+        assert registry.approval_requirement(names[1])["display_name"] == f"長名稱伺服器 → {tool_name}_v2"
+    finally:
+        db.delete(server)
+        db.commit()
+        db.close()

@@ -6,6 +6,7 @@ import pytest
 from app.core.config import settings
 from app.core.domain_profile import domain_profile
 from app.rag import tokenizers
+from app.rag.indices import bm25_store as bm25_store_module
 from app.rag.indices.bm25_store import BM25StoreManager, SIGNATURE_FILENAME
 from app.rag.retrievers.hybrid import HybridRetriever
 from app.rag.tokenizers import configure_tokenizer, get_chinese_analyzer
@@ -24,12 +25,15 @@ class ListVectorStore:
     def documents(self):
         return list(self.chunks.values())
 
-    def search(self, query, top_k, apply_threshold):
+    def embed_query(self, query):
+        return query
+
+    def search(self, query_embedding, top_k, apply_threshold, chunk_ids=None):
         return [(doc, 1.0) for doc in self.documents[:top_k]]
 
 
 class EmptyBM25:
-    def search(self, query, chunks, top_k):
+    def search(self, query, chunks, top_k, chunk_ids=None):
         return []
 
 
@@ -154,3 +158,35 @@ def test_bm25_index_without_signature_is_treated_as_stale(tmp_path, profile_toke
     reopened = BM25StoreManager(data_dir=str(tmp_path), bm25_index_dir=str(index_dir))
 
     assert not reopened.tokenizer_matches()
+
+
+def test_bm25_search_is_limited_to_given_chunk_ids(tmp_path, profile_tokenizer):
+    store = BM25StoreManager(data_dir=str(tmp_path), bm25_index_dir=str(tmp_path / "bm25"))
+    chunks = {
+        1: Document(page_content="MES 系統的 MES 工時填寫說明", metadata={"source": "mes.txt"}),
+        2: Document(page_content="MES 報表匯出", metadata={"source": "report.txt"}),
+    }
+    store.add_documents(chunks)
+
+    assert [doc.metadata["source"] for doc, _ in store.search("mes", chunks, top_k=1, chunk_ids=[2])] == ["report.txt"]
+    assert store.search("mes", chunks, top_k=5, chunk_ids=[]) == []
+
+
+def test_bm25_write_failure_is_raised_after_retries(tmp_path, profile_tokenizer, monkeypatch):
+    store = BM25StoreManager(data_dir=str(tmp_path), bm25_index_dir=str(tmp_path / "bm25"))
+    chunks = {1: Document(page_content="MES 系統的工時填寫說明", metadata={"source": "mes.txt"})}
+    store.add_documents(chunks)
+    attempts = []
+
+    def locked_writer(index):
+        attempts.append(index)
+        raise OSError("index is locked")
+
+    monkeypatch.setattr(bm25_store_module, "AsyncWriter", locked_writer)
+    monkeypatch.setattr(bm25_store_module.time, "sleep", lambda seconds: None)
+
+    with pytest.raises(OSError, match="index is locked"):
+        store.delete_ids([1])
+
+    assert len(attempts) == bm25_store_module.WRITE_ATTEMPTS
+    assert [doc.metadata["source"] for doc, _ in store.search("mes", chunks, top_k=5)] == ["mes.txt"]

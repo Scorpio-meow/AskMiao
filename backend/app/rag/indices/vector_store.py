@@ -259,11 +259,7 @@ class VectorStoreManager:
     def ids(self) -> Set[int]:
         return set(faiss.vector_to_array(self.index.id_map).tolist())
 
-    def search(self, query: str, top_k: Optional[int] = None, apply_threshold: bool = True) -> List[Tuple[Document, float]]:
-        if self.index.ntotal == 0:
-            return []
-
-        limit = top_k or self.top_k
+    def embed_query(self, query: str) -> np.ndarray:
         query_embedding = self.local_embeddings.encode(
             [query],
             batch_size=1,
@@ -272,11 +268,32 @@ class VectorStoreManager:
         )
         query_embedding = np.ascontiguousarray(query_embedding, dtype="float32")
         faiss.normalize_L2(query_embedding)
+        return query_embedding
 
-        similarities, chunk_ids = self.index.search(query_embedding, min(limit, self.index.ntotal))
+    def search(
+        self,
+        query_embedding: np.ndarray,
+        top_k: Optional[int] = None,
+        apply_threshold: bool = True,
+        chunk_ids: Optional[List[int]] = None,
+    ) -> List[Tuple[Document, float]]:
+        if self.index.ntotal == 0:
+            return []
+
+        limit = min(top_k or self.top_k, self.index.ntotal)
+        if chunk_ids is None:
+            similarities, found_ids = self.index.search(query_embedding, limit)
+        elif self.use_faiss_gpu and self.gpu_resources:
+            candidate_ids = np.asarray(chunk_ids, dtype="int64")
+            scores = self.index.reconstruct_batch(candidate_ids) @ query_embedding[0]
+            order = np.argsort(-scores)[:limit]
+            similarities, found_ids = scores[order][None], candidate_ids[order][None]
+        else:
+            selector = faiss.IDSelectorBatch(np.asarray(chunk_ids, dtype="int64"))
+            similarities, found_ids = self.index.search(query_embedding, limit, params=faiss.SearchParameters(sel=selector))
 
         results = []
-        for similarity, chunk_id in zip(similarities[0], chunk_ids[0]):
+        for similarity, chunk_id in zip(similarities[0], found_ids[0]):
             chunk = self.chunks.get(int(chunk_id))
             if chunk is not None and (not apply_threshold or similarity > self.similarity_threshold):
                 results.append((chunk, float(similarity)))

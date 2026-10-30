@@ -164,8 +164,9 @@ class HybridContextualRAG:
 
 
     def vector_search(self, query: str, top_k: int = None, apply_threshold: bool = True) -> List[Tuple[Document, float]]:
+        query_embedding = self.vector_store.embed_query(query)
         with self.vector_store.lock:
-            return self.vector_store.search(query, top_k=top_k, apply_threshold=apply_threshold)
+            return self.vector_store.search(query_embedding, top_k=top_k, apply_threshold=apply_threshold)
 
     def bm25_search(self, query: str, top_k: int = None) -> List[Tuple[Document, float]]:
         with self.vector_store.lock:

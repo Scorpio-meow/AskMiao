@@ -114,7 +114,7 @@ async def validate_connection(
     public_only: bool,
 ) -> None:
     if provider in PROVIDERS_REQUIRING_API_KEY and not has_api_key:
-        raise SafeClientError("這個供應商需要 API 金鑰")
+        raise SafeClientError("這個供應商需要 API 金鑰；變更供應商或 API 位址後不會沿用原本的金鑰，請重新輸入")
     if _is_claude_connection(provider, models):
         if max_output_tokens is None:
             raise SafeClientError("Claude 模型需要設定輸出 token 上限")
@@ -190,17 +190,21 @@ def set_user_shared_access(db: Session, user_id: int, connection_ids: List[int])
     for connection in shared:
         if connection.allowed_user_ids is None:
             continue
-        ids = [uid for uid in _user_ids(connection.allowed_user_ids) if uid != user_id]
+        current = _user_ids(connection.allowed_user_ids)
+        ids = [uid for uid in current if uid != user_id]
         if connection.id in wanted:
             ids.append(user_id)
-        connection.allowed_user_ids = json.dumps(sorted(ids))
+        if sorted(ids) != sorted(current):
+            connection.allowed_user_ids = json.dumps(sorted(ids))
 
 
 def remove_user_connections(db: Session, user_id: int) -> None:
     db.query(LlmConnection).filter(LlmConnection.owner_id == user_id).delete(synchronize_session=False)
     for connection in db.query(LlmConnection).filter(LlmConnection.allowed_user_ids.isnot(None)).all():
-        remaining = [uid for uid in _user_ids(connection.allowed_user_ids) if uid != user_id]
-        connection.allowed_user_ids = json.dumps(remaining)
+        current = _user_ids(connection.allowed_user_ids)
+        remaining = [uid for uid in current if uid != user_id]
+        if remaining != current:
+            connection.allowed_user_ids = json.dumps(remaining)
 
 
 def describe_connection_error(error: BaseException) -> str:

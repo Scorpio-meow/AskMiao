@@ -1,5 +1,5 @@
 import { useState, useCallback } from 'react';
-import authService, { Tokens, RegisterLoginResult } from '../services/authService';
+import authService, { RegisterLoginResult } from '../services/authService';
 import { User } from '../services/api';
 export function useAuth() {
   const [user, setUser] = useState<User | null>(() => authService.getUser());
@@ -67,25 +67,6 @@ export function useAuth() {
       setLoading(false);
     }
   }, []);
-  const updateProfile = useCallback(async (data: Partial<User>) => {
-    setLoading(true);
-    setError(null);
-    try {
-      const result = await authService.updateProfile(data);
-      if (result.success && result.user) {
-        setUser(result.user);
-      } else {
-        setError(result.error || '更新設定失敗');
-      }
-      return result;
-    } catch (err: any) {
-      const errorMsg = err.message || '更新時發生錯誤';
-      setError(errorMsg);
-      return { success: false, error: errorMsg };
-    } finally {
-      setLoading(false);
-    }
-  }, []);
   const changePassword = useCallback(async (currentPassword: string, newPassword: string, confirmPassword: string) => {
     setLoading(true);
     setError(null);
@@ -113,10 +94,8 @@ export function useAuth() {
     register,
     logout,
     getCurrentUser,
-    updateProfile,
     changePassword,
     isAuthenticated: authService.isAuthenticated(),
-    isAdmin: authService.isAdmin(),
   };
 }
 export default useAuth;

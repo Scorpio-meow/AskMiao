@@ -11,4 +11,9 @@ describe('parseServerDate', () => {
     expect(parseServerDate('2026-10-24T05:00:00Z').toISOString()).toBe('2026-10-24T05:00:00.000Z');
     expect(parseServerDate('2026-10-24T13:00:00+08:00').toISOString()).toBe('2026-10-24T05:00:00.000Z');
   });
+
+  it('returns an invalid date for missing timestamps', () => {
+    expect(Number.isNaN(parseServerDate(null).getTime())).toBe(true);
+    expect(Number.isNaN(parseServerDate(undefined).getTime())).toBe(true);
+  });
 });

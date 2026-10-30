@@ -1,14 +1,13 @@
 from fastapi import APIRouter, Depends, HTTPException, status, Request, Response
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.orm import Session
-from typing import List, Optional
+from typing import Optional
 import asyncio
 import logging
-import os
 logger = logging.getLogger(__name__)
 from app.models.database import get_db
 from app.schemas.auth import (
-    UserRegister, UserLogin, Token, TokenRefresh,
+    UserRegister, UserLogin, Token,
     UserProfile, UserUpdate, PasswordChange,
     LoginResponse, MessageResponse
 )
@@ -20,8 +19,8 @@ from app.crud.crud_user import (
 )
 from app.core.jwt_auth import (
     create_token_pair, verify_refresh_token,
-    get_current_active_user, get_current_admin_user,
-    validate_password_strength, sanitize_username,
+    get_current_active_user,
+    validate_password_strength,
     PasswordManager, TokenManager, revoke_token, resolve_token_user
 )
 from app.core.config import settings
@@ -82,8 +81,8 @@ async def register(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="目前不開放註冊，請聯繫管理員建立帳號"
         )
-    username = sanitize_username(user_data.username)
-    
+    username = user_data.username
+
     if get_user_by_username(db, username):
         log_security_event("REGISTER_FAILED", request=request, details={"username": username, "reason": "用戶名已存在"})
         raise HTTPException(
@@ -267,7 +266,6 @@ async def get_current_user_profile(
 async def update_current_user_profile(
     user_update: UserUpdate,
     request: Request,
-    response: Response,
     user: dict = Depends(get_current_active_user),
     db: Session = Depends(get_db)
 ):
@@ -288,34 +286,6 @@ async def update_current_user_profile(
             )
         update_user_email(db, user_obj.id, user_update.email)
         log_security_event("USER_EMAIL_UPDATED", request=request, user_id=user_obj.id)
-    
-    if user_update.new_password:
-        if not user_update.current_password:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="請提供目前的密碼"
-            )
-        
-        if not await _run_password_work(PasswordManager.verify_password, user_update.current_password, user_obj.hashed_password):
-            log_security_event("PASSWORD_CHANGE_FAILED", request=request, user_id=user_obj.id, details={
-                "reason": "當前密碼錯誤"
-            })
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="目前的密碼錯誤"
-            )
-        
-        is_valid, error_msg = validate_password_strength(user_update.new_password)
-        if not is_valid:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=error_msg
-            )
-        
-        await _run_password_work(update_user_password, db, user_obj.id, user_update.new_password)
-        # 變更密碼後所有權杖（含本次的）都已失效，需以新密碼重新登入
-        _clear_refresh_cookie(response)
-        log_security_event("PASSWORD_CHANGED", request=request, user_id=user_obj.id)
     
     user_obj = get_user_by_id(db, user_obj.id)
     return UserProfile.model_validate(user_obj)

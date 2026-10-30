@@ -26,6 +26,7 @@ const canAutoFocus = () => window.matchMedia('(pointer: fine)').matches;
 const supportsFieldSizing = typeof CSS !== 'undefined' && CSS.supports('field-sizing', 'content');
 const SKILL_COMMAND_PATTERN = /^\/([a-z0-9-]*)$/;
 const MAX_SKILL_SUGGESTIONS = 8;
+const MAX_ATTACHMENT_BYTES = 15 * 1024 * 1024;
 export const ChatInputArea: React.FC<ChatInputAreaProps> = ({
   value,
   onChange,
@@ -37,6 +38,7 @@ export const ChatInputArea: React.FC<ChatInputAreaProps> = ({
   attachments = [],
   onAddAttachments,
   onRemoveAttachment,
+  onRejectAttachments,
 }) => {
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -68,10 +70,13 @@ export const ChatInputArea: React.FC<ChatInputAreaProps> = ({
   };
   const processFiles = useCallback((files: FileList | File[]) => {
     const newAttachments: ChatAttachment[] = [];
-    const fileList = Array.from(files);
+    const tooLarge = Array.from(files).filter((file) => file.size > MAX_ATTACHMENT_BYTES);
+    if (tooLarge.length > 0) {
+      onRejectAttachments?.(`單一附件不可超過 ${MAX_ATTACHMENT_BYTES / (1024 * 1024)} MiB：${tooLarge.map((file) => file.name).join('、')}`);
+    }
+    const fileList = Array.from(files).filter((file) => file.size <= MAX_ATTACHMENT_BYTES);
     let processedCount = 0;
     fileList.forEach((file) => {
-      const isImg = file.type.startsWith('image/');
       const reader = new FileReader();
       reader.onload = (e) => {
         const dataUrl = e.target?.result as string;
@@ -88,23 +93,9 @@ export const ChatInputArea: React.FC<ChatInputAreaProps> = ({
           onAddAttachments(newAttachments);
         }
       };
-      if (isImg || file.size < 15 * 1024 * 1024) {
-        reader.readAsDataURL(file);
-      } else {
-        newAttachments.push({
-          id: `${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-          filename: file.name,
-          file_type: file.type || 'application/octet-stream',
-          file_size: file.size,
-          file,
-        });
-        processedCount++;
-        if (processedCount === fileList.length && onAddAttachments) {
-          onAddAttachments(newAttachments);
-        }
-      }
+      reader.readAsDataURL(file);
     });
-  }, [onAddAttachments]);
+  }, [onAddAttachments, onRejectAttachments]);
   const hasContent = Boolean(value.trim()) || attachments.length > 0;
   const canSend = hasContent && !sending && !disabled;
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {

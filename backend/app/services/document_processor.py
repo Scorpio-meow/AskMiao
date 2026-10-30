@@ -7,9 +7,10 @@ import re
 import zipfile
 from typing import Optional
 from lxml import etree
-from pypdf import PdfReader
 from docx import Document as DocxDocument
+from docx.table import Table as DocxTable
 from pptx import Presentation
+from pptx.shapes.group import GroupShape
 import openpyxl
 from app.core.config import settings
 from app.core.domain_profile import domain_profile
@@ -35,7 +36,11 @@ OOXML_CONTENT_TYPES_PART = "[Content_Types].xml"
 OOXML_XML_PARSER = etree.XMLParser(resolve_entities=False, no_network=True)
 
 
-class DocumentLimitExceeded(ValueError):
+class DocumentRejected(ValueError):
+    pass
+
+
+class DocumentLimitExceeded(DocumentRejected):
     """文件超過本次抽取的資源預算；訊息只描述哪一項上限，可以原樣告知使用者"""
 
 
@@ -51,13 +56,13 @@ def _ooxml_xml_bytes(archive: zipfile.ZipFile, members: list, max_xml_bytes: int
     try:
         content_types_info = archive.getinfo(OOXML_CONTENT_TYPES_PART)
     except KeyError as e:
-        raise ValueError("無效的 Office 文件格式") from e
+        raise DocumentRejected("無效的 Office 文件格式") from e
     if content_types_info.file_size > max_xml_bytes:
         raise DocumentLimitExceeded("文件的 XML 內容超過解析上限")
     try:
         root = etree.fromstring(archive.read(content_types_info), parser=OOXML_XML_PARSER)
     except etree.XMLSyntaxError as e:
-        raise ValueError("無效的 Office 文件格式") from e
+        raise DocumentRejected("無效的 Office 文件格式") from e
     defaults = {}
     overrides = {}
     for element in root:
@@ -179,7 +184,7 @@ class DocumentProcessor:
             file_size = os.path.getsize(file_path)
             max_size = int(settings.MAX_FILE_SIZE_MB) * 1024 * 1024
             if file_size > max_size:
-                raise ValueError(f"檔案大小 ({file_size} bytes) 超過限制")
+                raise DocumentRejected(f"檔案大小 ({file_size} bytes) 超過限制")
             if ext == ".pdf" or content_type == "application/pdf":
                 return plain_result(DocumentProcessor._extract_from_pdf(file_path, limits.max_ocr_pages), False, None)
             elif ext == ".docx" or content_type == "application/vnd.openxmlformats-officedocument.wordprocessingml.document":
@@ -245,7 +250,7 @@ class DocumentProcessor:
                 if builds_dom and _ooxml_xml_bytes(archive, members, limits.max_ooxml_xml_bytes) > limits.max_ooxml_xml_bytes:
                     raise DocumentLimitExceeded("文件的 XML 內容超過解析上限")
         except zipfile.BadZipFile as e:
-            raise ValueError("無效的 Office 文件格式") from e
+            raise DocumentRejected("無效的 Office 文件格式") from e
     @staticmethod
     def _extract_from_txt(file_path: str) -> str:
         encodings = ['utf-8', 'utf-8-sig', 'big5', 'gbk', 'gb2312', 'latin1']
@@ -297,18 +302,17 @@ class DocumentProcessor:
         doc = DocxDocument(file_path)
         text_content = []
         
-        for paragraph in doc.paragraphs:
-            if paragraph.text.strip():
-                text_content.append(paragraph.text)
-        
-        for table in doc.tables:
-            for row in table.rows:
-                row_text = [cell.text.strip() for cell in row.cells if cell.text.strip()]
-                if row_text:
-                    text_content.append(" | ".join(row_text))
+        for block in doc.iter_inner_content():
+            if isinstance(block, DocxTable):
+                for row in block.rows:
+                    row_text = [cell.text.strip() for cell in row.cells if cell.text.strip()]
+                    if row_text:
+                        text_content.append(" | ".join(row_text))
+            elif block.text.strip():
+                text_content.append(block.text)
         
         if not text_content:
-            raise ValueError("DOCX 文件中沒有可提取的文本內容")
+            raise DocumentRejected("DOCX 文件中沒有可提取的文本內容")
         
         full_text = "\n".join(text_content)
         logger.info(f"成功從 DOCX 提取 {len(doc.paragraphs)} 個段落和 {len(doc.tables)} 個表格，共 {len(full_text)} 字符")
@@ -319,26 +323,37 @@ class DocumentProcessor:
         slides_text = []
         for idx, slide in enumerate(prs.slides):
             slide_lines = [f"--- 投影片 {idx + 1} ---"]
-            for shape in slide.shapes:
-                if shape.has_text_frame:
-                    for paragraph in shape.text_frame.paragraphs:
-                        text = paragraph.text.strip()
-                        if text:
-                            slide_lines.append(text)
-                elif shape.has_table:
-                    for row in shape.table.rows:
-                        row_cells = [cell.text.strip() for cell in row.cells if cell.text.strip()]
-                        if row_cells:
-                            slide_lines.append(" | ".join(row_cells))
+            slide_lines.extend(DocumentProcessor._pptx_shape_lines(slide.shapes))
+            if slide.has_notes_slide and slide.notes_slide.notes_text_frame is not None:
+                notes = slide.notes_slide.notes_text_frame.text.strip()
+                if notes:
+                    slide_lines.append(f"備忘稿：{notes}")
             if len(slide_lines) > 1:
                 slides_text.append("\n".join(slide_lines))
         
         if not slides_text:
-            raise ValueError("PPTX 文件中沒有可提取的文本內容")
+            raise DocumentRejected("PPTX 文件中沒有可提取的文本內容")
         
         full_text = "\n\n".join(slides_text)
         logger.info(f"成功從 PPTX 提取 {len(prs.slides)} 頁投影片，共 {len(full_text)} 字符")
         return full_text
+    @staticmethod
+    def _pptx_shape_lines(shapes) -> list:
+        lines = []
+        for shape in shapes:
+            if isinstance(shape, GroupShape):
+                lines.extend(DocumentProcessor._pptx_shape_lines(shape.shapes))
+            elif shape.has_text_frame:
+                for paragraph in shape.text_frame.paragraphs:
+                    text = paragraph.text.strip()
+                    if text:
+                        lines.append(text)
+            elif shape.has_table:
+                for row in shape.table.rows:
+                    row_cells = [cell.text.strip() for cell in row.cells if cell.text.strip()]
+                    if row_cells:
+                        lines.append(" | ".join(row_cells))
+        return lines
     @staticmethod
     def _extract_from_xlsx(file_path: str) -> str:
         # read_only 以串流方式讀取工作表，不把整份活頁簿展開到記憶體
@@ -355,7 +370,7 @@ class DocumentProcessor:
                 sheets_text.append("\n".join(sheet_lines))
         
         if not sheets_text:
-            raise ValueError("XLSX 文件中沒有可提取的文本內容")
+            raise DocumentRejected("XLSX 文件中沒有可提取的文本內容")
         
         full_text = "\n\n".join(sheets_text)
         logger.info(f"成功從 XLSX 提取 {len(wb.sheetnames)} 個工作表，共 {len(full_text)} 字符")
@@ -371,19 +386,6 @@ class DocumentProcessor:
             if ext in DocumentProcessor.SUPPORTED_EXTENSIONS:
                 return True
         return False
-    
-    @staticmethod
-    def get_file_info(file_path: str, content_type: str) -> dict:
-        try:
-            stat = os.stat(file_path)
-            return {
-                "file_size": stat.st_size,
-                "content_type": content_type,
-                "is_supported": DocumentProcessor.validate_file_type(content_type, file_path)
-            }
-        except Exception as e:
-            logger.error(f"獲取文件信息時發生錯誤: {e}")
-            return {"error": str(e)}
     @staticmethod
     def _records_overview(extraction: Optional[ExtractionResult]) -> Optional[str]:
         if extraction is None or not extraction.records:
@@ -454,7 +456,6 @@ class DocumentProcessor:
         cls, filename: str, content: str, file_type: str = "", extraction: Optional[ExtractionResult] = None
     ) -> str:
         """高品質啟發式規則分析器"""
-        import re
         if not content or not content.strip():
             return f"收錄內部文件《{filename}》。"
         raw_lines = [line.strip() for line in content.strip().splitlines() if line.strip()]

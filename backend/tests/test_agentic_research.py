@@ -55,3 +55,12 @@ async def test_research_agent_run():
     assert "sources_detail" in result
     assert "research_trace" in result
     assert "retrieval_strategy" in result
+
+def test_page_title_is_the_first_title():
+    from app.rag.tools import extract_html_text
+
+    title, text = extract_html_text(
+        "<html><head><title>年度報告</title></head><body><svg><title>Close</title></svg><p>內文</p></body></html>"
+    )
+    assert title == "年度報告"
+    assert "Close" in text and "內文" in text

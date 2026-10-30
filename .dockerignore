@@ -1,0 +1,13 @@
+.git
+.venv
+**/.env
+**/node_modules
+**/__pycache__
+**/.pytest_cache
+backend/data
+backend/keys
+backend/logs
+backend/mcp_filesystem_sandbox
+backend/tests_data
+frontend/build
+frontend/~

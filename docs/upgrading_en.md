@@ -4,6 +4,11 @@
 
 > How to upgrade an existing deployment to a new release, with rollback steps and troubleshooting. See the [CHANGELOG](../CHANGELOG_en.md) for the full list of changes in each version.
 
+- [Upgrading from 6.0.0 to 7.0.0](#upgrading-from-600-to-700)
+  - [7.0.0 changes and required actions](#700-changes-and-required-actions)
+  - [Upgrade steps for 7.0.0](#upgrade-steps-for-700)
+  - [Rolling back to 6.0.0](#rolling-back-to-600)
+  - [After upgrading to 7.0.0](#after-upgrading-to-700)
 - [Upgrading from 5.0.0 to 6.0.0](#upgrading-from-500-to-600)
   - [6.0.0 changes and required actions](#600-changes-and-required-actions)
   - [Upgrade steps for 6.0.0](#upgrade-steps-for-600)
@@ -29,6 +34,145 @@
   - [Step 5: verify the upgrade](#step-5-verify-the-upgrade)
   - [Rolling back to 2.2.x](#rolling-back-to-22x)
   - [Troubleshooting](#troubleshooting)
+
+---
+
+## Upgrading from 6.0.0 to 7.0.0
+
+For upgrading from 6.0.0 to 7.0.0 (2026-10-31); see the [CHANGELOG](../CHANGELOG_en.md#700---2026-10-31) for the changes. This release moves chat to per-account API connections, and the database gains an `llm_connections` table (created automatically at startup); the backend and frontend dependencies are the same as in 6.0.0, and `.env` has no new required settings. What you need to do is give every account an API connection, update API clients, and rebuild the frontend; rebuilding the index once after upgrading is recommended so existing documents pick up this release's extraction and chunking fixes.
+
+### 7.0.0 changes and required actions
+
+| Item | 6.0.0 | 7.0.0 | Action |
+|---|---|---|---|
+| Models and keys used by chat | `MODEL_NAME`, `AVAILABLE_MODELS`, the provider keys, and `LLM_API_BASE` in `.env`, shared by every account | Only the account's own personal connections and the shared connections an admin grants it, stored in the new `llm_connections` table; an account without any connection (admins included) cannot chat | Create connections as in step 4 of the [upgrade steps](#upgrade-steps-for-700) |
+| LLM settings in `.env` | Shared by chat, AI summaries, `GET /api/tags`, and OCR of scanned PDF pages | Used only for AI summaries, `GET /api/tags`, and OCR of scanned PDF pages | Keep them if you use these features; there is no need to delete them |
+| Claude output token limit | `ANTHROPIC_MAX_TOKENS` in `.env` | Every Claude connection (`anthropic`, or a Claude deployment on Foundry) requires an "output token limit", which is capped by the model's own output limit; `ANTHROPIC_MAX_TOKENS` only serves the system model | Fill it in when creating Claude connections; the `ANTHROPIC_MAX_TOKENS` value works |
+| API address of personal connections | None | Members' personal connections can only point at public addresses; admins' personal connections and shared connections are not restricted | Have an admin create internal services (for example a local Ollama) as shared connections |
+| `POST /api/chat/send` and `GET /api/chat/models` | `model_name` is optional and defaults to `MODEL_NAME`; `GET /api/chat/models` returns the `.env` model list | `connection_id` and `model_name` are required, and a connection that is not the caller's own or granted to them, or a model not in its list, returns `400`; `GET /api/chat/models` requires sign-in and returns `{"connections": [{id, name, provider, scope, models}]}` | API clients fetch the available connections and models first and send both |
+| `PUT /api/auth/me` | Updates the email, or changes the password with `current_password` and `new_password` | Only updates the email; password fields are ignored without an error, and the password does not change | Change passwords with `POST /api/auth/change-password` |
+| Conversation endpoints | `GET /api/chat/conversations` includes the 5 most recent messages per conversation, and `GET /api/chat/conversations/{conversation_id}` the newest 500 | `messages` is always an empty array in both | Read messages from `GET /api/chat/conversations/{conversation_id}/messages` (`limit`, `offset`) |
+| Rebuild index | Clears the whole index and writes documents back one by one, so the knowledge base returns nothing meanwhile | Replaces each document's chunks in turn, so other documents stay searchable; the response gains `failed_documents` | Integrations that read the response handle `failed_documents` as needed |
+| Index write failures | A failed BM25 write is only logged; deleting a document reports success even when removing it from the indexes fails | Uploading, deleting, or rebuilding that document, or startup, fails; a delete returns `500` | When it happens, check the permissions and disk space of `BM25_INDEX_DIR` |
+| Document extraction and chunking | A document with an FAQ section in the middle keeps only what follows the first 「Q：」 line; an overlong Q&A pair becomes one chunk; DOCX tables come at the end; PPTX leaves out shapes in groups and speaker notes; digits in some PDFs come out as characters such as 「俸」 | Fixed | Rebuild the index once so documents whose uploaded file still exists are re-extracted |
+| PDFs without text | Pages without extractable text are stored as placeholder text | A PDF with no extractable text on any page returns `400` | To store scans, first set up the vision model for OCR of scanned PDF pages (see the [configuration reference](configuration_en.md#llm-providers-and-models)) |
+| Usernames | The `\w` rule, accepting letters of any script, full-width letters, and a trailing newline | Only Chinese characters, ASCII letters, digits, `_`, and `-` | Existing accounts sign in as before; when editing an account whose name breaks the rule in the admin dashboard, rename it to a valid name in the same edit |
+| Accounts deactivated and then reactivated | Tokens issued before deactivation work again after reactivation | Deactivation revokes them, so the account signs in again after reactivation | None |
+| Tool name length | Names generated from an OpenAPI `operationId` or an MCP tool have no length limit | Names given to the model are at most 64 characters, and longer ones become the first 55 characters plus `_` and an 8-character hash; creating or importing a tool with a longer name returns `400` | If a skill's `allowed-tools` lists an overlong tool name, use the new name listed by `GET /api/chat/tools` |
+| Custom API tool redirects | Every method follows cross-origin redirects (without credential headers) | Methods other than `GET`, `HEAD`, and `OPTIONS` follow only same-origin redirects; a refused redirect or more than 5 redirects returns `400` | For `POST` and similar tools that redirect to another domain, use the final URL |
+| `web_fetch` domain allowlist | Only the initial URL is checked; with `OLLAMA_API_KEY` set, Ollama Web Fetch is tried first | Every redirect is checked; Ollama Web Fetch is not used unless the allowlist is `*` | Add the redirect target domains you need to `WEB_FETCH_ALLOWED_DOMAINS` |
+| Docker images | No application Dockerfile was provided | `deploy/` (Docker Compose) and a `.dockerignore` at the repository root, which leaves `.env`, `backend/keys`, `backend/data`, `backend/logs`, `node_modules`, and similar out of the build context | Deployments that build their own images from the repository root and rely on the `.env`, keys, or data inside the image provide them through `env_file` and volumes instead, as `deploy/docker-compose.yml` does |
+| `COOKIE_SECURE` from `deploy/gen-env.sh` | None | Written as `true` when `PUBLIC_ORIGIN` starts with `https://` | If `deploy/.env` came from a pre-7.0.0 `gen-env.sh` and the site is served over HTTPS, set `COOKIE_SECURE` to `true` |
+| `rag_chunks` ids | SQLite may reuse deleted ids | New SQLite databases create the table with `AUTOINCREMENT` | None; existing SQLite tables are not rewritten |
+| Dependencies | — | `backend/requirements.txt`, `requirements.in`, and `frontend/bun.lock` are the same as in 6.0.0 | No reinstall needed; the frontend still has to be rebuilt |
+
+### Upgrade steps for 7.0.0
+
+1. **Stop and back up**: stop the backend and back up the database, `backend/data/`, and `backend/.env`. API connection keys are encrypted with `TOOL_SECRETS_KEY`, so keep that key with your database backups.
+2. **Update the code and rebuild the frontend**: the backend and frontend dependencies are the same as in 6.0.0, so there is no need to run `pip install` or `bun install`; run `bun run build` in `frontend/`. `.env` needs no new settings, and the existing LLM settings stay for AI summaries, `GET /api/tags`, and PDF OCR.
+3. **Start the backend**: `python main.py`. The `llm_connections` table is created automatically at startup; documents left without any chunks by an interrupted upload are indexed at this point too, and the log says 「上傳時未完成索引，已補建 N 個分塊」 (not indexed during upload, N chunks added).
+4. **Create API connections**: sign in as an admin, add connections under "Admin → Shared API connections", and enter the provider, API address, and key from `.env`; check off models with "從 API 取得模型" (fetch models from the API), except on Foundry, where deployment names are typed in, and fill in the output token limit for Claude connections. Under the accounts that may use it, pick all accounts (including accounts that register later) or check specific ones; you can also check the shared connections an account may use when editing that account. After saving, click "測試" (test) on the connection to confirm it works. If you would rather not share keys, have each account add its own under "Profile → My API connections"; see [Configuration: API connections](configuration_en.md#api-connections) for the fields.
+5. **API clients**:
+   - `POST /api/chat/send` sends `connection_id` and `model_name`, taken from `GET /api/chat/models` (sign-in required).
+   - Change passwords with `POST /api/auth/change-password`; password fields sent to `PUT /api/auth/me` are ignored without an error.
+   - Read a conversation's messages page by page from `GET /api/chat/conversations/{conversation_id}/messages`; the `attachments` of user messages carry the extracted attachment text in `content`.
+   - The `POST /api/documents/rebuild-index` response gains `failed_documents`.
+   - Settings that match tools by name (such as a skill's `allowed-tools`): custom API tools or MCP tools with names over 64 characters are given to the model as the first 55 characters plus `_` and an 8-character hash, so use the names listed by `GET /api/chat/tools`.
+6. **When deploying with Docker**:
+   - The `.dockerignore` at the repository root keeps `.env`, `backend/keys`, `backend/data`, and `backend/logs` out of images. Deployments that build their own images from the repository root provide `.env` through `env_file` and keep `data`, `keys`, and `logs` on volumes, as `deploy/docker-compose.yml` does; without a persistent `keys`, every recreated container generates new RSA keys and everyone has to sign in again.
+   - When serving over HTTPS, make sure `COOKIE_SECURE` in `deploy/.env` is `true`. The 7.0.0 `gen-env.sh` sets it from `PUBLIC_ORIGIN`; versions before 7.0.0 always wrote `false`, so correct it by hand and recreate the backend container.
+7. **Rebuild the index (recommended)**: as an admin, run "Rebuild index" on the knowledge base page. Documents whose uploaded file is still in `UPLOAD_DIR` are re-extracted and re-chunked the way this release does it (FAQ detection, splitting overlong Q&A pairs, DOCX table order, PPTX groups and speaker notes, PDF alternate glyphs). Other documents stay searchable during the rebuild; if the result lists failed documents, check the backend log and rebuild again.
+8. **Verify**:
+   - [ ] `GET http://localhost:8001/health` returns `{"status": "healthy"}`.
+   - [ ] A member's chat model menu lists the shared connections granted to it (or its own personal connections), and a sent message gets an answer; an account without any connection sees the notice 「這個帳號還沒有可用的 AI 模型」 (this account has no AI model available yet).
+   - [ ] After changing a password under "Profile", the current session and those in other browsers must sign in again with the new password.
+   - [ ] After deactivating and reactivating a test account in the admin dashboard, that account's existing sessions must sign in again.
+   - [ ] The rebuild-index result lists no failed documents.
+   - [ ] Uploading a password-protected PDF reports 「PDF 文件被密碼保護，無法讀取」 (the PDF is password-protected and cannot be read) rather than a server error.
+
+### Rolling back to 6.0.0
+
+1. Stop the backend, switch the code back to 6.0.0, and run `bun run build` in `frontend/` again; the dependencies are the same, so nothing needs reinstalling.
+2. Make sure `.env` still has the `MODEL_NAME`, `AVAILABLE_MODELS`, and provider keys chat needs: 6.0.0 chat uses only `.env` and never reads API connections, so every account shares those keys again.
+3. The `llm_connections` table can stay: 6.0.0 never reads it, and the connections are still there when you upgrade again. But 6.0.0 does not handle this table when deleting an account: PostgreSQL refuses to delete an account that owns personal connections because of the foreign key, so first delete the rows in `llm_connections` whose `owner_id` is that account's id; SQLite leaves the connections behind without an owner. Deleted accounts also stay in the `allowed_user_ids` of shared connections, so review those lists under "Admin → Shared API connections" after upgrading again.
+4. The attachment text 7.0.0 saved in `messages.context_used` can stay: 6.0.0 never reads it, but it still counts against each user's attachment quota.
+5. The database and indexes need no restore or rebuild: a `rag_chunks` table created with `AUTOINCREMENT` in a new SQLite database works in 6.0.0, and 6.0.0 compares the `users.tokens_valid_after` set on deactivation as usual.
+6. Switch API clients back to 6.0.0 usage: `POST /api/chat/send` ignores `connection_id`, and `model_name` may be omitted (to use `MODEL_NAME`) but, when sent, must be in the `.env` model list.
+
+### After upgrading to 7.0.0
+
+<details>
+<summary><b>The chat page has no model to choose</b></summary>
+
+The account has no personal connection and no shared connection granted to it; the `.env` models no longer appear on the chat page. Have an admin grant a shared connection as in step 4 of the [upgrade steps](#upgrade-steps-for-700), or have the account add its own under "Profile → My API connections".
+
+</details>
+
+<details>
+<summary><b>Sending a message returns <code>400</code>: 「找不到這個 API 連線，或你沒有使用權限」 (connection not found or not permitted) or 「這個 API 連線沒有提供此模型」 (the connection does not offer this model)</b></summary>
+
+The `connection_id` sent is not the caller's own or not granted to them (for example an admin just removed the account from a shared connection's list), or `model_name` is not in that connection's model list. Reload the chat page and pick the model again; API clients fetch `GET /api/chat/models` again. A request without `connection_id` or `model_name` returns `422`.
+
+</details>
+
+<details>
+<summary><b>Adding a personal connection returns 「API 位址無法使用：個人連線只能連到可從網際網路解析的公開位址…」 (personal connections can only reach public addresses)</b></summary>
+
+A member's personal connection cannot point at an internal or local service, such as Ollama at `http://localhost:11434`. Have an admin create it as a shared connection and grant it to the accounts that need it.
+
+</details>
+
+<details>
+<summary><b>Editing a connection asks for the key again</b></summary>
+
+The message is 「這個供應商需要 API 金鑰；變更供應商或 API 位址後不會沿用原本的金鑰，請重新輸入」 (this provider needs an API key; the stored key is not kept after the provider or API address changes): when the provider or API address changes, the stored key is not reused, as intended. Enter the key and save again.
+
+</details>
+
+<details>
+<summary><b>Editing an account in the admin dashboard returns <code>422</code> with an error about the username</b></summary>
+
+The account was created before 7.0.0 with characters that are no longer accepted (such as Cyrillic or full-width letters). It still signs in, but the edit dialog always sends the username, so rename it to use only Chinese characters, ASCII letters, digits, `_`, and `-` before saving, or send only the fields to change with `PUT /api/admin/users/{user_id}`.
+
+</details>
+
+<details>
+<summary><b>Uploading a PDF returns <code>400</code>: 「PDF 文件中沒有可提取的文字…」 (the PDF has no extractable text)</b></summary>
+
+Every page is an image or unreadable text, and OCR is not configured or failed. Set up the vision model for OCR of scanned PDF pages in `.env` (Microsoft Foundry, OpenAI, or Gemini, in that order; see the [configuration reference](configuration_en.md#llm-providers-and-models)) and upload the file again. Such PDFs stored by 6.0.0 hold only placeholder text, and a rebuild falls back to the stored content when re-extraction fails; delete those documents, set up OCR, and upload them again.
+
+</details>
+
+<details>
+<summary><b>After a rebuild: 「以下文件重建索引失敗，請查看後端日誌後再重建一次」 (these documents failed to rebuild; check the backend log and rebuild again)</b></summary>
+
+The backend log has 「處理文檔 &lt;id&gt; (&lt;file name&gt;) 失敗」 (processing document failed) with the reason. Documents whose re-extraction or chunking failed keep their old chunks, and other documents are unaffected; fix the cause and rebuild again.
+
+</details>
+
+<details>
+<summary><b>An upload, delete, or startup fails and the log says 「BM25 add attempt 3 failed」 or 「BM25 delete attempt 3 failed」</b></summary>
+
+A BM25 index write still failed after 3 attempts. 6.0.0 ignored this error and left BM25 out of step with the vector index; 7.0.0 fails the operation instead. Check that the backend account can write to `BM25_INDEX_DIR`, that there is enough disk space, and that no other process keeps holding the `bm25_write.lock` inside it, then try again.
+
+</details>
+
+<details>
+<summary><b>A custom API tool returns <code>status_code</code> <code>400</code>: 「上游轉址未跟隨：…」 (upstream redirect not followed)</b></summary>
+
+- 「轉址到其他來源，已拒絕」 (redirect to another origin refused): a method other than `GET`, `HEAD`, or `OPTIONS` got a redirect to another origin (different scheme, host, or port).
+- 「轉址次數超過上限 (5)」 (too many redirects): there were more than 5 redirects.
+
+Change the tool URL to the final URL and test again.
+
+</details>
+
+<details>
+<summary><b><code>web_fetch</code> reports 「網頁讀取失敗：該網址遭安全防護拒絕或格式無效」 (blocked by security checks or invalid) and the log says 「轉址目標不在允許的網域內」 (redirect target not in the allowed domains)</b></summary>
+
+The URL redirects to a domain that is not in `WEB_FETCH_ALLOWED_DOMAINS`. If it is safe to read, add the redirect target's domain to the allowlist and restart the backend.
+
+</details>
 
 ---
 

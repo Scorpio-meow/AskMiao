@@ -4,6 +4,11 @@
 
 > 本文件說明如何把既有部署升級到新版本，並附上回退步驟與常見問題。每個版本的完整變更見 [CHANGELOG](../CHANGELOG.md)。
 
+- [從 6.0.0 升級到 7.0.0](#從-600-升級到-700)
+  - [7.0.0 的變更與需要的動作](#700-的變更與需要的動作)
+  - [升級到 7.0.0 的步驟](#升級到-700-的步驟)
+  - [回退到 6.0.0](#回退到-600)
+  - [升級到 7.0.0 後的常見狀況](#升級到-700-後的常見狀況)
 - [從 5.0.0 升級到 6.0.0](#從-500-升級到-600)
   - [6.0.0 的變更與需要的動作](#600-的變更與需要的動作)
   - [升級到 6.0.0 的步驟](#升級到-600-的步驟)
@@ -29,6 +34,145 @@
   - [步驟 5：驗證升級結果](#步驟-5驗證升級結果)
   - [回退到 2.2.x](#回退到-22x)
   - [常見問題](#常見問題)
+
+---
+
+## 從 6.0.0 升級到 7.0.0
+
+適用於從 6.0.0 升級到 7.0.0（2026-10-31），變更見 [CHANGELOG](../CHANGELOG.md#700---2026-10-31)。這一版把聊天改為使用各帳號的 API 連線，資料庫新增 `llm_connections` 資料表（啟動時自動建立）；後端與前端的相依套件與 6.0.0 相同，`.env` 也沒有新的必填設定。需要動手的是替每個帳號準備 API 連線、調整自行串接 API 的客戶端，以及重新建置前端；建議升級後執行一次重建索引，讓既有文件套用這一版的擷取與切塊修正。
+
+### 7.0.0 的變更與需要的動作
+
+| 項目 | 6.0.0 | 7.0.0 | 需要的動作 |
+|---|---|---|---|
+| 聊天使用的模型與金鑰 | `.env` 的 `MODEL_NAME`、`AVAILABLE_MODELS`、各供應商金鑰與 `LLM_API_BASE`，所有帳號共用 | 只使用帳號自己的個人連線與管理員開放給它的共用連線，存在新的 `llm_connections` 資料表；沒有任何連線的帳號（含管理員）無法對話 | 依 [升級步驟](#升級到-700-的步驟) 第 4 點建立連線 |
+| `.env` 的 LLM 設定 | 聊天、AI 摘要、`GET /api/tags` 與 PDF 掃描頁 OCR 共用 | 只用於 AI 摘要、`GET /api/tags` 與 PDF 掃描頁 OCR | 需要這些功能時保留，不必刪除 |
+| Claude 的輸出 token 上限 | `.env` 的 `ANTHROPIC_MAX_TOKENS` | 每個 Claude 連線（`anthropic`，或 Foundry 上的 Claude 部署）必填「輸出 token 上限」，與模型的輸出上限取較小值；`ANTHROPIC_MAX_TOKENS` 只用於系統模型 | 建立 Claude 連線時填入，可沿用 `ANTHROPIC_MAX_TOKENS` 的值 |
+| 個人連線的 API 位址 | 無 | 一般帳號的個人連線只能指向公開位址；管理員的個人連線與共用連線不受限制 | 內部網路的服務（例如本機 Ollama）由管理員建成共用連線 |
+| `POST /api/chat/send` 與 `GET /api/chat/models` | `model_name` 選填，未帶時用 `MODEL_NAME`；`GET /api/chat/models` 回傳 `.env` 的模型清單 | `connection_id` 與 `model_name` 必填，連線不屬於自己、未開放給自己或模型不在清單內時回傳 `400`；`GET /api/chat/models` 需要登入，回傳 `{"connections": [{id, name, provider, scope, models}]}` | 自行串接的客戶端先取得可用的連線與模型，送出時一併帶入 |
+| `PUT /api/auth/me` | 可更新電子郵件，或帶 `current_password`、`new_password` 變更密碼 | 只更新電子郵件；密碼欄位會被忽略，不會報錯，密碼也不會變更 | 變更密碼改用 `POST /api/auth/change-password` |
+| 對話端點 | `GET /api/chat/conversations` 每段附最近 5 則訊息，`GET /api/chat/conversations/{conversation_id}` 附最新 500 則 | 兩者的 `messages` 一律為空陣列 | 訊息改以 `GET /api/chat/conversations/{conversation_id}/messages`（`limit`、`offset`）讀取 |
+| 重建索引 | 先清空整個索引再逐份寫回，期間知識庫查不到資料 | 逐份以新片段取代舊片段，其他文件照常可查；回應新增 `failed_documents` | 讀取回應的整合依需要處理 `failed_documents` |
+| 索引寫入失敗 | BM25 寫入失敗只寫入錯誤日誌；刪除文件時移除索引失敗仍回報成功 | 上傳、刪除、重建該文件或啟動會失敗，刪除回傳 `500` | 出現時檢查 `BM25_INDEX_DIR` 的權限與磁碟空間 |
+| 文件擷取與切塊 | 中間有一段 FAQ 的文件只收錄第一個「Q：」行之後的內容；過長的問答整段成為一個片段；DOCX 的表格排在文末；PPTX 不含群組內的圖形與備忘稿；部分 PDF 的數字擷取成「俸」這類字 | 已修正 | 執行一次重建索引，讓原始檔仍在的文件重新擷取 |
+| 沒有文字的 PDF | 擷取不到文字的頁面以佔位文字入庫 | 沒有任何一頁擷取到文字時回傳 `400` | 需要收錄掃描檔時，先設定 PDF 掃描頁 OCR 使用的視覺模型（見 [設定參考](configuration.md#llm-供應商與模型)） |
+| 使用者名稱 | `\w` 規則，接受各語系文字、全形字母與結尾的換行 | 只接受中文、英文字母、數字、`_`、`-` | 既有帳號照常登入；在管理後台編輯名稱不符合規則的帳號時，要一併改成符合規則的名稱 |
+| 停用後重新啟用的帳號 | 停用前簽發的權杖在重新啟用後恢復有效 | 停用即撤銷，重新啟用後要重新登入 | 無 |
+| 工具名稱長度 | 由 OpenAPI `operationId` 與 MCP 產生的名稱不限長度 | 交給模型的名稱最多 64 字元，過長的截斷為前 55 字元加上 `_` 與 8 碼雜湊；手動建立或匯入時超過回傳 `400` | 技能的 `allowed-tools` 列出過長的工具名稱時，改用 `GET /api/chat/tools` 列出的新名稱 |
+| 自訂 API 工具的轉址 | 所有方法都跟隨跨來源轉址（不轉送憑證標頭） | `GET`、`HEAD`、`OPTIONS` 以外的方法只跟隨同一來源的轉址；被擋下或超過 5 次時回傳 `400` | 會轉址到其他網域的 `POST` 等工具，把網址改成最終的網址 |
+| `web_fetch` 的網域白名單 | 只檢查初始網址；設定 `OLLAMA_API_KEY` 時優先使用 Ollama Web Fetch | 每次轉址都檢查；白名單不是 `*` 時不使用 Ollama Web Fetch | 需要的轉址目標網域加入 `WEB_FETCH_ALLOWED_DOMAINS` |
+| Docker 映像 | 沒有提供應用程式的 Dockerfile | 新增 `deploy/`（Docker Compose）與根目錄的 `.dockerignore`，建置內容排除 `.env`、`backend/keys`、`backend/data`、`backend/logs`、`node_modules` 等 | 以 repo 根目錄自建映像、並依賴映像內 `.env`、金鑰或資料的部署，改以 `env_file` 與資料卷提供（`deploy/docker-compose.yml` 的做法） |
+| `deploy/gen-env.sh` 的 `COOKIE_SECURE` | 無 | `PUBLIC_ORIGIN` 以 `https://` 開頭時寫入 `true` | 以 7.0.0 發行前的 `gen-env.sh` 產生 `deploy/.env`、又以 HTTPS 提供服務時，把 `COOKIE_SECURE` 改為 `true` |
+| `rag_chunks` 的 id | SQLite 可能重用刪除後的 id | 新建立的 SQLite 資料庫以 `AUTOINCREMENT` 建立 | 無；既有的 SQLite 資料表不會改寫 |
+| 相依套件 | — | `backend/requirements.txt`、`requirements.in` 與 `frontend/bun.lock` 與 6.0.0 相同 | 不需要重新安裝；前端仍要重新建置 |
+
+### 升級到 7.0.0 的步驟
+
+1. **停機並備份**：停止後端，備份資料庫、`backend/data/` 與 `backend/.env`。API 連線的金鑰以 `TOOL_SECRETS_KEY` 加密存放，這把金鑰要與資料庫備份一起保存。
+2. **更新程式碼並重新建置前端**：後端與前端的相依套件與 6.0.0 相同，不需要執行 `pip install` 或 `bun install`；在 `frontend/` 執行 `bun run build`。`.env` 不需要新增設定，原本的 LLM 設定保留給 AI 摘要、`GET /api/tags` 與 PDF OCR 使用。
+3. **啟動後端**：`python main.py`。`llm_connections` 資料表在啟動時自動建立；上傳時中斷、沒有任何片段的文件也會在這時補建索引，日誌會出現「上傳時未完成索引，已補建 N 個分塊」。
+4. **建立 API 連線**：以管理員登入，在「管理後台 → 共用 API 連線」新增連線，填入原本 `.env` 的供應商、API 位址與金鑰；模型可以按「從 API 取得模型」勾選（Foundry 需手動填寫部署名稱），Claude 連線要填「輸出 token 上限」。「可使用的帳號」選所有帳號（包含之後自行註冊的帳號）或勾選特定帳號，也可以在編輯帳號時直接勾選它能用的共用連線。儲存後在連線上按「測試」確認。不想共用金鑰時，改請各帳號在「個人資料 → 我的 API 連線」自行新增；欄位說明見 [設定參考：API 連線](configuration.md#api-連線)。
+5. **自行串接 API 的客戶端**：
+   - `POST /api/chat/send` 帶 `connection_id` 與 `model_name`，可用的值由 `GET /api/chat/models` 取得（需要登入）。
+   - 變更密碼改用 `POST /api/auth/change-password`；送到 `PUT /api/auth/me` 的密碼欄位會被忽略，不會報錯。
+   - 對話的訊息改由 `GET /api/chat/conversations/{conversation_id}/messages` 分頁讀取；使用者訊息的 `attachments` 會帶出附件抽出的文字 `content`。
+   - `POST /api/documents/rebuild-index` 的回應多了 `failed_documents`。
+   - 以名稱比對工具的設定（例如技能的 `allowed-tools`）：名稱超過 64 字元的自訂 API 工具或 MCP 工具，交給模型的名稱改為前 55 字元加上 `_` 與 8 碼雜湊，請改用 `GET /api/chat/tools` 列出的名稱。
+6. **以 Docker 部署時**：
+   - 根目錄的 `.dockerignore` 讓映像不再包含 `.env`、`backend/keys`、`backend/data`、`backend/logs`。以 repo 根目錄自建映像的部署，改以 `env_file` 提供 `.env`、以資料卷保存 `data`、`keys`、`logs`，與 `deploy/docker-compose.yml` 相同；`keys` 沒有保存時，每次重建容器都會產生新的 RSA 金鑰，所有人都要重新登入。
+   - 以 HTTPS 提供服務時，確認 `deploy/.env` 的 `COOKIE_SECURE` 為 `true`。7.0.0 的 `gen-env.sh` 依 `PUBLIC_ORIGIN` 自動設定，7.0.0 發行前的版本一律寫入 `false`，需要手動改正後重建後端容器。
+7. **重建索引（建議）**：以管理員在知識庫頁面執行「重建索引」，原始檔仍在 `UPLOAD_DIR` 的文件會以這一版的擷取與切塊方式重新收錄（FAQ 判斷、過長問答的切塊、DOCX 表格順序、PPTX 群組與備忘稿、PDF 替代字形）。重建期間其他文件照常可查；完成的訊息列出失敗的文件時，查看後端日誌後再重建一次。
+8. **驗證**：
+   - [ ] `GET http://localhost:8001/health` 回傳 `{"status": "healthy"}`。
+   - [ ] 一般帳號的聊天頁模型選單列出開放給它的共用連線（或它自己的個人連線），送出訊息能收到回答；沒有任何連線的帳號看到「這個帳號還沒有可用的 AI 模型」的提示。
+   - [ ] 在「個人資料」變更密碼後，目前與其他瀏覽器的工作階段都要以新密碼重新登入。
+   - [ ] 在管理後台停用測試帳號再重新啟用後，該帳號原本的工作階段要重新登入。
+   - [ ] 重建索引完成的訊息沒有列出失敗的文件。
+   - [ ] 上傳一份有密碼保護的 PDF，結果顯示「PDF 文件被密碼保護，無法讀取」，而不是伺服器錯誤。
+
+### 回退到 6.0.0
+
+1. 停止後端，把程式碼切回 6.0.0，在 `frontend/` 重新執行 `bun run build`；相依套件相同，不需要重新安裝。
+2. 確認 `.env` 仍有聊天要用的 `MODEL_NAME`、`AVAILABLE_MODELS` 與供應商金鑰：6.0.0 的聊天只使用 `.env`，不會讀取 API 連線，所有帳號再次共用這組金鑰。
+3. `llm_connections` 資料表可以保留：6.0.0 不會讀取它，再次升級時連線仍在。但 6.0.0 刪除帳號時不會處理這張表：PostgreSQL 會因外鍵拒絕刪除擁有個人連線的帳號，請先刪除 `llm_connections` 中 `owner_id` 為該帳號 id 的列；SQLite 則會留下沒有主人的連線。被刪除的帳號也會留在共用連線的 `allowed_user_ids` 中，再次升級後請在「管理後台 → 共用 API 連線」檢查名單。
+4. 7.0.0 存回 `messages.context_used` 的附件文字可以保留：6.0.0 不會讀取，但它仍計入每位使用者的附件配額。
+5. 資料庫與索引不需要還原或重建：新建立的 SQLite 資料庫中以 `AUTOINCREMENT` 建立的 `rag_chunks` 在 6.0.0 照常運作，停用帳號時更新的 `users.tokens_valid_after` 6.0.0 也照常比對。
+6. 自行串接 API 的客戶端改回 6.0.0 的用法：`POST /api/chat/send` 的 `connection_id` 會被忽略，`model_name` 可以省略（使用 `MODEL_NAME`），帶入時必須在 `.env` 的模型清單中。
+
+### 升級到 7.0.0 後的常見狀況
+
+<details>
+<summary><b>聊天頁沒有可選的模型</b></summary>
+
+帳號沒有個人連線，也沒有被開放任何共用連線；`.env` 的模型不會再出現在聊天頁。依 [升級步驟](#升級到-700-的步驟) 第 4 點由管理員開放共用連線，或請該帳號在「個人資料 → 我的 API 連線」自行新增。
+
+</details>
+
+<details>
+<summary><b>送出訊息回傳 <code>400</code>：「找不到這個 API 連線，或你沒有使用權限」或「這個 API 連線沒有提供此模型」</b></summary>
+
+送出的 `connection_id` 不屬於自己或沒有開放給自己（例如管理員剛把帳號移出共用連線的名單），或 `model_name` 不在該連線的模型清單中。重新整理聊天頁再選一次模型；自行串接的客戶端重新以 `GET /api/chat/models` 取得。沒有帶 `connection_id` 或 `model_name` 時回傳 `422`。
+
+</details>
+
+<details>
+<summary><b>新增個人連線時回傳「API 位址無法使用：個人連線只能連到可從網際網路解析的公開位址…」</b></summary>
+
+一般帳號的個人連線不能指向內部網路或本機的服務，例如 `http://localhost:11434` 的 Ollama。請管理員把它建成共用連線並開放給需要的帳號。
+
+</details>
+
+<details>
+<summary><b>編輯連線時要求重新輸入金鑰</b></summary>
+
+訊息為「這個供應商需要 API 金鑰；變更供應商或 API 位址後不會沿用原本的金鑰，請重新輸入」：改了供應商或 API 位址時，已儲存的金鑰不會沿用，這是預期行為。輸入金鑰後再儲存。
+
+</details>
+
+<details>
+<summary><b>管理後台編輯帳號時回傳 <code>422</code>，錯誤提到使用者名稱</b></summary>
+
+帳號在 7.0.0 之前建立，名稱含現在不接受的字元（例如西里爾字母或全形字母）。帳號照常登入；但編輯對話框會一併送出使用者名稱，請把名稱改成只含中文、英文字母、數字、`_`、`-` 的名稱再儲存，或以 `PUT /api/admin/users/{user_id}` 只送要變更的欄位。
+
+</details>
+
+<details>
+<summary><b>上傳 PDF 回傳 <code>400</code>：「PDF 文件中沒有可提取的文字…」</b></summary>
+
+每一頁都是圖片或無法辨識的文字，而且 OCR 未設定或辨識失敗。在 `.env` 設定 PDF 掃描頁 OCR 使用的視覺模型（依序使用 Microsoft Foundry、OpenAI 或 Gemini，見 [設定參考](configuration.md#llm-供應商與模型)）後重新上傳。6.0.0 收錄的這類 PDF 只存了佔位文字，重建索引時重新擷取失敗會沿用資料庫中的內容；請刪除這些文件，設定 OCR 後重新上傳。
+
+</details>
+
+<details>
+<summary><b>重建索引後出現「以下文件重建索引失敗，請查看後端日誌後再重建一次」</b></summary>
+
+後端日誌有「處理文檔 &lt;id&gt; (&lt;檔名&gt;) 失敗」與原因。重新擷取或切塊失敗的文件保留原本的片段，其他文件不受影響；排除原因後再重建一次。
+
+</details>
+
+<details>
+<summary><b>上傳、刪除或啟動失敗，日誌出現「BM25 add attempt 3 failed」或「BM25 delete attempt 3 failed」</b></summary>
+
+BM25 索引寫入重試 3 次仍失敗。6.0.0 會忽略這個錯誤，讓 BM25 與向量索引不一致；7.0.0 改為讓該次操作失敗。檢查 `BM25_INDEX_DIR` 是否可由後端帳號寫入、磁碟空間是否足夠，以及是否有其他行程一直持有其中的 `bm25_write.lock`，排除後再試一次。
+
+</details>
+
+<details>
+<summary><b>自訂 API 工具回傳 <code>status_code</code> <code>400</code>：「上游轉址未跟隨：…」</b></summary>
+
+- 「轉址到其他來源，已拒絕」：`GET`、`HEAD`、`OPTIONS` 以外的方法收到轉址到其他來源（scheme、主機或埠號不同）的回應。
+- 「轉址次數超過上限 (5)」：轉址超過 5 次。
+
+把工具網址改成最終的網址後再測試。
+
+</details>
+
+<details>
+<summary><b><code>web_fetch</code> 回報「網頁讀取失敗：該網址遭安全防護拒絕或格式無效」，日誌出現「轉址目標不在允許的網域內」</b></summary>
+
+網址轉址到不在 `WEB_FETCH_ALLOWED_DOMAINS` 的網域。確定可以讀取時，把轉址目標的網域加入白名單後重新啟動後端。
+
+</details>
 
 ---
 

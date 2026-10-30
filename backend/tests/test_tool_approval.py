@@ -15,8 +15,8 @@ from sqlalchemy import create_engine, text
 
 from app.api import api_tools, chat as chat_api, mcp
 from app.core.jwt_auth import get_current_user_from_token
-from app.models import CustomApiTool, McpServer
-from app.models.database import Base, SessionLocal, engine, upgrade_schema
+from app.models import CustomApiTool
+from app.models.database import SessionLocal, upgrade_schema
 from app.rag import tool_approval
 from app.rag.tool_approval import ToolApprovalBroker, approval_broker, default_requires_approval
 from test_agent_guardrails import ScriptedLLM, answer, collect, research, make_agent, tool_call
@@ -128,8 +128,8 @@ def admin_client():
 
 
 @pytest.fixture
-def clean_tools():
-    Base.metadata.create_all(bind=engine)
+def clean_tools(existing_users):
+    existing_users(ADMIN_USER)
     names = ("approval_get_tool", "approval_post_tool")
 
     def remove():

@@ -1,13 +1,24 @@
+import hashlib
 import json
 import logging
 import re
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional, Tuple
 import yaml
+from app.core.limits import MAX_OPENAPI_SCHEMA_REFS, MAX_TOOL_NAME_CHARS
 from app.core.ssrf_protection import DnsPool, safe_fetch_text, SSRFProtectionError
 from app.core.error_response import SafeClientError, format_ssrf_rejection, log_and_get_error_id
 from app.models import BODY_CONTENT_TYPES, OAUTH2_CLIENT_CREDENTIALS
 
 logger = logging.getLogger(__name__)
+
+TOOL_NAME_HASH_CHARS = 8
+
+
+def fit_tool_name(name: str) -> str:
+    if len(name) <= MAX_TOOL_NAME_CHARS:
+        return name
+    digest = hashlib.sha256(name.encode("utf-8")).hexdigest()[:TOOL_NAME_HASH_CHARS]
+    return f"{name[:MAX_TOOL_NAME_CHARS - TOOL_NAME_HASH_CHARS - 1]}_{digest}"
 
 
 def load_yaml_without_aliases(text: str) -> Any:
@@ -146,34 +157,57 @@ class OpenApiParser:
                 elif isinstance(first_server, str):
                     return first_server.rstrip("/")
         return ""
-    @classmethod
-    def _resolve_ref(cls, ref: str, root_spec: Dict[str, Any], visited: Optional[set] = None) -> Dict[str, Any]:
-        """遞迴解析 $ref 本地內部參照引用"""
-        if visited is None:
-            visited = set()
-        if ref in visited or not ref.startswith("#/"):
-            return {"type": "object", "description": f"參照目標: {ref}"}
-        visited.add(ref)
-        parts = ref.lstrip("#/").split("/")
+    @staticmethod
+    def _lookup_pointer(ref: str, root_spec: Dict[str, Any]) -> Any:
         curr = root_spec
+        for part in ref.lstrip("#/").split("/"):
+            curr = curr[part.replace("~1", "/").replace("~0", "~")]
+        return curr
+    @classmethod
+    def _follow_ref(cls, ref: str, root_spec: Dict[str, Any]) -> Dict[str, Any]:
+        visited = set()
+        target: Any = {"$ref": ref}
+        while isinstance(target, dict) and "$ref" in target:
+            ref = target["$ref"]
+            if not isinstance(ref, str) or ref in visited or not ref.startswith("#/"):
+                return {}
+            visited.add(ref)
+            try:
+                target = cls._lookup_pointer(ref, root_spec)
+            except Exception:
+                return {}
+        return target if isinstance(target, dict) else {}
+    @classmethod
+    def _resolve_ref(
+        cls, ref: str, root_spec: Dict[str, Any], visited: frozenset = frozenset(), resolved: Optional[List[str]] = None
+    ) -> Dict[str, Any]:
+        """遞迴解析 $ref 本地內部參照引用"""
+        if resolved is None:
+            resolved = []
+        if ref in visited or not ref.startswith("#/") or len(resolved) >= MAX_OPENAPI_SCHEMA_REFS:
+            return {"type": "object", "description": f"參照目標: {ref}"}
+        resolved.append(ref)
+        visited = visited | {ref}
         try:
-            for p in parts:
-                p = p.replace("~1", "/").replace("~0", "~")
-                curr = curr[p]
+            curr = cls._lookup_pointer(ref, root_spec)
         except Exception:
             return {"type": "object", "description": f"無法解析之參照: {ref}"}
         if isinstance(curr, dict) and "$ref" in curr:
-            return cls._resolve_ref(curr["$ref"], root_spec, visited)
+            return cls._resolve_ref(curr["$ref"], root_spec, visited, resolved)
         elif isinstance(curr, dict):
-            return cls._clean_schema(curr, root_spec, visited)
+            return cls._clean_schema(curr, root_spec, visited, resolved)
         return curr if isinstance(curr, dict) else {}
     @classmethod
-    def _clean_schema(cls, schema: Dict[str, Any], root_spec: Dict[str, Any], visited: Optional[set] = None) -> Dict[str, Any]:
+    def _clean_schema(
+        cls, schema: Dict[str, Any], root_spec: Dict[str, Any], visited: frozenset = frozenset(), resolved: Optional[List[str]] = None
+    ) -> Dict[str, Any]:
         """遞迴清理並正規化 JSON Schema（相容 Function Calling 與各版本型別定義）"""
+        if resolved is None:
+            resolved = []
         if not isinstance(schema, dict):
             return {"type": "string"}
         if "$ref" in schema:
-            return cls._resolve_ref(schema["$ref"], root_spec, visited)
+            return cls._resolve_ref(schema["$ref"], root_spec, visited, resolved)
         cleaned: Dict[str, Any] = {}
         raw_type = schema.get("type")
         if isinstance(raw_type, list):
@@ -196,12 +230,12 @@ class OpenApiParser:
         if "properties" in schema and isinstance(schema["properties"], dict):
             props = {}
             for prop_name, prop_val in schema["properties"].items():
-                props[prop_name] = cls._clean_schema(prop_val, root_spec, visited)
+                props[prop_name] = cls._clean_schema(prop_val, root_spec, visited, resolved)
             cleaned["properties"] = props
         if "required" in schema and isinstance(schema["required"], list):
             cleaned["required"] = [str(r) for r in schema["required"]]
         if "items" in schema and isinstance(schema["items"], dict):
-            cleaned["items"] = cls._clean_schema(schema["items"], root_spec, visited)
+            cleaned["items"] = cls._clean_schema(schema["items"], root_spec, visited, resolved)
         return cleaned
     @classmethod
     def _extract_endpoints(
@@ -264,7 +298,7 @@ class OpenApiParser:
         has_body = False
         for p in all_raw_params:
             if isinstance(p, dict) and "$ref" in p:
-                p = cls._resolve_ref(p["$ref"], root_spec)
+                p = cls._follow_ref(p["$ref"], root_spec)
             if not isinstance(p, dict):
                 continue
             p_name = p.get("name")
@@ -273,9 +307,6 @@ class OpenApiParser:
             p_desc = p.get("description", "")
             if not p_name:
                 continue
-            param_locations[p_name] = p_in
-            if p_required or p_in == "path":
-                required_params.append(p_name)
             if version == "swagger_2.0" and p_in == "body":
                 has_body = True
                 body_schema = p.get("schema", {})
@@ -288,11 +319,16 @@ class OpenApiParser:
                         if b_req not in required_params:
                             required_params.append(b_req)
                 else:
-                    param_properties[p_name] = {
-                        "type": cleaned_body_schema.get("type", "object"),
-                        "description": p_desc or "請求本文資料物件"
-                    }
+                    param_properties["request_body"] = {**cleaned_body_schema, "description": p_desc or "請求本文資料物件"}
+                    param_locations["request_body"] = "body"
+                    if p_required:
+                        required_params.append("request_body")
                 continue
+            if p_in == "formData":
+                has_body = True
+            param_locations[p_name] = "body" if p_in == "formData" else p_in
+            if p_required or p_in == "path":
+                required_params.append(p_name)
             if "schema" in p:
                 cleaned_p_schema = cls._clean_schema(p["schema"], root_spec)
                 if p_desc and "description" not in cleaned_p_schema:
@@ -311,10 +347,13 @@ class OpenApiParser:
                 if p_type == "array" and "items" in p:
                     prop_item["items"] = cls._clean_schema(p["items"], root_spec)
                 param_properties[p_name] = prop_item
+        consumes = op.get("consumes", root_spec.get("consumes"))
+        if version == "swagger_2.0" and isinstance(consumes, list):
+            body_content_type = next((mime for mime in BODY_CONTENT_TYPES if mime in consumes), body_content_type)
         if version != "swagger_2.0" and "requestBody" in op:
             req_body = op.get("requestBody")
             if isinstance(req_body, dict) and "$ref" in req_body:
-                req_body = cls._resolve_ref(req_body["$ref"], root_spec)
+                req_body = cls._follow_ref(req_body["$ref"], root_spec)
             if isinstance(req_body, dict):
                 has_body = True
                 req_body_required = bool(req_body.get("required", False))
@@ -341,10 +380,7 @@ class OpenApiParser:
                                 if b_req not in required_params:
                                     required_params.append(b_req)
                     else:
-                        param_properties["request_body"] = {
-                            "type": cleaned_body.get("type", "object"),
-                            "description": req_body.get("description", "請求本文資料")
-                        }
+                        param_properties["request_body"] = {**cleaned_body, "description": req_body.get("description", "請求本文資料")}
                         param_locations["request_body"] = "body"
                         if req_body_required:
                             required_params.append("request_body")
@@ -396,7 +432,7 @@ class OpenApiParser:
         resolved = {}
         for name, scheme in schemes.items():
             if isinstance(scheme, dict) and "$ref" in scheme:
-                scheme = cls._resolve_ref(scheme["$ref"], root_spec)
+                scheme = cls._follow_ref(scheme["$ref"], root_spec)
             if isinstance(scheme, dict):
                 resolved[name] = scheme
         return resolved
@@ -452,11 +488,11 @@ class OpenApiParser:
             clean_op = re.sub(r'[^a-zA-Z0-9_]', '_', operation_id.strip())
             clean_op = re.sub(r'_+', '_', clean_op).strip('_')
             if clean_op and re.match(r'^[a-zA-Z]', clean_op):
-                return clean_op.lower()
+                return fit_tool_name(clean_op.lower())
         path_clean = re.sub(r'[\{\}\/]', '_', path)
         combined = f"{method.lower()}_{path_clean}"
         clean_name = re.sub(r'[^a-zA-Z0-9_]', '_', combined)
         clean_name = re.sub(r'_+', '_', clean_name).strip('_')
         if not re.match(r'^[a-zA-Z]', clean_name):
             clean_name = f"api_{clean_name}"
-        return clean_name[:64]
+        return clean_name[:MAX_TOOL_NAME_CHARS]

@@ -3,14 +3,20 @@ import io
 import math
 import os
 import logging
-from typing import Optional, List, Dict, Any
+import re
+from typing import Optional, List, Dict, Set
 import httpx
 import pymupdf as fitz
-from pypdf import PdfReader
 from fontTools.ttLib import TTFont
+from pypdf import PdfReader
 from app.core.config import settings
 from app.core.limits import MAX_OCR_PIXELS
+from app.services.document_processor import DocumentRejected
 logger = logging.getLogger(__name__)
+TOUNICODE_SECTION_PATTERN = re.compile(rb"begin(bfchar|bfrange)(.*?)end\1", re.S)
+TOUNICODE_TOKEN_PATTERN = re.compile(rb"<([0-9A-Fa-f]+)>|\[[^\]]*\]")
+OBJECT_REFERENCE_PATTERN = re.compile(r"(\d+) 0 R")
+REPLACEMENT_CHARACTER = 0xFFFD
 class PDFService:
     """企業級穩健 PDF 處理服務"""
     OCR_RENDER_DPI = 150
@@ -55,88 +61,76 @@ class PDFService:
         valid_ratio = valid_count / len(text)
         return valid_ratio < (1 - threshold)
     @staticmethod
-    def _font_has_tounicode(doc, xref: int) -> bool:
-        """檢查字型是否已包含 ToUnicode 映射"""
-        try:
-            key = doc.xref_get_key(xref, "ToUnicode")
-            return bool(key and len(key) >= 2 and key[0] != "null" and key[1] != "null")
-        except Exception:
-            return False
+    def _alternate_glyph_unicodes(font_bytes: bytes) -> Dict[int, int]:
+        font = TTFont(io.BytesIO(font_bytes))
+        if "GSUB" not in font or font["GSUB"].table.LookupList is None:
+            return {}
+        unicode_of_glyph: Dict[str, int] = {}
+        for code_point, glyph_name in sorted((font.getBestCmap() or {}).items()):
+            unicode_of_glyph.setdefault(glyph_name, code_point)
+        glyph_ids = {name: gid for gid, name in enumerate(font.getGlyphOrder())}
+        alternates: Dict[int, int] = {}
+        for lookup in font["GSUB"].table.LookupList.Lookup:
+            for subtable in lookup.SubTable:
+                mapping = getattr(getattr(subtable, "ExtSubTable", subtable), "mapping", None) or {}
+                for source, target in mapping.items():
+                    if target not in unicode_of_glyph and source in unicode_of_glyph:
+                        alternates.setdefault(glyph_ids[target], unicode_of_glyph[source])
+        return alternates
     @staticmethod
-    def _repair_fonts_and_inject_tounicode(doc) -> int:
-        """
-        掃描 PDF 內部所有內嵌字型，使用 fontTools 分析其內部 cmap 表，
-        若缺少 ToUnicode 則動態建立 Adobe-Identity-UCS CMap stream 注入，修復亂碼
-        """
-        repaired_count = 0
-        try:
-            seen_xrefs = set()
-            for page_num in range(len(doc)):
-                page = doc[page_num]
-                font_list = page.get_fonts(full=True)
-                for font_tuple in font_list:
-                    xref = font_tuple[0]
-                    name = font_tuple[3]
-                    if xref in seen_xrefs or xref <= 0:
+    def _mapped_codes(cmap_stream: bytes) -> Set[int]:
+        codes: Set[int] = set()
+        for kind, body in TOUNICODE_SECTION_PATTERN.findall(cmap_stream):
+            tokens = [int(m.group(1), 16) if m.group(1) else None for m in TOUNICODE_TOKEN_PATTERN.finditer(body)]
+            if kind == b"bfchar":
+                codes.update(code for code, target in zip(tokens[0::2], tokens[1::2]) if target != REPLACEMENT_CHARACTER)
+            else:
+                for start, end, target in zip(tokens[0::3], tokens[1::3], tokens[2::3]):
+                    if target != REPLACEMENT_CHARACTER:
+                        codes.update(range(start, end + 1))
+        return codes
+    @classmethod
+    def _map_unmapped_alternate_glyphs(cls, doc) -> int:
+        added = 0
+        seen = set()
+        for page in doc:
+            for xref, _, font_type, name, _, encoding, *_ in page.get_fonts(full=True):
+                if xref in seen or font_type != "Type0" or not encoding.startswith("Identity"):
+                    continue
+                seen.add(xref)
+                try:
+                    kind, to_unicode = doc.xref_get_key(xref, "ToUnicode")
+                    if kind != "xref":
                         continue
-                    seen_xrefs.add(xref)
-                    if PDFService._font_has_tounicode(doc, xref):
+                    kind, descendants = doc.xref_get_key(xref, "DescendantFonts")
+                    if kind == "xref":
+                        descendants = doc.xref_object(int(descendants.split()[0]))
+                    descendant = int(OBJECT_REFERENCE_PATTERN.search(descendants).group(1))
+                    if (
+                        doc.xref_get_key(descendant, "Subtype")[1] != "/CIDFontType2"
+                        or doc.xref_get_key(descendant, "CIDToGIDMap")[1] not in ("null", "/Identity")
+                    ):
                         continue
-                    try:
-                        extracted = doc.extract_font(xref)
-                        font_bytes = extracted.get("buffer")
-                        if not font_bytes:
-                            continue
-                        tt = TTFont(io.BytesIO(font_bytes))
-                        cmap_table = tt.getBestCmap()
-                        if not cmap_table:
-                            continue
-                        glyph_order = tt.getGlyphOrder()
-                        glyph_to_gid = {glyph: idx for idx, glyph in enumerate(glyph_order)}
-                        gid_to_uni: Dict[int, int] = {}
-                        for uni_cp, glyph_name in cmap_table.items():
-                            gid = glyph_to_gid.get(glyph_name)
-                            if gid is not None:
-                                gid_to_uni[gid] = uni_cp
-                        if not gid_to_uni:
-                            continue
-                        lines = [
-                            "/CIDInit /ProcSet findresource begin",
-                            "12 dict begin begincmap",
-                            "/CIDSystemInfo << /Registry (Adobe) /Ordering (UCS) /Supplement 0 >> def",
-                            "/CMapName /Adobe-Identity-UCS def",
-                            "1 begincodespacerange",
-                            "<0000> <FFFF>",
-                            "endcodespacerange",
-                            f"{len(gid_to_uni)} beginbfchar",
-                        ]
-                        for gid, uni_cp in gid_to_uni.items():
-                            if uni_cp <= 0xFFFF:
-                                lines.append(f"<{gid:04X}> <{uni_cp:04X}>")
-                            else:
-                                utf16_hex = chr(uni_cp).encode("utf-16-be").hex().upper()
-                                lines.append(f"<{gid:04X}> <{utf16_hex}>")
-                        lines.extend([
-                            "endbfchar",
-                            "endcmap",
-                            "CMapName currentdict /CMap defineresource pop",
-                            "end",
-                            "end"
-                        ])
-                        cmap_str = "\n".join(lines)
-                        cmap_bytes = cmap_str.encode("latin1")
-                        new_xref = doc.get_new_xref()
-                        doc.update_object(new_xref, "<<>>")
-                        doc.update_stream(new_xref, cmap_bytes)
-                        doc.xref_set_key(xref, "ToUnicode", f"{new_xref} 0 R")
-                        repaired_count += 1
-                        logger.info(f"成功為字型 {name} (xref={xref}) 注入 ToUnicode CMap 表 ({len(gid_to_uni)} 字元)")
-                    except Exception as fe:
-                        logger.debug(f"分析字型 {name} (xref={xref}) 失敗: {fe}")
+                    descriptor = int(doc.xref_get_key(descendant, "FontDescriptor")[1].split()[0])
+                    font_file = int(doc.xref_get_key(descriptor, "FontFile2")[1].split()[0])
+                    alternates = cls._alternate_glyph_unicodes(doc.xref_stream(font_file))
+                    stream_xref = int(to_unicode.split()[0])
+                    cmap_stream = doc.xref_stream(stream_xref)
+                    mapped = cls._mapped_codes(cmap_stream)
+                    missing = {gid: code_point for gid, code_point in alternates.items() if gid not in mapped}
+                    end = cmap_stream.rfind(b"endcmap")
+                    if not missing or end < 0:
                         continue
-        except Exception as e:
-            logger.warning(f"掃描與修復字型 CMap 時發生錯誤: {e}")
-        return repaired_count
+                    entries = "\n".join(
+                        f"<{gid:04X}> <{chr(code_point).encode('utf-16-be').hex().upper()}>"
+                        for gid, code_point in sorted(missing.items())
+                    )
+                    section = f"\n{len(missing)} beginbfchar\n{entries}\nendbfchar\n".encode("ascii")
+                    doc.update_stream(stream_xref, cmap_stream[:end] + section + cmap_stream[end:])
+                    added += len(missing)
+                except Exception as e:
+                    logger.debug(f"字型 {name} (xref={xref}) 的替代字形對應檢查失敗: {e}")
+        return added
     @staticmethod
     def _is_vision_available() -> bool:
         """檢查是否配置了可用的 Vision 模型端點"""
@@ -273,25 +267,24 @@ class PDFService:
     @classmethod
     def extract_text_robust(cls, file_path: str, max_ocr_pages: Optional[int]) -> str:
         """
-        同步/標準進入點：執行多層防護 PDF 抽取（支援內嵌字型修復 + Vision OCR 智慧補全）
+        同步/標準進入點：執行多層防護 PDF 抽取（支援 Vision OCR 智慧補全）
         max_ocr_pages：最多送 Vision OCR 的頁數（每頁一次付費呼叫）；None 表示不限，只用於管理員上傳
         """
         return cls._extract_sync_internal(file_path, max_ocr_pages)
     @classmethod
     def _extract_sync_internal(cls, file_path: str, max_ocr_pages: Optional[int]) -> str:
-        """內部提取實作：PyMuPDF + 字型 CMap 修復 + Vision OCR + pypdf 雙重備援"""
+        """內部提取實作：PyMuPDF（補上 ToUnicode 漏掉的替代字形）+ Vision OCR + pypdf 雙重備援"""
         import concurrent.futures
         try:
             doc = fitz.open(file_path)
-            if doc.is_encrypted:
-                try:
-                    doc.authenticate("")
-                except Exception:
-                    raise ValueError("PDF 文件被密碼保護，無法讀取")
-            repaired_fonts = cls._repair_fonts_and_inject_tounicode(doc)
-            if repaired_fonts > 0:
-                logger.info(f"PDF 檔案 {os.path.basename(file_path)} 共修復了 {repaired_fonts} 個字型之 ToUnicode 映射")
+            if doc.is_encrypted and not doc.authenticate(""):
+                doc.close()
+                raise DocumentRejected("PDF 文件被密碼保護，無法讀取")
+            mapped_glyphs = cls._map_unmapped_alternate_glyphs(doc)
+            if mapped_glyphs > 0:
+                logger.info(f"PDF 檔案 {os.path.basename(file_path)} 補上了 {mapped_glyphs} 個替代字形的 ToUnicode 對應")
             pages_text: List[Optional[str]] = [None] * len(doc)
+            text_pages = 0
             ocr_jobs = []
             for page_idx in range(len(doc)):
                 page_num = page_idx + 1
@@ -299,6 +292,7 @@ class PDFService:
                 page_raw = page.get_text("text")
                 if page_raw and page_raw.strip() and not cls._is_garbled(page_raw):
                     pages_text[page_idx] = f"--- 第 {page_num} 頁 ---\n{page_raw.strip()}\n"
+                    text_pages += 1
                 else:
                     blocks = page.get_text("blocks")
                     block_texts = [b[4].strip() for b in blocks if len(b) >= 5 and b[4].strip()]
@@ -306,6 +300,7 @@ class PDFService:
                     
                     if joined_blocks and not cls._is_garbled(joined_blocks):
                         pages_text[page_idx] = f"--- 第 {page_num} 頁 ---\n{joined_blocks}\n"
+                        text_pages += 1
                     else:
                         logger.warning(f"第 {page_num} 頁文字為空或判定為亂碼 (文字長度: {len(page_raw)})，加入 OCR 佇列")
                         ocr_jobs.append((page_idx, page_num, page))
@@ -338,6 +333,7 @@ class PDFService:
                             ocr_text = future.result()
                             if ocr_text and not ocr_text.startswith("[第 "):
                                 pages_text[page_idx] = f"--- 第 {page_num} 頁 (OCR 識別) ---\n{ocr_text.strip()}\n"
+                                text_pages += 1
                             else:
                                 pages_text[page_idx] = f"--- 第 {page_num} 頁 ---\n{ocr_text.strip()}\n"
                         except Exception as e:
@@ -349,11 +345,14 @@ class PDFService:
                     page_num = job[1]
                     pages_text[page_idx] = f"--- 第 {page_num} 頁 ---\n[本頁為圖檔或無可提取純文字]\n"
             doc.close()
+            if not text_pages:
+                raise DocumentRejected("PDF 文件中沒有可提取的文字：每一頁都是圖片或無法辨識的文字，且 OCR 未設定或辨識失敗")
             final_pages = [p for p in pages_text if p is not None]
             full_text = "\n".join(final_pages).strip()
-            if full_text:
-                logger.info(f"成功從 PDF 提取 {len(final_pages)} 頁，共 {len(full_text)} 字元")
-                return full_text
+            logger.info(f"成功從 PDF 提取 {len(final_pages)} 頁，共 {len(full_text)} 字元")
+            return full_text
+        except DocumentRejected:
+            raise
         except Exception as e:
             logger.warning(f"PyMuPDF 穩健讀取失敗 ({e})，啟動 pypdf 備援降級")
         text_content = []
@@ -361,9 +360,11 @@ class PDFService:
             pdf_reader = PdfReader(file)
             if pdf_reader.is_encrypted:
                 try:
-                    pdf_reader.decrypt("")
+                    decrypted = pdf_reader.decrypt("")
                 except Exception:
-                    raise ValueError("PDF 文件被密碼保護，無法讀取")
+                    decrypted = False
+                if not decrypted:
+                    raise DocumentRejected("PDF 文件被密碼保護，無法讀取")
             for page_num, page in enumerate(pdf_reader.pages):
                 try:
                     page_text = page.extract_text()
@@ -372,5 +373,5 @@ class PDFService:
                 except Exception:
                     continue
         if not text_content:
-            raise ValueError("PDF 文件中沒有可提取的文本內容（可能是純圖檔掃描件）")
+            raise DocumentRejected("PDF 文件中沒有可提取的文本內容（可能是純圖檔掃描件）")
         return "\n".join(text_content)

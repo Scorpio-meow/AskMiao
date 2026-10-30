@@ -388,8 +388,9 @@ function Documents() {
     try {
       const response = await api.post('/documents/rebuild-index');
       const data = response.data;
+      const failedDocuments = data.failed_documents;
       const messageParts = [
-        `索引重建成功！`,
+        failedDocuments.length > 0 ? `索引重建完成，${failedDocuments.length} 份文件失敗` : `索引重建成功！`,
         `文件: ${data.document_count || 0}`,
         `向量塊: ${data.chunk_count || 0}`,
         `切塊設定: ${data.chunk_size || '?'}/${data.chunk_overlap || '?'}`
@@ -401,10 +402,19 @@ function Documents() {
         messageParts.push(`結構化記錄: ${data.records_detected}`);
       }
       setSuccess(messageParts.join(' | '));
+      const warnings = [];
       if (data.missing_source_files && data.missing_source_files.length > 0) {
-        setLocalError(
+        warnings.push(
           `以下文件的原始檔已遺失，已改用資料庫內容重建，建議重新上傳：${data.missing_source_files.join('、')}`
         );
+      }
+      if (failedDocuments.length > 0) {
+        warnings.push(
+          `以下文件重建索引失敗，請查看後端日誌後再重建一次：${failedDocuments.map((doc) => doc.filename).join('、')}`
+        );
+      }
+      if (warnings.length > 0) {
+        setLocalError(warnings.join('；'));
       }
       setRebuildDialog(false);
       fetchDocuments();
@@ -603,9 +613,11 @@ function Documents() {
                         )}
                       </div>
                     )}
-                    <div className={styles.docMeta}>
-                      <span>上傳時間：{parseServerDate(doc.created_at).toLocaleString('zh-TW')}</span>
-                    </div>
+                    {doc.created_at && (
+                      <div className={styles.docMeta}>
+                        <span>上傳時間：{parseServerDate(doc.created_at).toLocaleString('zh-TW')}</span>
+                      </div>
+                    )}
                   </div>
                   <div className={styles.docActions}>
                     <IconButton
@@ -895,7 +907,7 @@ function Documents() {
           <ul className={styles.rebuildNotes}>
             <li>適用於調整切塊參數、索引毀損或檢索結果異常時</li>
             <li>文件越多，重建所需時間越長；完成前請勿關閉此視窗</li>
-            <li>重建期間知識庫會暫時查不到資料</li>
+            <li>每份文件在換上新片段的瞬間會短暫查不到，其他文件照常可查</li>
             <li>已有的摘要（含手動修訂）會保留，只替缺少摘要的文件生成</li>
           </ul>
           {rebuildLoading && (

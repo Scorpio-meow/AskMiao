@@ -18,6 +18,9 @@ def test_admin_creates_accounts_with_the_registration_rules(env):
         ({"username": "carol", "email": "other@example.com", "password": "Secret123"}, "使用者名稱已被使用"),
         ({"username": "dave", "email": "carol@example.com", "password": "Secret123"}, "電子郵件已被使用"),
         ({"username": "bad name", "email": "bad@example.com", "password": "Secret123"}, "使用者名稱只能包含"),
+        ({"username": "аdmin", "email": "cyrillic@example.com", "password": "Secret123"}, "使用者名稱只能包含"),
+        ({"username": "ａdmin", "email": "fullwidth@example.com", "password": "Secret123"}, "使用者名稱只能包含"),
+        ({"username": "alice\n", "email": "newline@example.com", "password": "Secret123"}, "使用者名稱只能包含"),
         ({"username": "weak", "email": "weak@example.com", "password": "alllowercase1"}, "大寫"),
     ):
         response = root.post("/api/admin/users", json={**payload, "is_admin": False})
@@ -56,7 +59,14 @@ def test_admins_cannot_lock_themselves_out(env):
     assert (demoted["is_admin"], demoted["role"]) == (False, "user")
 
 
-@pytest.mark.parametrize("changes", [{"username": "a b"}, {"username": "ab"}, {"email": "not-an-email"}])
+@pytest.mark.parametrize("changes", [
+    {"username": "a b"},
+    {"username": "ab"},
+    {"username": "аdmin"},
+    {"username": "ａdmin"},
+    {"username": "alice\n"},
+    {"email": "not-an-email"},
+])
 def test_admin_user_updates_are_validated(env, changes):
     login, _, ids = env
     assert login("root").put(f"/api/admin/users/{ids['alice']}", json=changes).status_code == 422
@@ -84,6 +94,23 @@ def test_admin_sets_which_shared_connections_an_account_may_use(env):
 
     assert login("root").put(f"/api/admin/users/{ids['alice']}/llm-connections", json={"shared_connection_ids": [999]}).status_code == 400
     assert login("alice").get(f"/api/admin/users/{ids['alice']}/llm-connections").status_code == 403
+
+
+def test_access_changes_leave_unaffected_connections_untouched(env):
+    login, Session, ids = env
+    root = login("root")
+    untouched = root.post("/api/admin/llm-connections", json={**personal(name="不變"), "allowed_user_ids": [ids["root"]]}).json()["id"]
+    with Session() as session:
+        connection = session.get(LlmConnection, untouched)
+        connection.allowed_user_ids = json.dumps([ids["bob"], ids["root"]], separators=(",", ":"))
+        session.commit()
+        before = (connection.allowed_user_ids, connection.updated_at)
+
+    assert root.put(f"/api/admin/users/{ids['alice']}/llm-connections", json={"shared_connection_ids": []}).status_code == 200
+    assert root.delete(f"/api/admin/users/{ids['alice']}").status_code == 200
+    with Session() as session:
+        connection = session.get(LlmConnection, untouched)
+        assert (connection.allowed_user_ids, connection.updated_at) == before
 
 
 def test_model_discovery_uses_the_stored_key_and_network_scope(env, monkeypatch):
@@ -114,3 +141,19 @@ def test_model_discovery_uses_the_stored_key_and_network_scope(env, monkeypatch)
     monkeypatch.setattr(connections_api, "list_models", failing)
     failed = login("root").post("/api/llm-connections/discover-models", json={"provider": "foundry", "api_base": "https://x.services.ai.azure.com", "api_key": "k"})
     assert failed.status_code == 400 and "手動填寫" in failed.json()["detail"]
+
+
+def test_model_discovery_never_sends_the_stored_key_to_another_endpoint(env, monkeypatch):
+    login, _, _ = env
+    keys = []
+
+    async def fake_list_models(endpoint):
+        keys.append(endpoint.api_key)
+        return []
+
+    monkeypatch.setattr(connections_api, "list_models", fake_list_models)
+    alice = login("alice")
+    connection_id = alice.post("/api/llm-connections", json=personal()).json()["id"]
+    for target in ({"provider": "openai", "api_base": "https://other.example.com/v1"}, {"provider": "ollama", "api_base": "https://api.example.com/v1"}):
+        assert alice.post("/api/llm-connections/discover-models", json={**target, "connection_id": connection_id}).status_code == 200
+    assert keys == [None, None]

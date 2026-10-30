@@ -1,20 +1,23 @@
 
-from pydantic import BaseModel, EmailStr, Field, field_validator, ConfigDict, validator
+import re
+from pydantic import BaseModel, EmailStr, Field, ConfigDict, validator
 from typing import Optional
 from datetime import datetime
 from app.core.limits import MAX_LOGIN_IDENTIFIER_CHARS, MAX_PASSWORD_CHARS
+USERNAME_PATTERN = re.compile(r"[A-Za-z0-9_\-㐀-䶿一-鿿]+")
+def validate_username(value: str) -> str:
+    if not USERNAME_PATTERN.fullmatch(value):
+        raise ValueError('使用者名稱只能包含中文、英文字母、數字、底線和連字號')
+    return value
 class UserRegister(BaseModel):
     username: str = Field(..., min_length=3, max_length=50, description="用戶名")
     email: EmailStr = Field(..., description="電子郵件地址")
     password: str = Field(..., min_length=8, max_length=MAX_PASSWORD_CHARS, description="密碼")
-    
+
     @validator('username')
     def username_alphanumeric(cls, v):
-        import re
-        if not re.match(r'^[\w\-]+$', v):
-            raise ValueError('使用者名稱只能包含字母、數字、底線和連字號')
-        return v
-    
+        return validate_username(v)
+
     class Config:
         json_schema_extra = {
             "example": {
@@ -49,15 +52,6 @@ class Token(BaseModel):
                 "expires_in": 1800
             }
         }
-class TokenRefresh(BaseModel):
-    refresh_token: str = Field(..., description="刷新令牌")
-    
-    class Config:
-        json_schema_extra = {
-            "example": {
-                "refresh_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
-            }
-        }
 class UserProfile(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     
@@ -71,15 +65,11 @@ class UserProfile(BaseModel):
     last_login: Optional[datetime] = None
 class UserUpdate(BaseModel):
     email: Optional[EmailStr] = None
-    current_password: Optional[str] = Field(None, max_length=MAX_PASSWORD_CHARS)
-    new_password: Optional[str] = Field(None, min_length=8, max_length=MAX_PASSWORD_CHARS)
     
     class Config:
         json_schema_extra = {
             "example": {
-                "email": "newemail@example.com",
-                "current_password": "OldPass123",
-                "new_password": "NewSecurePass456"
+                "email": "newemail@example.com"
             }
         }
 class PasswordChange(BaseModel):
@@ -99,36 +89,6 @@ class PasswordChange(BaseModel):
                 "current_password": "OldPass123",
                 "new_password": "NewSecurePass456",
                 "confirm_password": "NewSecurePass456"
-            }
-        }
-class PasswordReset(BaseModel):
-    user_id: int = Field(..., description="用戶 ID")
-    new_password: str = Field(..., min_length=8, max_length=MAX_PASSWORD_CHARS, description="新密碼")
-    
-    class Config:
-        json_schema_extra = {
-            "example": {
-                "user_id": 5,
-                "new_password": "ResetPass789"
-            }
-        }
-class UserCreate(BaseModel):
-    username: str = Field(..., min_length=3, max_length=50)
-    email: EmailStr
-    password: str = Field(..., min_length=8, max_length=MAX_PASSWORD_CHARS)
-    role: str = Field(default="user", pattern="^(user|admin|moderator)$")
-    is_active: bool = Field(default=True)
-    is_admin: bool = Field(default=False)
-    
-    class Config:
-        json_schema_extra = {
-            "example": {
-                "username": "new_user",
-                "email": "newuser@example.com",
-                "password": "InitialPass123",
-                "role": "user",
-                "is_active": True,
-                "is_admin": False
             }
         }
 class LoginResponse(BaseModel):

@@ -160,6 +160,28 @@ def test_password_change_clears_the_refresh_cookie_and_ends_the_session(client, 
     assert http.get("/api/auth/me", headers=headers).status_code == 401
 
 
+def test_profile_update_changes_the_email_but_never_the_password(client):
+    http, _ = client
+    login = http.post("/api/auth/login", json={"username": "member", "password": "Secret123"})
+    headers = {"Authorization": f"Bearer {login.json()['tokens']['access_token']}"}
+    updated = http.put("/api/auth/me", headers=headers, json={
+        "email": "renamed@example.com",
+        "current_password": "wrong",
+        "new_password": "Changed456",
+    })
+    assert updated.status_code == 200
+    assert http.get("/api/auth/me", headers=headers).json()["email"] == "renamed@example.com"
+    assert http.post("/api/auth/login", json={"username": "member", "password": "Secret123"}).status_code == 200
+
+
+def test_refresh_token_can_be_used_only_once(client):
+    http, _ = client
+    login = http.post("/api/auth/login", json={"username": "member", "password": "Secret123"})
+    cookie = {"Cookie": f"refresh_token={login.cookies['refresh_token']}"}
+    assert http.post("/api/auth/refresh", headers=cookie).status_code == 200
+    assert http.post("/api/auth/refresh", headers=cookie).status_code == 401
+
+
 def test_logout_with_an_expired_access_token_revokes_the_refresh_cookie(client):
     from datetime import timedelta
 

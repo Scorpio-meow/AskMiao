@@ -13,6 +13,7 @@ import httpx
 from app import __version__
 from app.core.error_response import format_client_error, log_and_get_error_id
 from app.core.ssrf_protection import DnsPool, SSRFSafeTransport, same_origin, send_following_redirects
+from app.services.openapi_parser import fit_tool_name
 logger = logging.getLogger(__name__)
 MCP_PROTOCOL_VERSION = "2025-06-18"
 MAX_MCP_TOOL_PAGES = 50
@@ -34,6 +35,12 @@ MCP_STDERR_TAIL_BYTES = 2048
 MAX_MCP_HTTP_REDIRECTS = 5
 # MCP 規格建議的工具名稱字元；名稱會出現在 API 路徑與函式名稱中，其他名稱的工具一律略過
 MCP_TOOL_NAME_PATTERN = re.compile(r"[A-Za-z0-9_.-]{1,128}")
+def mcp_function_name(server_name: str, tool_name: str) -> str:
+    clean_server = re.sub(r'[^a-zA-Z0-9_]', '_', server_name).lower()
+    clean_tool = re.sub(r'[^a-zA-Z0-9_]', '_', tool_name).lower()
+    return fit_tool_name(f"mcp_{clean_server}_{clean_tool}")
+
+
 def _is_response_to(message: Any, req_id: int) -> bool:
     return isinstance(message, dict) and message.get("id") == req_id and "method" not in message
 
@@ -834,9 +841,7 @@ if __name__ == '__main__':
         將 MCP tool 規格轉換為 OpenAI Function Calling 相容之 Tool Definition
         """
         t_name = mcp_tool.get("name", "")
-        clean_server = re.sub(r'[^a-zA-Z0-9_]', '_', server_name).lower()
-        clean_tool = re.sub(r'[^a-zA-Z0-9_]', '_', t_name).lower()
-        fn_name = f"mcp_{clean_server}_{clean_tool}"
+        fn_name = mcp_function_name(server_name, t_name)
         desc = mcp_tool.get("description") or f"由 MCP 伺服器 [{server_display_name}] 提供的工具: {t_name}"
         input_schema = mcp_tool.get("inputSchema") or {"type": "object", "properties": {}}
         return {

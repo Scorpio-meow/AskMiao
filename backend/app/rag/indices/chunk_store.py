@@ -57,14 +57,6 @@ class ChunkStore:
             rows = session.query(DbDocument.id).filter(DbDocument.id.in_(set(document_ids))).all()
         return {row.id for row in rows}
 
-    def delete_ids(self, chunk_ids: List[int]) -> None:
-        from app.models import RagChunk
-        if not chunk_ids:
-            return
-        with self.session_factory() as session:
-            session.query(RagChunk).filter(RagChunk.id.in_(chunk_ids)).delete(synchronize_session=False)
-            session.commit()
-
     def delete_by_document(self, document_id: int) -> None:
         from app.models import RagChunk
         with self.session_factory() as session:

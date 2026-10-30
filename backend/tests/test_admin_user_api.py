@@ -5,7 +5,7 @@
 2. 變更權限、帳號狀態與刪除使用者時寫入安全日誌，記錄操作的管理員
 3. 刪除上傳過文件或建立過工具的帳號時，外鍵改為 NULL，文件與工具保留
 """
-from datetime import datetime
+from datetime import datetime, timedelta
 
 import pytest
 from fastapi import FastAPI
@@ -15,7 +15,9 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app.api import admin as admin_api
+from app.api import auth as auth_api
 from app.core.jwt_auth import get_current_admin_user
+from app.crud import crud_user
 from app.models import CustomApiTool, Document, McpServer, User
 from app.models.database import Base, get_db
 
@@ -121,4 +123,34 @@ def test_deleting_a_user_keeps_their_documents_and_tools():
         assert session.query(Document).one().uploaded_by is None
         assert session.query(CustomApiTool).one().created_by is None
         assert session.query(McpServer).one().created_by is None
+    engine.dispose()
+
+
+def test_deactivating_an_account_ends_its_sessions(monkeypatch):
+    engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    Base.metadata.create_all(engine)
+    Session = sessionmaker(bind=engine)
+    with Session() as session:
+        user_id = crud_user.create_user(session, "member", "member@example.com", "Secret123").id
+
+    def override_db():
+        with Session() as session:
+            yield session
+
+    app = FastAPI()
+    app.include_router(auth_api.router)
+    app.include_router(admin_api.router, prefix="/api/admin")
+    app.dependency_overrides[get_db] = override_db
+    app.dependency_overrides[get_current_admin_user] = lambda: {"user_id": 99, "username": "root", "is_admin": True}
+    client = TestClient(app)
+    login = client.post("/api/auth/login", json={"username": "member", "password": "Secret123"})
+    access = {"Authorization": f"Bearer {login.json()['tokens']['access_token']}"}
+    refresh = {"Cookie": f"refresh_token={login.cookies['refresh_token']}"}
+    later = datetime.utcnow() + timedelta(minutes=1)
+    monkeypatch.setattr(admin_api, "datetime", type("Later", (datetime,), {"utcnow": classmethod(lambda cls: later)}))
+
+    assert client.put(f"/api/admin/users/{user_id}", json={"is_active": False}).status_code == 200
+    assert client.put(f"/api/admin/users/{user_id}", json={"is_active": True}).json()["user"]["is_active"] is True
+    assert client.get("/api/auth/me", headers=access).status_code == 401
+    assert client.post("/api/auth/refresh", headers=refresh).status_code == 401
     engine.dispose()

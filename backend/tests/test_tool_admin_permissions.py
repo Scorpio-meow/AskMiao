@@ -22,7 +22,7 @@ from app.api.api_tools import execute_http_api_tool
 from app.core.jwt_auth import get_current_user_from_token
 from app.core.ssrf_protection import SSRFProtectionError
 from app.models import McpServer
-from app.models.database import Base, SessionLocal, engine
+from app.models.database import SessionLocal
 from app.services import mcp_service
 from app.services.mcp_service import INHERITED_ENV_VARS, McpHttpClient, McpManager, build_stdio_env
 
@@ -70,8 +70,8 @@ def no_side_effects(monkeypatch):
 
 
 @pytest.fixture
-def clean_test_servers():
-    Base.metadata.create_all(bind=engine)
+def clean_test_servers(existing_users):
+    existing_users(ADMIN_USER, NORMAL_USER)
 
     def remove():
         db = SessionLocal()

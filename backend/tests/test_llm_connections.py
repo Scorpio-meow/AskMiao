@@ -132,6 +132,46 @@ def test_members_cannot_point_personal_connections_at_internal_networks(env):
     assert root.post("/api/llm-connections", json=personal(provider="ollama", api_base="http://localhost:11434", api_key=None)).status_code == 201
 
 
+def test_changing_provider_or_address_drops_the_stored_key(env):
+    login, Session, _ = env
+    alice = login("alice")
+    connection_id = alice.post("/api/llm-connections", json=personal()).json()["id"]
+    renamed = alice.put(f"/api/llm-connections/{connection_id}", json={"name": "改名", "provider": "openai", "api_base": "https://api.example.com/v1"})
+    assert renamed.json()["has_api_key"] is True
+
+    keyed = alice.put(f"/api/llm-connections/{connection_id}", json={"provider": "anthropic", "max_output_tokens": 8000})
+    assert keyed.status_code == 400 and "重新輸入" in keyed.json()["detail"]
+    with Session() as session:
+        assert connections_service.endpoint_of(session, session.get(LlmConnection, connection_id)).api_key == "sk-alice"
+
+    moved = alice.put(f"/api/llm-connections/{connection_id}", json={"api_base": "https://api.example.com/other"})
+    assert moved.status_code == 200 and moved.json()["has_api_key"] is False
+    with Session() as session:
+        assert session.get(LlmConnection, connection_id).api_key is None
+
+
+def test_explicit_nulls_cannot_clear_required_fields(env):
+    login, Session, _ = env
+    alice = login("alice")
+    connection_id = alice.post("/api/llm-connections", json=personal()).json()["id"]
+    for field in ("name", "provider", "api_base", "models"):
+        response = alice.put(f"/api/llm-connections/{connection_id}", json={field: None})
+        assert response.status_code == 400 and field in response.json()["detail"]
+    with Session() as session:
+        stored = session.get(LlmConnection, connection_id)
+        assert (stored.name, stored.provider, stored.api_base, json.loads(stored.models)) == (
+            "我的 OpenAI", "openai", "https://api.example.com/v1", ["gpt-6-sol", "gpt-6-luna"]
+        )
+
+    assert alice.put(f"/api/llm-connections/{connection_id}", json={"max_output_tokens": 8000}).json()["max_output_tokens"] == 8000
+    assert alice.put(f"/api/llm-connections/{connection_id}", json={"max_output_tokens": None}).json()["max_output_tokens"] is None
+
+    root = login("root")
+    shared_id = root.post("/api/admin/llm-connections", json={**personal(name="共用"), "allowed_user_ids": []}).json()["id"]
+    assert root.put(f"/api/admin/llm-connections/{shared_id}", json={"models": None}).status_code == 400
+    assert root.get("/api/admin/llm-connections").json()["connections"][0]["models"] == ["gpt-6-sol", "gpt-6-luna"]
+
+
 @pytest.mark.parametrize("overrides, message", [
     ({"provider": "anthropic", "api_key": None, "max_output_tokens": 8000}, "金鑰"),
     ({"provider": "anthropic", "models": ["claude-opus-5-5"]}, "輸出 token 上限"),

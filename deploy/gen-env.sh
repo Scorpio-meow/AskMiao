@@ -18,6 +18,10 @@ pg_password="$(secret)"
 app_user="askmiao_app"
 app_password="$(secret)"
 fernet_key="$(openssl rand 32 | base64 | tr '+/' '-_' | tr -d '\n')"
+cookie_secure=false
+case "$PUBLIC_ORIGIN" in
+  https://*) cookie_secure=true ;;
+esac
 
 umask 077
 {
@@ -26,7 +30,7 @@ umask 077
 
 HOST=0.0.0.0
 ENVIRONMENT=production
-COOKIE_SECURE=false
+COOKIE_SECURE=$cookie_secure
 TOOL_SECRETS_KEY=$fernet_key
 POSTGRES_PASSWORD=$pg_password
 POSTGRES_APP_USER=$app_user

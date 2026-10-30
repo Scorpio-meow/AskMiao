@@ -8,9 +8,8 @@ import ipaddress
 from concurrent.futures import ThreadPoolExecutor
 from enum import Enum
 import logging
-import re
 import socket
-from typing import Dict, List, Optional, Set, Tuple, Union
+from typing import Callable, Dict, List, Optional, Set, Tuple, Union
 from urllib.parse import ParseResult, urljoin, urlparse
 import httpx
 import httpx2
@@ -53,6 +52,8 @@ DISALLOWED_IPV6_NETWORKS = [
     ipaddress.ip_network("fe80::/10"),          # Link-Local unicast
     ipaddress.ip_network("ff00::/8"),           # Multicast
 ]
+
+ALLOWED_URL_SCHEMES = ("http", "https")
 
 # 明確禁止的主機名稱關鍵字與後綴
 DISALLOWED_HOSTNAMES: Set[str] = {
@@ -207,28 +208,18 @@ async def resolve_hostname(
 IPAddress = Union[ipaddress.IPv4Address, ipaddress.IPv6Address]
 
 
-async def validate_url_ssrf(
-    url: str,
-    dns_pool: DnsPool,
-    allowed_schemes: Tuple[str, ...] = ("http", "https"),
-    allow_private_ips: bool = False
-) -> Tuple[bool, str, Optional[ParseResult]]:
+async def validate_url_ssrf(url: str, dns_pool: DnsPool) -> Tuple[bool, str, Optional[ParseResult]]:
     """全方位 SSRF URL 驗證器，回傳 (is_valid, error_reason, parsed_result)。
 
     注意：error_reason 可能含伺服器端 DNS 解析結果，只能寫入日誌，不可回傳給使用者。
     驗證通過後若自行發出連線，請改用 SSRFSafeTransport，否則連線時的第二次 DNS 解析
     可能被 DNS rebinding 導向內網。
     """
-    is_valid, reason, parsed, _ = await _check_url(url, dns_pool, allowed_schemes, allow_private_ips)
+    is_valid, reason, parsed, _ = await _check_url(url, dns_pool)
     return is_valid, reason, parsed
 
 
-async def _check_url(
-    url: str,
-    dns_pool: DnsPool,
-    allowed_schemes: Tuple[str, ...] = ("http", "https"),
-    allow_private_ips: bool = False
-) -> Tuple[bool, str, Optional[ParseResult], List[IPAddress]]:
+async def _check_url(url: str, dns_pool: DnsPool) -> Tuple[bool, str, Optional[ParseResult], List[IPAddress]]:
     """
     全方位 SSRF URL 驗證器。
     
@@ -242,7 +233,7 @@ async def _check_url(
     
     回傳：
         (is_valid, error_reason, parsed_result, approved_ips)
-        approved_ips 為驗證時核可的 IP；直接以 IP 表示的主機或 allow_private_ips 時為空
+        approved_ips 為驗證時核可的 IP；直接以 IP 表示的主機時為空
     """
     if not url or not isinstance(url, str):
         return False, "URL 不能為空值", None, []
@@ -255,8 +246,8 @@ async def _check_url(
 
     # 1. 協議驗證
     scheme = (parsed.scheme or "").lower()
-    if scheme not in allowed_schemes:
-        return False, f"不允許的 URL 協定 '{scheme}'，僅支援: {', '.join(allowed_schemes)}", None, []
+    if scheme not in ALLOWED_URL_SCHEMES:
+        return False, f"不允許的 URL 協定 '{scheme}'，僅支援: {', '.join(ALLOWED_URL_SCHEMES)}", None, []
 
     # 2. 主機名稱檢查
     hostname = parsed.hostname
@@ -276,49 +267,48 @@ async def _check_url(
     else:
         if port <= 0 or port > 65535:
             return False, f"無效的連接埠號碼: {port}", None, []
-        if not allow_private_ips and port in BLOCKED_DANGEROUS_PORTS:
+        if port in BLOCKED_DANGEROUS_PORTS:
             return False, f"禁止存取受保護的內部服務連接埠: {port}", None, []
 
     approved_ips: List[IPAddress] = []
 
     # 4. 檢查主機名稱關鍵字與特殊域名後綴
-    if not allow_private_ips:
-        if hostname_lower in DISALLOWED_HOSTNAMES:
-            return False, f"禁止存取保留/內部主機名稱: {hostname_lower}", None, []
+    if hostname_lower in DISALLOWED_HOSTNAMES:
+        return False, f"禁止存取保留/內部主機名稱: {hostname_lower}", None, []
 
-        for suffix in DISALLOWED_HOSTNAME_SUFFIXES:
-            if hostname_lower.endswith(suffix):
-                return False, f"禁止存取內部專屬網域: {hostname_lower}", None, []
+    for suffix in DISALLOWED_HOSTNAME_SUFFIXES:
+        if hostname_lower.endswith(suffix):
+            return False, f"禁止存取內部專屬網域: {hostname_lower}", None, []
 
-        # 檢查是否為直接輸入的 IP 位址字串
-        try:
-            direct_ip = ipaddress.ip_address(hostname_lower)
-        except ValueError:
-            # 不是直接的 IP 位址，為標準網域名稱
-            direct_ip = None
-        if direct_ip is not None:
-            is_disallowed, reason = is_ip_disallowed(direct_ip)
-            if is_disallowed:
-                return False, f"目標 IP 位址不被允許: {reason}", None, []
-            return True, "", parsed, approved_ips
+    # 檢查是否為直接輸入的 IP 位址字串
+    try:
+        direct_ip = ipaddress.ip_address(hostname_lower)
+    except ValueError:
+        # 不是直接的 IP 位址，為標準網域名稱
+        direct_ip = None
+    if direct_ip is not None:
+        is_disallowed, reason = is_ip_disallowed(direct_ip)
+        if is_disallowed:
+            return False, f"目標 IP 位址不被允許: {reason}", None, []
+        return True, "", parsed, approved_ips
 
-        # 5. DNS 解析並驗證所有解析出的 IP
-        resolved_ips = await resolve_hostname(hostname_lower, port, dns_pool)
-        if not resolved_ips:
-            return False, f"無法解析主機名稱之 IP 位址: {hostname}", None, []
+    # 5. DNS 解析並驗證所有解析出的 IP
+    resolved_ips = await resolve_hostname(hostname_lower, port, dns_pool)
+    if not resolved_ips:
+        return False, f"無法解析主機名稱之 IP 位址: {hostname}", None, []
 
-        for ip_addr in resolved_ips:
-            is_disallowed, reason = is_ip_disallowed(ip_addr)
-            if is_disallowed:
-                logger.warning(f"SSRF 防護阻止存取 {url}: 解析出禁止 IP {ip_addr} ({reason})")
-                return False, f"主機解析至受保護或私有 IP 位址 ({ip_addr}): {reason}", None, []
-        approved_ips = resolved_ips
+    for ip_addr in resolved_ips:
+        is_disallowed, reason = is_ip_disallowed(ip_addr)
+        if is_disallowed:
+            logger.warning(f"SSRF 防護阻止存取 {url}: 解析出禁止 IP {ip_addr} ({reason})")
+            return False, f"主機解析至受保護或私有 IP 位址 ({ip_addr}): {reason}", None, []
+    approved_ips = resolved_ips
 
     return True, "", parsed, approved_ips
 
 
-async def _pin_to_approved_ip(request, request_class, dns_pool: DnsPool, allow_private_ips: bool):
-    is_safe, error_msg, _, approved_ips = await _check_url(str(request.url), dns_pool, allow_private_ips=allow_private_ips)
+async def _pin_to_approved_ip(request, request_class, dns_pool: DnsPool):
+    is_safe, error_msg, _, approved_ips = await _check_url(str(request.url), dns_pool)
     if not is_safe:
         raise SSRFProtectionError(f"SSRF 防護拒絕連線: {error_msg}")
     if not approved_ips:
@@ -342,13 +332,12 @@ class SSRFSafeTransport(httpx.AsyncBaseTransport):
     用法：httpx.AsyncClient(transport=SSRFSafeTransport(DnsPool.CONFIGURED_ENDPOINT), ...)
     """
 
-    def __init__(self, dns_pool: DnsPool, allow_private_ips: bool = False) -> None:
+    def __init__(self, dns_pool: DnsPool) -> None:
         self._dns_pool = dns_pool
-        self._allow_private_ips = allow_private_ips
         self._transport = httpx.AsyncHTTPTransport()
 
     async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
-        pinned = await _pin_to_approved_ip(request, httpx.Request, self._dns_pool, self._allow_private_ips)
+        pinned = await _pin_to_approved_ip(request, httpx.Request, self._dns_pool)
         return await self._transport.handle_async_request(pinned)
 
     async def aclose(self) -> None:
@@ -361,7 +350,7 @@ class SSRFSafeHttpx2Transport(httpx2.AsyncBaseTransport):
         self._transport = httpx2.AsyncHTTPTransport()
 
     async def handle_async_request(self, request: httpx2.Request) -> httpx2.Response:
-        pinned = await _pin_to_approved_ip(request, httpx2.Request, self._dns_pool, False)
+        pinned = await _pin_to_approved_ip(request, httpx2.Request, self._dns_pool)
         return await self._transport.handle_async_request(pinned)
 
     async def aclose(self) -> None:
@@ -404,7 +393,7 @@ async def safe_fetch_text(
     max_redirects: int = 5,
     max_size_bytes: int = 10 * 1024 * 1024,
     headers: Optional[Dict[str, str]] = None,
-    allow_private_ips: bool = False
+    is_url_allowed: Optional[Callable[[str], bool]] = None
 ) -> str:
     """
     執行具備 SSRF 防護、安全轉址追蹤與回應大小限制的非同步 HTTP GET 請求。
@@ -420,7 +409,6 @@ async def safe_fetch_text(
         max_redirects: 最大轉址次數 (預設 5 次)
         max_size_bytes: 最大回應大小位元組 (預設 10MB)
         headers: 自訂 HTTP 標頭
-        allow_private_ips: 是否允許存取私有 IP (預設 False)
         
     回傳:
         回應本文文字內容 (str)
@@ -442,12 +430,7 @@ async def safe_fetch_text(
 
     while True:
         # 1. 驗證當前 URL 的 SSRF 安全性
-        is_safe, error_msg, _ = await validate_url_ssrf(
-            current_url,
-            dns_pool,
-            allowed_schemes=("http", "https"),
-            allow_private_ips=allow_private_ips
-        )
+        is_safe, error_msg, _ = await validate_url_ssrf(current_url, dns_pool)
         if not is_safe:
             raise SSRFProtectionError(f"SSRF 防護拒絕連線: {error_msg}")
 
@@ -457,7 +440,7 @@ async def safe_fetch_text(
         client_kwargs = {
             "timeout": timeout,
             "follow_redirects": False,
-            "transport": SSRFSafeTransport(dns_pool, allow_private_ips=allow_private_ips),
+            "transport": SSRFSafeTransport(dns_pool),
         }
 
         try:
@@ -479,6 +462,8 @@ async def safe_fetch_text(
                         next_url = urljoin(current_url, location.strip())
                         if next_url in visited_urls:
                             raise ValueError(f"偵測到循環轉址: {next_url}")
+                        if is_url_allowed is not None and not is_url_allowed(next_url):
+                            raise ValueError(f"轉址目標不在允許的網域內: {next_url}")
 
                         logger.info(f"安全轉址 ({redirect_count}/{max_redirects}): {current_url} -> {next_url}")
                         current_url = next_url

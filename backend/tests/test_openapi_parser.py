@@ -1,5 +1,4 @@
 import pytest
-import anyio
 from app.services.openapi_parser import OpenApiParser
 @pytest.mark.anyio
 async def test_openapi_parser():
@@ -123,3 +122,89 @@ paths: {}
     parsed = await OpenApiParser.parse(spec_with_alias.replace("x-copy: *info\n", ""))
     assert parsed["title"] == "Alias API"
     assert "raw_spec" not in parsed
+
+
+def test_long_operation_id_becomes_a_valid_stable_function_name():
+    import re
+    from app.core.limits import MAX_TOOL_NAME_CHARS
+
+    long_id = "listAllTheOrganizationRepositoryWebhookDeliveriesForTheGivenHookIdentifier"
+    name = OpenApiParser._generate_tool_name("get", "/hooks", long_id)
+    assert re.fullmatch(rf"[a-zA-Z0-9_-]{{1,{MAX_TOOL_NAME_CHARS}}}", name)
+    assert name == OpenApiParser._generate_tool_name("get", "/hooks", long_id)
+    assert name != OpenApiParser._generate_tool_name("get", "/hooks", long_id + "V2")
+    assert OpenApiParser._generate_tool_name("get", "/hooks", "listHooks") == "listhooks"
+
+
+@pytest.mark.anyio
+async def test_reused_ref_keeps_its_fields_in_every_branch():
+    import json
+    from app.core.limits import MAX_OPENAPI_SCHEMA_REFS
+
+    depth = 20
+    schemas = {
+        "Loc": {"type": "object", "properties": {"lat": {"type": "number"}, "lng": {"type": "number"}}},
+        "Trip": {"type": "object", "properties": {
+            "origin": {"$ref": "#/components/schemas/Loc"}, "destination": {"$ref": "#/components/schemas/Loc"},
+        }},
+        "Node": {"type": "object", "properties": {"child": {"$ref": "#/components/schemas/Node"}}},
+        **{f"L{i}": {"type": "object", "properties": {
+            "a": {"$ref": f"#/components/schemas/L{i + 1}"}, "b": {"$ref": f"#/components/schemas/L{i + 1}"},
+        }} for i in range(depth)},
+        f"L{depth}": {"type": "string"},
+    }
+    spec = {
+        "openapi": "3.0.3",
+        "info": {"title": "t", "version": "1"},
+        "servers": [{"url": "https://api.example.com"}],
+        "components": {"schemas": schemas},
+        "paths": {"/trips": {"post": {"operationId": "createTrip", "requestBody": {"content": {
+            "application/json": {"schema": {"$ref": "#/components/schemas/Trip"}},
+        }}}}},
+    }
+    properties = (await OpenApiParser.parse(json.dumps(spec)))["endpoints"][0]["parameters_schema"]["properties"]
+    loc = {"lat": {"type": "number"}, "lng": {"type": "number"}}
+    assert properties["origin"]["properties"] == loc
+    assert properties["destination"]["properties"] == loc
+    node = OpenApiParser._clean_schema({"$ref": "#/components/schemas/Node"}, spec)
+    assert "properties" not in node["properties"]["child"]
+    fan_out = OpenApiParser._clean_schema({"$ref": "#/components/schemas/L0"}, spec)
+    assert json.dumps(fan_out).count('"properties"') <= MAX_OPENAPI_SCHEMA_REFS
+
+
+@pytest.mark.anyio
+async def test_referenced_parameters_bodies_and_security_schemes_keep_their_fields():
+    import json
+
+    spec = {
+        "openapi": "3.0.3",
+        "info": {"title": "t", "version": "1"},
+        "servers": [{"url": "https://api.example.com"}],
+        "security": [{"Key": []}],
+        "components": {
+            "schemas": {"Pet": {"type": "object", "properties": {"name": {"type": "string"}}, "required": ["name"]}},
+            "parameters": {
+                "PetId": {"name": "petId", "in": "path", "required": True, "schema": {"type": "integer"}},
+                "Limit": {"$ref": "#/components/parameters/RealLimit"},
+                "RealLimit": {"name": "limit", "in": "query", "schema": {"type": "integer"}},
+            },
+            "requestBodies": {"Pet": {"required": True, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Pet"}}}}},
+            "securitySchemes": {
+                "Key": {"$ref": "#/components/securitySchemes/RealKey"},
+                "RealKey": {"type": "apiKey", "in": "header", "name": "X-Key"},
+            },
+        },
+        "paths": {"/pets/{petId}": {"put": {
+            "operationId": "updatePet",
+            "parameters": [{"$ref": "#/components/parameters/PetId"}, {"$ref": "#/components/parameters/Limit"}],
+            "requestBody": {"$ref": "#/components/requestBodies/Pet"},
+        }}},
+    }
+    endpoint = (await OpenApiParser.parse(json.dumps(spec)))["endpoints"][0]
+    assert endpoint["param_locations"] == {"petId": "path", "limit": "query", "name": "body"}
+    assert endpoint["parameters_schema"]["properties"] == {
+        "petId": {"type": "integer"}, "limit": {"type": "integer"}, "name": {"type": "string"},
+    }
+    assert set(endpoint["parameters_schema"]["required"]) == {"petId", "name"}
+    assert endpoint["auth_type"] == "api_key"
+    assert endpoint["auth_config"]["key_name"] == "X-Key"

@@ -3,7 +3,7 @@ import secrets
 from functools import lru_cache
 from sqlalchemy.orm import Session
 from sqlalchemy import or_
-from typing import Optional, List
+from typing import Optional
 from datetime import datetime
 from pydantic import ValidationError
 from app.models import User
@@ -22,18 +22,6 @@ def get_user_by_username_or_email(db: Session, identifier: str) -> Optional[User
     return db.query(User).filter(
         or_(User.username == identifier, User.email == identifier)
     ).first()
-def get_users(
-    db: Session,
-    skip: int = 0,
-    limit: int = 100,
-    is_active: Optional[bool] = None
-) -> List[User]:
-    query = db.query(User)
-    
-    if is_active is not None:
-        query = query.filter(User.is_active == is_active)
-    
-    return query.offset(skip).limit(limit).all()
 def create_user(
     db: Session,
     username: str,
@@ -147,71 +135,3 @@ def update_user_last_login(
     db.refresh(user)
     
     return user
-def deactivate_user(
-    db: Session,
-    user_id: int
-) -> Optional[User]:
-    user = get_user_by_id(db, user_id)
-    
-    if not user:
-        return None
-    
-    user.is_active = False
-    db.commit()
-    db.refresh(user)
-    
-    return user
-def activate_user(
-    db: Session,
-    user_id: int
-) -> Optional[User]:
-    user = get_user_by_id(db, user_id)
-    
-    if not user:
-        return None
-    
-    user.is_active = True
-    db.commit()
-    db.refresh(user)
-    
-    return user
-def delete_user(
-    db: Session,
-    user_id: int
-) -> bool:
-    user = get_user_by_id(db, user_id)
-    
-    if not user:
-        return False
-    
-    db.delete(user)
-    db.commit()
-    
-    return True
-def update_user_role(
-    db: Session,
-    user_id: int,
-    role: str,
-    is_admin: Optional[bool] = None
-) -> Optional[User]:
-    user = get_user_by_id(db, user_id)
-    
-    if not user:
-        return None
-    
-    user.role = role
-    
-    if is_admin is not None:
-        user.is_admin = is_admin
-    
-    db.commit()
-    db.refresh(user)
-    
-    return user
-def count_users(db: Session, is_active: Optional[bool] = None) -> int:
-    query = db.query(User)
-    
-    if is_active is not None:
-        query = query.filter(User.is_active == is_active)
-    
-    return query.count()

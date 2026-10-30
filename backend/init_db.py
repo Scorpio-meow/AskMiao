@@ -2,7 +2,6 @@
 import asyncio
 from sqlalchemy import text
 from app.models.database import Base, engine, upgrade_schema
-from app.models import User, Conversation, Message, Document
 
 
 def ensure_schema_compatibility():

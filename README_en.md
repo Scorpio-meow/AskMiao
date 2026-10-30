@@ -10,7 +10,7 @@ AskMiao answers with hybrid retrieval (FAISS + BM25 + Cross-Encoder) and agentic
 
 [繁體中文](README.md) | [English](README_en.md)
 
-[![Version](https://img.shields.io/badge/version-6.0.0-2563eb?style=flat)](CHANGELOG_en.md)
+[![Version](https://img.shields.io/badge/version-7.0.0-2563eb?style=flat)](CHANGELOG_en.md)
 [![Python](https://img.shields.io/badge/Python-3.12+-3776AB?style=flat&logo=python&logoColor=white)](https://www.python.org/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-005571?style=flat&logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
 [![React](https://img.shields.io/badge/React-19.2-61DAFB?style=flat&logo=react&logoColor=black)](https://react.dev/)
@@ -153,8 +153,8 @@ flowchart LR
 ### Knowledge base and document processing
 
 - 28 file extensions: `.txt`, `.md`, `.markdown`, `.pdf`, `.docx`, `.pptx`, `.xlsx`, `.csv`, `.json`, `.jsonl`, `.yaml`, `.yml`, `.xml`, `.html`, `.htm`, `.log`, `.py`, `.js`, `.ts`, `.tsx`, `.jsx`, `.java`, `.cpp`, `.c`, `.sql`, `.sh`, `.ini`, `.env`.
-- **Robust PDF extraction**: PyMuPDF extracts text and repairs embedded fonts missing ToUnicode maps; blank or garbled pages go through vision-model OCR (Microsoft Foundry, OpenAI, or Gemini), with pypdf as the last fallback.
-- **Smart chunking**: JSON, JSONL, YAML, CSV, and XLSX are parsed into structured records that become one chunk each (nested fields kept, long records split into parts that repeat the header), Q&A documents become one chunk per question-answer pair, and everything else is split recursively on Chinese punctuation.
+- **Robust PDF extraction**: PyMuPDF extracts text; before that, alternate glyphs in embedded TrueType fonts that the ToUnicode map leaves unmapped (or maps to U+FFFD) get a mapping found by reversing the font's GSUB single substitutions, such as the Noto Sans TC digits Illustrator exports, which would otherwise come out as characters like 俸; blank or garbled pages go through vision-model OCR (Microsoft Foundry, OpenAI, or Gemini), with pypdf as the last fallback.
+- **Smart chunking**: JSON, JSONL, YAML, CSV, and XLSX are parsed into structured records that become one chunk each (nested fields kept, long records split into parts that repeat the header), Q&A documents that start with a "Q:" line become one chunk per question-answer pair (pairs longer than the chunk size are split), and everything else is split recursively on Chinese punctuation.
 - **AI outlines and summaries**: uploads get an AI summary that can be regenerated or edited; rule-based summaries take over when the LLM fails. The summaries also form the knowledge-base catalog the agent uses to decide which document to search.
 
 ### External tools and MCP
@@ -648,11 +648,10 @@ Run them from `backend/` with `python scripts/<script>`:
 |---|---|
 | `create_user.py` | Create an account (including the first admin): `--username` and `--email` are required, `--admin` creates an admin, and the password is entered interactively; see [Create the first admin](#4-create-the-first-admin) |
 | `evaluate_retrieval.py` | Evaluate retrieval quality with a golden set and compare relevance thresholds (read-only, safe to run alongside the backend); see [calibrating the relevance threshold](docs/configuration_en.md#calibrating-the-relevance-threshold) |
-| `reprocess_existing_docs.py` | Offline rebuild: re-extract text, regenerate summaries, re-chunk, and re-index. Stop the backend first |
-| `reset_faiss.py` | Delete the FAISS and BM25 index files in `backend/data`, then recompute them from `rag_chunks` (asks for confirmation first) |
+| `reprocess_existing_docs.py` | Runs the same rebuild as Rebuild index, offline: re-extract text, generate summaries for documents without one (existing summaries are kept), re-chunk, and re-index. Stop the backend first |
+| `reset_faiss.py` | Delete the index files that `FAISS_INDEX_PATH`, `METADATA_PATH`, and `BM25_INDEX_DIR` point to, then recompute them from `rag_chunks` (asks for confirmation first) |
 | `test_llm_clients.py` | Check the model list and each provider's request format with mocked responses, without calling any API |
 | `docx_to_txt.py` | Convert `.docx` files in the upload directory to `.txt` |
-| `migrate_sqlite_to_postgres.py` | Known issue: imports the removed `app.models.custom_agent` and cannot run at the moment |
 
 ## Troubleshooting
 
@@ -767,7 +766,7 @@ Once one login identifier (user name or email, case-insensitive) fails `LOGIN_MA
 | [API Reference](docs/api_en.md) | Every endpoint's permission, request and response format, the SSE event contract, and error codes |
 | [Architecture & Design](docs/architecture_en.md) | Layers, data model, retrieval pipeline, agent loop, authentication, and security design |
 | [Configuration Reference](docs/configuration_en.md) | Defaults and effects of every environment variable, provider routing, threshold calibration, frontend settings |
-| [Upgrade Guide](docs/upgrading_en.md) | Steps from 2.x to 3.0.0, from 3.0.0 to 4.0.0, and from 4.0.0 to 5.0.0, rollback, and troubleshooting |
+| [Upgrade Guide](docs/upgrading_en.md) | Steps from 2.x to 3.0.0 and every release since (up to 6.0.0 to 7.0.0), rollback, and troubleshooting |
 | [Architecture Decision Records](docs/adr/README_en.md) | Context, trade-offs, and amendments of major design decisions |
 | [llms_en.txt](llms_en.txt) | File map, system constraints, and verification steps for AI agents |
 | [Changelog](CHANGELOG_en.md) | What was added, changed, removed, and fixed in each release |
@@ -775,7 +774,7 @@ Once one login identifier (user name or email, case-insensitive) fails `LOGIN_MA
 
 ## Versioning
 
-- **Current version**: 6.0.0 (2026-10-26); see the [changelog](CHANGELOG_en.md).
+- **Current version**: 7.0.0 (2026-10-31); see the [changelog](CHANGELOG_en.md).
 - **Policy**: [Semantic Versioning](https://semver.org/). Incompatible changes, such as new required settings or changes to API permissions or the index format, bump the major version.
 - **Where the version lives**: `__version__` in `backend/app/__init__.py` (used by the OpenAPI document and the MCP handshake) and `frontend/package.json`, updated together with `CHANGELOG.md` for each release.
 

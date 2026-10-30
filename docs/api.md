@@ -2,7 +2,7 @@
 
 [繁體中文](api.md) | [English](api_en.md)
 
-> 本文件說明 AskMiao 後端 **6.0.0** 的 REST 與 SSE 串流端點，內容依 `backend/app/api/` 的實際路由撰寫。設定 `ENABLE_API_DOCS=true` 時，後端另外在 `http://localhost:8001/docs`（Swagger UI）與 `http://localhost:8001/redoc` 提供互動測試，OpenAPI 規格位於 `/openapi.json`；這三個路徑不需要登入且會列出所有端點與參數，對外服務時請保持 `ENABLE_API_DOCS=false`（範本值），此時三者一律回傳 `404`。
+> 本文件說明 AskMiao 後端 **7.0.0** 的 REST 與 SSE 串流端點，內容依 `backend/app/api/` 的實際路由撰寫。設定 `ENABLE_API_DOCS=true` 時，後端另外在 `http://localhost:8001/docs`（Swagger UI）與 `http://localhost:8001/redoc` 提供互動測試，OpenAPI 規格位於 `/openapi.json`；這三個路徑不需要登入且會列出所有端點與參數，對外服務時請保持 `ENABLE_API_DOCS=false`（範本值），此時三者一律回傳 `404`。
 
 ## 目錄
 
@@ -52,7 +52,7 @@
 | POST | `/api/auth/login` | 公開 | 登入 |
 | POST | `/api/auth/refresh` | 公開（需 Cookie） | 以重新整理權杖換發權杖 |
 | GET | `/api/auth/me` | 登入 | 取得個人資料 |
-| PUT | `/api/auth/me` | 登入 | 更新電子郵件或密碼 |
+| PUT | `/api/auth/me` | 登入 | 更新電子郵件 |
 | POST | `/api/auth/change-password` | 登入 | 變更密碼 |
 | POST | `/api/auth/logout` | 存取權杖（只驗簽章） | 登出並撤銷權杖 |
 | POST | `/api/auth/validate-token` | 登入 | 檢查存取權杖是否有效 |
@@ -62,7 +62,7 @@
 | POST | `/api/chat/approvals/{approval_id}` | 登入（僅限發問者） | 核准或拒絕等待中的工具呼叫 |
 | GET | `/api/chat/conversations` | 登入 | 自己的對話清單 |
 | POST | `/api/chat/conversations` | 登入 | 建立對話 |
-| GET | `/api/chat/conversations/{conversation_id}` | 登入 | 單一對話與全部訊息 |
+| GET | `/api/chat/conversations/{conversation_id}` | 登入 | 單一對話（不含訊息） |
 | GET | `/api/chat/conversations/{conversation_id}/messages` | 登入 | 分頁取得訊息 |
 | DELETE | `/api/chat/conversations/{conversation_id}` | 登入 | 刪除對話 |
 | GET | `/api/llm-connections/providers` | 登入 | 可選的供應商與預設 API 位址、模型 |
@@ -148,7 +148,7 @@
 
 權杖一律以 RSA-2048 私鑰簽署 RS256，後端無法載入 RSA 金鑰時拒絕啟動。回應 JSON 中的 `tokens.refresh_token` 一律是空字串，真正的重新整理權杖只存在 Cookie 中；`expires_in` 目前固定回傳 `1800`，實際到期時間以權杖內的 `exp` 為準。存取與重新整理權杖的 `iat` 是保留微秒小數的秒數（RFC 7519 的 NumericDate 允許小數，例如 `1791561600.640123`），`exp` 仍為整數秒；自行解析權杖的用戶端不要假設 `iat` 是整數。
 
-**變更密碼會撤銷所有權杖**：`users.tokens_valid_after` 在建立帳號時等於建立時間，變更密碼（帶 `new_password` 的 [1.5](#15-put-apiauthme) 或 [1.6](#16-post-apiauthchange-password)）時更新為當下；簽發時間（`iat`）早於它的存取與重新整理權杖一律回傳 `401`，包括發出這次請求的存取權杖與其他裝置上的工作階段。兩者比對到微秒，與變更密碼同一秒內、但較早簽發的權杖也會失效；變更後才簽發的權杖（例如立刻重新登入）照常有效。變更成功的回應會同時清除重新整理權杖 Cookie，用戶端必須以新密碼重新登入（前端會清除登入狀態並導回登入頁）。
+**變更密碼會撤銷所有權杖**：`users.tokens_valid_after` 在建立帳號時等於建立時間，變更密碼（[1.6](#16-post-apiauthchange-password)）或管理員停用帳號時更新為當下，之後重新啟用也不會讓舊權杖恢復；簽發時間（`iat`）早於它的存取與重新整理權杖一律回傳 `401`，包括發出這次請求的存取權杖與其他裝置上的工作階段。兩者比對到微秒，與變更密碼同一秒內、但較早簽發的權杖也會失效；變更後才簽發的權杖（例如立刻重新登入）照常有效。變更成功的回應會同時清除重新整理權杖 Cookie，用戶端必須以新密碼重新登入（前端會清除登入狀態並導回登入頁）。
 
 ### 1.1 POST /api/auth/register
 
@@ -160,7 +160,7 @@
 
 | 欄位 | 型態 | 必填 | 規則 |
 |---|---|---|---|
-| `username` | string | 是 | 3–50 字元，只能包含文字（含中文）、數字、底線與連字號 |
+| `username` | string | 是 | 3–50 字元，只能包含中文、英文字母、數字、底線與連字號（其他語系文字與全形字母不接受） |
 | `email` | string | 是 | 合法的電子郵件格式 |
 | `password` | string | 是 | 8–256 字元，且包含大寫字母、小寫字母與數字 |
 
@@ -243,17 +243,13 @@
 
 ### 1.5 PUT /api/auth/me
 
-更新電子郵件或密碼，只需帶入要變更的欄位。
+更新電子郵件；變更密碼改用 [1.6](#16-post-apiauthchange-password)。
 
 | 欄位 | 型態 | 必填 | 說明 |
 |---|---|---|---|
 | `email` | string | 否 | 新的電子郵件，不可與他人重複 |
-| `current_password` | string | 變更密碼時必填 | 目前的密碼 |
-| `new_password` | string | 否 | 新密碼，規則同註冊 |
 
-密碼欄位最多 256 字元。**回應**：`200 OK`，回傳更新後的 `UserProfile`。錯誤時回傳 `400`：`該電子郵件已被使用`、`請提供目前的密碼`、`目前的密碼錯誤` 或密碼強度訊息。
-
-帶 `new_password` 且變更成功時，該帳號所有已簽發的權杖（含這次請求使用的存取權杖）立即失效，回應同時清除重新整理權杖 Cookie，用戶端必須以新密碼重新登入（見 [權杖模型](#權杖模型)）；只變更 `email` 不影響權杖。
+**回應**：`200 OK`，回傳更新後的 `UserProfile`。電子郵件已被使用時回傳 `400`：`該電子郵件已被使用`。變更電子郵件不影響權杖。
 
 ### 1.6 POST /api/auth/change-password
 
@@ -316,12 +312,12 @@
 | 欄位 | 型態 | 說明 |
 |---|---|---|
 | `filename` | string | 檔名，最多 255 字元 |
-| `file_type` | string | MIME 類型，最多 255 字元；`image/*` 交給視覺模型，其他類型抽取文字 |
+| `file_type` | string | MIME 類型，最多 255 字元；`image/png`、`image/jpeg`、`image/gif`、`image/webp` 交給視覺模型，`image/svg+xml` 與非圖片類型抽取文字；其他圖片類型（例如 BMP、TIFF）不讀取，改告知模型請使用者改用 PNG、JPEG、GIF 或 WebP |
 | `file_size` | integer | 選填，檔案大小 |
 | `data_url` | string | 選填，必須是 base64 編碼的 `data:` URL（`http(s)://` 等遠端網址一律拒絕），解碼後單一附件最多 15 MiB、同一則訊息合計最多 20 MiB；圖片必須提供 |
 | `content` | string | 選填，已擷取好的純文字，最多 50,000 字元；未提供時由 `data_url` 解碼後擷取（PDF 最多 OCR 20 頁） |
 
-每個附件放進模型脈絡的文字最多 50,000 字元，超過的部分截斷。由 `data_url` 擷取文字時套用比管理員上傳更嚴格的聊天附件解析預算（例如 `.docx`、`.pptx`、`.xlsx` 解壓總量最多 64 MiB，`.docx`、`.pptx` 會建成 DOM 的 XML 合計最多 8 MiB），整個後端行程同時最多解析 2 個附件，其餘排隊等候；超過預算的附件不會讓請求失敗，而是以「附件超過解析上限，未讀取內容」告知模型。完整上限見 [設定參考：資源上限](configuration.md#資源上限)。
+每個附件放進模型脈絡的文字最多 50,000 字元，超過的部分截斷。由 `data_url` 擷取文字時套用比管理員上傳更嚴格的聊天附件解析預算（例如 `.docx`、`.pptx`、`.xlsx` 解壓總量最多 64 MiB，`.docx`、`.pptx` 會建成 DOM 的 XML 合計最多 8 MiB），整個後端行程同時最多解析 2 個附件，其餘排隊等候；超過預算的附件不會讓請求失敗，而是以「附件超過解析上限，未讀取內容」告知模型；無法讀取的附件（例如無效的 Office 文件、PDF 有密碼保護或沒有可擷取的文字）同樣不讓請求失敗，而是以「附件未讀取內容」與原因告知模型。擷取出的文字（每個最多 50,000 字元）存回該則使用者訊息附件的 `content`，[2.7](#27-get-apichatconversationsconversation_idmessages) 的回應會帶出；之後在同一段對話提問時隨前文帶入，先前附件的文字從最新的訊息往前合計最多 50,000 字元。完整上限見 [設定參考：資源上限](configuration.md#資源上限)。
 
 | 狀態碼 | 情況 |
 |---|---|
@@ -330,7 +326,7 @@
 | `422` | 欄位驗證失敗：訊息過長、附件過多或過大、`data_url` 不是 base64 `data:` URL 等 |
 | `429` | 這位使用者已有 2 個回答正在串流 |
 
-**`reasoning_effort` 的處理**：前端提供 `none`、`low`、`medium`、`high`、`xhigh`、`max` 六檔；後端接受 `none`、`minimal`、`low`、`medium`、`high`、`xhigh`、`max`，其他值不會傳給模型。各供應商的對應：OpenAI 與 Microsoft Foundry 的 GPT 模型直接傳送（`gpt-6*` 與 Foundry 上的 GPT 走 Responses API，`none` 只有 `luna` 系列接受，其餘改送 `low`；`minimal` 一律改送 `low`），Claude 送 `output_config.effort`（`none` 不送、`minimal` 改 `low`），Gemini 對應到 `minimal` 至 `high`（`none` 改 `minimal`，`xhigh`、`max` 改 `high`），Ollama 對應到 `think`（`none` 為 `false`，`xhigh`、`max` 改 `high`）；Foundry 上非 OpenAI 的模型不送。使用 Chat Completions 的 OpenAI 模型中，名稱含 `gpt-5` 的在帶工具呼叫時一律改送 `none`。
+**`reasoning_effort` 的處理**：前端提供 `none`、`low`、`medium`、`high`、`xhigh`、`max` 六檔；後端接受 `none`、`minimal`、`low`、`medium`、`high`、`xhigh`、`max`，其他值不會傳給模型。各供應商的對應：OpenAI 與 Microsoft Foundry 的 GPT 模型直接傳送（`gpt-6*` 與 Foundry 上的 GPT 走 Responses API，`none` 只有 `luna` 系列接受，其餘改送 `low`；`minimal` 一律改送 `low`），Claude 送 `output_config.effort`（`none`、`minimal` 改送 `low`），Gemini 對應到 `minimal` 至 `high`（`none` 改 `minimal`，`xhigh`、`max` 改 `high`），Ollama 對應到 `think`（`none` 為 `false`，`xhigh`、`max` 改 `high`）；Foundry 上非 OpenAI 的模型不送。使用 Chat Completions 的 OpenAI 模型中，`gpt-5.x`（名稱含 `gpt-5.`）在帶工具呼叫時一律改送 `none`；原始的 `gpt-5`、`gpt-5-mini`、`gpt-5-nano` 不接受 `none`、`xhigh`、`max`，選 `none` 時改送 `minimal`，選 `xhigh`、`max` 時改送 `high`，其他情況照使用者的選擇傳送。
 
 #### SSE 事件
 
@@ -345,7 +341,7 @@
 | `step_end` | 每次工具呼叫結束 | `step`、`tool`、`arguments`、`output_preview`（結果 JSON 的前 300 字）、`duration_seconds`、`status`（`success` / `error`） |
 | `token` | 答案文字 | `content` |
 | `sources` | 答案完成後 | `sources`（來源名稱，去重）、`sources_detail`（見下表） |
-| `done` | 助理訊息已存入資料庫 | `message_id`、`conversation_id`、`answer`、`sources`、`sources_detail`、`research_trace`（所有 `step_end` 的內容） |
+| `done` | 助理訊息已存入資料庫；串流期間對話已被刪除時不儲存 | `message_id`（未儲存時為 `null`）、`conversation_id`、`answer`、`sources`、`sources_detail`、`research_trace`（所有 `step_end` 的內容） |
 | `error` | API 層發生未預期例外 | `detail`（含錯誤代碼的訊息）、`error_id` |
 
 `sources_detail` 只列答案以 `[n]` 實際引用的條目，依第一次引用的順序排列；沒有任何引用時 `sources` 與 `sources_detail` 皆為空陣列。每筆的欄位依來源而定：
@@ -469,7 +465,7 @@ data: {"message_id": 108, "conversation_id": 42, "answer": "特休假需先在�
 
 ### 2.4 GET /api/chat/conversations
 
-取得自己的對話清單，依最後更新時間由新到舊排列，最多 **200** 段；每段對話附**最近 5 則**訊息（依時間先後），其中附件只列檔名等資訊，不含 `data_url`。
+取得自己的對話清單，依最後更新時間由新到舊排列，最多 **200** 段；`messages` 一律為空陣列，訊息請以 [2.7](#27-get-apichatconversationsconversation_idmessages) 取得。
 
 ```json
 [
@@ -478,26 +474,10 @@ data: {"message_id": 108, "conversation_id": 42, "answer": "特休假需先在�
     "title": "特休假申請流程",
     "created_at": "2026-09-25T01:00:00",
     "updated_at": "2026-09-25T01:30:00",
-    "messages": [
-      {
-        "id": 108,
-        "content": "特休假需先在系統填寫假單……[1]。",
-        "is_user": false,
-        "created_at": "2026-09-25T01:30:00",
-        "context_used": null,
-        "model_name": "gpt-6-sol",
-        "reasoning_effort": null,
-        "attachments": [],
-        "sources": ["員工手冊.pdf"],
-        "sources_detail": [...],
-        "research_trace": [...]
-      }
-    ]
+    "messages": []
   }
 ]
 ```
-
-訊息物件的 `sources`、`sources_detail`、`research_trace` 與 `attachments` 由資料庫的 `context_used` 欄位解析而來；回應中的 `context_used` 一律為 `null`（原始內容含附件的 base64，不再重複輸出）。`reasoning_effort` 目前不會儲存，一律為 `null`。
 
 ### 2.5 POST /api/chat/conversations
 
@@ -505,7 +485,7 @@ data: {"message_id": 108, "conversation_id": 42, "answer": "特休假需先在�
 
 ### 2.6 GET /api/chat/conversations/{conversation_id}
 
-取得單一對話與最新的 500 則訊息（依時間先後）。對話不存在或不屬於自己時回傳 `404` `找不到該對話`。
+取得單一對話，`messages` 一律為空陣列，訊息請以 [2.7](#27-get-apichatconversationsconversation_idmessages) 取得。對話不存在或不屬於自己時回傳 `404` `找不到該對話`。
 
 ### 2.7 GET /api/chat/conversations/{conversation_id}/messages
 
@@ -517,6 +497,26 @@ data: {"message_id": 108, "conversation_id": 42, "answer": "特休假需先在�
 | `offset` | `0` | 從最新一則往回略過的數量 |
 
 回傳最新的 `limit` 則訊息（依時間先後排列），以 `offset` 往前翻頁。對話不存在或不屬於自己時回傳空陣列。
+
+```json
+[
+  {
+    "id": 108,
+    "content": "特休假需先在系統填寫假單……[1]。",
+    "is_user": false,
+    "created_at": "2026-09-25T01:30:00",
+    "context_used": null,
+    "model_name": "gpt-6-sol",
+    "reasoning_effort": null,
+    "attachments": [],
+    "sources": ["員工手冊.pdf"],
+    "sources_detail": [...],
+    "research_trace": [...]
+  }
+]
+```
+
+訊息物件的 `sources`、`sources_detail`、`research_trace` 與 `attachments` 由資料庫的 `context_used` 欄位解析而來；回應中的 `context_used` 一律為 `null`（原始內容含附件的 base64，不再重複輸出）。使用者訊息的 `attachments` 保留送出時的欄位（含 `data_url`），`content` 為附件抽出的文字（每個最多 50,000 字元）。`reasoning_effort` 目前不會儲存，一律為 `null`。
 
 ### 2.8 DELETE /api/chat/conversations/{conversation_id}
 
@@ -559,8 +559,9 @@ data: {"message_id": 108, "conversation_id": 42, "answer": "特休假需先在�
 - 支援副檔名：`.txt`、`.md`、`.markdown`、`.pdf`、`.docx`、`.pptx`、`.xlsx`、`.csv`、`.json`、`.jsonl`、`.yaml`、`.yml`、`.xml`、`.html`、`.htm`、`.log`、`.py`、`.js`、`.ts`、`.tsx`、`.jsx`、`.java`、`.cpp`、`.c`、`.sql`、`.sh`、`.ini`、`.env`。
 - 單檔上限為 `MAX_FILE_SIZE_MB`（範本 10 MB）；整個請求本文上限為 10 × `MAX_FILE_SIZE_MB` MiB + 1 MiB，而且只有存取權杖有效且其 `is_admin` 聲明為 `true` 時才適用（否則為 1 MiB），超過回傳 `413`。本文上限在解析請求前依權杖內的聲明決定；是否為管理員仍以資料庫為準，已被取消管理員身分的帳號會收到 `403`。
 - `.docx`、`.pptx`、`.xlsx` 解壓後總大小超過 200 MiB、內含超過 10,000 個檔案，或壓縮比超過 100（解壓後超過 10 MiB 的單一成員與整個檔案都檢查）時拒絕解析；PDF 掃描頁點陣化時每頁最多 25 MP。
-- 檔名中的空白會換成底線；與既有檔名相同時自動加上 `_1`、`_2` 等後綴；含 `/`、`\`、`..`、`<`、`>`、`:`、`"`、`|`、`?`、`*` 的檔名會被拒絕。
+- 檔名中的空白會換成底線；與上傳目錄中的檔案或既有文件的檔名相同時（含原檔已遺失的文件）自動加上 `_1`、`_2` 等後綴；含 `/`、`\`、`..`、`<`、`>`、`:`、`"`、`|`、`?`、`*` 或超過 255 位元組（UTF-8）的檔名會被拒絕。
 - 擷取出的文字（去除前後空白後）與既有文件完全相同時視為重複，不會重複建立。
+- 無法收錄的檔案回傳 `400`，`detail` 說明原因，例如超過解析上限、無效的 Office 文件、沒有可擷取的文字（PDF 每一頁都是圖片且 OCR 未設定或辨識失敗時也是）或 PDF 有密碼保護；檔案頭部與宣告的類型不符時只回傳 `安全驗證失敗: 上傳的檔案未通過安全檢查`。
 - 切塊方式：JSON、JSONL、YAML、CSV、XLSX 與 JS 宣告解析成結構化記錄，逐筆成為片段，過長的記錄切成多段；其他格式的 Q&A 一問一答成一個片段；其餘依 `CHUNK_SIZE` / `CHUNK_OVERLAP` 遞迴切塊。記錄的格式見 [系統架構](architecture.md#結構化資料)。
 
 **回應**：`200 OK`，逐檔回報結果，每筆以 `http_status` 標示該檔的處理狀態。成功的項目中，`qa_pairs` 是 Q&A 對的數量，`record_count` 是結構化記錄數，`warning` 在結構化格式解析失敗或超過解析上限、改以純文字處理時提供說明，其他時候為 `null`：
@@ -635,11 +636,11 @@ data: {"message_id": 108, "conversation_id": 42, "answer": "特休假需先在�
 
 刪除文件：先刪除資料庫紀錄，再移除該文件的片段、向量與 BM25 項目，最後刪除上傳原檔。進行中的索引寫入會在持鎖後確認文件仍存在，已刪除文件的片段不會被寫回知識庫。
 
-**回應**：`200 OK` `{"message": "文件刪除成功"}`；找不到時回傳 `404` `文件不存在`。
+**回應**：`200 OK` `{"message": "文件刪除成功"}`；找不到時回傳 `404` `文件不存在`。資料庫紀錄已刪除但移除索引失敗時回傳 `500`，殘留的片段在下次啟動校正時清除。
 
 ### 3.6 POST /api/documents/rebuild-index
 
-以資料庫中的文件完整重建索引：清空片段與索引後，逐份文件重新擷取文字（上傳原檔存在時優先使用，並覆寫 `documents.content`），依目前的切塊設定重新切塊與建立向量，並替沒有摘要的文件生成 AI 摘要；既有摘要（含手動修訂的）保留。重建完成前知識庫暫時查不到資料；重建進行中再次呼叫回傳 `409` `索引重建正在進行中，請等待完成後再試`。原檔已遺失的文件改以資料庫內容當一般文字切塊，檔名列在 `missing_source_files`，建議重新上傳。從 2.x 升級後需要執行一次，文件越多耗時越久。
+以資料庫中的文件完整重建索引：逐份文件重新擷取文字（上傳原檔存在時優先使用，並覆寫 `documents.content`），依目前的切塊設定重新切塊與建立向量，並替沒有摘要的文件生成 AI 摘要，再以新的片段取代該文件原本的片段；既有摘要（含手動修訂的）保留。重建期間其他文件照常可查，只有正在取代片段的那份文件會短暫查不到；處理失敗的文件保留原本的片段，列在 `failed_documents`（`document_id`、`filename`），`message` 也會註明失敗份數；重建進行中再次呼叫回傳 `409` `索引重建正在進行中，請等待完成後再試`。原檔已遺失的文件改以資料庫內容當一般文字切塊，檔名列在 `missing_source_files`，建議重新上傳。從 2.x 升級後需要執行一次，文件越多耗時越久。
 
 ```json
 {
@@ -649,13 +650,14 @@ data: {"message_id": 108, "conversation_id": 42, "answer": "特休假需先在�
   "qa_pairs_detected": 0,
   "records_detected": 42,
   "missing_source_files": [],
+  "failed_documents": [],
   "chunk_size": 300,
   "chunk_overlap": 100,
   "timestamp": "2026-09-25T10:00:00.000000"
 }
 ```
 
-資料庫沒有文件時回傳 `{"message": "索引重建完成（沒有文件）", "document_count": 0, "chunk_count": 0, "qa_pairs_detected": 0, "records_detected": 0, "missing_source_files": [], "timestamp": "..."}`。
+資料庫沒有文件時回傳 `{"message": "索引重建完成（沒有文件）", "document_count": 0, "chunk_count": 0, "qa_pairs_detected": 0, "records_detected": 0, "missing_source_files": [], "failed_documents": [], "timestamp": "..."}`。
 
 ---
 
@@ -703,7 +705,7 @@ data: {"message_id": 108, "conversation_id": 42, "answer": "特休假需先在�
 
 **憑證的加密與遮蔽**：`headers` 與 `auth_config` 以 `TOOL_SECRETS_KEY`（Fernet）加密後才寫入資料庫，後端啟動時也會把舊版以明文存放的資料改為加密。管理 API 的回應以 `••••••••` 取代秘密值（空值不遮蔽），憑證寫入後無法再從 API 讀出。更新時送出的 `headers` 或 `auth_config` 整個取代原值，其中值仍為 `••••••••` 的鍵沿用已儲存的值；該鍵沒有已儲存的值（包括已儲存的憑證無法解密）時回傳 `400` `欄位 <名稱> 沒有已儲存的值，請輸入實際內容`。更換 `TOOL_SECRETS_KEY` 後，已儲存的憑證都無法解密（`credentials_unreadable` 為 `true`），重新輸入之前該工具無法執行：Agent 呼叫時回傳附錯誤代碼的錯誤，[測試端點](#49-post-apiapi-toolstool_idtest) 回傳 `400` `無法以目前的 TOOL_SECRETS_KEY 解密工具憑證，請重新輸入`；金鑰與加密範圍見 [設定參考：工具憑證加密](configuration.md#工具憑證加密)。
 
-**參數組裝規則**：出現在網址 `{名稱}` 中或位置為 `path` 的參數會替換進網址；`header` 放進標頭；`query` 放進查詢字串；`body` 放進主體。主體依 `body_content_type` 以 JSON、表單（`application/x-www-form-urlencoded`）或 `multipart/form-data` 欄位（不含檔案）送出；兩種表單格式中，物件與陣列值轉成 JSON 字串，布林值轉成 `true` / `false`。未指定位置的參數，`POST`、`PUT`、`PATCH` 放進主體，其他方法放進查詢字串。模型傳入 `request_body` 物件時，整個取代主體。
+**參數組裝規則**：出現在網址 `{名稱}` 中或位置為 `path` 的參數會替換進網址；`header` 放進標頭；`query` 放進查詢字串；`body` 放進主體。主體依 `body_content_type` 以 JSON、表單（`application/x-www-form-urlencoded`）或 `multipart/form-data` 欄位（不含檔案）送出；兩種表單格式中，物件與陣列值轉成 JSON 字串，布林值轉成 `true` / `false`。未指定位置的參數，`POST`、`PUT`、`PATCH` 放進主體，其他方法放進查詢字串。`request_body` 的位置為 `body` 時（例如匯入時請求主體不是有 `properties` 的物件），模型傳入的 `request_body` 不論是物件、陣列、字串或數字都整個取代主體；位置不是 `body` 時只有物件會取代主體。
 
 **只接受宣告的參數**：呼叫端（Agent 或 [4.9](#49-post-apiapi-toolstool_idtest) 的測試）傳入的每個參數都必須列在 `parameters_schema.properties` 中，否則不送出請求，結果的 `status_code` 為 `400`（`工具參數無效：未宣告的參數 …`）；沒有宣告任何參數的工具不接受任何參數。`request_body` 同樣必須宣告；`request_body_schema` 有 `properties` 且 `additionalProperties` 不是 `true` 時，`request_body` 物件中的欄位也必須列在其中，未宣告的欄位以 `request_body.<欄位>` 列出。
 
@@ -760,7 +762,9 @@ data: {"message_id": 108, "conversation_id": 42, "answer": "特休假需先在�
 
 工具名稱取自 `operationId`（轉為小寫並把非英數字元換成底線）；沒有 `operationId` 時由方法與路徑組成，例如 `get_pets_petid`。
 
-`body_content_type` 依規格的請求主體格式依序選擇 `application/json`、`application/x-www-form-urlencoded`、`multipart/form-data`，其他格式（例如 XML）改用 JSON。`auth_type` 與 `auth_config` 取自端點的 `security`（沒有時用規格頂層的 `security`）與 `securitySchemes`（3.x 的 `components`）或 `securityDefinitions`（2.0），只填入設定欄位，憑證留空：
+請求主體是有 `properties` 的物件時，每個欄位成為位置為 `body` 的參數；其他型別（陣列、字串、數字、沒有 `properties` 的物件）成為一個位置為 `body` 的 `request_body` 參數，保留完整的 schema（例如陣列的 `items`）。Swagger 2.0 的 `in: formData` 參數同樣成為位置為 `body` 的參數。`$ref` 在每個用到的地方都展開成完整結構；同一條參照路徑上的循環參照，以及每個參數或主體 schema 中超過 200 個（`MAX_OPENAPI_SCHEMA_REFS`）的參照，改以只含說明的物件 schema 取代。以 `$ref` 引用的參數（`components/parameters`、Swagger 2.0 的 `parameters`）、請求主體（`components/requestBodies`）與認證方式（`securitySchemes`／`securityDefinitions`）會先沿參照找到原本的物件（可連續參照），再照一般規則處理。
+
+`body_content_type` 依規格的請求主體格式（Swagger 2.0 為端點的 `consumes`，沒有時用規格頂層的 `consumes`）依序選擇 `application/json`、`application/x-www-form-urlencoded`、`multipart/form-data`，其他格式（例如 XML）改用 JSON。`auth_type` 與 `auth_config` 取自端點的 `security`（沒有時用規格頂層的 `security`）與 `securitySchemes`（3.x 的 `components`）或 `securityDefinitions`（2.0），只填入設定欄位，憑證留空：
 
 | 規格中的認證 | `auth_type` | 填入的 `auth_config` |
 |---|---|---|
@@ -777,7 +781,7 @@ data: {"message_id": 108, "conversation_id": 42, "answer": "特休假需先在�
 
 ### 4.2 POST /api/api-tools/import
 
-把解析後勾選的端點批次匯入。同名工具會被覆寫並重新啟用。
+把解析後勾選的端點批次匯入。同名工具會更新網址、參數與主體設定，啟用狀態維持不變（停用的工具不會被重新啟用）。
 
 | 欄位 | 型態 | 必填 | 說明 |
 |---|---|---|---|
@@ -789,7 +793,7 @@ data: {"message_id": 108, "conversation_id": 42, "answer": "特休假需先在�
 
 端點宣告的認證優先：前端匯入對話框的 Bearer Token 只會填進沒有宣告認證或宣告 Bearer 的端點，其他認證方式的憑證請在匯入後以 4.6 編輯工具填入。`auth_type` 或 `body_content_type` 不在允許的值中時回傳 `422`。
 
-新匯入的工具依方法決定 `requires_approval`（`GET`、`HEAD`、`OPTIONS` 以外為 `true`）。覆寫既有工具時，原本需要核准的仍維持需要核准；`headers` 與 `auth_config` 則改為這次匯入的內容（含 `global_headers`、`global_auth_config`），不沿用已儲存的憑證，沒有提供時即清空。匯入後可以 4.6 修改。
+新匯入的工具依方法決定 `requires_approval`（`GET`、`HEAD`、`OPTIONS` 以外為 `true`）。覆寫既有工具時，原本需要核准的仍維持需要核准；`headers` 保留已儲存的標頭，只以這次匯入帶有值的標頭新增或覆寫（含 `global_headers`）；`auth_config` 在認證方式相同時只以這次帶有值的欄位覆寫，認證方式不同時，只有原本未設定認證或這次帶了金鑰等憑證才會改用新的設定，否則保留原本的認證。空白的金鑰不會蓋掉已儲存的憑證。匯入後可以 4.6 修改。
 
 ```json
 {
@@ -854,7 +858,7 @@ data: {"message_id": 108, "conversation_id": 42, "answer": "特休假需先在�
 
 - 回應為 JSON 時 `data` 是解析後的物件，否則是前 4000 字的文字。上游回應本文超過 1 MiB 時中止讀取，`status_code` 為 `502`。
 - 本次請求注入的憑證（標頭值、Bearer 權杖、API Key、Basic 認證）出現在 `data` 或 `url` 中時會換成 `[已遮蔽]`；`url` 中查詢字串型 API Key 與工具網址固定查詢參數的值同樣遮蔽。
-- 轉址由後端手動跟隨，最多 5 次，轉址回應的本文一律不讀取；轉址到其他來源（scheme、主機或埠號不同）時，不轉送管理員設定的標頭與認證標頭。
+- 轉址由後端手動跟隨，最多 5 次，轉址回應的本文一律不讀取。`GET`、`HEAD`、`OPTIONS` 轉址到其他來源（scheme、主機或埠號不同）時，不轉送管理員設定的標頭與認證標頭；其他方法只跟隨同一來源的轉址，轉址到其他來源時中止，請求主體不會送往其他網域；這時與轉址超過上限一樣，回傳 `status_code: 400` 與說明原因的 `error`（「上游轉址未跟隨：…」）。
 - 整個呼叫（含轉址與逐段讀取回應）的總時限為工具的 `timeout` 秒，超過時中止，`status_code` 為 `504`（`上游在 <timeout> 秒內沒有完成回應`）。
 - 第一個請求與每次轉址都會重新經過 SSRF 驗證，並把連線固定在驗證過的 IP；被拒絕時 `status_code` 為 `403`、`is_success` 為 `false`，`error` 只說明遭 SSRF 防護拒絕並附錯誤代碼，另附 `error_id`，完整原因只寫入伺服器日誌。
 - 參數未宣告、路徑參數無效、代入後的主機不符，或覆寫工具網址中固定的查詢參數時不送出請求，`status_code` 為 `400`，`error` 說明原因（見 [工具物件](#工具物件)）。

@@ -8,26 +8,25 @@ from app import __version__
 from app.core.config import settings
 from app.core.limits import LOG_FILE_BACKUP_COUNT, LOG_FILE_MAX_BYTES
 from app.core.lifespan import lifespan
+from app.core.security_logging import SingleLineMessageFormatter
 from app.middleware import setup_middlewares
 from app.api import chat, admin, documents, tags as tags_router, auth, api_tools, mcp, skills, llm_connections
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 LOGS_DIR = os.path.join(BASE_DIR, 'logs')
 os.makedirs(LOGS_DIR, exist_ok=True)
 log_level = settings.LOG_LEVEL.upper()
-logging.basicConfig(
-    level=getattr(logging, log_level),
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    datefmt='%Y-%m-%d %H:%M:%S',
-    handlers=[
-        logging.StreamHandler(),
-        RotatingFileHandler(
-            os.path.join(LOGS_DIR, 'app.log'),
-            maxBytes=LOG_FILE_MAX_BYTES,
-            backupCount=LOG_FILE_BACKUP_COUNT,
-            encoding='utf-8'
-        )
-    ]
-)
+log_handlers = [
+    logging.StreamHandler(),
+    RotatingFileHandler(
+        os.path.join(LOGS_DIR, 'app.log'),
+        maxBytes=LOG_FILE_MAX_BYTES,
+        backupCount=LOG_FILE_BACKUP_COUNT,
+        encoding='utf-8'
+    )
+]
+for handler in log_handlers:
+    handler.setFormatter(SingleLineMessageFormatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s', datefmt='%Y-%m-%d %H:%M:%S'))
+logging.basicConfig(level=getattr(logging, log_level), handlers=log_handlers)
 logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
 # httpx／httpcore 的 INFO 日誌會記下完整請求網址，查詢字串型 API 金鑰等憑證會因此明文落地
 logging.getLogger("httpx").setLevel(logging.WARNING)
@@ -73,7 +72,6 @@ def create_app():
         logger.info(f"FAISS gpu available: {faiss_gpu_available}; num_gpus = {faiss.get_num_gpus() if faiss_gpu_available else 0}")
     except Exception as e:
         logger.warning("FAISS not importable or CPU-only. If you intended to use GPU FAISS, ensure faiss-gpu is installed and CUDA is configured. Error: %s", e)
-        faiss_gpu_available = False
     return app
 if __name__ == "__main__":
     import argparse

@@ -36,7 +36,7 @@ from app.core.jwt_auth import (
 )
 from app.core.redis_client import TokenBlacklist
 from app.crud import crud_user
-from app.models import User
+from app.models import Document, RagChunk, User
 from app.models.database import Base, upgrade_schema
 
 
@@ -273,4 +273,24 @@ def test_sqlite_users_table_uses_autoincrement(db):
     db.delete(second)
     db.commit()
     third = add_user(db, "third")
+    assert third.id > deleted_id > first.id
+
+
+def test_sqlite_rag_chunks_table_uses_autoincrement(db):
+    from sqlalchemy.dialects import sqlite
+
+    ddl = str(CreateTable(RagChunk.__table__).compile(dialect=sqlite.dialect()))
+    assert "AUTOINCREMENT" in ddl
+    db.add(Document(id=1, filename="handbook.txt", content="handbook"))
+    db.commit()
+    chunks = [RagChunk(document_id=1, chunk_index=index, content="handbook", chunk_metadata="{}") for index in range(2)]
+    db.add_all(chunks)
+    db.commit()
+    first, second = chunks
+    deleted_id = second.id
+    db.delete(second)
+    db.commit()
+    third = RagChunk(document_id=1, chunk_index=1, content="handbook", chunk_metadata="{}")
+    db.add(third)
+    db.commit()
     assert third.id > deleted_id > first.id

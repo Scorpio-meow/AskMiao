@@ -61,6 +61,24 @@ def test_registration_works_when_open(client, monkeypatch):
     assert response.json()["user"]["is_admin"] is False
 
 
+@pytest.mark.parametrize("username", ["аdmin", "ａdmin", "alice\n"])
+def test_registration_rejects_lookalike_and_trailing_newline_usernames(client, session_factory, monkeypatch, username):
+    monkeypatch.setattr(settings, "ALLOW_REGISTRATION", True)
+    response = client.post("/api/auth/register", json={**NEW_USER, "username": username})
+    assert response.status_code == 422
+    assert "使用者名稱只能包含" in response.text
+    with session_factory() as session:
+        assert session.query(User).count() == 0
+        with pytest.raises(ValueError, match="使用者名稱只能包含"):
+            create_account(session, username, NEW_USER["email"], NEW_USER["password"], is_admin=False)
+
+
+def test_registration_accepts_chinese_usernames(client, monkeypatch):
+    monkeypatch.setattr(settings, "ALLOW_REGISTRATION", True)
+    response = client.post("/api/auth/register", json={**NEW_USER, "username": "王小明_01"})
+    assert response.status_code == 201
+
+
 def test_create_account_script_applies_registration_rules(session_factory):
     with session_factory() as session:
         admin = create_account(session, "root", "root@example.com", "Secret123", is_admin=True)

@@ -20,7 +20,7 @@ from app.models.database import Base, SessionLocal, engine, upgrade_schema
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="建立 AskMiao 帳號")
-    parser.add_argument("--username", required=True, help="使用者名稱（3～50 字，只含字母、數字、底線與連字號）")
+    parser.add_argument("--username", required=True, help="使用者名稱（3～50 字，只含中文、英文字母、數字、底線與連字號）")
     parser.add_argument("--email", required=True, help="電子郵件")
     parser.add_argument("--admin", action="store_true", help="建立為管理員")
     args = parser.parse_args()

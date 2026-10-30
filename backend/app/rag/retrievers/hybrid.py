@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import Callable, Iterable, List, Tuple, Dict, Optional, Sequence
+from typing import Iterable, List, Tuple, Dict, Optional, Sequence
 import os
 import re
 import threading
@@ -195,14 +195,12 @@ class HybridRetriever:
         return logits
 
     def hybrid_search(
-        self, query: str, allowed: Optional[Callable[[Document], bool]] = None
+        self, query: str, query_embedding: np.ndarray, chunk_ids: Optional[List[int]] = None
     ) -> List[Tuple[Document, float]]:
-        """兩軌必跑：向量與 BM25 各取 TOP_K 筆，以 RRF 融合後取前 RERANK_TOP_K 筆（呼叫端須持有 vector_store.lock）"""
-        vector_results = self.vector_store.search(query, self.top_k, apply_threshold=False)
-        bm25_results = self.bm25_store.search(query, self.vector_store.chunks, self.top_k)
+        """兩軌必跑：向量與 BM25 各取 TOP_K 筆（指定 chunk_ids 時只在這些片段中取），以 RRF 融合後取前 RERANK_TOP_K 筆（呼叫端須持有 vector_store.lock）"""
+        vector_results = self.vector_store.search(query_embedding, self.top_k, apply_threshold=False, chunk_ids=chunk_ids)
+        bm25_results = self.bm25_store.search(query, self.vector_store.chunks, self.top_k, chunk_ids=chunk_ids)
         fused = reciprocal_rank_fusion([vector_results, bm25_results], self.rrf_k)
-        if allowed is not None:
-            fused = [(doc, score) for doc, score in fused if allowed(doc)]
         return fused[: self.rerank_top_k]
 
     def _relevance(self, query: str, documents: List[Document]) -> List[float]:
@@ -219,14 +217,22 @@ class HybridRetriever:
 
     def rank(self, query: str, target_document: Optional[str] = None) -> List[RetrievedChunk]:
         """融合並重排後的全部候選，未套用相關性門檻、未截斷；重排失敗時直接拋出例外"""
+        query_embedding = self.vector_store.embed_query(query)
         with self.vector_store.lock:
-            allowed = (lambda doc: matches_target_document(doc, target_document)) if target_document else None
+            chunk_ids = None
+            if target_document:
+                chunk_ids = [
+                    chunk_id for chunk_id, doc in self.vector_store.chunks.items()
+                    if matches_target_document(doc, target_document)
+                ]
             exact = find_exact_matches(
-                query, (doc for doc in self.vector_store.chunks.values() if allowed is None or allowed(doc))
+                query,
+                self.vector_store.chunks.values() if chunk_ids is None
+                else (self.vector_store.chunks[chunk_id] for chunk_id in chunk_ids)
             )
             # 精確比對候選與融合軌一樣以 RERANK_TOP_K 為上限（分數高者優先），重排成本不隨語料規模成長
             exact = sorted(exact, key=lambda item: item[1], reverse=True)[: self.rerank_top_k]
-            fused = self.hybrid_search(query, allowed)
+            fused = self.hybrid_search(query, query_embedding, chunk_ids)
 
             exact_ids = {doc.metadata["chunk_id"] for doc, _ in exact}
             fused = [(doc, score) for doc, score in fused if doc.metadata["chunk_id"] not in exact_ids]

@@ -4,13 +4,12 @@
 1. 請求本文上限在驗證相依之前生效，只有帶有效存取權杖的聊天／上傳請求才放寬
 2. 聊天附件只接受 base64 data: URL，並限制數量、單檔與總量；訊息長度有上限
 3. 模型名稱必須在可用清單內；每位使用者的並行串流與附件儲存量有上限
-4. 對話清單只帶最近幾則訊息、不含附件本體與原始 context_used
+4. 對話清單與單段對話不帶訊息；訊息由分頁端點讀取，不含原始 context_used
 5. 附件在執行緒中解析；PDF 點陣化有像素上限、在單一執行緒進行、OCR 頁數有上限；OOXML 擋壓縮炸彈
 6. 會超線性回溯的清洗與切分邏輯改為線性；工具結果與篩選參數有上限；遠端模型清單有快取
 """
 import asyncio
 import base64
-import io
 import json
 import threading
 import time
@@ -51,7 +50,7 @@ from app.rag.tools import ResearchToolRegistry, extract_html_text
 from app.services import chat_service as chat_service_module
 from app.services import pdf_service
 from app.services.chat_service import AttachmentQuotaExceeded, ChatService
-from app.services.document_processor import DocumentLimitExceeded, DocumentProcessor
+from app.services.document_processor import DocumentLimitExceeded, DocumentProcessor, DocumentRejected
 from test_agent_guardrails import research
 from app.services.structured_data import (
     _extract_declared_json,
@@ -184,6 +183,46 @@ async def test_concurrent_stream_limit_per_user(monkeypatch, db):
     assert exc_info.value.status_code == 429
 
 
+@pytest.mark.anyio
+async def test_stream_slot_is_released_when_rag_fails(monkeypatch, db):
+    connection = add_connection(db, owner_id=7)
+    monkeypatch.setattr(chat_api, "_active_streams", {})
+
+    class FailingRag:
+        async def generate_response_stream(self, *args, **kwargs):
+            raise RuntimeError("模型連線失敗")
+            yield
+
+    monkeypatch.setattr(chat_api, "get_rag_system", lambda: FailingRag())
+    response = await chat_api.send_message(MessageCreate(content="hi", connection_id=connection.id, model_name="model-a"), db=db, user_id=7)
+    body = "".join([chunk async for chunk in response.body_iterator])
+
+    assert "event: error" in body
+    assert chat_api._active_streams == {}
+
+
+@pytest.mark.anyio
+async def test_stream_slot_is_released_when_client_disconnects(monkeypatch, db):
+    connection = add_connection(db, owner_id=7)
+    monkeypatch.setattr(chat_api, "_active_streams", {})
+
+    class EndlessRag:
+        async def generate_response_stream(self, *args, **kwargs):
+            yield {"event": "token", "data": {"content": "半"}}
+            await asyncio.Event().wait()
+
+    monkeypatch.setattr(chat_api, "get_rag_system", lambda: EndlessRag())
+    response = await chat_api.send_message(MessageCreate(content="hi", connection_id=connection.id, model_name="model-a"), db=db, user_id=7)
+    stream = response.body_iterator
+    assert "event: start" in await stream.__anext__()
+    assert "event: token" in await stream.__anext__()
+    assert chat_api._active_streams == {7: 1}
+
+    await stream.aclose()
+
+    assert chat_api._active_streams == {}
+
+
 def test_attachment_storage_quota(monkeypatch, db):
     monkeypatch.setattr(chat_service_module, "MAX_USER_ATTACHMENT_STORAGE_BYTES", 1000)
     service = ChatService()
@@ -193,6 +232,19 @@ def test_attachment_storage_quota(monkeypatch, db):
         service.ensure_attachment_quota(db, 1, 101)
     # 其他使用者不受影響
     service.ensure_attachment_quota(db, 2, 1000)
+
+
+def test_attachment_text_is_stored_only_within_the_quota(monkeypatch, db):
+    service = ChatService()
+    context = json.dumps({"attachments": [{"filename": "a.txt"}]})
+    message = service.save_message(db, 1, "q", True, context_used=context)
+    monkeypatch.setattr(chat_service_module, "MAX_USER_ATTACHMENT_STORAGE_BYTES", len(context) + 50)
+    service.save_attachment_texts(db, message.id, ["x" * 100])
+    db.refresh(message)
+    assert message.context_used == context
+    service.save_attachment_texts(db, message.id, ["x" * 10])
+    db.refresh(message)
+    assert json.loads(message.context_used)["attachments"][0]["content"] == "x" * 10
 
 
 @pytest.mark.anyio
@@ -231,7 +283,7 @@ async def test_concurrent_attachment_messages_cannot_exceed_the_quota(monkeypatc
 
 # ---------- 4. 對話清單 ----------
 
-def test_conversation_list_is_bounded_and_omits_attachment_bodies(db):
+def test_conversation_list_and_detail_carry_no_messages(db):
     service = ChatService()
     conversation = Conversation(user_id=1, title="t")
     db.add(conversation)
@@ -242,14 +294,13 @@ def test_conversation_list_is_bounded_and_omits_attachment_bodies(db):
     db.commit()
 
     listed = service.get_user_conversations(db, 1)
-    messages = listed[0].messages
+    assert [(c.id, c.title, c.messages) for c in listed] == [(conversation.id, "t", [])]
+    assert service.get_conversation_with_messages(db, conversation.id, 1).messages == []
+
+    messages = service.get_conversation_messages(db, conversation.id, 1, limit=5)
     assert [m.content for m in messages] == [f"m{i}" for i in range(7, 12)]
     assert all(m.context_used is None for m in messages)
-    assert messages[0].attachments[0].data_url is None
-    assert messages[0].attachments[0].filename == "a.png"
-
-    full = service.get_conversation_with_messages(db, conversation.id, 1)
-    assert full.messages[0].attachments[0].data_url == "data:image/png;base64,AAAA"
+    assert messages[0].attachments[0].data_url == "data:image/png;base64,AAAA"
 
 
 # ---------- 5. 附件解析 ----------
@@ -394,6 +445,15 @@ def test_attachment_over_budget_is_reported_instead_of_parsed(monkeypatch, tmp_p
         url = f"data:{DOCX_TYPE};base64," + base64.b64encode(handle.read()).decode()
     text = agent_module._extract_attachment_text("a.docx", DOCX_TYPE, url)
     assert text.startswith("[附件超過解析上限") and "檔案數" in text
+
+
+def test_rejected_attachment_is_reported_to_the_model(monkeypatch):
+    def reject(*_):
+        raise DocumentRejected("PDF 文件中沒有可提取的文字")
+
+    monkeypatch.setattr(DocumentProcessor, "extract_text_from_file", reject)
+    url = "data:application/pdf;base64," + base64.b64encode(b"%PDF-1.7").decode()
+    assert agent_module._extract_attachment_text("scan.pdf", "application/pdf", url) == "[附件未讀取內容：PDF 文件中沒有可提取的文字]"
 
 
 @pytest.mark.anyio

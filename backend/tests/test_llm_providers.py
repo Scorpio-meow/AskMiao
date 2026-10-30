@@ -1,3 +1,4 @@
+import asyncio
 import json
 import re
 from types import SimpleNamespace
@@ -352,6 +353,31 @@ async def test_claude_max_tokens_capped_by_model_output_limit(claude):
 
 
 @pytest.mark.asyncio
+async def test_slow_model_lookup_does_not_block_other_endpoints(monkeypatch):
+    monkeypatch.setattr(llm_client, "_anthropic_output_limits", {})
+    slow = LlmEndpoint("anthropic", "https://slow.example.com", "test-key", 128000, False)
+    fast = LlmEndpoint("anthropic", "https://api.anthropic.com", "test-key", 128000, False)
+    release_slow = asyncio.Event()
+
+    class Models:
+        def __init__(self, endpoint):
+            self.endpoint = endpoint
+
+        async def retrieve(self, model):
+            if self.endpoint is slow:
+                await release_slow.wait()
+            return SimpleNamespace(id=model, max_tokens=64000)
+
+    monkeypatch.setattr(llm_client, "_anthropic_client", lambda endpoint: SimpleNamespace(models=Models(endpoint)))
+    slow_lookup = asyncio.create_task(llm_client._anthropic_max_tokens(slow, "claude-haiku-4-5"))
+    await asyncio.sleep(0)
+
+    assert await asyncio.wait_for(llm_client._anthropic_max_tokens(fast, "claude-haiku-4-5"), timeout=1) == 64000
+    release_slow.set()
+    assert await slow_lookup == 64000
+
+
+@pytest.mark.asyncio
 async def test_claude_max_tokens_on_foundry_uses_connection_limit():
     endpoint = LlmEndpoint("foundry", "https://example.services.ai.azure.com", "foundry-key", 32000, False)
 
@@ -646,6 +672,23 @@ def test_foundry_chat_completions_skips_reasoning_effort_for_non_openai_models()
 
     assert "reasoning_effort" not in kimi
     assert gpt["reasoning_effort"] == "high"
+
+
+@pytest.mark.parametrize("model, tools, effort, expected", [
+    ("gpt-5.4", [KB_TOOL], "high", "none"),
+    ("gpt-5.4-mini", None, "none", "none"),
+    ("gpt-5.4", None, "medium", "medium"),
+    ("gpt-5", [KB_TOOL], "high", "high"),
+    ("gpt-5-mini", [KB_TOOL], "none", "minimal"),
+    ("gpt-5-nano", None, "none", "minimal"),
+    ("gpt-5-nano", None, "low", "low"),
+    ("gpt-5", [KB_TOOL], "xhigh", "high"),
+    ("gpt-5-mini", None, "max", "high"),
+])
+def test_chat_completions_sends_none_effort_only_to_gpt5_point_releases(model, tools, effort, expected):
+    payload = llm_client._openai_payload("openai", [{"role": "user", "content": "hi"}], model, tools, effort, stream=False)
+
+    assert payload["reasoning_effort"] == expected
 
 
 @pytest.mark.parametrize("effort, expected", [

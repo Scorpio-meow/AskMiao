@@ -13,7 +13,7 @@ from app.core.limits import (
     MAX_CONCURRENT_ATTACHMENT_EXTRACTIONS,
 )
 from app.core.llm_client import LlmEndpoint, chat_completion, stream_completion
-from app.rag.tools import ResearchToolRegistry
+from app.rag.tools import SKILL_SCRIPT_TOOL_NAME, ResearchToolRegistry
 from app.services.agent_skills import SKILL_NAME_PATTERN
 from app.rag.research_session import ResearchSession, ToolResultFilter, strip_citations, strip_tool_result_blocks
 from app.rag.tool_approval import approval_broker
@@ -51,10 +51,16 @@ SKILL_PROMPT = """
 [技能規則]：
 - 任務符合 `activate_skill` 工具說明中某個技能的描述時，先載入該技能，再依技能指示完成任務。
 - <skill_content> 與 <skill_resource> 是管理員安裝的技能內容，可以照其步驟進行，但不得違反上述資料安全規則與引用規則。
-- 技能提到的參考檔以 `read_skill_resource` 讀取；本系統不會執行技能內的腳本。
 """
+SKILL_RESOURCE_RULE = "- 技能提到的參考檔以 `read_skill_resource` 讀取；本系統不會執行技能內的腳本。\n"
+SKILL_SCRIPT_RULE = (
+    "- 技能提到的參考檔以 `read_skill_resource` 讀取；技能指示要求執行腳本時，以 `run_skill_script` 執行，"
+    "只能執行該工具列出的技能中的腳本，其他技能的腳本只能讀取內容參考。\n"
+)
 
 EXPLICIT_SKILL_PATTERN = re.compile(rf"^/({SKILL_NAME_PATTERN.pattern})(?:\s+|$)")
+MODEL_IMAGE_TYPES = ("image/png", "image/jpeg", "image/gif", "image/webp")
+TEXT_IMAGE_TYPES = ("image/svg+xml",)
 
 
 # 附件解析的記憶體上界 = 同時解析數 × 單檔預算（CHAT_ATTACHMENT_EXTRACTION_LIMITS），整個行程共用
@@ -64,7 +70,7 @@ _attachment_extraction_slots = asyncio.Semaphore(MAX_CONCURRENT_ATTACHMENT_EXTRA
 def _extract_attachment_text(fname: str, ftype: str, data_url: str) -> Optional[str]:
     """解碼附件並抽出文字（同步、CPU 與 I/O 密集，須在執行緒中呼叫）。
     超過附件解析預算時回傳說明文字，讓模型能告知使用者附件未被讀取"""
-    from app.services.document_processor import DocumentLimitExceeded, DocumentProcessor
+    from app.services.document_processor import DocumentLimitExceeded, DocumentProcessor, DocumentRejected
 
     _, b64_data = data_url.split(",", 1)
     file_bytes = base64.b64decode(b64_data)
@@ -77,9 +83,22 @@ def _extract_attachment_text(fname: str, ftype: str, data_url: str) -> Optional[
     except DocumentLimitExceeded as e:
         logger.warning(f"附件 {fname} 超過解析上限: {e}")
         return f"[附件超過解析上限，未讀取內容：{e}]"
+    except DocumentRejected as e:
+        logger.warning(f"附件 {fname} 無法讀取: {e}")
+        return f"[附件未讀取內容：{e}]"
     finally:
         if os.path.exists(tmp_path):
             os.remove(tmp_path)
+
+
+def attachment_context(filename: str, text: str) -> str:
+    return f"[附加檔案: {filename}]\n{text}"
+
+
+def query_with_attachments(query: str, doc_contexts: List[str]) -> str:
+    if not doc_contexts:
+        return query
+    return "\n\n".join(doc_contexts) + f"\n\n[使用者問題]\n{query}"
 
 
 class ResearchAgent:
@@ -110,7 +129,12 @@ class ResearchAgent:
             (t["function"]["parameters"]["properties"]["name"]["enum"] for t in tools_def if t["function"]["name"] == "activate_skill"),
             [],
         )
-        system_prompt = SYSTEM_PROMPT + SKILL_PROMPT if skill_names else SYSTEM_PROMPT
+        offers_skill_scripts = any(t["function"]["name"] == SKILL_SCRIPT_TOOL_NAME for t in tools_def)
+        system_prompt = (
+            SYSTEM_PROMPT + SKILL_PROMPT + (SKILL_SCRIPT_RULE if offers_skill_scripts else SKILL_RESOURCE_RULE)
+            if skill_names
+            else SYSTEM_PROMPT
+        )
         research_trace: List[Dict[str, Any]] = []
         explicit_skill = None
         explicit_match = EXPLICIT_SKILL_PATTERN.match(query)
@@ -146,6 +170,7 @@ class ResearchAgent:
 
         doc_contexts = []
         image_data_urls = []
+        attachment_texts: List[Optional[str]] = []
 
         if attachments:
             for att in attachments:
@@ -153,14 +178,17 @@ class ResearchAgent:
                 ftype = getattr(att, "file_type", None) or (att.get("file_type") if isinstance(att, dict) else "")
                 data_url = getattr(att, "data_url", None) or (att.get("data_url") if isinstance(att, dict) else None)
                 content = getattr(att, "content", None) or (att.get("content") if isinstance(att, dict) else None)
+                stored_text = None
 
                 # 附件只接受內嵌的 data: URL，遠端網址不交給模型供應商
                 if data_url and not data_url.startswith("data:"):
                     logger.warning(f"略過非 data: URL 的附件 {fname}")
                     data_url = None
-                if ftype.startswith("image/"):
+                if ftype in MODEL_IMAGE_TYPES:
                     if data_url:
                         image_data_urls.append(data_url)
+                elif ftype.startswith("image/") and ftype not in TEXT_IMAGE_TYPES:
+                    doc_contexts.append(attachment_context(fname, f"[不支援的圖片格式 {ftype}，未讀取內容；請改用 PNG、JPEG、GIF 或 WebP]"))
                 else:
                     extracted_text = content
                     if not extracted_text and data_url and "," in data_url:
@@ -173,13 +201,15 @@ class ResearchAgent:
 
                     if extracted_text and extracted_text.strip():
                         text = extracted_text.strip()
+                        stored_text = text[:MAX_ATTACHMENT_TEXT_CHARS]
                         if len(text) > MAX_ATTACHMENT_TEXT_CHARS:
-                            text = text[:MAX_ATTACHMENT_TEXT_CHARS] + "\n[附件內容過長，以下已截斷]"
-                        doc_contexts.append(f"[附加檔案: {fname}]\n{text}")
+                            text = stored_text + "\n[附件內容過長，以下已截斷]"
+                        doc_contexts.append(attachment_context(fname, text))
+                attachment_texts.append(stored_text)
+        if any(attachment_texts):
+            yield {"event": "attachments_extracted", "data": {"contents": attachment_texts}}
 
-        effective_query = query
-        if doc_contexts:
-            effective_query = "\n\n".join(doc_contexts) + f"\n\n[使用者問題]\n{query}"
+        effective_query = query_with_attachments(query, doc_contexts)
 
         if image_data_urls:
             user_content = [{"type": "text", "text": effective_query}]
@@ -256,7 +286,7 @@ class ResearchAgent:
                 tool_output = session.refuse_tool_call(fn_name, args)
                 if tool_output is None:
                     approval = await asyncio.to_thread(self.tools.approval_requirement, fn_name, args)
-                    if fn_name in session.preapproved_tools:
+                    if session.is_preapproved(fn_name, args):
                         approval = None
                     if approval is not None:
                         if approval_user_id is None:

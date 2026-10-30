@@ -44,16 +44,21 @@ class RankedVectorStore:
     def documents(self):
         return list(self.chunks.values())
 
-    def search(self, query, top_k, apply_threshold):
-        return [(doc, 1.0 / rank) for rank, doc in enumerate(self.vector_ranking[:top_k], start=1)]
+    def embed_query(self, query):
+        return query
+
+    def search(self, query_embedding, top_k, apply_threshold, chunk_ids=None):
+        ranking = [doc for doc in self.vector_ranking if chunk_ids is None or doc.metadata["chunk_id"] in chunk_ids]
+        return [(doc, 1.0 / rank) for rank, doc in enumerate(ranking[:top_k], start=1)]
 
 
 class RankedBM25:
     def __init__(self, bm25_ranking):
         self.bm25_ranking = bm25_ranking
 
-    def search(self, query, chunks, top_k):
-        return [(doc, 10.0 / rank) for rank, doc in enumerate(self.bm25_ranking[:top_k], start=1)]
+    def search(self, query, chunks, top_k, chunk_ids=None):
+        ranking = [doc for doc in self.bm25_ranking if chunk_ids is None or doc.metadata["chunk_id"] in chunk_ids]
+        return [(doc, 10.0 / rank) for rank, doc in enumerate(ranking[:top_k], start=1)]
 
 
 def make_retriever(monkeypatch, documents, vector_ranking, bm25_ranking, encoder, **overrides):
@@ -89,7 +94,7 @@ def test_chunk_found_only_by_bm25_reaches_rerank_candidates(monkeypatch):
         FakeCrossEncoder({bm25_only.page_content: 0.95}, default_relevance=0.1),
     )
 
-    candidates = [doc.metadata["chunk_id"] for doc, _ in retriever.hybrid_search("MES")]
+    candidates = [doc.metadata["chunk_id"] for doc, _ in retriever.hybrid_search("MES", "MES")]
     results = retriever.smart_search("MES")
 
     assert 99 in candidates

@@ -28,7 +28,7 @@ from app.core import security as security_module
 from app.core.rsa_keys import RSAKeyManager
 from app.core.limits import MAX_LOG_FIELD_CHARS, MAX_LOGIN_IDENTIFIER_CHARS
 from app.core.redis_client import TokenBlacklist
-from app.core.security_logging import security_logger, truncate_log_value
+from app.core.security_logging import SingleLineMessageFormatter, security_logger, truncate_log_value
 from app.core.user_context import get_current_user_id
 from app.rag import tokenizers
 from app.rag import tools as tools_module
@@ -74,6 +74,18 @@ def test_security_log_fields_are_truncated_and_not_duplicated():
     assert security_files and all(isinstance(h, RotatingFileHandler) for h in security_files)
     with pytest.raises(ValidationError):
         UserLogin(username="u" * (MAX_LOGIN_IDENTIFIER_CHARS + 1), password="x")
+
+
+def test_log_messages_cannot_forge_extra_lines():
+    formatter = SingleLineMessageFormatter("%(levelname)s - %(message)s")
+    record = logging.LogRecord("app", logging.INFO, __file__, 1, "model %s", ("gpt\n2026-10-31 - app - ERROR - forged",), None)
+    assert formatter.format(record) == "INFO - model gpt\\n2026-10-31 - app - ERROR - forged"
+    try:
+        raise ValueError("boom")
+    except ValueError:
+        record = logging.LogRecord("app", logging.ERROR, __file__, 1, "failed", (), sys.exc_info())
+    assert formatter.format(record).splitlines()[0] == "ERROR - failed"
+    assert "Traceback" in formatter.format(record)
 
 
 @pytest.mark.anyio

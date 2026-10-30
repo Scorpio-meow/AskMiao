@@ -13,7 +13,7 @@ from app.api import mcp
 from app.core.jwt_auth import get_current_user_from_token
 from app.core.tool_secrets import decrypt_json, encrypt_json
 from app.models import McpServer
-from app.models.database import Base, SessionLocal, engine
+from app.models.database import SessionLocal
 
 PUBLIC_IP = ipaddress.ip_address("93.184.216.34")
 ADMIN_USER = {"user_id": 1, "username": "admin", "email": "admin@example.com", "role": "admin", "is_admin": True}
@@ -80,8 +80,8 @@ def fake(monkeypatch):
 
 
 @pytest.fixture
-def client():
-    Base.metadata.create_all(bind=engine)
+def client(existing_users):
+    existing_users(ADMIN_USER)
     db = SessionLocal()
     db.query(McpServer).filter(McpServer.name == SERVER_NAME).delete()
     db.commit()
@@ -191,6 +191,35 @@ def test_admin_client_is_used_without_registration(fake, client):
 
     revoked = client.delete(f"/api/mcp/servers/{server['id']}/oauth")
     assert revoked.json()["server"]["oauth_authorized"] is False
+
+
+def test_url_change_registers_a_new_client(fake, client):
+    registrations = []
+    handle = fake.handle
+
+    def counting(request):
+        if request.url.path == "/register":
+            registrations.append(request)
+        return handle(request)
+
+    fake.handle = counting
+    server, _, params = authorize(client)
+    client.get("/api/mcp/oauth/callback", params={"state": params["state"], "code": "c"})
+    edited = client.put(f"/api/mcp/servers/{server['id']}", json={"url": f"{MCP_URL}?tenant=2"})
+    assert edited.json()["server"]["oauth_authorized"] is False
+    with SessionLocal() as db:
+        assert db.get(McpServer, server["id"]).oauth_config is None
+    assert client.post(f"/api/mcp/servers/{server['id']}/oauth/start").status_code == 200
+    assert len(registrations) == 2
+
+
+def test_url_change_keeps_the_admin_client(fake, client):
+    fake.registration = False
+    server = create_server(client, oauth_client={"client_id": "admin-client", "client_secret": "admin-secret", "scope": "read"})
+    edited = client.put(f"/api/mcp/servers/{server['id']}", json={"url": f"{MCP_URL}?tenant=2"})
+    assert edited.json()["server"]["oauth_client"]["client_id"] == "admin-client"
+    params = {k: v[0] for k, v in parse_qs(urlparse(client.post(f"/api/mcp/servers/{server['id']}/oauth/start").json()["authorization_url"]).query).items()}
+    assert params["client_id"] == "admin-client"
 
 
 def test_missing_client_without_registration_is_reported(fake, client):

@@ -2,7 +2,7 @@
 
 [繁體中文](configuration.md) | [English](configuration_en.md)
 
-> Every setting in the backend `backend/.env` and the frontend `frontend/.env`, with its default and what it actually does, as of **6.0.0** (to upgrade from 5.0.0, see the [upgrade guide](upgrading_en.md#upgrading-from-500-to-600)). The source of truth is `Settings` in `backend/app/core/config.py`; the template is [`backend/.env.example`](../backend/.env.example).
+> Every setting in the backend `backend/.env` and the frontend `frontend/.env`, with its default and what it actually does, as of **7.0.0** (to upgrade from 6.0.0, see the [upgrade guide](upgrading_en.md#upgrading-from-600-to-700)). The source of truth is `Settings` in `backend/app/core/config.py`; the template is [`backend/.env.example`](../backend/.env.example).
 
 - [How settings are read](#how-settings-are-read)
 - [Required settings](#required-settings)
@@ -107,7 +107,7 @@ The system model list (`GET /api/tags`, and the default model used for document 
 
 The default model is `MODEL_NAME`, then the first Foundry deployment, then the default the remote list reports; if it is not in the list, the first model in the list is used.
 
-| Provider | Built-in list (6.0.0) |
+| Provider | Built-in list (7.0.0) |
 |---|---|
 | OpenAI | `gpt-6.1-sol`, `gpt-6-sol`, `gpt-6-luna`, `gpt-6-astra`, `gpt-5.6-sol`, `gpt-5.6-luna`, `gpt-5.6-terra`, `gpt-5.4`, `gpt-5.4-mini` |
 | Anthropic | `claude-opus-5-5`, `claude-fable-5-1`, `claude-sonnet-5-5`, `claude-haiku-5-5`, `claude-sonnet-5`, `claude-opus-5`, `claude-fable-5`, `claude-opus-4-8`, `claude-haiku-4-5` |
@@ -126,7 +126,7 @@ Each account can only chat through two kinds of connection, and the model menu g
 |---|---|
 | Provider | `openai` (OpenAI or a compatible API), `anthropic`, `gemini`, `foundry`, `ollama`; calls work like the provider of the same name in `.env`: `gpt-6*` uses the Responses API, and Foundry deployments whose names start with `claude-` use `{API address}/anthropic` |
 | API address | For example `https://api.openai.com/v1`, `https://api.anthropic.com`, `https://<resource>.services.ai.azure.com`, `https://ollama.com` |
-| API key | Required for Anthropic, Gemini, and Foundry, optional for OpenAI-compatible services and Ollama; encrypted with `TOOL_SECRETS_KEY` and never read back through the API; leave it blank when editing to keep the stored key |
+| API key | Required for Anthropic, Gemini, and Foundry, optional for OpenAI-compatible services and Ollama; encrypted with `TOOL_SECRETS_KEY` and never read back through the API; leave it blank when editing to keep the stored key, except that changing the provider or API address drops it and it must be entered again |
 | Models | The model names offered by this connection (deployment names for Foundry), up to 50 |
 | Output token limit | Required for Claude (`anthropic`, or Claude deployments on Foundry); the smaller of it and the model's own output limit is used |
 
@@ -148,7 +148,7 @@ The `.env` system models pick a provider from the model name (API connections us
 | None of the above | Ollama | `{LLM_API_BASE}/api/chat` |
 
 > [!NOTE]
-> `reasoning_effort` is mapped per provider before it is sent (see the [API reference](api_en.md) for the rules); models on Chat Completions whose name contains `gpt-5` always get `none` when tools are attached, to respect the compatibility limits between reasoning and tool calling.
+> `reasoning_effort` is mapped per provider before it is sent (see the [API reference](api_en.md) for the rules); `gpt-5.x` models on Chat Completions (names containing `gpt-5.`) always get `none` when tools are attached, to respect the compatibility limits between reasoning and tool calling; the original `gpt-5`, `gpt-5-mini`, and `gpt-5-nano` do not accept `none`, `xhigh`, or `max`: `none` becomes `minimal` and `xhigh` and `max` become `high`, and otherwise the user's choice is sent.
 
 ## Agent and web tools
 
@@ -251,7 +251,7 @@ Common `DATABASE_URL` values:
 | PostgreSQL 17 from `backend/docker-compose.yml` | `postgresql+psycopg2://<POSTGRES_APP_USER>:<POSTGRES_APP_PASSWORD>@localhost:7690/chatbot` (the container binds `127.0.0.1:7690` only) |
 | Your own PostgreSQL | `postgresql+psycopg2://<user>:<password>@<host>:5432/<database>` (a non-superuser account is recommended; see the next section) |
 
-Tables are created automatically when the backend starts, and missing new columns (such as `custom_api_tools.requires_approval`, `mcp_servers.requires_approval`, and `users.tokens_valid_after`) are added and backfilled at startup too; tool credentials stored in plaintext by older versions are encrypted at startup as well (see [Tool credential encryption](#tool-credential-encryption)). New SQLite databases create `users` and `documents` with `AUTOINCREMENT`, so deleted ids are never reused; existing SQLite tables are not rewritten. `init_db.py` is a compatibility script that adds columns and indexes to older PostgreSQL databases; SQLite does not need it (SQLite does not support its `ADD COLUMN IF NOT EXISTS` statement).
+Tables are created automatically when the backend starts, and missing new columns (such as `custom_api_tools.requires_approval`, `mcp_servers.requires_approval`, and `users.tokens_valid_after`) are added and backfilled at startup too; tool credentials stored in plaintext by older versions are encrypted at startup as well (see [Tool credential encryption](#tool-credential-encryption)). New SQLite databases create `users`, `documents`, and `rag_chunks` with `AUTOINCREMENT`, so deleted ids are never reused; existing SQLite tables are not rewritten. `init_db.py` is a compatibility script that adds columns and indexes to older PostgreSQL databases; SQLite does not need it (SQLite does not support its `ADD COLUMN IF NOT EXISTS` statement).
 
 ### PostgreSQL non-superuser account
 
@@ -324,7 +324,7 @@ The password is typed twice interactively and never passed as a command-line arg
 
 ### Password changes and token revocation
 
-Access and refresh tokens issued before the account's `users.tokens_valid_after` are rejected. The column equals the creation time when an account is created (so old tokens do not carry over when a deleted account's id is reused) and is set to the current time on a password change: after a successful `POST /api/auth/change-password` or a `PUT /api/auth/me` that sets a new password, every token issued to the account before then, including the current one and those on other devices, stops working immediately, and a stolen refresh token can no longer be renewed. The response clears the refresh token cookie, and every session must sign in again with the new password. Existing databases get the column automatically at backend startup, backfilled from `created_at`.
+Access and refresh tokens issued before the account's `users.tokens_valid_after` are rejected. The column equals the creation time when an account is created (so old tokens do not carry over when a deleted account's id is reused) and is set to the current time on a password change: after a successful `POST /api/auth/change-password`, every token issued to the account before then, including the current one and those on other devices, stops working immediately, and a stolen refresh token can no longer be renewed. The response clears the refresh token cookie, and every session must sign in again with the new password. Existing databases get the column automatically at backend startup, backfilled from `created_at`.
 
 ## Tool credential encryption
 
@@ -384,28 +384,31 @@ The limits below protect a single backend process and the operator's paid usage.
 | `MAX_CHAT_REQUEST_BODY_BYTES` | about 27.7 MiB | Body limit of `POST /api/chat/send` (20 MiB of attachments inflated 4/3 by base64, plus 1 MiB); applies only with a validly signed access token, otherwise the limit stays 1 MiB |
 | Document upload body limit | `MAX_FILES_PER_UPLOAD` × `MAX_FILE_SIZE_MB` MiB + 1 MiB | Body limit of `POST /api/documents/upload` (101 MiB with the template's `MAX_FILE_SIZE_MB=10`); raised only when the access token is validly signed and its `is_admin` claim is `true`, otherwise the limit stays 1 MiB |
 | `MAX_FILES_PER_UPLOAD` | 10 | Files per upload |
+| `MAX_FILENAME_BYTES` | 255 bytes | Length of an uploaded file name in UTF-8 (the Linux file-system limit); a longer name gets `400` for that file |
 | `MAX_CHAT_MESSAGE_CHARS` | 20,000 characters | Length of one chat message; longer messages get `422` |
 | `MAX_CHAT_ATTACHMENTS` | 5 | Attachments per message |
 | `MAX_CHAT_ATTACHMENT_BYTES` | 15 MiB | Decoded size of one attachment; an attachment's `data_url` must be a base64 `data:` URL, and remote URLs are rejected |
 | `MAX_CHAT_ATTACHMENTS_TOTAL_BYTES` | 20 MiB | Decoded size of all attachments in one message |
-| `MAX_ATTACHMENT_TEXT_CHARS` | 50,000 characters | Text per attachment placed into the model context (the rest is truncated), and the length limit of an attachment's `content` field in the request |
+| `MAX_ATTACHMENT_TEXT_CHARS` | 50,000 characters | Text per attachment placed into the model context (the rest is truncated), and the length limit of an attachment's `content` field in the request and of the attachment text saved back to the database |
 | `MAX_USER_ATTACHMENT_STORAGE_BYTES` | 200 MiB | Attachment storage per user in the database; beyond it, sending a message returns `413`. Old attachments are never purged automatically; deleting conversations with attachments frees the space |
 | `MAX_CONCURRENT_CHAT_STREAMS_PER_USER` | 2 | Answer streams one user may run at once; more get `429` |
 | `MAX_LISTED_CONVERSATIONS` (`services/chat_service.py`) | 200 | `GET /api/chat/conversations` lists only the 200 most recently updated conversations |
-| `LIST_PREVIEW_MESSAGES` (`services/chat_service.py`) | 5 | Latest messages included with each conversation in the list (without attachment bodies) |
-| `MAX_CONVERSATION_MESSAGES` (`services/chat_service.py`) | 500 | Latest messages returned when reading one conversation |
+| `MAX_CONVERSATION_MESSAGES` (`services/chat_service.py`) | 500 | Messages returned at most by one call to `GET /api/chat/conversations/{conversation_id}/messages` (the cap on `limit`) |
+| `MAX_HISTORY_ATTACHMENT_CHARS` (`services/chat_service.py`) | 50,000 characters | Total attachment text from earlier user messages carried in the history, counted from the newest message back; equal to `MAX_ATTACHMENT_TEXT_CHARS` |
 
 **Tools and outbound requests**
 
 | Constant | Value | Description |
 |---|---|---|
 | `MAX_TOOL_RESULT_CHARS` | 20,000 characters | Each tool call's result is truncated to this length before it enters the model context |
+| `MAX_TOOL_NAME_CHARS` | 64 characters | Length of the tool function names given to the model (the limit of OpenAI and other providers); names generated from an OpenAPI operationId or an MCP tool are truncated with an 8-character hash appended, and longer names created by hand or sent to import return `400` |
+| `MAX_OPENAPI_SCHEMA_REFS` | 200 | `$ref`s expanded at most per parameter or request body schema when an OpenAPI spec is parsed; references past this count and cyclic references are replaced by an object schema holding only a description |
 | `MAX_KB_CATALOG_CHARS` | 4,000 characters | Length of the document catalog (file names and summaries) in the `search_knowledge_base` tool description; it is sent on every model call, so past this length only the first documents are listed and the rest are counted |
 | `MAX_MCP_CATALOG_CHARS` | 8,000 characters | Length of the MCP resource or prompt list in the `read_mcp_resource` and `get_mcp_prompt` tool descriptions (each tool separately); servers that do not fit are left out with a warning in the log |
 | `MAX_TEXT_CLEANUP_CHARS` | 2,000,000 characters | HTML is truncated to this length before `web_fetch` extracts text |
 | `MAX_DATE_RANGE_CHARS`, `MAX_TARGET_DATES`, `MAX_FILTER_RECORDS` (`rag/tools.py`) | 200 characters, 93 days, 50 records | Length of `filter_and_count_records`' `date_range`, the number of dates it may expand to, and the records returned (a larger `limit` is clamped to 50) |
 | `MAX_API_TOOL_RESPONSE_BYTES` (`api/api_tools.py`) | 1 MiB | Response body limit of custom API tools; reading stops and the call returns `502` |
-| `MAX_API_TOOL_REDIRECTS` (`api/api_tools.py`), `MAX_MCP_HTTP_REDIRECTS` (`services/mcp_service.py`) | 5, 5 | Redirects that custom API tools and HTTP MCP follow, manually: redirect response bodies are never read, and every hop passes SSRF validation again; HTTP MCP follows only same-origin redirects, and custom API tools drop credential headers on cross-origin redirects. The whole call, redirects included, is also bounded by the tool's or server's `timeout` setting; a custom API tool that runs out of time returns `504` |
+| `MAX_API_TOOL_REDIRECTS` (`api/api_tools.py`), `MAX_MCP_HTTP_REDIRECTS` (`services/mcp_service.py`) | 5, 5 | Redirects that custom API tools and HTTP MCP follow, manually: redirect response bodies are never read, and every hop passes SSRF validation again; HTTP MCP, and custom API tools with methods other than `GET`, `HEAD`, and `OPTIONS`, follow only same-origin redirects, while custom API tools with `GET`, `HEAD`, or `OPTIONS` drop credential headers on cross-origin redirects. The whole call, redirects included, is also bounded by the tool's or server's `timeout` setting; a custom API tool that runs out of time returns `504` |
 | `MAX_MCP_HTTP_RESPONSE_BYTES` (`services/mcp_service.py`) | 4 MiB | Limit for one response from an HTTP MCP server |
 | `MAX_MCP_STDIO_LINE_BYTES` (`services/mcp_service.py`) | 4 MiB | Limit for one JSON-RPC message line from a `stdio` MCP subprocess, the same as the HTTP response limit |
 | `MCP_STDERR_TAIL_BYTES` (`services/mcp_service.py`) | 2,048 bytes | A `stdio` subprocess's stderr is drained continuously (so a full pipe cannot stall it) and only this many trailing bytes are kept, written to the server log if the subprocess exits abnormally |

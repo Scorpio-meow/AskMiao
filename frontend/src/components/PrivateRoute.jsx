@@ -1,5 +1,5 @@
 
-import { Navigate, useLocation } from 'react-router-dom';
+import { Navigate, useLocation, useOutletContext } from 'react-router-dom';
 import { useAuth } from '../hooks/useAuth';
 import Forbidden from './Forbidden';
 export const PrivateRoute = ({ element }) => {
@@ -12,11 +12,12 @@ export const PrivateRoute = ({ element }) => {
 };
 export const AdminRoute = ({ element }) => {
   const location = useLocation();
-  const { isAuthenticated, isAdmin } = useAuth();
+  const user = useOutletContext();
+  const { isAuthenticated } = useAuth();
   if (!isAuthenticated) {
     return <Navigate to="/login" state={{ from: location }} replace />;
   }
-  if (!isAdmin) {
+  if (!user?.is_admin) {
     return <Forbidden />;
   }
   return element;

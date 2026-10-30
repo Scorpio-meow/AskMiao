@@ -4,6 +4,9 @@ from types import SimpleNamespace
 
 import openpyxl
 import pytest
+from docx import Document as DocxDocument
+from pptx import Presentation
+from pptx.util import Inches
 
 from app.api.documents import process_document_for_rag
 from app.core.config import settings
@@ -237,6 +240,36 @@ def test_xlsx_rows_use_sheet_names_column_letters_and_iso_dates(tmp_path):
     assert [(record.sheet, record.row, record.record_index) for record in result.records] == [("員工", 3, 1), ("員工", 5, 2)]
 
 
+def test_pptx_text_inside_groups_and_speaker_notes_is_extracted(tmp_path):
+    presentation = Presentation()
+    slide = presentation.slides.add_slide(presentation.slide_layouts[6])
+    group = slide.shapes.add_group_shape()
+    group.shapes.add_textbox(Inches(1), Inches(1), Inches(4), Inches(1)).text_frame.text = "群組內的標題"
+    group.shapes.add_group_shape().shapes.add_textbox(Inches(1), Inches(2), Inches(4), Inches(1)).text_frame.text = "巢狀群組的內容"
+    slide.notes_slide.notes_text_frame.text = "講者備忘"
+    path = tmp_path / "grouped.pptx"
+    presentation.save(path)
+
+    result = DocumentProcessor.extract_document(str(path), "", ADMIN_UPLOAD_EXTRACTION_LIMITS)
+
+    assert result.text == "--- 投影片 1 ---\n群組內的標題\n巢狀群組的內容\n備忘稿：講者備忘"
+
+
+def test_docx_tables_stay_under_their_headings(tmp_path):
+    document = DocxDocument()
+    document.add_paragraph("一、加班費率")
+    table = document.add_table(rows=1, cols=2)
+    table.rows[0].cells[0].text = "平日"
+    table.rows[0].cells[1].text = "1.34 倍"
+    document.add_paragraph("二、請假規定")
+    path = tmp_path / "handbook.docx"
+    document.save(path)
+
+    result = DocumentProcessor.extract_document(str(path), "", ADMIN_UPLOAD_EXTRACTION_LIMITS)
+
+    assert result.text == "一、加班費率\n平日 | 1.34 倍\n二、請假規定"
+
+
 def test_long_record_is_split_into_parts_with_a_repeated_header():
     data = [{"title": "長記錄", "a": "甲" * 50, "b": "乙" * 50, "c": "丙" * 300, "url": "https://example.com/a"}]
     record = tree(".json", json.dumps(data, ensure_ascii=False)).records[0]
@@ -303,6 +336,31 @@ def test_faq_detection_is_skipped_for_structured_formats():
         "source": "doc", "document_id": 1, "record_index": 2, "part": 1, "part_count": 1,
         "preserve_whole": True, "label": "b",
     }
+
+
+def test_manual_with_an_faq_section_in_the_middle_is_indexed_as_normal_text():
+    manual = "員工手冊\n第一章 出勤\n每日工時八小時。\nQ: 特休幾天？\nA: 依年資。\n第二章 薪資\n每月五日發薪。"
+
+    docs, qa_count, _ = process_document_for_rag(
+        DocumentProcessor.stored_text_extraction("manual.txt", manual), {"source": "manual.txt", "document_id": 1},
+        SimpleNamespace(chunk_size=800),
+    )
+
+    assert qa_count == 0
+    assert [(doc.page_content, doc.metadata) for doc in docs] == [(manual, {"source": "manual.txt", "document_id": 1})]
+
+
+def test_pure_faq_keeps_pairs_whole_only_when_they_fit_a_chunk():
+    faq = "\n  \nQ: 特休幾天？\nA: 依年資。\nQ: 病假規定？\nA: " + "病假一年三十天，" * 10
+
+    docs, qa_count, _ = process_document_for_rag(
+        DocumentProcessor.stored_text_extraction("faq.txt", faq), {"source": "faq.txt", "document_id": 1},
+        SimpleNamespace(chunk_size=40),
+    )
+
+    assert qa_count == 2
+    assert docs[0].page_content == "Q：特休幾天？\nA：依年資。"
+    assert [doc.metadata["preserve_whole"] for doc in docs] == [True, False]
 
 
 def indexed_chunks(*records_with_ids):

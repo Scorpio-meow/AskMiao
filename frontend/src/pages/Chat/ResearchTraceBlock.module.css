@@ -232,6 +232,11 @@
   color: var(--color-error-text);
 }
 
+.statusUnknown {
+  display: inline-flex;
+  color: var(--text-tertiary);
+}
+
 .duration {
   color: var(--text-tertiary);
   font-size: var(--font-size-xs);

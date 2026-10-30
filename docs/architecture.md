@@ -225,13 +225,13 @@ erDiagram
 ```
 
 - **`rag_chunks` 是片段的權威來源**：`id` 就是 chunk_id，FAISS 與 BM25 都以它為鍵。`chunk_metadata` 保存 `source`、`document_id`、`chunk_index`、`original_filename`、`content_type`，Q&A 片段另有 `question`，結構化記錄另有 `record_index`、`part`、`part_count`，以及視來源而定的 `label`、`links`、`group`、`sheet`、`row`（見第 4 節）。
-- **`messages.context_used`**：助理訊息存 `sources`、`sources_detail`、`research_trace`；使用者訊息存 `attachments`（含附件的 base64，每位使用者合計上限 200 MiB）。`/api/chat` 的回應只提供解析後的欄位，`context_used` 一律為 `null`。
+- **`messages.context_used`**：助理訊息存 `sources`、`sources_detail`、`research_trace`；使用者訊息存 `attachments`（含附件的 base64，每位使用者合計上限 200 MiB；附件抽出的文字最多 50,000 字元存入該附件的 `content`，供之後的提問帶入前文）。`/api/chat` 的回應只提供解析後的欄位，`context_used` 一律為 `null`。
 - **`requires_approval`**：自訂 API 工具與 MCP 伺服器的呼叫前核准旗標，見第 9 節。
 - **`users.tokens_valid_after`**：簽發時間早於此時刻的存取與重新整理權杖一律無效。建立帳號時等於 `created_at`（帳號刪除後 id 被重用時，舊權杖不會對應到新帳號），變更密碼時更新為當下，見第 10 節。
 - **工具憑證欄位**：`custom_api_tools` 的 `headers`、`auth_config` 與 `mcp_servers` 的 `env_vars`、`headers`、`oauth_config`、`oauth_tokens` 以 `TOOL_SECRETS_KEY`（Fernet）加密後存放，內容以 `fernet:` 開頭，見第 9 節。
 - **資料庫以外的檔案**：`backend/data/`（`faiss_index.bin`、`index_metadata.json`、`bm25_index/`、`uploads/`、`jieba_cache/`）、`backend/keys/`（JWT 金鑰對）、`backend/mcp_filesystem_sandbox/`（檔案系統 MCP 範本的根目錄）與 `backend/logs/`（日誌）。
 
-資料表在後端啟動時以 SQLAlchemy `create_all` 建立，接著由 `upgrade_schema()` 為既有資料表補上後來新增的欄位並回填（目前為兩個 `requires_approval`：API 工具依方法回填，`GET`、`HEAD`、`OPTIONS` 以外為 `true`；MCP 伺服器一律為 `true`；`custom_api_tools.body_content_type`，以 `application/json` 回填；`mcp_servers` 的 `discovered_resources`、`discovered_prompts`、`oauth_config`、`oauth_tokens` 與 `agent_skills` 的 `allow_scripts`、`allowed_user_ids`；以及 `users.tokens_valid_after`，以 `created_at` 回填；此欄位為空的帳號，例如回退到舊版期間建立的，每次啟動都會補值），再把仍以明文存放的工具憑證改為加密（無法解析為 JSON 的值會清空並記下警告）。新建立的 SQLite 資料庫中，`users` 與 `documents` 使用 `AUTOINCREMENT`，刪除後的 id 不會被新資料重用。`backend/init.sql` 是 PostgreSQL 容器的初始化結構，`backend/init-app-role.sh` 接著建立後端連線用的非超級使用者並把資料表交給它擁有（見第 13 節）。
+資料表在後端啟動時以 SQLAlchemy `create_all` 建立，接著由 `upgrade_schema()` 為既有資料表補上後來新增的欄位並回填（目前為兩個 `requires_approval`：API 工具依方法回填，`GET`、`HEAD`、`OPTIONS` 以外為 `true`；MCP 伺服器一律為 `true`；`custom_api_tools.body_content_type`，以 `application/json` 回填；`mcp_servers` 的 `discovered_resources`、`discovered_prompts`、`oauth_config`、`oauth_tokens` 與 `agent_skills` 的 `allow_scripts`、`allowed_user_ids`；以及 `users.tokens_valid_after`，以 `created_at` 回填；此欄位為空的帳號，例如回退到舊版期間建立的，每次啟動都會補值），再把仍以明文存放的工具憑證改為加密（無法解析為 JSON 的值會清空並記下警告）。新建立的 SQLite 資料庫中，`users`、`documents` 與 `rag_chunks` 使用 `AUTOINCREMENT`，刪除後的 id 不會被新資料重用。`backend/init.sql` 是 PostgreSQL 容器的初始化結構，`backend/init-app-role.sh` 接著建立後端連線用的非超級使用者並把資料表交給它擁有（見第 13 節）。
 
 ---
 
@@ -257,9 +257,9 @@ flowchart TB
 
 | 格式 | 擷取方式 |
 |---|---|
-| PDF | PyMuPDF 擷取並修復缺少 ToUnicode 對照表的內嵌字型；空白或判定為亂碼的頁面，以 150 DPI 轉成圖片交給視覺模型 OCR（依序使用 Microsoft Foundry、OpenAI 或 Gemini）。點陣化在文件執行緒上逐頁進行、每頁最多 25 MP（超過時降低解析度），只有視覺模型呼叫最多 4 頁平行；聊天附件最多 OCR 20 頁，管理員上傳不限。最後以 pypdf 備援 |
-| DOCX | 段落文字加上表格（每列以 `\|` 串接） |
-| PPTX | 逐頁投影片文字 |
+| PDF | PyMuPDF 擷取文字，擷取前先替內嵌 TrueType 字型中 ToUnicode 沒有對應（或對到 U+FFFD）的替代字形補上對應：依字型 GSUB 的單一替換反查原本的字元，例如 Illustrator 輸出的 Noto Sans TC 數字，否則會被擷取成「俸」這類字；空白或判定為亂碼的頁面，以 150 DPI 轉成圖片交給視覺模型 OCR（依序使用 Microsoft Foundry、OpenAI 或 Gemini）。點陣化在文件執行緒上逐頁進行、每頁最多 25 MP（超過時降低解析度），只有視覺模型呼叫最多 4 頁平行；聊天附件最多 OCR 20 頁，管理員上傳不限。沒有任何一頁擷取到文字（例如 OCR 未設定或辨識失敗）或有密碼保護時拒絕。PyMuPDF 無法讀取時以 pypdf 備援 |
+| DOCX | 依文件中的順序輸出段落與表格（每列以 `\|` 串接），表格留在所屬標題之下 |
+| PPTX | 逐頁投影片文字（含群組內的圖形與表格），以及每頁的備忘稿 |
 | XLSX | 以唯讀模式逐工作表讀取，每個工作表的第一個非空列為表頭，其後每列成為一筆結構化記錄；沒有資料列時逐列以 `\|` 串接 |
 | CSV | 第一個非空列為表頭，其後每列成為一筆結構化記錄；沒有資料列時逐列以 `\|` 串接 |
 | JSON、JSONL、YAML | 解析成結構化記錄（見下方「結構化資料」） |
@@ -268,7 +268,7 @@ flowchart TB
 | HTML | 以 `app/core/html_text.py` 單次線性掃描去除標籤、`script`、`style` 與 `noscript` 後的文字 |
 | 其他文字檔 | 依序嘗試 UTF-8、UTF-8 BOM、Big5、GBK、GB2312、Latin-1 編碼讀取 |
 
-擷取前會依宣告的類型檢查檔頭特徵。管理員上傳與聊天附件各用一組資源預算（`app/core/limits.py` 的 `ExtractionLimits`，呼叫端必須指定）：OOXML（DOCX、PPTX、XLSX）先檢查 ZIP 的成員數（≤ 10,000）、成員宣告的解壓大小合計（管理員上傳 ≤ 200 MiB、聊天附件 ≤ 64 MiB）與壓縮比（解壓後超過 10 MiB 的單一成員或整個檔案 ≤ 100），擋下壓縮炸彈；聊天附件的 DOCX、PPTX 另依 `[Content_Types].xml` 加總會被建成 DOM 的 XML 部件（另含 `.rels`），上限 8 MiB，改副檔名無法繞過。聊天附件的 JSON、JSONL、YAML 與 JS 宣告超過 2,000,000 字時不解析，改以純文字處理並只做線性的雜訊清除；整個行程同時最多解析 2 個聊天附件，超過預算的附件不讀取內容，改以一段說明告知模型。擷取不出文字的檔案回報失敗並刪除暫存檔。SVG 去除、JSON 宣告抽取、Q&A 切分與目錄行清理都改為線性時間的實作，惡意構造的輸入不會觸發二次時間的正規式回溯。
+擷取前會依宣告的類型檢查檔頭特徵。管理員上傳與聊天附件各用一組資源預算（`app/core/limits.py` 的 `ExtractionLimits`，呼叫端必須指定）：OOXML（DOCX、PPTX、XLSX）先檢查 ZIP 的成員數（≤ 10,000）、成員宣告的解壓大小合計（管理員上傳 ≤ 200 MiB、聊天附件 ≤ 64 MiB）與壓縮比（解壓後超過 10 MiB 的單一成員或整個檔案 ≤ 100），擋下壓縮炸彈；聊天附件的 DOCX、PPTX 另依 `[Content_Types].xml` 加總會被建成 DOM 的 XML 部件（另含 `.rels`），上限 8 MiB，改副檔名無法繞過。聊天附件的 JSON、JSONL、YAML 與 JS 宣告超過 2,000,000 字時不解析，改以純文字處理並只做線性的雜訊清除；整個行程同時最多解析 2 個聊天附件，超過預算或無法讀取（例如無效的 Office 文件、PDF 有密碼保護或沒有可擷取的文字）的附件不讀取內容，改以一段說明告知模型。管理員上傳的檔案擷取不出文字時回報失敗並刪除暫存檔。SVG 去除、JSON 宣告抽取、Q&A 切分與目錄行清理都改為線性時間的實作，惡意構造的輸入不會觸發二次時間的正規式回溯。
 
 ### 結構化資料
 
@@ -289,7 +289,7 @@ JSON、JSONL、YAML、JS 宣告、CSV 與 XLSX 由 `app/services/structured_data
 
 一般文件以 `RecursiveCharacterTextSplitter` 切塊，分隔符號依序為段落分隔線、空行、換行、中文句末與句中標點（`。！？；：，`）、英文標點與空白。Q&A（只在非結構化格式中偵測）一問一答一個片段。結構化記錄不超過 `CHUNK_SIZE` 時整筆一個片段；過長時以整行欄位為單位切成多段，單一欄位的值本身過長時再以上述切塊器切開，每段都重複標頭並加上 `（2/3）`，段落之間不重疊。兩者都標記為 `preserve_whole`，不再交給一般切塊。
 
-重建索引時，原始檔還在 `UPLOAD_DIR` 的文件會重新擷取並覆寫 `documents.content`；原始檔已遺失的文件改以資料庫內容當一般文字切塊，並列在回應的 `missing_source_files`。既有摘要（含管理員手動修訂的）會保留，只替沒有摘要的文件生成；重建先清空索引再逐份寫回，期間知識庫暫時查不到資料，重建進行中再次呼叫回傳 `409`。
+重建索引時，原始檔還在 `UPLOAD_DIR` 的文件會重新擷取並覆寫 `documents.content`；原始檔已遺失的文件改以資料庫內容當一般文字切塊，並列在回應的 `missing_source_files`。既有摘要（含管理員手動修訂的）會保留，只替沒有摘要的文件生成；重建逐份以新片段取代該文件的舊片段，其他文件照常可查，處理失敗的文件保留舊片段並列在 `failed_documents`；重建進行中再次呼叫回傳 `409`。
 
 ---
 
@@ -327,7 +327,7 @@ JSON、JSONL、YAML、JS 宣告、CSV 與 XLSX 由 `app/services/structured_data
 |---|---|---|---|
 | 重新啟動後端 | 只補齊差異 | 否 | 索引檔遺失或與資料庫不一致 |
 | `POST /api/admin/vector-store/reindex` | 以現有片段重算全部向量、重建 BM25 | 否 | 懷疑向量損毀 |
-| `POST /api/documents/rebuild-index` | 清空後重新擷取、切塊與建立索引，並替沒有摘要的文件生成摘要 | 只對沒有摘要的文件 | 從 2.x 升級、修改切塊設定 |
+| `POST /api/documents/rebuild-index` | 逐份重新擷取、切塊與建立索引，並替沒有摘要的文件生成摘要 | 只對沒有摘要的文件 | 從 2.x 升級、修改切塊設定 |
 
 刪除文件時只移除該文件的片段與向量；`DELETE /api/admin/vector-store/clear` 會清空全部片段與索引，但保留文件紀錄。
 
@@ -393,7 +393,7 @@ flowchart TB
 | `mcp_<伺服器>_<工具>` | 透過 `tools/call` 呼叫 MCP 伺服器；伺服器的 `requires_approval` 為 `true` 時先經使用者核准 |
 | `activate_skill` | 只在有啟用的 Agent Skills 時提供；工具說明列出技能名稱與描述（最多 8,000 字元），呼叫後重新讀取 `SKILL.md`，回傳去掉 frontmatter 的內文（包在 `<skill_content>`）與技能內的檔案清單，不讀取那些檔案；同一次提問重複啟用時只回覆已載入 |
 | `read_skill_resource` | 讀取已啟用技能目錄內的單一 UTF-8 文字檔（只接受相對路徑，拒絕 `..` 與符號連結），每次最多 20,000 字元；讀取腳本不會執行它 |
-| `run_skill_script` | 只在使用者看得到、開啟 `allow_scripts` 的技能時提供；以後端的 Python（`-I`）、`bash` 或 `node` 在技能目錄的暫存複本中執行腳本，環境變數同 `stdio` MCP，最多 60 秒，`stdout`、`stderr` 各最多 20,000 字元，同時最多 2 個；一律需要使用者核准，除非已啟用的技能在 `allowed-tools` 列出它 |
+| `run_skill_script` | 只在使用者看得到、開啟 `allow_scripts` 的技能時提供；以後端的 Python（`-I`）、`bash` 或 `node` 在技能目錄的暫存複本中執行腳本，環境變數同 `stdio` MCP，最多 60 秒，`stdout`、`stderr` 各最多 20,000 字元，同時最多 2 個；一律需要使用者核准，除非要執行的技能本身已啟用並在 `allowed-tools` 列出它 |
 | `read_mcp_resource` | 只在啟用中的 MCP 伺服器有已探索的 resources 時提供；以 `resources/read` 讀取清單中的 uri，不在清單中的直接拒絕；核准依伺服器的 `requires_approval` |
 | `get_mcp_prompt` | 只在啟用中的 MCP 伺服器有已探索的 prompts 時提供；以 `prompts/get` 取得清單中的 prompt；核准依伺服器的 `requires_approval` |
 
@@ -413,7 +413,7 @@ flowchart TB
 | 職責 | 內容 |
 |---|---|
 | 引用編號表 | 知識庫片段以 `chunk:<chunk_id>`、網頁以 `url:<網址>` 為鍵，第一次出現時配號並寫入工具結果的 `citation` 欄位；同一來源再出現沿用原號碼 |
-| 網址來源限制 | `web_fetch` 只能讀取「使用者訊息（含附件文字與先前的使用者訊息）」或「本次內建工具結果的資料欄位」中以完整網址出現過的網址：來源文字先切出完整的網址記號，兩邊都正規化成 httpx 的形式後逐字比對，實際送出的是比對到的正規化網址；工具回聲的查詢參數不算來源 |
+| 網址來源限制 | `web_fetch` 只能讀取「使用者訊息（含附件文字，以及前文中先前的使用者訊息與其附件文字）」或「本次內建工具結果的資料欄位」中以完整網址出現過的網址：來源文字先切出完整的網址記號，兩邊都正規化成 httpx 的形式後逐字比對，實際送出的是比對到的正規化網址；工具回聲的查詢參數不算來源 |
 | 讀過知識庫後停用聯網 | `BLOCK_WEB_TOOLS_AFTER_KB=true` 時，知識庫工具回傳過內容後拒絕 `web_search` 與 `web_fetch` |
 | 不可信資料包裝 | 每個工具結果包在 `<untrusted_tool_result id="...">` 內，id 每次提問隨機產生，資料無法預先偽造結束標記 |
 | 解析引用 | 答案完成後解析 `[1]`、`[1,2]`、`[1、2]` 與 `[1][2]`，只列出引用表中存在的編號，依第一次引用的順序去重 |
@@ -423,21 +423,21 @@ flowchart TB
 ### 串流與儲存
 
 - 每次工具呼叫前後推送 `step_start` / `step_end`，需要核准時中間穿插 `approval_required` / `approval_resolved`；最終答案以 `token` 推送，完成後推送 `sources` 與 `done`。事件格式見 [API 參考 2.1](api.md#21-post-apichatsend)。
-- 使用者訊息在串流開始前寫入資料庫；助理訊息在串流完成後才寫入，因此中途停止的回答不會被儲存。串流期間資料庫連線先還給連線池，資料庫存取與附件解碼、解析都在執行緒中進行，不阻塞事件迴圈。
+- 使用者訊息在串流開始前寫入資料庫，附件抽出的文字在呼叫模型前寫回該訊息附件的 `content`；助理訊息在串流完成後才寫入，因此中途停止的回答不會被儲存，串流期間對話已被刪除時也不寫入（`done` 的 `message_id` 為 `null`）。串流期間資料庫連線先還給連線池，資料庫存取與附件解碼、解析都在執行緒中進行，不阻塞事件迴圈。
 - 每位使用者同時最多 2 個回答串流（超過回傳 `429`）；送出前檢查 `model_name` 是否在可用模型清單內，以及附件儲存量是否超過每位使用者 200 MiB。
 
 ### 工具呼叫核准
 
 `app/rag/tool_approval.py` 的 `ToolApprovalBroker` 讓發問的使用者在對話中決定有副作用的工具是否執行，設計背景見 [ADR-0006](adr/0006-tool-call-approval.md)：
 
-1. Agent 準備執行工具時，`ResearchToolRegistry.approval_requirement()` 依名稱查詢對應的自訂 API 工具或 MCP 伺服器的 `requires_approval`；內建工具不需要核准，`run_skill_script` 一律需要核准。同一次提問中已啟用的技能在 `allowed-tools` 列出的工具名稱記在 `ResearchSession.preapproved_tools`，這些工具略過核准。
+1. Agent 準備執行工具時，`ResearchToolRegistry.approval_requirement()` 依名稱查詢對應的自訂 API 工具或 MCP 伺服器的 `requires_approval`；內建工具不需要核准，`run_skill_script` 一律需要核准。同一次提問中已啟用的技能在 `allowed-tools` 列出的工具名稱記在 `ResearchSession.preapproved_tools`，這些工具略過核准；`run_skill_script` 例外，記在 `preapproved_script_skills`，只有執行列出它的那個技能自己的腳本時才略過核准。
 2. 需要核准時，Broker 建立一個綁定發問者 `user_id` 的待核准項目（隨機 `approval_id`），串流送出 `approval_required`（含工具名稱、顯示名稱、參數，以及實際送出的位置 `target`：自訂 API 工具為 HTTP 方法與主機，MCP 為傳輸方式與主機或本機指令名稱），Agent 暫停等待。
 3. 前端在該則回答中顯示確認卡片；使用者按下核准或拒絕後呼叫 `POST /api/chat/approvals/{approval_id}`。只有同一位使用者能處理，其他人或已處理、已逾時的項目回傳 `404`。
 4. 串流送出 `approval_resolved`。核准時照常執行工具；拒絕或 300 秒逾時時不執行，Agent 收到「使用者未核准」的工具結果並改以已取得的資料回答。
 5. 沒有可核准的使用者時（`approval_user_id` 為 `None`，例如非互動式呼叫），需要核准的工具一律不執行。
 
 待核准項目只存在行程記憶體中；使用者中斷串流時，等待中的項目隨之取消。
-- 前文由資料庫讀取最近 `CONVERSATION_HISTORY_MESSAGES` 則訊息，一律從使用者訊息開始，並移除先前回答中的 `[n]`，避免模型沿用舊編號。
+- 前文由資料庫讀取最近 `CONVERSATION_HISTORY_MESSAGES` 則訊息，一律從使用者訊息開始，並移除先前回答中的 `[n]`（程式碼區塊與行內程式碼中的不動），避免模型沿用舊編號。先前使用者訊息的附件文字（附件的 `content`）一併帶入，從最新的訊息往前合計最多 50,000 字元（`MAX_HISTORY_ATTACHMENT_CHARS`）。
 
 ---
 
@@ -454,10 +454,10 @@ flowchart TB
 | Ollama | `{LLM_API_BASE}/api/chat` | 圖片轉為 `images` 欄位；工具呼叫參數轉為物件；可設定 `OLLAMA_TEMPERATURE`、`OLLAMA_NUM_PREDICT` |
 
 - **路由**：依模型名稱決定供應商（Foundry 部署 → `claude-` → `gemini-` → `gpt-` / `o1` / `o3` / `o4` → Ollama），完整規則見 [設定參考：供應商路由](configuration.md#供應商路由)。
-- **推理程度**：`reasoning_effort` 依供應商對應後傳給模型（對應規則見 [API 參考](api.md)）；走 Chat Completions 且名稱含 `gpt-5` 的模型帶工具時一律送 `none`，`gpt-6*` 與 Foundry 上的 GPT 改走 Responses API 以同時支援工具與推理。
+- **推理程度**：`reasoning_effort` 依供應商對應後傳給模型（對應規則見 [API 參考](api.md)）；走 Chat Completions 的 `gpt-5.x` 模型（名稱含 `gpt-5.`）帶工具時一律送 `none`，原始的 `gpt-5`、`gpt-5-mini`、`gpt-5-nano` 不接受 `none`、`xhigh`、`max`，選 `none` 時改送 `minimal`，選 `xhigh`、`max` 時改送 `high`，其他情況送使用者選擇的程度；`gpt-6*` 與 Foundry 上的 GPT 改走 Responses API 以同時支援工具與推理。
 - **兩種呼叫**：`chat_completion` 用於研究迴圈的每一輪（非串流，回傳 `content` 與 `tool_calls`）；`stream_completion` 只在需要重新生成最終答案時使用，Claude 串流時以 `tool_choice: none` 避免再觸發工具。
 - **逾時**：共用的 httpx 用戶端以 `LLM_TIMEOUT` 為逾時，等待連線池名額另以 15 秒為上限（池被占滿時很快失敗），每次請求自帶的逾時也保留這個上限；文件摘要另以 18 秒為上限。
-- **影像輸入**：只接受內嵌的 `data:` URL，遠端圖片網址一律拒絕，避免模型供應商代為擷取使用者指定的任意位址。
+- **影像輸入**：只接受內嵌的 `data:` URL，遠端圖片網址一律拒絕，避免模型供應商代為擷取使用者指定的任意位址。聊天附件只有 PNG、JPEG、GIF、WebP 以圖片交給模型；SVG 以文字讀取；其他圖片格式（例如 BMP、TIFF）不讀取，改告知模型請使用者改用 PNG、JPEG、GIF 或 WebP。
 - **模型清單**：遠端模型清單在執行緒中查詢並快取 30 秒（含失敗結果）；送出訊息時指定的模型必須在可用清單內或等於 `MODEL_NAME`。
 
 ---
@@ -499,14 +499,14 @@ flowchart TB
 
 1. **動態載入**：每次組裝工具定義時查詢資料庫，工具異動即時生效。MCP 工具使用探索時寫入的快取，不必每次連線。
 2. **命名**：自訂 API 工具以 `name` 註冊（取自 `operationId` 或方法與路徑，只含英數與底線）；MCP 工具為 `mcp_<伺服器>_<工具>`，名稱中的非英數字元換成底線並轉小寫，`execute_tool` 依此前綴路由。
-3. **HTTP 執行器**：呼叫端（模型）只能使用 `parameters_schema` 宣告的參數，`request_body` 有宣告欄位的 `request_body_schema` 且 `additionalProperties` 不是 `true` 時一併檢查其中的欄位，未宣告的參數不送出，直接回傳 `400`。接著以百分比編碼替換路徑參數（拒絕 `.`、`..`，代入後的 scheme、主機與埠號必須與設定相同）、組裝查詢字串與標頭、注入認證（Bearer、API Key、Basic，或以 OAuth2 client credentials 向 `token_url` 取得並快取的 Bearer 權杖，API 回傳 `401` 時重新取得並重試一次），依 `body_content_type` 把主體序列化為 JSON、表單或 `multipart/form-data` 欄位。工具網址中的查詢參數由管理員固定，呼叫端提供同名參數時回傳 `400`；查詢字串一律自行組好，不依賴 httpx 對既有查詢字串的處理。請求經 `SSRFSafeTransport` 在第一個請求與每次轉址前重新做 SSRF 驗證、把連線固定在驗證過的 IP；轉址由 `send_following_redirects` 手動跟隨（最多 5 次），轉址回應的本文不讀取，跨來源轉址時移除管理員設定的標頭與認證標頭。整個呼叫（含轉址與逐段讀取）以工具的 `timeout` 為總時限，逾時回傳 `504`；回應本文上限 1 MiB。結果與網址中出現的憑證值換成 `[已遮蔽]`，工具網址中固定的查詢參數值（可能是寫在網址裡的金鑰）也不出現在回傳的網址中。
+3. **HTTP 執行器**：呼叫端（模型）只能使用 `parameters_schema` 宣告的參數，`request_body` 有宣告欄位的 `request_body_schema` 且 `additionalProperties` 不是 `true` 時一併檢查其中的欄位，未宣告的參數不送出，直接回傳 `400`。接著以百分比編碼替換路徑參數（拒絕 `.`、`..`，代入後的 scheme、主機與埠號必須與設定相同）、組裝查詢字串與標頭、注入認證（Bearer、API Key、Basic，或以 OAuth2 client credentials 向 `token_url` 取得並快取的 Bearer 權杖，API 回傳 `401` 時重新取得並重試一次），依 `body_content_type` 把主體序列化為 JSON、表單或 `multipart/form-data` 欄位。工具網址中的查詢參數由管理員固定，呼叫端提供同名參數時回傳 `400`；查詢字串一律自行組好，不依賴 httpx 對既有查詢字串的處理。請求經 `SSRFSafeTransport` 在第一個請求與每次轉址前重新做 SSRF 驗證、把連線固定在驗證過的 IP；轉址由 `send_following_redirects` 手動跟隨（最多 5 次），轉址回應的本文不讀取；`GET`、`HEAD`、`OPTIONS` 可跟隨跨來源轉址，此時移除管理員設定的標頭與認證標頭，其他會改變狀態的方法只接受同一來源的轉址，轉址到其他來源時中止，請求主體不會送往其他網域。整個呼叫（含轉址與逐段讀取）以工具的 `timeout` 為總時限，逾時回傳 `504`；回應本文上限 1 MiB。結果與網址中出現的憑證值換成 `[已遮蔽]`，工具網址中固定的查詢參數值（可能是寫在網址裡的金鑰）也不出現在回傳的網址中。
 4. **MCP 傳輸**：`McpStdioClient` 以子行程的標準輸入輸出交換 JSON-RPC，單行訊息上限 4 MiB；`McpHttpClient` 以 Streamable HTTP 的 POST 交換 JSON-RPC（`http` 與 `sse` 兩種設定都先走這條路徑；帶工作階段的請求收到 `404` 時重新交握一次，關閉時以 `DELETE` 結束工作階段），`initialize` 收到 `400`、`404`、`405` 時改用 `McpLegacySseClient` 的舊版 HTTP+SSE（GET 開啟串流、等待同一來源的 `endpoint` 事件後 POST，串流最多 4 MiB）。兩者同樣經 `SSRFSafeTransport` 逐跳驗證並固定 IP，單次回應上限 4 MiB。HTTP 轉址由 `send_following_redirects` 手動跟隨，只接受同一來源（最多 5 次），管理員設定的標頭與 JSON-RPC 本文不會送往其他網域；每次請求以伺服器的逾時設定為總時限。每次呼叫都會重新建立連線並完成 `initialize` 交握。探索時只保留名稱符合 `[A-Za-z0-9_.-]{1,128}` 的工具；工具失敗只回傳錯誤代碼（stderr、JSON-RPC 錯誤與 SSRF 拒絕原因只寫入日誌），啟動失敗的訊息只含指令名稱、不含參數。
 5. **子行程隔離**：`build_stdio_env()` 只繼承 MCP 官方 SDK 預設清單中的系統變數，略過以 `()` 開頭的 shell 函式定義，再加上伺服器的 `env_vars`；後端的資料庫連線與模型金鑰不會傳給第三方 MCP 伺服器。子行程的工作目錄是每次新建的空暫存目錄，後端目錄下的 `.env` 與 `keys/` 不在其相對路徑範圍內（子行程仍以後端的系統帳號執行，能讀取該帳號可讀的檔案）。每個子行程自成一個程序群組，關閉時連同 `npx`、`uvx` 啟動的孫行程整棵終止；同時最多 4 個子行程，等待空位的時間不超過該伺服器的逾時設定。stderr 持續讀出以免管線寫滿卡住，只保留最後 2 KiB 供日誌診斷。
 6. **內建範本**：只提供 `mcp_time` 與 `mcp_filesystem`。檔案系統範本釘選 `@modelcontextprotocol/server-filesystem@2026.8.31`，根目錄是專屬的 `backend/mcp_filesystem_sandbox`（絕對路徑，與 `DATA_DIR` 分開，因為其中的 BM25 索引由 Whoosh 以 pickle 載入）。網頁擷取類範本已移除，因為 `stdio` 子行程的出站連線不受 `web_fetch` 的 SSRF、網域白名單與網址來源限制約束。
 7. **呼叫前核准**：自訂 API 工具與 MCP 伺服器各有 `requires_approval` 旗標；Agent 呼叫這類工具前須由發問的使用者核准，見第 7 節「工具呼叫核准」與 [ADR-0006](adr/0006-tool-call-approval.md)。
 8. **管理權限**：工具由所有使用者的 Agent 共用，`stdio` 模式還會在主機上執行指令，因此 `/api/api-tools` 與 `/api/mcp` 的所有端點（含查詢）只開放管理員。一般使用者只能在對話中讓 Agent 使用已啟用的工具。詳見 [ADR-0002](adr/0002-external-tools-and-outbound-safety.md) 與 [ADR-0004](adr/0004-tool-admin-permissions-and-subprocess-isolation.md)。
 9. **憑證加密與遮蔽**：`app/core/tool_secrets.py` 在寫入資料庫前以 `TOOL_SECRETS_KEY`（Fernet）加密自訂 API 工具的 `headers`、`auth_config` 與 MCP 伺服器的 `env_vars`、`headers`，執行工具時才解密。管理 API 的回應以 `••••••••` 取代秘密值：`accept`、`accept-encoding`、`accept-language`、`cache-control`、`content-type`、`user-agent` 以外的標頭，`auth_config` 的 `token`、`key_value`、`password`、`client_secret`，以及 MCP 的所有環境變數與 OAuth `client_secret`；`key_name`、`username` 等設定照常顯示，MCP 的 OAuth 權杖不出現在回應中。更新時仍為遮蔽字樣的欄位沿用已儲存的值，沒有已儲存的值時回傳 `400`。無法以目前的金鑰解密時（例如更換了 `TOOL_SECRETS_KEY`），回應帶 `credentials_unreadable: true`，由管理員重新輸入。
-10. **規格解析**：`OpenApiParser` 拒絕含 YAML 別名的規格（別名在後續處理時會被逐一展開；先以事件串流檢查，沒有別名才以 `yaml.safe_load` 載入），`POST /api/api-tools/parse-spec` 的回應不含原始規格；規格網址同樣經 SSRF 驗證。端點的 `security` 與 `securitySchemes` / `securityDefinitions` 轉成 `auth_type` 與不含憑證的 `auth_config`，請求主體格式轉成 `body_content_type`。
+10. **規格解析**：`OpenApiParser` 拒絕含 YAML 別名的規格（別名在後續處理時會被逐一展開；先以事件串流檢查，沒有別名才以 `yaml.safe_load` 載入），`POST /api/api-tools/parse-spec` 的回應不含原始規格；規格網址同樣經 SSRF 驗證。端點的 `security` 與 `securitySchemes` / `securityDefinitions` 轉成 `auth_type` 與不含憑證的 `auth_config`，請求主體格式轉成 `body_content_type`（Swagger 2.0 取自端點的 `consumes`，沒有時用規格頂層的 `consumes`）。請求主體是有 `properties` 的物件時展開成各個 `body` 參數；其他型別（陣列、字串、數字、沒有 `properties` 的物件）成為保留完整 schema（例如 `items`）的 `request_body` 參數；Swagger 2.0 的 `in: formData` 參數成為主體欄位。`$ref` 在每個分支各自展開成完整結構，同一條參照路徑上的循環參照，以及每個參數或主體 schema 中超過 200 個（`MAX_OPENAPI_SCHEMA_REFS`）的參照，改以只含說明的物件 schema 取代。
 11. **MCP resources 與 prompts**：探索時依伺服器宣告的 capability 讀取 `resources/list`、`prompts/list`（失敗只寫入日誌），各最多 200 項存入 `discovered_resources`、`discovered_prompts`。Agent 的 `read_mcp_resource`、`get_mcp_prompt` 說明列出這些項目（`MAX_MCP_CATALOG_CHARS`），執行前先比對清單，不在清單中的 uri 或 prompt 不會送到伺服器。
 12. **MCP 遠端 OAuth**（`app/services/mcp_oauth.py`）：依 MCP 授權規格 `2025-06-18`，從 `WWW-Authenticate` 或 `/.well-known/oauth-protected-resource` 找到授權伺服器，使用管理員填入的 client 或動態註冊，以授權碼 + PKCE（S256）與 `resource` 取得權杖。一次性的 `state` 存在行程記憶體中 10 分鐘，回呼 `GET /api/mcp/oauth/callback` 不需登入、只靠 `state` 對應管理員與伺服器。權杖加密存入 `oauth_tokens`，HTTP 請求帶 Bearer，快到期或連線收到 `401` 時以 refresh token 換新。OAuth 端點的請求共用 `app/services/oauth_client.py`（SSRF 驗證、只跟隨同一來源的轉址、15 秒、256 KiB），自訂 API 工具的 client credentials 也使用它。
 
@@ -548,7 +548,7 @@ sequenceDiagram
 | 帳號綁定 | 每次請求由 `resolve_token_user()` 依 `sub` 讀取帳號：不存在、已停用，或 `iat` 早於帳號的 `tokens_valid_after`（建立帳號時等於 `created_at`，防止帳號刪除後 id 被重用；變更密碼時更新為當下；`iat` 保留微秒，同一秒內稍早簽發的權杖同樣無效）時回傳 `401`；`username`、`role`、`is_admin` 取自資料庫而非權杖 |
 | 重新整理權杖 | 有效 `REFRESH_TOKEN_EXPIRE_DAYS` 天，只含 `sub` 與 `type: refresh`，存於 HttpOnly Cookie（路徑 `/api/auth`，`Secure` 由必填的 `COOKIE_SECURE` 決定，不再依 `ENVIRONMENT` 推導，`SameSite` 預設 `lax`）；只能使用一次，換發時撤銷舊權杖並重設 Cookie |
 | 密碼 | Argon2 雜湊；舊的 bcrypt 雜湊仍可驗證，登入成功時自動改存 Argon2。註冊與改密碼要求 8 至 256 字元並包含大小寫字母與數字；雜湊與驗證在執行緒中進行，同時最多 4 個 |
-| 變更密碼 | `POST /api/auth/change-password` 與帶新密碼的 `PUT /api/auth/me` 把 `tokens_valid_after` 更新為當下並清除重新整理權杖 Cookie：該帳號先前簽發的權杖（含其他裝置、可能已外洩者與目前這一個）全部失效，前端隨即清除登入狀態並導回登入頁 |
+| 變更密碼 | `POST /api/auth/change-password` 把 `tokens_valid_after` 更新為當下並清除重新整理權杖 Cookie：該帳號先前簽發的權杖（含其他裝置、可能已外洩者與目前這一個）全部失效，前端隨即清除登入狀態並導回登入頁 |
 | 登入節流 | `app/core/login_throttle.py` 對登入識別（不分大小寫、忽略前後空白）與來源位址分別計數：`LOGIN_FAILURE_WINDOW_SECONDS` 內失敗達 `LOGIN_MAX_FAILURES_PER_ACCOUNT` 或 `LOGIN_MAX_FAILURES_PER_ADDRESS` 次，該識別或位址的登入暫停 `LOGIN_LOCKOUT_SECONDS` 秒，期間不驗證密碼，直接回傳 `429` 與 `Retry-After`（`LOGIN_THROTTLED` 寫入安全日誌）。拿到密碼雜湊名額後會再檢查一次是否鎖定，失敗也在釋放名額前記錄，同時送出的大量請求在鎖定後最多只有已在驗證中的 4 個會完成。不存在或已停用的帳號同樣計數，並對假雜湊驗一次密碼，回應內容與時間都與存在的帳號相同；登入成功只清除該識別的紀錄。計數在行程記憶體中，追蹤的識別與位址各最多 10,000 個，最久沒有新失敗者先淘汰 |
 | 註冊 | `ALLOW_REGISTRATION=false` 時 `POST /api/auth/register` 回傳 `403` 並寫入安全日誌（`REGISTER_REJECTED`）；`GET /api/auth/registration`（不需登入）回傳 `{"enabled": bool}`，前端據此顯示或隱藏註冊入口。帳號（含第一位管理員）由 `backend/scripts/create_user.py` 建立，套用與註冊相同的規則，`--admin` 建立管理員，密碼以互動方式輸入 |
 | 授權 | 管理員端點依資料庫中該帳號的 `is_admin` 判斷，變更後下一個請求就生效。`GET /api/admin/users` 與 `PUT /api/admin/users/{user_id}` 的回應只含 `UserProfile` 欄位，不含密碼雜湊；變更帳號權限、狀態與刪除帳號時寫入安全日誌（`ADMIN_USER_UPDATED`、`ADMIN_USER_DELETED`） |
@@ -613,10 +613,10 @@ flowchart LR
 工具結果（知識庫片段、網頁內容、外部 API 回應）可能夾帶提示注入。Agent 一律把工具結果包在每次提問 id 不同的 `<untrusted_tool_result>` 標記內，系統提示要求只把它當資料看，也不把對話或知識庫內容拼進網址或搜尋字串。程式層另有三道限制：
 
 1. **網址來源限制**：`web_fetch` 只能讀取使用者訊息或本次內建工具結果資料欄位中以完整網址出現過的網址（兩邊都正規化成 httpx 的形式後逐字比對，實際送出比對到的網址）。
-2. **網域白名單**：`WEB_FETCH_ALLOWED_DOMAINS` 限定可讀取的網域（含子網域），明確寫 `*` 才表示不限制；白名單只檢查初始網址。
+2. **網域白名單**：`WEB_FETCH_ALLOWED_DOMAINS` 限定可讀取的網域（含子網域），明確寫 `*` 才表示不限制；初始網址與每一次轉址的目標都要在白名單內，白名單不是 `*` 時不使用 Ollama Web Fetch（轉址由 Ollama 端追蹤，無法逐跳檢查）。
 3. **讀過知識庫後停用聯網**：`BLOCK_WEB_TOOLS_AFTER_KB=true` 時，同一次提問只要知識庫工具回傳過內容，之後的 `web_search` 與 `web_fetch` 一律拒絕。
 
-Agent Skills 的內容例外：技能由管理員上傳，`activate_skill` 與 `read_skill_resource` 的結果以 `<skill_content>`、`<skill_resource>` 原樣交給模型當作指示，其中出現的網址也列入網址來源。上傳的 zip 拒絕絕對路徑、`..` 與符號連結，並以實際解壓的位元組數計算上限。技能中的腳本預設不會執行；管理員為技能開啟 `allow_scripts` 後，`run_skill_script` 的結果包上不可信標記，每次執行都要使用者核准。腳本在暫存複本中以最小環境變數執行，但**不是沙箱**：它以後端的系統帳號執行，能讀取該帳號可讀的檔案並連上網路，不受上述三道限制，只應為信任的技能開啟。技能的 `allowed-tools` 會讓列出的工具在該次提問中略過核准（包括 `run_skill_script` 與有副作用的外部工具），因此安裝技能前也要檢查這個欄位。
+Agent Skills 的內容例外：技能由管理員上傳，`activate_skill` 與 `read_skill_resource` 的結果以 `<skill_content>`、`<skill_resource>` 原樣交給模型當作指示，其中出現的網址也列入網址來源。上傳的 zip 拒絕絕對路徑、`..` 與符號連結，並以實際解壓的位元組數計算上限。技能中的腳本預設不會執行；管理員為技能開啟 `allow_scripts` 後，`run_skill_script` 的結果包上不可信標記，每次執行都要使用者核准。腳本在暫存複本中以最小環境變數執行，但**不是沙箱**：它以後端的系統帳號執行，能讀取該帳號可讀的檔案並連上網路，不受上述三道限制，只應為信任的技能開啟。技能的 `allowed-tools` 會讓列出的工具在該次提問中略過核准（包括有副作用的外部工具；列出 `run_skill_script` 時只限該技能自己的腳本），因此安裝技能前也要檢查這個欄位。
 
 自訂 API 與 MCP 工具的結果同樣包上不可信標記，但不列入網址來源與引用編號，其出站請求不受上述三道限制（已知風險，見 [ADR-0003](adr/0003-rrf-relevance-citations-and-tool-trust.md)）。緩解方式是呼叫前核准：有副作用的工具由發問的使用者看過工具、送出的位置與參數後才執行（[ADR-0006](adr/0006-tool-call-approval.md)）；自訂 API 工具也只接受管理員在 `parameters_schema` 宣告的參數，不能夾帶其他查詢參數或本文欄位（第 9 節）。
 

@@ -8,13 +8,16 @@ type ResearchStep = NonNullable<Message['research_trace']>[number];
 const INITIAL_PAGE_SIZE = 100;
 const OLDER_PAGE_SIZE = 50;
 const STREAM_INTERRUPTED_MESSAGE = '連線中斷，回答可能不完整，請重新傳送。';
+const TOOL_INTERRUPTED_MESSAGE = '連線中斷，回答可能不完整。中斷時仍有工具在執行，可能已經完成；重新傳送前請先確認結果，避免重複執行。';
 const isAbortError = (err: any) => err?.name === 'CanceledError' || err?.name === 'AbortError';
 const getErrorDetail = (err: any, fallback: string): string => {
   const detail = err?.response?.data?.detail;
   return typeof detail === 'string' && detail ? detail : fallback;
 };
+const hasRunningStep = (trace: ResearchStep[] | undefined): boolean =>
+  Boolean(trace?.some((step) => step.status === 'running'));
 const settleRunningSteps = (trace: ResearchStep[] | undefined): ResearchStep[] | undefined =>
-  trace?.map((step) => (step.status === 'running' ? { ...step, status: 'error' } : step));
+  trace?.map((step) => (step.status === 'running' ? { ...step, status: 'interrupted' } : step));
 /** onError：載入或刪除失敗時通知呼叫端顯示訊息（串流失敗則直接標示在該則回覆上） */
 export function useChat(onError: (message: string) => void) {
   const [conversationsLoading, setConversationsLoading] = useState(false);
@@ -163,11 +166,16 @@ export function useChat(onError: (message: string) => void) {
         return next;
       });
     };
+    const countSavedMessage = () => {
+      if (viewTokenRef.current === viewToken) {
+        setMessagesOffset(prev => prev + 1);
+      }
+    };
     const markInterrupted = () => {
       updateBotMessage(m => ({
         ...m,
         pending_approval: null,
-        error: STREAM_INTERRUPTED_MESSAGE,
+        error: hasRunningStep(m.research_trace) ? TOOL_INTERRUPTED_MESSAGE : STREAM_INTERRUPTED_MESSAGE,
         research_trace: settleRunningSteps(m.research_trace)
       }));
     };
@@ -188,6 +196,7 @@ export function useChat(onError: (message: string) => void) {
         (ev) => {
           if (ev.event === 'start') {
             started = true;
+            countSavedMessage();
             streamConversationId = ev.data?.conversation_id ?? streamConversationId;
           } else if (ev.event === 'step_start') {
             const stepData = ev.data;
@@ -224,6 +233,9 @@ export function useChat(onError: (message: string) => void) {
           } else if (ev.event === 'done') {
             finished = true;
             const doneData = ev.data;
+            if (doneData.message_id) {
+              countSavedMessage();
+            }
             updateBotMessage(m => ({
               ...m,
               id: doneData.message_id || m.id,

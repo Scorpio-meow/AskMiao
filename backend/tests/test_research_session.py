@@ -55,6 +55,12 @@ def test_strip_citations_removes_markers_only():
     assert strip_citations("依年資計算 [1][2]，另見 [3, 4]。第 [a] 項") == "依年資計算 ，另見 。第 [a] 項"
 
 
+def test_strip_citations_keeps_code():
+    text = "取第一筆用 `items[0]` [1]\n```python\nprint(items[1])\n```\n~~~\nrow[2]\n~~~\n結果 [2]"
+
+    assert strip_citations(text) == "取第一筆用 `items[0]` \n```python\nprint(items[1])\n```\n~~~\nrow[2]\n~~~\n結果 "
+
+
 def fetch_allowed(session, url):
     arguments = {"url": url}
     return session.refuse_tool_call("web_fetch", arguments) is None, arguments["url"]

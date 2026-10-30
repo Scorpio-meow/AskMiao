@@ -15,7 +15,6 @@ _public_http_client: Optional[httpx.AsyncClient] = None
 _client_lock = asyncio.Lock()
 _anthropic_http_clients: Dict[bool, Any] = {}
 _anthropic_output_limits: Dict[Tuple[str, str], int] = {}
-_anthropic_output_limits_lock = asyncio.Lock()
 @dataclass(frozen=True)
 class LlmEndpoint:
     provider: str
@@ -65,6 +64,9 @@ OPENAI_RESPONSES_MODEL_PREFIXES = ("gpt-6",)
 FOUNDRY_RESPONSES_MODEL_PREFIXES = ("gpt-", "o3", "o4")
 CHAT_COMPLETIONS_ONLY_PREFIXES = ("gpt-oss", "o3-mini")
 OPENAI_RESPONSES_NONE_EFFORT_MARKER = "luna"
+GPT5_MODEL_MARKER = "gpt-5"
+GPT5_NONE_EFFORT_MARKER = "gpt-5."
+ORIGINAL_GPT5_EFFORT_BY_REASONING = {"none": "minimal", "xhigh": "high", "max": "high"}
 OPENAI_OUTPUT_KEY = "_openai_output"
 DEFAULT_OPENAI_MODELS = ["gpt-6.1-sol", "gpt-6-sol", "gpt-6-luna", "gpt-6-astra", "gpt-5.6-sol", "gpt-5.6-luna", "gpt-5.6-terra", "gpt-5.4", "gpt-5.4-mini"]
 DEFAULT_CLAUDE_MODELS = ["claude-opus-5-5", "claude-fable-5-1", "claude-sonnet-5-5", "claude-haiku-5-5", "claude-sonnet-5", "claude-opus-5", "claude-fable-5", "claude-opus-4-8", "claude-haiku-4-5"]
@@ -177,6 +179,16 @@ def _openai_endpoint(endpoint: LlmEndpoint) -> Tuple[str, Dict[str, str]]:
     if endpoint.provider == "gemini":
         return f"{base}/v1beta/openai/chat/completions", headers
     return f"{base}/chat/completions", headers
+def _chat_completions_effort(model: str, tools: Optional[List[Dict[str, Any]]], reasoning_effort: Optional[str]) -> Optional[str]:
+    name = model.lower()
+    if GPT5_MODEL_MARKER not in name:
+        return reasoning_effort
+    accepts_none = GPT5_NONE_EFFORT_MARKER in name
+    if tools and accepts_none:
+        return "none"
+    if not accepts_none:
+        return ORIGINAL_GPT5_EFFORT_BY_REASONING.get(reasoning_effort, reasoning_effort)
+    return reasoning_effort
 def _openai_payload(
     provider: str,
     messages: List[Dict[str, Any]],
@@ -194,7 +206,7 @@ def _openai_payload(
         payload["tools"] = tools
         payload["tool_choice"] = "auto"
     if provider == "openai" or (provider == "foundry" and model.startswith(OPENAI_MODEL_PREFIXES)):
-        effort = "none" if tools and "gpt-5" in model.lower() else reasoning_effort
+        effort = _chat_completions_effort(model, tools, reasoning_effort)
         if effort in REASONING_EFFORT_VALUES:
             payload["reasoning_effort"] = effort
     if provider == "gemini" and reasoning_effort in GEMINI_EFFORT_BY_REASONING:
@@ -564,12 +576,9 @@ async def _anthropic_model_output_limit(endpoint: LlmEndpoint, model: str) -> Op
     if endpoint.provider == "foundry":
         return None
     key = (endpoint.api_base, model)
-    if key in _anthropic_output_limits:
-        return _anthropic_output_limits[key]
-    async with _anthropic_output_limits_lock:
-        if key not in _anthropic_output_limits:
-            info = await _anthropic_client(endpoint).models.retrieve(model)
-            _anthropic_output_limits[key] = info.max_tokens
+    if key not in _anthropic_output_limits:
+        info = await _anthropic_client(endpoint).models.retrieve(model)
+        _anthropic_output_limits[key] = info.max_tokens
     return _anthropic_output_limits[key]
 async def _anthropic_max_tokens(endpoint: LlmEndpoint, model: str) -> int:
     """連線設定的輸出 token 上限與模型輸出上限取較小值，避免輸出上限較低的模型回傳 400"""

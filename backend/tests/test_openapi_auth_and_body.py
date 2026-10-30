@@ -164,3 +164,82 @@ async def test_token_endpoint_failure_is_reported_without_details(upstream):
     assert "錯誤代碼" in result["error"]
     assert "invalid_client" not in result["error"]
     assert all(r.headers["host"] == "auth.example.com" for r in upstream["sent"])
+
+
+USER_SCHEMA = {"type": "object", "properties": {"username": {"type": "string"}}}
+PETSTORE_V2 = {
+    "swagger": "2.0",
+    "info": {"title": "Petstore", "version": "1"},
+    "host": "petstore.swagger.io",
+    "basePath": "/v2",
+    "schemes": ["https"],
+    "definitions": {"User": USER_SCHEMA},
+    "paths": {
+        "/pet/{petId}": {"post": {"operationId": "updatePetWithForm", "consumes": ["application/x-www-form-urlencoded"], "parameters": [
+            {"name": "petId", "in": "path", "required": True, "type": "integer"},
+            {"name": "name", "in": "formData", "type": "string"},
+            {"name": "status", "in": "formData", "type": "string"},
+        ]}},
+        "/user/createWithList": {"post": {"operationId": "createUsersWithListInput", "parameters": [
+            {"name": "body", "in": "body", "required": True, "schema": {"type": "array", "items": {"$ref": "#/definitions/User"}}},
+        ]}},
+    },
+}
+PETSTORE_V3 = {
+    "openapi": "3.0.2",
+    "info": {"title": "Petstore", "version": "1"},
+    "servers": [{"url": "https://petstore3.swagger.io/api/v3"}],
+    "components": {"schemas": {"User": USER_SCHEMA}},
+    "paths": {"/user/createWithList": {"post": {"operationId": "createUsersWithListInput", "requestBody": {"content": {
+        "application/json": {"schema": {"type": "array", "items": {"$ref": "#/components/schemas/User"}}},
+    }}}}},
+}
+
+
+async def parsed_tool(spec, name):
+    endpoint = next(e for e in (await OpenApiParser.parse(json.dumps(spec)))["endpoints"] if e["name"] == name)
+    return {
+        "name": endpoint["name"],
+        "method": endpoint["method"],
+        "url": endpoint["full_url"],
+        "parameters_schema": endpoint["parameters_schema"],
+        "param_locations": endpoint["param_locations"],
+        "body_content_type": endpoint["body_content_type"],
+    }
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("spec", [PETSTORE_V2, PETSTORE_V3])
+async def test_array_body_is_sent_as_the_whole_body(upstream, spec):
+    upstream["handler"] = lambda request: httpx.Response(200, json={"ok": True}, request=request)
+    tool = await parsed_tool(spec, "createuserswithlistinput")
+    body_schema = tool["parameters_schema"]["properties"]["request_body"]
+    assert body_schema["type"] == "array" and body_schema["items"] == USER_SCHEMA
+    assert "body" not in tool["parameters_schema"]["required"]
+    result = await execute_http_api_tool(tool, {"request_body": [{"username": "miao"}]}, "test_tool")
+    assert result["is_success"] is True
+    assert json.loads(upstream["sent"][0].content) == [{"username": "miao"}]
+
+
+@pytest.mark.anyio
+async def test_array_body_cannot_be_sent_as_a_form(upstream):
+    upstream["handler"] = lambda request: httpx.Response(200, json={"ok": True}, request=request)
+    tool = await parsed_tool(PETSTORE_V2, "createuserswithlistinput")
+    tool["body_content_type"] = "application/x-www-form-urlencoded"
+    result = await execute_http_api_tool(tool, {"request_body": [{"username": "miao"}]}, "test_tool")
+    assert result["is_success"] is False
+    assert "請求主體必須是物件" in json.dumps(result, ensure_ascii=False)
+    assert upstream["sent"] == []
+
+
+@pytest.mark.anyio
+async def test_swagger_form_data_is_sent_as_a_form(upstream):
+    upstream["handler"] = lambda request: httpx.Response(200, json={"ok": True}, request=request)
+    tool = await parsed_tool(PETSTORE_V2, "updatepetwithform")
+    assert tool["body_content_type"] == "application/x-www-form-urlencoded"
+    result = await execute_http_api_tool(tool, {"petId": 7, "name": "Rex", "status": "sold"}, "test_tool")
+    assert result["is_success"] is True
+    request = upstream["sent"][0]
+    assert request.url.path == "/v2/pet/7"
+    assert request.headers["content-type"] == "application/x-www-form-urlencoded"
+    assert parse_qs(request.content.decode()) == {"name": ["Rex"], "status": ["sold"]}

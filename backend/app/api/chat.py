@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 from app.models.database import get_db
-from app.models import MessageCreate, MessageResponse, ChatResponse, ConversationResponse
+from app.models import MessageCreate, ConversationResponse
 from app.services.chat_service import AttachmentQuotaExceeded, ChatService
 from app.core.rag_manager import get_rag_system
 from app.core.user_context import get_current_user_id
@@ -13,7 +13,6 @@ import contextlib
 import logging
 logger = logging.getLogger(__name__)
 import json
-import os
 from app.core.config import settings
 from app.core.limits import MAX_CONCURRENT_CHAT_STREAMS_PER_USER
 from app.rag.tool_approval import approval_broker
@@ -147,6 +146,8 @@ async def send_message(
                     data = event_item.get("data", {})
                     if ev in ("approval_required", "approval_resolved"):
                         yield f"event: {ev}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
+                    elif ev == "attachments_extracted":
+                        await asyncio.to_thread(chat_service.save_attachment_texts, db, user_message_id, data["contents"])
                     elif ev == "step_start":
                         yield f"event: step_start\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
                     elif ev == "step_end":
@@ -183,7 +184,7 @@ async def send_message(
                     model_name=message_data.model_name,
                 )
                 done_payload = {
-                    "message_id": bot_message.id,
+                    "message_id": bot_message.id if bot_message else None,
                     "conversation_id": conv_id,
                     "answer": collected_tokens,
                     "sources": collected_sources,

@@ -186,65 +186,10 @@ export const ChatMessageItem: React.FC<ChatMessageItemProps> = ({
       mainContent: rawContent,
     };
   }, [message.content]);
-  const traceFromContext = useMemo(() => {
-    if (message.research_trace && message.research_trace.length > 0) {
-      return message.research_trace;
-    }
-    if (message.context_used) {
-      try {
-        const parsed = typeof message.context_used === 'string' ? JSON.parse(message.context_used) : message.context_used;
-        if (parsed && typeof parsed === 'object' && Array.isArray(parsed.research_trace)) {
-          return parsed.research_trace;
-        }
-      } catch { }
-    }
-    return [];
-  }, [message.research_trace, message.context_used]);
-  const sourcesFromContext = useMemo(() => {
-    if (message.sources && message.sources.length > 0) {
-      return message.sources;
-    }
-    if (message.context_used) {
-      try {
-        const parsed = typeof message.context_used === 'string' ? JSON.parse(message.context_used) : message.context_used;
-        if (Array.isArray(parsed)) {
-          return parsed;
-        }
-        if (parsed && typeof parsed === 'object' && Array.isArray(parsed.sources)) {
-          return parsed.sources;
-        }
-      } catch { }
-    }
-    return [];
-  }, [message.sources, message.context_used]);
-  const sourcesDetailFromContext = useMemo(() => {
-    if (message.sources_detail && message.sources_detail.length > 0) {
-      return message.sources_detail;
-    }
-    if (message.context_used) {
-      try {
-        const parsed = typeof message.context_used === 'string' ? JSON.parse(message.context_used) : message.context_used;
-        if (parsed && typeof parsed === 'object' && Array.isArray(parsed.sources_detail)) {
-          return parsed.sources_detail;
-        }
-      } catch { }
-    }
-    return [];
-  }, [message.sources_detail, message.context_used]);
-  const attachmentsFromContext = useMemo(() => {
-    if (message.attachments && message.attachments.length > 0) {
-      return message.attachments;
-    }
-    if (message.context_used) {
-      try {
-        const parsed = typeof message.context_used === 'string' ? JSON.parse(message.context_used) : message.context_used;
-        if (parsed && typeof parsed === 'object' && Array.isArray(parsed.attachments)) {
-          return parsed.attachments;
-        }
-      } catch { }
-    }
-    return [];
-  }, [message.attachments, message.context_used]);
+  const traceFromContext = useMemo(() => message.research_trace || [], [message.research_trace]);
+  const sourcesFromContext = useMemo(() => message.sources || [], [message.sources]);
+  const sourcesDetailFromContext = useMemo(() => message.sources_detail || [], [message.sources_detail]);
+  const attachmentsFromContext = useMemo(() => message.attachments || [], [message.attachments]);
   const [lightboxImg, setLightboxImg] = React.useState<{ src: string; alt: string } | null>(null);
   const hasTrace = traceFromContext.length > 0;
   const hasText = Boolean(mainContent.trim());

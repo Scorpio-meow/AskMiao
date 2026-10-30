@@ -12,32 +12,12 @@ export const SourceBadges: React.FC<SourceBadgesProps> = ({
   const normalizedDetails: SourceDetail[] = useMemo(() => {
     if (!sourcesDetail) return [];
     if (Array.isArray(sourcesDetail)) return sourcesDetail;
-    if (typeof sourcesDetail === 'string') {
-      try {
-        const parsed = JSON.parse(sourcesDetail);
-        if (Array.isArray(parsed)) return parsed;
-      } catch {
-        return [];
-      }
-    }
     return [];
   }, [sourcesDetail]);
   const normalizedSources: string[] = useMemo(() => {
     if (!sources) return [];
     if (Array.isArray(sources)) {
       return sources.map((s) => (typeof s === 'string' ? s : (s as any)?.source || JSON.stringify(s)));
-    }
-    if (typeof sources === 'string') {
-      const trimmed = (sources as string).trim();
-      if (trimmed.startsWith('[') && trimmed.endsWith(']')) {
-        try {
-          const parsed = JSON.parse(trimmed);
-          if (Array.isArray(parsed)) {
-            return parsed.map((s) => (typeof s === 'string' ? s : (s as any)?.source || JSON.stringify(s)));
-          }
-        } catch { }
-      }
-      return trimmed.split(/[,;\n]+/).map((s) => s.trim()).filter(Boolean);
     }
     return [];
   }, [sources]);

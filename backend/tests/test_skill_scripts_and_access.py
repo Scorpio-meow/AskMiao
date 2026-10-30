@@ -1,3 +1,4 @@
+import asyncio
 import io
 import json
 import zipfile
@@ -12,7 +13,7 @@ from app.core.config import settings
 from app.core.jwt_auth import get_current_user_from_token
 from app.core.user_context import get_current_user_id
 from app.models import AgentSkill, User
-from app.models.database import Base, SessionLocal, engine
+from app.models.database import SessionLocal
 from app.rag.agent import ResearchAgent
 from app.rag.tools import ResearchToolRegistry
 from app.services import agent_skills
@@ -25,6 +26,13 @@ SKILL_MD = """---
 name: script-skill
 description: Runs helper scripts. Use when testing scripts.
 allowed-tools: run_skill_script Read
+---
+Run scripts/echo.py.
+"""
+
+OTHER_SKILL_MD = """---
+name: other-skill
+description: Runs other scripts. Use when testing cross-skill approval.
 ---
 Run scripts/echo.py.
 """
@@ -48,10 +56,10 @@ def make_zip(entries):
 
 
 @pytest.fixture
-def env(tmp_path, monkeypatch):
+def env(tmp_path, monkeypatch, existing_users):
     monkeypatch.setattr(settings, "SKILLS_DIR", str(tmp_path / "skills"))
     monkeypatch.setenv("DATABASE_URL", "postgresql://user:secret@db/x")
-    Base.metadata.create_all(bind=engine)
+    existing_users(ADMIN_USER)
     with SessionLocal() as db:
         db.query(AgentSkill).delete()
         db.query(User).filter(User.username.in_(USERNAMES)).delete(synchronize_session=False)
@@ -155,6 +163,74 @@ async def test_allowed_tools_preapprove_only_after_activation(env, monkeypatch):
     assert steps[1]["status"] == "success"
     assert '"exit_code": 0' in steps[2]["output_preview"]
     assert not any(e["event"] == "approval_required" for e in events)
+
+
+@pytest.mark.anyio
+async def test_allowed_tools_preapprove_only_the_listing_skills_scripts(env, monkeypatch):
+    client, skill, _ = env
+    client.patch(f"/api/skills/{skill['id']}/settings", json={"allow_scripts": True})
+    other = client.post("/api/skills/upload", files={"file": ("o.zip", make_zip({
+        "SKILL.md": OTHER_SKILL_MD,
+        "scripts/echo.py": ECHO_PY,
+    }), "application/zip")}).json()["skill"]
+    client.patch(f"/api/skills/{other['id']}/settings", json={"allow_scripts": True})
+    agent = ResearchAgent(tool_registry=ResearchToolRegistry())
+    ScriptedLLM([
+        tool_call("activate_skill", {"name": "script-skill"}, "c1"),
+        tool_call("run_skill_script", {"skill": "other-skill", "path": "scripts/echo.py"}, "c2"),
+        tool_call("run_skill_script", {"skill": "script-skill", "path": "scripts/echo.py"}, "c3"),
+        answer("完成"),
+    ]).install(monkeypatch)
+    events = await collect(research(agent, "跑腳本", approval_user_id=None))
+    steps = [e["data"] for e in events if e["event"] == "step_end"]
+    assert steps[0]["status"] == "success"
+    assert "核准" in steps[1]["output_preview"]
+    assert '"exit_code": 0' in steps[2]["output_preview"]
+
+
+@pytest.mark.anyio
+async def test_cancelled_script_is_killed(env, monkeypatch):
+    client, skill, _ = env
+    client.patch(f"/api/skills/{skill['id']}/settings", json={"allow_scripts": True})
+    spawned = []
+    started = asyncio.Event()
+    create = asyncio.create_subprocess_exec
+
+    async def spawn(*args, **kwargs):
+        process = await create(*args, **kwargs)
+        spawned.append(process)
+        started.set()
+        return process
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", spawn)
+    task = asyncio.create_task(
+        ResearchToolRegistry().execute_tool("run_skill_script", {"skill": "script-skill", "path": "scripts/sleep.py"})
+    )
+    await asyncio.wait_for(started.wait(), timeout=30)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert spawned[0].returncode is not None
+
+
+@pytest.mark.anyio
+async def test_prompts_mention_running_scripts_only_when_offered(env, monkeypatch):
+    client, skill, _ = env
+    agent = ResearchAgent(tool_registry=ResearchToolRegistry())
+
+    async def prompts():
+        llm = ScriptedLLM([tool_call("activate_skill", {"name": "script-skill"}, "c1"), answer("完成")]).install(monkeypatch)
+        await collect(research(agent, "跑腳本"))
+        return llm.chat_messages[0][0]["content"], llm.chat_messages[1][-1]["content"]
+
+    system, activation = await prompts()
+    assert "本系統不會執行技能內的腳本" in system
+    assert "本系統不會執行技能內的腳本" in activation
+
+    client.patch(f"/api/skills/{skill['id']}/settings", json={"allow_scripts": True})
+    system, activation = await prompts()
+    assert "run_skill_script" in system and "本系統不會執行技能內的腳本" not in system
+    assert "run_skill_script" in activation and "本系統不會執行技能內的腳本" not in activation
 
 
 @pytest.mark.anyio

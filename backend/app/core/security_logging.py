@@ -7,6 +7,9 @@ from typing import Optional, Dict, Any
 from fastapi import Request
 import os
 from app.core.limits import LOG_FILE_BACKUP_COUNT, LOG_FILE_MAX_BYTES, MAX_LOG_FIELD_CHARS
+class SingleLineMessageFormatter(logging.Formatter):
+    def formatMessage(self, record: logging.LogRecord) -> str:
+        return super().formatMessage(record).replace("\r", "\\r").replace("\n", "\\n")
 security_logger = logging.getLogger("security")
 security_logger.setLevel(logging.INFO)
 # 安全事件只寫 security.log，不再重複落地到 app.log

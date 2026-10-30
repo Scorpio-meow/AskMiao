@@ -199,6 +199,34 @@ async def test_cross_origin_redirect_drops_credentials(public_dns, upstream):
 
 
 @pytest.mark.anyio
+async def test_state_changing_requests_do_not_follow_cross_origin_redirects(public_dns, upstream):
+    def handler(request):
+        if request.url.path == "/orders":
+            return httpx.Response(307, headers={"Location": "https://other.example.net/collect"}, request=request)
+        if request.url.path == "/moved":
+            return httpx.Response(308, headers={"Location": "/orders/v2"}, request=request)
+        return httpx.Response(200, json={"ok": True}, request=request)
+
+    upstream["handler"] = handler
+    tool = {
+        "name": "orders",
+        "method": "POST",
+        "url": "https://api.example.com/orders",
+        "parameters_schema": {"type": "object", "properties": {"note": {"type": "string"}}},
+        "param_locations": {"note": "body"},
+    }
+    result = await execute_http_api_tool(tool, {"note": "機密內容"}, "test_tool")
+    assert result["is_success"] is False
+    assert result["status_code"] == 400
+    assert "轉址到其他來源" in result["error"]
+    assert [request.headers["host"] for request in upstream["sent"]] == ["api.example.com"]
+
+    result = await execute_http_api_tool(dict(tool, url="https://api.example.com/moved"), {"note": "機密內容"}, "test_tool")
+    assert result["is_success"] is True
+    assert upstream["sent"][-1].url.path == "/orders/v2"
+
+
+@pytest.mark.anyio
 async def test_credentials_are_redacted_from_result(public_dns, upstream):
     def echo(request):
         return httpx.Response(
@@ -259,6 +287,22 @@ async def test_web_fetch_rejection_hides_resolved_address(monkeypatch):
         result = await ResearchToolRegistry().web_fetch("https://internal-alias.example.com/")
     assert "SSRF" in result["error"]
     assert "10.20.30.40" not in str(result)
+
+
+@pytest.mark.anyio
+async def test_web_fetch_redirect_must_stay_in_allowed_domains(monkeypatch, public_dns, upstream):
+    monkeypatch.setattr(settings, "OLLAMA_API_KEY", "ollama-key")
+    monkeypatch.setattr(settings, "WEB_FETCH_ALLOWED_DOMAINS", "example.com")
+
+    def handler(request):
+        if request.headers["host"] == "news.example.com":
+            return httpx.Response(302, headers={"Location": "https://collector.example.net/a"}, request=request)
+        return httpx.Response(200, text="<p>leaked</p>", request=request)
+
+    upstream["handler"] = handler
+    result = await ResearchToolRegistry().web_fetch("https://news.example.com/a")
+    assert "error" in result and result["content"] == ""
+    assert [request.headers["host"] for request in upstream["sent"]] == ["news.example.com"]
 
 
 def test_mcp_presets_are_constrained():

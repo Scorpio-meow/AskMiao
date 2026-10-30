@@ -1,4 +1,5 @@
 import json
+from pathlib import Path
 
 import pytest
 
@@ -25,7 +26,7 @@ def test_profile_with_missing_field_is_rejected(tmp_path):
 
 
 def test_profile_with_unknown_field_is_rejected(tmp_path):
-    shipped = json.loads(open(settings.DOMAIN_PROFILE_PATH, encoding="utf-8").read())
+    shipped = json.loads(Path(settings.DOMAIN_PROFILE_PATH).read_text(encoding="utf-8"))
     path = tmp_path / "profile.json"
     path.write_text(json.dumps({**shipped, "faq_keywords": ["特休"]}, ensure_ascii=False), encoding="utf-8")
 

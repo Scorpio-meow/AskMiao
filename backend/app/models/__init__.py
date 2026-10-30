@@ -68,6 +68,7 @@ class Document(Base):
     is_processed = Column(Boolean, default=False)
 class RagChunk(Base):
     __tablename__ = "rag_chunks"
+    __table_args__ = {"sqlite_autoincrement": True}
 
     id = Column(Integer, primary_key=True, index=True)
     document_id = Column(Integer, ForeignKey("documents.id", ondelete="CASCADE"), index=True, nullable=False)

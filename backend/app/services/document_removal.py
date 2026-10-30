@@ -21,11 +21,10 @@ async def remove_document(db: Session, document: Document) -> None:
     try:
         rag_system = get_rag_system()
         await asyncio.to_thread(rag_system.remove_document_by_id, document_id)
-    except Exception as e:
-        logger.warning("Failed to remove document from RAG system: %s", str(e))
-    try:
-        file_path = os.path.join(settings.UPLOAD_DIR, filename)
-        if os.path.exists(file_path):
-            os.remove(file_path)
-    except Exception as e:
-        logger.warning("Failed to remove physical file: %s", str(e))
+    finally:
+        try:
+            file_path = os.path.join(settings.UPLOAD_DIR, filename)
+            if os.path.exists(file_path):
+                os.remove(file_path)
+        except Exception as e:
+            logger.warning("Failed to remove physical file: %s", str(e))

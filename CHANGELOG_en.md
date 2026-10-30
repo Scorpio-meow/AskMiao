@@ -6,6 +6,7 @@ All notable changes to AskMiao are documented in this file. The format is based 
 
 | Version | Release date | Highlights |
 |---|---|---|
+| [7.0.0](#700---2026-10-31) | 2026-10-31 | Per-account API connections and admin-granted shared connections, user management, token revocation on deactivation, per-hop redirect checks for tools and the web allowlist, Docker Compose deployment for a VM, FAQ and PDF extraction fixes, and index rebuilds that no longer empty the knowledge base |
 | [6.0.0](#600---2026-10-26) | 2026-10-26 | Agent Skills, MCP Streamable HTTP and OAuth, re-parsed structured data, the Responses API, Microsoft Foundry (including Claude), reasoning effort mapped across five providers, and Ollama and Gemini integration fixes |
 | [5.0.0](#500---2026-10-10) | 2026-10-10 | Second security audit fixes: login failure throttling, token revocation on password change, optional self-registration, encrypted tool credentials, PyJWT in place of python-jose, hash-pinned dependencies, a non-superuser PostgreSQL account |
 | [4.0.0](#400---2026-09-27) | 2026-09-27 | Security audit fixes: tokens bound to database accounts, user approval for tool calls, IP-pinned outbound connections, resource limits |
@@ -18,6 +19,9 @@ All notable changes to AskMiao are documented in this file. The format is based 
 | [1.0.0](#100---2026-08-01) | 2026-08-01 | Hybrid RAG and security foundations |
 
 > [!TIP]
+> Upgrading from 6.0.0 to 7.0.0? Read the [upgrade guide](docs/upgrading_en.md#upgrading-from-600-to-700) first: chat now uses per-account API connections, so every account (admins included) needs a personal connection or a shared one granted by an admin before it can chat, and `POST /api/chat/send` requires `connection_id` and `model_name`; `PUT /api/auth/me` no longer changes passwords, and the conversation list and single-conversation endpoints no longer include messages. The backend and frontend dependencies are the same as in 6.0.0, so nothing needs reinstalling.
+
+> [!TIP]
 > Upgrading from 5.0.0 to 6.0.0? Read the [upgrade guide](docs/upgrading_en.md#upgrading-from-500-to-600) first: the domain profile has two new required fields, `.env` has a new required `SKILLS_DIR`, and the Azure OpenAI settings are renamed for Microsoft Foundry (the old names are still read).
 
 > [!TIP]
@@ -27,8 +31,29 @@ All notable changes to AskMiao are documented in this file. The format is based 
 
 ## [Unreleased]
 
+---
+
+## [7.0.0] - 2026-10-31
+
 > [!IMPORTANT]
 > Chat no longer uses the models and keys in `.env`. After upgrading, every account (admins included) needs an API connection to chat: an admin recreates the `.env` providers as shared connections under "Admin → Shared API connections" and picks the accounts that may use them, or each account adds its own key under "Profile → My API connections". `POST /api/chat/send` now requires `connection_id` and `model_name`.
+>
+> API clients need two more changes: `PUT /api/auth/me` only updates the email, so change passwords with `POST /api/auth/change-password`; `messages` in `GET /api/chat/conversations` and `GET /api/chat/conversations/{conversation_id}` is always an empty array, so read messages from `GET /api/chat/conversations/{conversation_id}/messages`. The backend and frontend dependencies are the same as in 6.0.0; see the [upgrade guide](docs/upgrading_en.md#upgrading-from-600-to-700).
+
+### Security
+
+- **Members' personal connections can only reach public addresses**: the API address is checked when a connection is saved, and every model call goes through the SSRF check and is pinned to the approved IP (the httpx2 client used by the Anthropic SDK included), so nobody can use their own connection to make the backend reach the internal network or cloud metadata services. Error messages never reveal the internal address a name resolved to. Admins' personal connections and shared connections may point at the internal network (for example a local Ollama).
+- **Deactivating an account revokes its tokens**: deactivating an account sets `users.tokens_valid_after` to the current time. Its tokens already stopped working while it was deactivated; now the access and refresh tokens issued before deactivation do not come back when it is reactivated, and the account must sign in again.
+- **Changing a connection's provider or API address drops the stored key**: an update to a personal or shared connection that changes `provider` or `api_base` without sending a new key clears the stored key, and providers that need a key return `400` asking for it again; `POST /api/llm-connections/discover-models` uses a stored connection's key only when both the provider and the API address match it. A stored key is never sent to another provider or address.
+- **Usernames accept only Chinese characters, ASCII letters, digits, `_`, and `-`**: registration, admin account creation and editing, and `scripts/create_user.py` all apply the same rule. The previous `\w` rule also accepted look-alike letters such as Cyrillic, full-width letters, and a trailing newline, so a name could look identical to an existing account; existing accounts are unaffected and sign in as before.
+- **A skill whose `allowed-tools` lists `run_skill_script` pre-approves only its own scripts**: previously, once such a skill was activated, scripts of other skills ran without approval for the rest of that question too.
+- **Skill scripts stop when the chat is cancelled**: when the user stops an answer or the connection drops, a running `run_skill_script` script and its child processes are terminated instead of continuing in the background.
+- **The `web_fetch` domain allowlist is checked on every redirect**: when `WEB_FETCH_ALLOWED_DOMAINS` is not `*`, each redirect target must be on the allowlist too (previously only the initial URL was checked, so an allowed site could redirect the request to any domain), and Ollama Web Fetch is no longer used (Ollama follows redirects on its side, so they cannot be checked hop by hop).
+- **State-changing custom API tools no longer follow cross-origin redirects**: methods other than `GET`, `HEAD`, and `OPTIONS` follow only same-origin redirects, so the request body never goes to another domain; a refused redirect or more than 5 redirects gives `status_code` `400` with an `error` starting with 「上游轉址未跟隨：…」 (upstream redirect not followed) that says why, while SSRF rejections are still `403`.
+- **A new `.dockerignore` at the repository root**: images built from the repository root leave out `.env` at any level, `backend/keys`, `backend/data`, `backend/logs`, `node_modules`, `.git`, `.venv`, and similar, so keys, data, and local settings are not packed into images.
+- **`deploy/gen-env.sh` sets `COOKIE_SECURE` from `PUBLIC_ORIGIN`**: when `PUBLIC_ORIGIN` starts with `https://`, it writes `COOKIE_SECURE=true`, so the refresh token cookie is sent over HTTPS only.
+- **The production image installs no test packages**: `deploy/Dockerfile.backend` skips `pytest`, `pytest-asyncio`, `psutil`, `iniconfig`, and `pluggy` from `requirements.txt`.
+- **General logs can no longer be forged with extra lines**: `app.log` and console logs escape line breaks in messages as `\n`, so user-supplied text (such as a model name, tool name, or URL) cannot fake a normal-looking log line; exception tracebacks stay multi-line. Found by a CodeQL scan (`py/log-injection`).
 
 ### Added
 
@@ -43,6 +68,7 @@ All notable changes to AskMiao are documented in this file. The format is based 
   - Admins can reset other accounts' passwords (`PUT /api/admin/users/{id}/password`), which signs that account out everywhere.
   - Editing an account lets admins check the shared connections it may use (`GET/PUT /api/admin/users/{id}/llm-connections`) and see its personal connections.
   - The user list is searchable and shows the last sign-in time.
+- **Docker Compose deployment for a VM** (`deploy/`): `docker-compose.yml` runs PostgreSQL 17, the backend, and an nginx frontend, with the database and the backend's `data`, `keys`, and `logs` on named volumes. The backend image installs the CPU build of torch and skips the `nvidia-`, `triton`, and `cuda-` packages; nginx serves the frontend build and reverse-proxies `/api`, resolving the backend address through Docker's built-in DNS so a recreated backend container does not cause `502`; the frontend build converts `index.html` to LF first. `deploy/gen-env.sh` generates `deploy/.env` on the target host (the PostgreSQL and application account passwords, `TOOL_SECRETS_KEY`, and so on) from `PUBLIC_ORIGIN`, `WEB_PORT`, `NETWORK_SUBNET`, and `WEB_CONTAINER_IP`, so no secrets go into the repository.
 
 ### Changed
 
@@ -50,11 +76,77 @@ All notable changes to AskMiao are documented in this file. The format is based 
 - The LLM settings in `.env` (`MODEL_NAME`, `AVAILABLE_MODELS`, the provider keys, and `LLM_API_BASE`) only serve background system work: AI summaries of uploaded documents and `GET /api/tags`.
 - Self-registered accounts never use the operator's LLM keys; with `ALLOW_REGISTRATION=true`, remember that all accounts still share the knowledge base and the enabled tools.
 - Admins cannot deactivate or delete their own account or remove their own admin rights (`400`), so the system always keeps someone who can manage it; `PUT /api/admin/users/{id}` validates the username and email format (`422` otherwise), and toggling admin rights sets `role` to `admin` or `user` accordingly.
+- **`PUT /api/auth/me` only updates the email**: it no longer accepts `current_password` and `new_password` (they are ignored if sent, and the password does not change); change passwords with `POST /api/auth/change-password`.
+- **Conversation endpoints no longer include messages**: `messages` in `GET /api/chat/conversations` (previously the 5 most recent per conversation) and `GET /api/chat/conversations/{conversation_id}` (previously the newest 500) is always an empty array; read messages page by page from `GET /api/chat/conversations/{conversation_id}/messages`. The `LIST_PREVIEW_MESSAGES` constant is removed.
+- The `POST /api/documents/rebuild-index` response gains `failed_documents` (each with `document_id` and `filename`); when documents fail, `message` says how many, and the knowledge base page lists the failed file names.
+- `scripts/reprocess_existing_docs.py` runs the same flow as the rebuild-index endpoint: it no longer clears every index first or regenerates every document's summary (hand-edited summaries are kept), and it lists the documents that failed.
+- A BM25 index write that still fails after 3 attempts now fails the operation (uploading a file, deleting or rebuilding a document, or the BM25 rebuild at startup) instead of writing one error log line and leaving BM25 out of step with the vector index.
+- **Claude caching, reasoning effort, and refusal fallback**: the last user message gets a cache breakpoint, so multi-turn chats and tool loops can read from the cache, and the log records `cache_read` and `cache_creation` token counts; reasoning effort `none` now sends effort `low` (previously nothing was sent, so the model used its higher default); `claude-opus-4-8`, `claude-opus-4-7`, `claude-opus-4-6`, and `claude-sonnet-4-6` explicitly enable adaptive thinking unless the effort is `none`; `claude-opus-5-5`, `claude-opus-5`, `claude-fable-5-1`, and `claude-sonnet-5-5` on the Claude API directly enable the server-side refusal fallback (`fallbacks: "default"`); tool loops use streaming, so long responses are no longer bound by a single request timeout.
 
-### Security
+### Fixed
 
-- **Members' personal connections can only reach public addresses**: the API address is checked when a connection is saved, and every model call goes through the SSRF check and is pinned to the approved IP (the httpx2 client used by the Anthropic SDK included), so nobody can use their own connection to make the backend reach the internal network or cloud metadata services. Error messages never reveal the internal address a name resolved to. Admins' personal connections and shared connections may point at the internal network (for example a local Ollama).
+#### Knowledge base and document extraction
 
+- A document is split into Q&A pairs as an FAQ only when nothing but whitespace comes before its first 「Q：」 line: a manual with an FAQ section in the middle is now indexed in full, where previously everything before the first 「Q：」 line was left out of the index; Q&A pairs longer than `CHUNK_SIZE` are split further instead of becoming one chunk each.
+- `search_knowledge_base` with `target_document` searches only that document's chunks: previously it took the top results from the whole knowledge base and then filtered them, so in a large knowledge base the document's chunks often did not make the cut and nothing was reported found.
+- Documents left without any chunks by an interrupted upload (for example a backend crash) are indexed at startup, with the same extraction as a rebuild.
+- Deleting a document returns `500` when removing it from the indexes fails, instead of reporting success; leftover chunks are removed by the reconciliation at the next startup.
+- Rebuilding the index no longer clears the whole index first: each document's old chunks are replaced by its new ones, other documents stay searchable during the rebuild, and a document whose re-extraction or chunking fails keeps its old chunks and is listed in `failed_documents`.
+- Query embeddings are computed outside the index lock, so other searches and document writes no longer queue behind them.
+- PDF: before extraction, alternate glyphs in embedded TrueType fonts that the ToUnicode map leaves unmapped or maps to U+FFFD are mapped back to their source character through the font's GSUB single substitutions, so digits in Noto Sans TC exported by Illustrator, for example, are no longer extracted as 「俸」 or 「俻」; the font repair code that did not work is removed.
+- A PDF with no extractable text on any page (for example a scan with OCR not configured or failing) is rejected with `400` and the reason, instead of being stored as the placeholder 「[本頁為圖檔或無可提取純文字]」 (page is an image or has no extractable text); different scans are no longer treated as duplicates because of identical placeholder text.
+- An upload whose name matches an existing document (including one whose original file is missing) also gets a `_1`, `_2`, … suffix, and the suffixed name stays within `MAX_FILENAME_BYTES` (255 bytes in UTF-8).
+- Failed uploads show the actual reason (an extraction limit, an invalid Office file, no extractable text, a password-protected PDF, and so on) instead of always 「安全驗證失敗」 (security check failed); password-protected PDFs and Chinese file names over 255 bytes now return `400` instead of `500`.
+- When one file of a batch upload fails its database commit, the transaction is rolled back and the other files in the batch are processed as usual.
+- PPTX extraction includes shapes and tables inside groups and each slide's speaker notes; DOCX extraction outputs paragraphs and tables in document order, so tables stay under their headings instead of all coming at the end.
+- New SQLite databases create `rag_chunks` with `AUTOINCREMENT`, so deleted chunk ids are never reused; existing tables are unchanged.
+
+#### Custom API tools, OpenAPI, and MCP
+
+- Tool names given to the model are at most 64 characters (`MAX_TOOL_NAME_CHARS`): names generated from an OpenAPI `operationId` or an MCP tool, and overlong names already in the database, are truncated with an 8-character hash appended; creating a tool by hand or importing one with a name over 64 characters returns `400`. Previously an overlong name made the provider reject the whole request.
+- Re-importing an OpenAPI spec keeps the stored headers and credentials (only fields this import sends with a value override them) and the tool's enabled state, so disabled tools are not re-enabled.
+- When the request body is an array, string, number, or object without `properties`, the `request_body` from the model is sent as the whole body and keeps its full schema (such as an array's `items`); a non-object body with a form or `multipart/form-data` body type returns `400` with the reason.
+- A `$ref` used in several places is expanded in full at each one (previously only a description remained from the second use on); at most 200 references (`MAX_OPENAPI_SCHEMA_REFS`) are expanded per parameter or body schema.
+- Swagger 2.0 `in: formData` parameters become body fields and are sent as a form according to the endpoint's or the spec's top-level `consumes`.
+- Parameters, request bodies, and security schemes given as a `$ref` import correctly: previously resolving them lost fields such as `name`, `in`, and `content`.
+- Changing an MCP server's URL clears an OAuth client obtained through dynamic registration (a client entered by an admin is kept), so the old server's client is not carried to a new authorization server.
+- The page title returned by `web_fetch` is the first `<title>`; pages with several `<title>` elements (for example inline SVG) no longer get the last one.
+
+#### Chat and models
+
+- When `run_skill_script` is offered, the system prompt and skill content no longer tell the model that 「本系統不會執行技能內的腳本」 (this system never runs scripts in skills); they explain that scripts run through `run_skill_script` and only scripts of the skills it lists can run.
+- `PUT /api/auth/me` no longer saves a new email before a failing password check (the password fields are removed; see Changed).
+- The conversation list and single-conversation endpoints no longer read messages and attachment content from the database.
+- Follow-up questions include the text of earlier attachments: the text extracted from an attachment (at most `MAX_ATTACHMENT_TEXT_CHARS`, 50,000 characters, each) is saved back to its user message and carried in the history of later questions in the same conversation, at most 50,000 characters in total counted from the newest message back; the saved text counts against the attachment quota and is not saved once the quota is reached. Previously the model could not see earlier attachments in follow-up questions.
+- "Load older messages" no longer shows duplicates after sending a message.
+- The original `gpt-5`, `gpt-5-mini`, and `gpt-5-nano` get `minimal` for `none` and `high` for `xhigh` and `max`; always sending `none` with tools now applies only to `gpt-5.x` (these three models do not accept `none`).
+- Looking up a Claude model's output limit no longer holds a global lock, so one slow connection does not make other Claude requests wait.
+- `claude-haiku-4-5` no longer gets an effort it does not support (which returned `400`); `max_tokens` sent to Claude is the smaller of the configured output token limit (the API connection's setting, or `ANTHROPIC_MAX_TOKENS` for the system model) and the model's output limit from the Models API (not queried on Foundry), so models with a lower output limit no longer return `400`.
+- Only PNG, JPEG, GIF, and WebP chat attachments go to the model as images, and SVG is read as text; other image formats (such as BMP or TIFF) and unreadable attachments (an invalid Office file, or a PDF that is password-protected or has no text) are not read, and the model is told why.
+- Deleting a conversation while an answer is streaming no longer writes the assistant message into a newly created orphan conversation; the `done` event's `message_id` is then `null`.
+- Removing the `[n]` citation markers of earlier answers from the history no longer touches code blocks and inline code (such as `arr[1]`).
+- Setting `name`, `provider`, `api_base`, or `models` to `null` in a connection update returns `400` instead of causing a server error or storing an invalid model list.
+
+#### Frontend
+
+- The profile is read again on load and on every page change, so granting or removing admin rights takes effect without signing in again, and the admin pages check rights against the latest profile.
+- Attachments over 15 MiB are rejected with a message as soon as they are selected.
+- When an answer stream is interrupted, tool steps still running are marked 「結果不明」 (result unknown) instead of failed, with a reminder to check the result before resending so tools with side effects do not run twice.
+- The knowledge base page no longer crashes when a document's `created_at` is null.
+- The key hint in the connection form reflects whether the stored key will be kept: after the provider or API address changes, it asks for the key again, and the key becomes required for providers that need one.
+
+#### Deployment and scripts
+
+- A new `.gitattributes` keeps `*.sh` and `frontend/index.html` on LF line endings: Windows working copies with `core.autocrlf=true` converted them to CRLF, so `init-app-role.sh` failed inside the container and the CSP hash of the inline script in `index.html` no longer matched, leaving a blank page.
+- `scripts/reset_faiss.py` deletes the indexes at `FAISS_INDEX_PATH`, `METADATA_PATH`, and `BM25_INDEX_DIR` from `.env` instead of hard-coded file names under `backend/data/`.
+
+### Removed
+
+- `scripts/migrate_sqlite_to_postgres.py`, which imported the long-removed `app.models.custom_agent` and could not run.
+- Frontend code with no callers: `utils/logger.js`, `utils/offlineCache.jsx`, `utils/motion.js`, the unused exports of `utils/secureLogger.ts`, and `authService.updateProfile`, `authService.isAdmin`, `chatService.getConversations`, and `chatService.getConversation`.
+- Backend code with no callers: `get_users`, `deactivate_user`, `activate_user`, `delete_user`, `update_user_role`, and `count_users` in `crud_user`; `TokenRefresh`, `PasswordReset`, and `UserCreate` in `schemas/auth.py`; `RSAKeyManager.load_private_key` and `load_public_key`; `jwt_auth.sanitize_username`; `ChunkStore.delete_ids`; `DocumentProcessor.get_file_info`; and the unused `allow_private_ips` and `allowed_schemes` parameters of the SSRF validation.
+
+---
 
 ## [6.0.0] - 2026-10-26
 
@@ -163,7 +255,7 @@ All notable changes to AskMiao are documented in this file. The format is based 
 - The `custom_agents` table, which no feature used, from `init.sql` and the migration script (an existing table in your database is not dropped).
 
 > [!IMPORTANT]
-> Before upgrading, add `record_label_fields` and `record_ignore_fields` to the domain profile and `SKILLS_DIR` to `.env`, or the backend will not start, and reinstall the backend packages from the new `requirements.txt`; after upgrading, have an admin run "Rebuild index" once so existing documents switch to the new record format. See the [upgrade guide](docs/upgrading_en.md#upgrading-from-500-to-the-next-release).
+> Before upgrading, add `record_label_fields` and `record_ignore_fields` to the domain profile and `SKILLS_DIR` to `.env`, or the backend will not start, and reinstall the backend packages from the new `requirements.txt`; after upgrading, have an admin run "Rebuild index" once so existing documents switch to the new record format. See the [upgrade guide](docs/upgrading_en.md#upgrading-from-500-to-600).
 
 ---
 

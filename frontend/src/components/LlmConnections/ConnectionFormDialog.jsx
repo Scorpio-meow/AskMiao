@@ -49,6 +49,7 @@ export default function ConnectionFormDialog({ connection, shared, providers, us
   const [modelQuery, setModelQuery] = useState('');
   const [userQuery, setUserQuery] = useState('');
   const preset = presetOf(providers, form.provider);
+  const keepsApiKey = connection?.has_api_key && form.provider === connection.provider && form.api_base.trim() === connection.api_base;
   const selectedModels = parseModels(form.models);
   const visibleModels = (discovered || []).filter((model) => matches(model, modelQuery));
   const visibleUsers = (users || []).filter((user) => matches(`${user.username} ${user.email}`, userQuery));
@@ -125,9 +126,11 @@ export default function ConnectionFormDialog({ connection, shared, providers, us
       setSaving(false);
     }
   };
-  const keyHint = connection?.has_api_key
+  const keyHint = keepsApiKey
     ? '已設定金鑰，留空即沿用原本的金鑰；金鑰儲存後不會再顯示'
-    : preset.requires_api_key
+    : connection?.has_api_key
+      ? '已變更供應商或 API 位址，原本的金鑰不會沿用；需要金鑰請重新輸入'
+      : preset.requires_api_key
       ? '金鑰加密存放，儲存後不會再顯示'
       : '選填；自架的服務通常不需要';
   const busy = saving || discovering;
@@ -184,11 +187,11 @@ export default function ConnectionFormDialog({ connection, shared, providers, us
               type="password"
               value={form.api_key}
               onChange={(e) => update({ api_key: e.target.value })}
-              placeholder={connection?.has_api_key ? '••••••••' : ''}
+              placeholder={keepsApiKey ? '••••••••' : ''}
               helperText={keyHint}
               disabled={saving}
               autoComplete="new-password"
-              required={preset.requires_api_key && !connection?.has_api_key}
+              required={preset.requires_api_key && !keepsApiKey}
             />
             <div className={styles.field}>
               <div className={styles.fieldHeader}>

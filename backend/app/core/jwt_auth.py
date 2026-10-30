@@ -22,12 +22,7 @@ ALGORITHM = "RS256"
 from app.core.rsa_keys import rsa_manager
 RSA_PRIVATE_KEY = rsa_manager.get_private_key_pem()
 RSA_PUBLIC_KEY = rsa_manager.get_public_key_pem()
-try:
-    from app.core.redis_client import TokenBlacklist
-    USE_BLACKLIST = True
-except Exception as e:
-    USE_BLACKLIST = False
-    print(f"Token 黑名單功能不可用: {e}")
+from app.core.redis_client import TokenBlacklist
 password_hasher = PasswordHasher()
 security = HTTPBearer()
 def _numeric_date(moment: datetime) -> float:
@@ -109,7 +104,7 @@ class TokenManager:
     
     @staticmethod
     def decode_token(token: str) -> Dict[str, Any]:
-        if USE_BLACKLIST and TokenBlacklist.is_blacklisted(token):
+        if TokenBlacklist.is_blacklisted(token):
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="權杖已被撤銷",
@@ -254,25 +249,17 @@ def validate_password_strength(password: str) -> tuple[bool, str]:
         return False, "密碼必須包含至少一個數字"
     
     return True, ""
-def sanitize_username(username: str) -> str:
-    import re
-    return re.sub(r'[^\w\-]', '', username)
-def revoke_token(token: str, expires_in: int = None):
-    if not USE_BLACKLIST:
-        print("Token 黑名單功能未啟用")
-        return False
-    
+def revoke_token(token: str):
     try:
-        if expires_in is None:
-            payload = TokenManager.decode_token(token)
-            exp = payload.get("exp")
-            if exp:
-                # exp 是 epoch 秒數，須與 time.time() 比較；naive 的 datetime.utcnow().timestamp() 會被當成本地時間，
-                # 伺服器在 UTC 負時區時算出 0，撤銷只維持 1 秒，登出的權杖隨即又能使用
-                expires_in = max(int(exp - time.time()), 0)
-            else:
-                expires_in = 86400
-        
+        payload = TokenManager.decode_token(token)
+        exp = payload.get("exp")
+        if exp:
+            # exp 是 epoch 秒數，須與 time.time() 比較；naive 的 datetime.utcnow().timestamp() 會被當成本地時間，
+            # 伺服器在 UTC 負時區時算出 0，撤銷只維持 1 秒，登出的權杖隨即又能使用
+            expires_in = max(int(exp - time.time()), 0)
+        else:
+            expires_in = 86400
+
         return TokenBlacklist.add_token(token, expires_in)
     except Exception as e:
         print(f"撤銷 Token 失敗: {e}")

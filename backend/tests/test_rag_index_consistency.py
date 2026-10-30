@@ -199,7 +199,6 @@ async def test_admin_delete_document_endpoint_also_removes_chunks(rag, session_f
 
 @pytest.mark.asyncio
 async def test_rebuild_index_endpoint_regenerates_chunks(rag, session_factory, monkeypatch):
-    add_indexed_document(rag, session_factory, 9, "old.txt", "stale parking rules")
     db_documents = [
         SimpleNamespace(id=1, filename="rag_test_missing_overtime.txt", content=OVERTIME,
                         file_type="text/plain", description=None, uploaded_by=1),
@@ -212,6 +211,7 @@ async def test_rebuild_index_endpoint_regenerates_chunks(rag, session_factory, m
 
     for doc in db_documents:
         add_db_document(session_factory, doc.id, doc.filename, doc.content)
+    rag.add_documents([Document(page_content="stale parking rules", metadata={"source": db_documents[0].filename, "document_id": 1})])
     monkeypatch.setattr(documents_api, "get_rag_system", lambda: rag)
     monkeypatch.setattr(documents_api.DocumentProcessor, "generate_document_summary_async", fake_summary)
 
@@ -222,6 +222,35 @@ async def test_rebuild_index_endpoint_regenerates_chunks(rag, session_factory, m
     assert bm25_sources(rag, "seniority") == ["rag_test_missing_leave.txt"]
     assert result["missing_source_files"] == ["rag_test_missing_overtime.txt", "rag_test_missing_leave.txt"]
     assert result["records_detected"] == 0
+    assert result["failed_documents"] == []
+    assert_indices_match_database(rag, session_factory)
+
+
+@pytest.mark.asyncio
+async def test_rebuild_index_reports_failed_documents_and_keeps_the_others_searchable(rag, session_factory, monkeypatch):
+    db_documents = [
+        SimpleNamespace(id=1, filename="rag_test_missing_overtime.txt", content=OVERTIME,
+                        file_type="text/plain", description=None, uploaded_by=1),
+        SimpleNamespace(id=2, filename="rag_test_missing_leave.txt", content=LEAVE,
+                        file_type="text/plain", description=None, uploaded_by=1),
+    ]
+
+    async def summary_failing_for_leave(filename, content, file_type="", extraction=None):
+        if filename == "rag_test_missing_leave.txt":
+            raise RuntimeError("summary model crashed")
+        return f"summary of {filename}"
+
+    for doc in db_documents:
+        add_indexed_document(rag, session_factory, doc.id, doc.filename, doc.content)
+    monkeypatch.setattr(documents_api, "get_rag_system", lambda: rag)
+    monkeypatch.setattr(documents_api.DocumentProcessor, "generate_document_summary_async", summary_failing_for_leave)
+
+    result = await documents_api.rebuild_index(db=FakeSession(db_documents), current_user={"username": "admin"})
+
+    assert result["failed_documents"] == [{"document_id": 2, "filename": "rag_test_missing_leave.txt"}]
+    assert len(rag.documents) == 2
+    assert bm25_sources(rag, "approval") == ["rag_test_missing_overtime.txt"]
+    assert bm25_sources(rag, "seniority") == ["rag_test_missing_leave.txt"]
     assert_indices_match_database(rag, session_factory)
 
 
@@ -317,9 +346,10 @@ def test_document_lists_leave_out_full_text(session_factory):
 def test_embeddings_are_computed_outside_the_index_lock(rag, session_factory, monkeypatch):
     add_db_document(session_factory, 1, "overtime.txt", OVERTIME)
     original_embed = rag.vector_store.embed
+    original_embed_query = rag.vector_store.embed_query
     lock_free_while_embedding = []
 
-    def embed(texts):
+    def record_lock_state():
         acquired = []
 
         def try_lock():
@@ -331,14 +361,45 @@ def test_embeddings_are_computed_outside_the_index_lock(rag, session_factory, mo
         other.start()
         other.join()
         lock_free_while_embedding.append(acquired[0])
+
+    def embed(texts):
+        record_lock_state()
         return original_embed(texts)
 
+    def embed_query(query):
+        record_lock_state()
+        return original_embed_query(query)
+
     monkeypatch.setattr(rag.vector_store, "embed", embed)
+    monkeypatch.setattr(rag.vector_store, "embed_query", embed_query)
     rag.add_documents([Document(page_content=OVERTIME, metadata={"source": "overtime.txt", "document_id": 1})])
     rag.force_reindex()
+    rag.smart_search(OVERTIME)
+    rag.vector_search(OVERTIME)
 
-    assert lock_free_while_embedding == [True, True]
+    assert lock_free_while_embedding == [True, True, True, True]
     assert_indices_match_database(rag, session_factory)
+
+
+def test_target_document_ranked_below_top_k_is_still_found(index_dir, session_factory, monkeypatch):
+    monkeypatch.setattr(settings, "TOP_K", 2)
+    rag = HybridContextualRAG(session_factory=session_factory)
+    for document_id in range(1, 6):
+        add_indexed_document(rag, session_factory, document_id, f"overtime{document_id}.txt", OVERTIME)
+    add_indexed_document(rag, session_factory, 6, "parking.txt", "parking needs manager approval")
+    parking_id = next(cid for cid, doc in rag.vector_store.chunks.items() if doc.metadata["source"] == "parking.txt")
+    overtime_id = next(cid for cid, doc in rag.vector_store.chunks.items() if doc.metadata["source"] == "overtime1.txt")
+
+    assert "parking.txt" not in {r.document.metadata["source"] for r in rag.smart_search(OVERTIME)}
+    assert [r.document.metadata["source"] for r in rag.smart_search(OVERTIME, target_document="parking.txt")] == ["parking.txt"]
+    assert [doc.metadata["source"] for doc, _ in rag.bm25_store.search(OVERTIME, rag.vector_store.chunks, 2, chunk_ids=[parking_id])] == ["parking.txt"]
+    query_embedding = rag.vector_store.embed_query(OVERTIME)
+    for use_gpu_search in (False, True):
+        monkeypatch.setattr(rag.vector_store, "use_faiss_gpu", use_gpu_search)
+        monkeypatch.setattr(rag.vector_store, "gpu_resources", object() if use_gpu_search else None)
+        hits = rag.vector_store.search(query_embedding, 2, apply_threshold=False, chunk_ids=[parking_id, overtime_id])
+        assert [doc.metadata["source"] for doc, _ in hits] == ["overtime1.txt", "parking.txt"]
+        assert rag.vector_store.search(query_embedding, 2, apply_threshold=False, chunk_ids=[]) == []
 
 
 def test_startup_reconciles_indices_with_database(make_rag, session_factory):

@@ -149,6 +149,11 @@ export const ResearchTraceBlock: React.FC<ResearchTraceBlockProps> = ({
                         <Icon name="error" size={14} />
                         <span className="sr-only">失敗</span>
                       </span>
+                    ) : step.status === 'interrupted' ? (
+                      <span className={styles.statusUnknown}>
+                        <Icon name="help" size={14} />
+                        <span className="sr-only">結果不明</span>
+                      </span>
                     ) : (
                       <span className={styles.statusSuccess}>
                         <Icon name="check-circle" size={14} />

@@ -1,4 +1,4 @@
-import { useId, useState } from 'react';
+import { useEffect, useId, useState } from 'react';
 import { useNavigate, useLocation, Outlet, NavLink } from 'react-router-dom';
 import { useAuth } from '../hooks/useAuth';
 import { LOGOUT_UNCONFIRMED_NOTICE } from '../services/authService';
@@ -15,8 +15,11 @@ const THEME_OPTIONS = [
 function Layout() {
   const navigate = useNavigate();
   const location = useLocation();
-  const { user, logout } = useAuth();
+  const { user, logout, getCurrentUser, isAuthenticated } = useAuth();
   const { theme, setTheme } = useTheme();
+  useEffect(() => {
+    if (isAuthenticated) getCurrentUser();
+  }, [isAuthenticated, getCurrentUser, location.pathname]);
   const [anchorEl, setAnchorEl] = useState(null);
   const menuId = useId();
   const open = Boolean(anchorEl);
@@ -134,7 +137,7 @@ function Layout() {
         tabIndex={-1}
         className={`${styles.mainContent} ${isFixedLayout ? styles.mainContentFixed : ''}`}
       >
-        <Outlet />
+        <Outlet context={user} />
       </main>
       <NetworkStatus />
     </div>

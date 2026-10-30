@@ -88,6 +88,7 @@ export interface ChatInputAreaProps {
   attachments?: ChatAttachment[];
   onAddAttachments?: (attachments: ChatAttachment[]) => void;
   onRemoveAttachment?: (index: number) => void;
+  onRejectAttachments?: (message: string) => void;
 }
 export interface SourceBadgesProps {
   sources?: string[];

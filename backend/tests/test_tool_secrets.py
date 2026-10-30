@@ -22,7 +22,7 @@ from app.core.config import Settings
 from app.core.jwt_auth import get_current_user_from_token
 from app.core.tool_secrets import SECRET_MASK, decrypt_json, is_encrypted
 from app.models import CustomApiTool, McpServer
-from app.models.database import Base, SessionLocal, engine, upgrade_schema
+from app.models.database import SessionLocal, upgrade_schema
 
 ADMIN_USER = {"user_id": 1, "username": "admin", "email": "admin@example.com", "role": "admin", "is_admin": True}
 TOOL_NAME = "secrets_test_tool"
@@ -30,8 +30,8 @@ SERVER_NAME = "secrets_test_server"
 
 
 @pytest.fixture
-def client():
-    Base.metadata.create_all(bind=engine)
+def client(existing_users):
+    existing_users(ADMIN_USER)
 
     def remove():
         with SessionLocal() as db:

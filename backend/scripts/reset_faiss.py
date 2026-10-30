@@ -1,29 +1,23 @@
 
 import sys
-import os
 import shutil
 from pathlib import Path
 backend_dir = Path(__file__).parent.parent
 sys.path.insert(0, str(backend_dir))
+from app.core.config import settings
 def reset_indexes():
     print("=" * 60)
     print("🔧 開始重置 RAG 索引...")
     print("=" * 60)
     
-    data_dir = backend_dir / "data"
-    
-    index_files = [
-        data_dir / "faiss_index.bin",
-        data_dir / "index_metadata.json",
-        data_dir / "index_metadata.pkl",
-    ]
-    bm25_dir = data_dir / "bm25_index"
+    index_files = [Path(settings.FAISS_INDEX_PATH), Path(settings.METADATA_PATH)]
+    bm25_dir = Path(settings.BM25_INDEX_DIR)
     
     print("\n⚠️  這將刪除以下索引檔案:")
     for f in index_files:
         status = "存在" if f.exists() else "不存在"
-        print(f"   - {f.name}: {status}")
-    print(f"   - bm25_index/: {'存在' if bm25_dir.exists() else '不存在'}")
+        print(f"   - {f}: {status}")
+    print(f"   - {bm25_dir}: {'存在' if bm25_dir.exists() else '不存在'}")
     
     response = input("\n是否繼續? (y/n): ")
     if response.lower() != 'y':
@@ -34,11 +28,11 @@ def reset_indexes():
     for f in index_files:
         if f.exists():
             f.unlink()
-            print(f"   ✓ 已刪除 {f.name}")
+            print(f"   ✓ 已刪除 {f}")
     
     if bm25_dir.exists():
         shutil.rmtree(bm25_dir)
-        print("   ✓ 已刪除 bm25_index/")
+        print(f"   ✓ 已刪除 {bm25_dir}")
     
     print("\n🔄 重新初始化 RAG 系統...")
     try:

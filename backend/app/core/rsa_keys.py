@@ -55,21 +55,6 @@ class RSAKeyManager:
         print(f"   私鑰: {self.private_key_path}")
         print(f"   公鑰: {self.public_key_path}")
     
-    def load_private_key(self):
-        with open(self.private_key_path, 'rb') as f:
-            return serialization.load_pem_private_key(
-                f.read(),
-                password=None,
-                backend=default_backend()
-            )
-    
-    def load_public_key(self):
-        with open(self.public_key_path, 'rb') as f:
-            return serialization.load_pem_public_key(
-                f.read(),
-                backend=default_backend()
-            )
-    
     def get_private_key_pem(self) -> str:
         with open(self.private_key_path, 'r') as f:
             return f.read()

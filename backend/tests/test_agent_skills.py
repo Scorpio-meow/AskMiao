@@ -12,7 +12,7 @@ from app.core.config import settings
 from app.core.jwt_auth import get_current_user_from_token
 from app.core.user_context import get_current_user_id
 from app.models import AgentSkill
-from app.models.database import Base, SessionLocal, engine
+from app.models.database import SessionLocal
 from app.rag.agent import ResearchAgent
 from app.rag.research_session import ResearchSession
 from app.rag.tools import ResearchToolRegistry
@@ -50,9 +50,9 @@ def make_zip(entries, symlinks=()):
 
 
 @pytest.fixture
-def skills_dir(tmp_path, monkeypatch):
+def skills_dir(tmp_path, monkeypatch, existing_users):
     monkeypatch.setattr(settings, "SKILLS_DIR", str(tmp_path / "skills"))
-    Base.metadata.create_all(bind=engine)
+    existing_users(ADMIN_USER, NORMAL_USER)
     db = SessionLocal()
     db.query(AgentSkill).delete()
     db.commit()
@@ -187,11 +187,15 @@ def test_install_rejects_conflicting_entries(skills_dir):
 def test_activation_content_lists_resources_without_reading_them(skills_dir):
     skill, files = read_skill_upload("pdf.zip", make_zip({"SKILL.md": PDF_SKILL, "scripts/run.py": "print(1)"}))
     agent_skills.install_skill(skill, files, replace=False)
-    content = agent_skills.activate_skill("pdf-processing")["content"]
+    content = agent_skills.activate_skill("pdf-processing", False)["content"]
     assert content.startswith('<skill_content name="pdf-processing">')
     assert "<file>scripts/run.py</file>" in content
     assert "print(1)" not in content
     assert "name: pdf-processing" not in content
+    assert "本系統不會執行技能內的腳本" in content
+    scripted = agent_skills.activate_skill("pdf-processing", True)["content"]
+    assert "run_skill_script" in scripted
+    assert "不會執行" not in scripted
 
 
 def test_non_admin_cannot_manage_skills(skills_dir):
@@ -305,6 +309,7 @@ async def test_slash_command_activates_skill_before_model_call(skills_dir):
 
     system = captured["messages"][0]["content"]
     assert "[技能規則]" in system
+    assert "本系統不會執行技能內的腳本" in system
     assert '<skill_content name="pdf-processing">' in system
     assert captured["messages"][-1]["content"] == "幫我整理這份 PDF"
     done = events[-1]["data"]

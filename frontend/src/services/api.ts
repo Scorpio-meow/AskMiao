@@ -16,7 +16,6 @@ export interface Message {
   content: string;
   is_user: boolean;
   created_at?: string;
-  context_used?: string | null | string[];
   model_name?: string | null;
   reasoning_effort?: string | null;
   attachments?: ChatAttachment[];
@@ -275,14 +274,6 @@ export const chatService = {
       parser.push(decoder.decode(value, { stream: true }));
     }
     parser.push(decoder.decode());
-  },
-  async getConversations(): Promise<Conversation[]> {
-    const response = await api.get<Conversation[]>('/chat/conversations');
-    return response.data;
-  },
-  async getConversation(conversationId: number): Promise<Conversation> {
-    const response = await api.get<Conversation>(`/chat/conversations/${conversationId}`);
-    return response.data;
   },
   async deleteConversation(conversationId: number): Promise<{ message: string }> {
     const response = await api.delete<{ message: string }>(`/chat/conversations/${conversationId}`);

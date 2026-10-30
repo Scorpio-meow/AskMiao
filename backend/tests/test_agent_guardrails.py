@@ -183,6 +183,26 @@ async def test_previous_answer_citation_markers_are_not_sent_back(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_only_model_supported_image_types_are_sent_as_images(monkeypatch):
+    agent, _ = make_agent(monkeypatch)
+    llm = ScriptedLLM([answer("好")]).install(monkeypatch)
+    monkeypatch.setattr(agent_module, "_extract_attachment_text", lambda fname, ftype, url: "<svg>圖示</svg>")
+    attachments = [
+        {"filename": "a.png", "file_type": "image/png", "data_url": "data:image/png;base64,AAAA"},
+        {"filename": "b.svg", "file_type": "image/svg+xml", "data_url": "data:image/svg+xml;base64,PHN2Zz4="},
+        {"filename": "c.bmp", "file_type": "image/bmp", "data_url": "data:image/bmp;base64,Qk0="},
+    ]
+
+    events = await collect(research(agent, "看圖", attachments=attachments))
+
+    user_content = llm.chat_messages[0][-1]["content"]
+    assert [part["image_url"]["url"] for part in user_content if part["type"] == "image_url"] == ["data:image/png;base64,AAAA"]
+    assert "[附加檔案: b.svg]\n<svg>圖示</svg>" in user_content[0]["text"]
+    assert "[附加檔案: c.bmp]\n[不支援的圖片格式 image/bmp" in user_content[0]["text"]
+    assert next(e for e in events if e["event"] == "attachments_extracted")["data"] == {"contents": [None, "<svg>圖示</svg>", None]}
+
+
+@pytest.mark.asyncio
 async def test_web_fetch_rejects_url_not_given_by_user_or_tool_results(monkeypatch):
     monkeypatch.setattr(settings, "ENABLE_WEB_SEARCH", True)
     agent, registry = make_agent(monkeypatch)

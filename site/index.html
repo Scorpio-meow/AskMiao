@@ -6,7 +6,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>AskMiao：企業級 Agentic RAG 智慧知識庫對話系統</title>
   <meta name="description"
-    content="AskMiao 是開源的企業級知識庫對話系統：向量與 BM25 以 RRF 融合、Cross-Encoder 重排門檻、ReAct 自主研究 Agent，答案逐句以 [n] 標註出處；有副作用的工具呼叫先經使用者核准，出站請求逐跳 SSRF 驗證並固定連線 IP。5.0.0 加上登入失敗節流、變更密碼即撤銷所有權杖與工具憑證加密存放。">
+    content="AskMiao 是開源的企業級知識庫對話系統：向量與 BM25 以 RRF 融合、Cross-Encoder 重排門檻、ReAct 自主研究 Agent，答案逐句以 [n] 標註出處；有副作用的工具呼叫先經使用者核准，出站請求逐跳 SSRF 驗證並固定連線 IP。7.0.0 起每個帳號使用自己的模型 API 連線，管理員可以開放共用連線並指定帳號。">
   <meta name="color-scheme" content="light dark">
   <meta name="theme-color" media="(prefers-color-scheme: light)" content="#f6f8fb">
   <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#0a0f1a">
@@ -38,7 +38,7 @@
     "license": "https://opensource.org/licenses/MIT",
     "programmingLanguage": ["Python", "TypeScript"],
     "runtimePlatform": ["FastAPI", "React"],
-    "version": "6.0.0",
+    "version": "7.0.0",
     "dateModified": "2026-10-26"
   }
   </script>
@@ -375,7 +375,7 @@
         <span>AskMiao</span>
       </a>
       <nav class="nav__links" aria-label="主要導覽">
-        <a class="nav__release" href="#release"><span class="nav__pulse" aria-hidden="true"></span>5.0.0</a>
+        <a class="nav__release" href="#v7"><span class="nav__pulse" aria-hidden="true"></span>7.0.0</a>
         <a href="#next">6.0.0</a>
         <a href="#citations">引用出處</a>
         <a href="#features">功能</a>
@@ -420,8 +420,9 @@
     </div>
     <nav class="nav__menu" id="nav-menu" data-nav-menu data-open="false" aria-label="行動版導覽">
       <a href="#film">介紹影片</a>
-      <a href="#release">5.0.0 新功能</a>
+      <a href="#v7">7.0.0 新功能</a>
       <a href="#next">6.0.0 新功能</a>
+      <a href="#release">5.0.0 新功能</a>
       <a href="#citations">引用出處</a>
       <a href="#features">功能</a>
       <a href="#how">運作方式</a>
@@ -487,9 +488,9 @@
       </div>
       <div class="container hero__grid">
         <div class="hero__copy">
-          <a class="release-pill" href="#release" data-anim style="--i:0">
-            <span class="release-pill__ver">5.0.0</span>
-            <span class="release-pill__text">登入、權杖與憑證再收緊</span>
+          <a class="release-pill" href="#v7" data-anim style="--i:0">
+            <span class="release-pill__ver">7.0.0</span>
+            <span class="release-pill__text">每個帳號自己的 API 連線</span>
             <svg class="icon" aria-hidden="true">
               <use href="#i-arrow-right"></use>
             </svg>
@@ -668,7 +669,6 @@
           <header class="release__head reveal">
             <div class="release__intro">
               <p class="release__meta">
-                <span class="release__badge">最新發行</span>
                 <time datetime="2026-10-10">2026-10-10</time>
                 <span class="release__flag"><svg class="icon" aria-hidden="true">
                     <use href="#i-warning-circle"></use>
@@ -1120,6 +1120,95 @@ items[0].name: 企業版年約</pre>
           <p>升級前在領域設定檔補上 <span class="mono">record_label_fields</span> 與 <span class="mono">record_ignore_fields</span>、在
             <span class="mono">.env</span> 加上 <span class="mono">SKILLS_DIR</span>，否則後端無法啟動；升級後執行一次重建索引。</p>
           <a class="link-more" href="https://github.com/Scorpio-meow/AskMiao/blob/HEAD/docs/upgrading.md#從-500-升級到-600"
+            target="_blank" rel="noopener">升級指南<span class="sr-only">（在新分頁開啟）</span><svg class="icon" aria-hidden="true">
+              <use href="#i-arrow-up-right"></use>
+            </svg></a>
+        </aside>
+      </div>
+    </section>
+    <section class="section next" id="v7" aria-labelledby="v7-title">
+      <div class="container">
+        <div class="section__head reveal">
+          <p class="eyebrow next__eyebrow"><span class="next__dot" aria-hidden="true"></span>7.0.0 新功能 · 2026-10-31 發行</p>
+          <h2 id="v7-title">模型連線各自管理，第三輪稽核一併修正</h2>
+          <p>以下變更隨 7.0.0 發行，完整清單在 CHANGELOG 的 7.0.0。</p>
+        </div>
+        <div class="next__grid">
+          <article class="next__card spot reveal">
+            <div class="cell__icon"><svg class="icon" aria-hidden="true">
+                <use href="#i-key"></use>
+              </svg></div>
+            <h3>每個帳號自己的 API 連線</h3>
+            <ul class="next__list">
+              <li>在「個人資料 → 我的 API 連線」設定 OpenAI、Claude、Gemini、Microsoft Foundry 或 Ollama 的位址、金鑰與模型，只有自己看得到。</li>
+              <li>按「從 API 取得模型」列出供應商提供的模型，儲存前可以先測試連線。</li>
+              <li>金鑰加密存放；一般帳號的連線只能連到公開位址，每次呼叫模型都經 SSRF 檢查。</li>
+            </ul>
+          </article>
+          <article class="next__card spot reveal">
+            <div class="cell__icon"><svg class="icon" aria-hidden="true">
+                <use href="#i-user-gear"></use>
+              </svg></div>
+            <h3>共用連線與帳號管理</h3>
+            <ul class="next__list">
+              <li>管理員建立共用連線，開放給所有帳號或只給指定帳號，沒被指定的人看不到。</li>
+              <li>管理後台可以新增帳號、重設密碼；停用帳號時，所有裝置上的登入隨即失效。</li>
+              <li>權限有變動時，對方切換頁面就會看到，不必重新登入。</li>
+            </ul>
+          </article>
+          <article class="next__card spot reveal">
+            <div class="cell__icon"><svg class="icon" aria-hidden="true">
+                <use href="#i-file-text"></use>
+              </svg></div>
+            <h3>文件擷取與檢索更準</h3>
+            <ul class="next__list">
+              <li>Illustrator 輸出的 Noto Sans TC 數字不再被擷取成「俸俻」，依字型的替換表還原成原本的數字。</li>
+              <li>手冊中間有 FAQ 時整份照常索引；指定文件查詢不再因為知識庫變大而誤報查無資料。</li>
+              <li>沒有文字的掃描 PDF、有密碼的 PDF 會說明原因；PPTX 群組與備忘稿的文字一併擷取。</li>
+              <li>重建索引逐份替換，其他文件照常可查，失敗的文件會列出來。</li>
+            </ul>
+          </article>
+          <article class="next__card spot reveal">
+            <div class="cell__icon"><svg class="icon" aria-hidden="true">
+                <use href="#i-plugs-connected"></use>
+              </svg></div>
+            <h3>OpenAPI 與工具</h3>
+            <ul class="next__list">
+              <li>以 <span class="mono">$ref</span> 引用的參數、請求主體與認證，陣列主體與 Swagger 2.0 表單，都能正確匯入。</li>
+              <li>重新匯入保留已填的憑證與停用狀態；超過 64 字元的工具名稱自動縮短，不再讓整個對話失敗。</li>
+              <li><span class="mono">POST</span> 等請求遇到跨網域轉址時中止，請求內容不會送到其他網域。</li>
+            </ul>
+          </article>
+          <article class="next__card spot reveal">
+            <div class="cell__icon"><svg class="icon" aria-hidden="true">
+                <use href="#i-shield-check"></use>
+              </svg></div>
+            <h3>第三輪安全稽核</h3>
+            <ul class="next__list">
+              <li>技能的 <span class="mono">allowed-tools</span> 只放行它自己的腳本，對話中斷時一併終止腳本。</li>
+              <li><span class="mono">web_fetch</span> 的網域白名單在每一次轉址都重新檢查。</li>
+              <li>改了連線的供應商或位址就不沿用舊金鑰；使用者名稱擋下外觀相似的冒充字元。</li>
+              <li>Docker 映像不再打包本機的 <span class="mono">.env</span>、金鑰與資料。</li>
+            </ul>
+          </article>
+          <article class="next__card spot reveal">
+            <div class="cell__icon"><svg class="icon" aria-hidden="true">
+                <use href="#i-chats-circle"></use>
+              </svg></div>
+            <h3>對話更可靠</h3>
+            <ul class="next__list">
+              <li>追問時帶上前一輪附件的內容，不必重新上傳。</li>
+              <li>超過 15 MiB 的附件在選檔時就提示，不會送出空附件。</li>
+              <li>工具執行到一半連線中斷時，步驟標示「結果不明」，提醒確認後再重送，避免重複執行。</li>
+            </ul>
+          </article>
+        </div>
+        <aside class="next__upgrade reveal" aria-label="升級提醒">
+          <svg class="icon" aria-hidden="true">
+            <use href="#i-info"></use>
+          </svg>
+          <p>升級後每個帳號（含管理員）都要有 API 連線才能對話：管理員把原本 <span class="mono">.env</span> 的供應商建成共用連線並指定帳號，或請各帳號自行設定。</p>
+          <a class="link-more" href="https://github.com/Scorpio-meow/AskMiao/blob/HEAD/docs/upgrading.md#從-600-升級到-700"
             target="_blank" rel="noopener">升級指南<span class="sr-only">（在新分頁開啟）</span><svg class="icon" aria-hidden="true">
               <use href="#i-arrow-up-right"></use>
             </svg></a>
@@ -1725,7 +1814,7 @@ FOUNDRY_DEPLOYMENT=gpt-6-sol,gpt-6-luna</pre>
       <div class="container">
         <div class="section__head reveal">
           <h2>安全不是附加功能，而是預設路徑</h2>
-          <p>工具結果、出站請求、工具管理、認證、資源用量與日誌，每條路徑都有對應的防護模組與測試。專案做過兩輪安全稽核：4.0.0 處理第一輪的 52 項線索，5.0.0 修正第二輪的發現。</p>
+          <p>工具結果、出站請求、工具管理、認證、資源用量與日誌，每條路徑都有對應的防護模組與測試。專案做過三輪安全稽核：4.0.0 處理第一輪的 52 項線索，5.0.0 修正第二輪的發現，7.0.0 修正第三輪的發現。</p>
         </div>
         <div class="inspector reveal" data-inspector>
           <div class="inspector__context">
@@ -2409,9 +2498,8 @@ FOUNDRY_DEPLOYMENT=gpt-6-sol,gpt-6-luna</pre>
               <li>請求、附件與工具結果的資源上限</li>
             </ul>
           </article>
-          <article class="tl tl--release">
+          <article class="tl">
             <span class="tl__ver">5.0.0</span><span class="tl__date">2026-10-10</span>
-            <span class="tl__flag">最新發行</span>
             <span class="tl__flag tl__flag--warn">含破壞性變更</span>
             <h3>第二輪安全稽核修正</h3>
             <ul>
@@ -2422,6 +2510,37 @@ FOUNDRY_DEPLOYMENT=gpt-6-sol,gpt-6-luna</pre>
               <li>PostgreSQL 改用非超級使用者</li>
             </ul>
             <a class="tl__more" href="#release">看 5.0.0 的互動示範<svg class="icon" aria-hidden="true">
+                <use href="#i-arrow-up-right"></use>
+              </svg></a>
+          </article>
+          <article class="tl">
+            <span class="tl__ver">6.0.0</span><span class="tl__date">2026-10-26</span>
+            <span class="tl__flag tl__flag--warn">含破壞性變更</span>
+            <h3>Agent Skills 與五家供應商</h3>
+            <ul>
+              <li>Agent Skills，輸入 / 指定技能</li>
+              <li>MCP Streamable HTTP 與 OAuth</li>
+              <li>OpenAPI 匯入一併帶上認證</li>
+              <li>結構化資料重新解析</li>
+              <li>Responses API 與 Microsoft Foundry</li>
+            </ul>
+            <a class="tl__more" href="#next">看 6.0.0 新功能<svg class="icon" aria-hidden="true">
+                <use href="#i-arrow-up-right"></use>
+              </svg></a>
+          </article>
+          <article class="tl tl--release">
+            <span class="tl__ver">7.0.0</span><span class="tl__date">2026-10-31</span>
+            <span class="tl__flag">最新發行</span>
+            <span class="tl__flag tl__flag--warn">含破壞性變更</span>
+            <h3>各帳號的 API 連線與第三輪稽核</h3>
+            <ul>
+              <li>每個帳號自己的 API 連線，管理員開放共用連線</li>
+              <li>管理後台新增帳號、重設密碼</li>
+              <li>PDF 數字、FAQ 與指定文件檢索修正</li>
+              <li>OpenAPI 引用、重新匯入與工具名稱修正</li>
+              <li>技能腳本、轉址與映像檔的安全修正</li>
+            </ul>
+            <a class="tl__more" href="#v7">看 7.0.0 新功能<svg class="icon" aria-hidden="true">
                 <use href="#i-arrow-up-right"></use>
               </svg></a>
           </article>

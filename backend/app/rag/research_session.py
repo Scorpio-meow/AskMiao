@@ -7,11 +7,12 @@ import httpx
 
 from app.core.config import settings
 from app.core.limits import MAX_TOOL_RESULT_CHARS
-from app.rag.tools import SKILL_TOOL_NAMES, WEB_TOOL_NAMES
+from app.rag.tools import SKILL_SCRIPT_TOOL_NAME, SKILL_TOOL_NAMES, WEB_TOOL_NAMES
 
 # 答案中的引用標記：[1]、[1,2]、[1，2]、[1、2]；[1][2] 會被視為兩個標記
 CITATION_PATTERN = re.compile(r"\[(\d+(?:\s*[,，、]\s*\d+)*)\]")
 CITATION_SEPARATOR = re.compile(r"\s*[,，、]\s*")
+CODE_OR_CITATION_PATTERN = re.compile(r"(?P<code>```[\s\S]*?(?:```|\Z)|~~~[\s\S]*?(?:~~~|\Z)|`[^`\n]+`)|" + CITATION_PATTERN.pattern)
 SNIPPET_LENGTH = 200
 # 從來源文字抽出完整網址記號；網址結尾常接的標點與全形文字不屬於網址
 URL_TOKEN_PATTERN = re.compile(r"https?://[^\s<>\"'`]+", re.IGNORECASE)
@@ -102,7 +103,7 @@ class ToolResultFilter:
 
 def strip_citations(text: str) -> str:
     """移除先前回答中的引用標記；那些編號屬於上一次提問的引用表，留著會讓模型沿用錯誤的編號"""
-    return CITATION_PATTERN.sub("", text)
+    return CODE_OR_CITATION_PATTERN.sub(lambda match: match.group("code") or "", text)
 
 
 class ResearchSession:
@@ -120,6 +121,12 @@ class ResearchSession:
         self._citation_details: Dict[int, Dict[str, Any]] = {}
         self.activated_skills: Set[str] = set()
         self.preapproved_tools: Set[str] = set()
+        self.preapproved_script_skills: Set[str] = set()
+
+    def is_preapproved(self, name: str, arguments: Dict[str, Any]) -> bool:
+        if name == SKILL_SCRIPT_TOOL_NAME:
+            return str(arguments.get("skill", "")) in self.preapproved_script_skills
+        return name in self.preapproved_tools
 
     def refuse_tool_call(self, name: str, arguments: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """依聯網安全規則檢查工具呼叫；應拒絕時回傳要交給模型的錯誤結果"""
@@ -145,7 +152,10 @@ class ResearchSession:
         if name in SKILL_TOOL_NAMES:
             if name == "activate_skill" and output.get("skill"):
                 self.activated_skills.add(output["skill"])
-                self.preapproved_tools.update(output.get("allowed_tools") or [])
+                allowed_tools = output.get("allowed_tools") or []
+                self.preapproved_tools.update(tool for tool in allowed_tools if tool != SKILL_SCRIPT_TOOL_NAME)
+                if SKILL_SCRIPT_TOOL_NAME in allowed_tools:
+                    self.preapproved_script_skills.add(output["skill"])
             self._add_url_source(output.get("content"))
         elif name == "search_knowledge_base":
             for doc in output.get("documents") or []:

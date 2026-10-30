@@ -3,26 +3,23 @@ from datetime import datetime
 from typing import Dict, List, Optional
 from sqlalchemy import func
 from sqlalchemy.orm import Session
-from app.models import User, Conversation, Message, MessageResponse, ConversationResponse
+from app.models import Conversation, Message, MessageResponse, ConversationResponse
 from app.core.config import settings
-from app.core.limits import MAX_USER_ATTACHMENT_STORAGE_BYTES
+from app.core.limits import MAX_ATTACHMENT_TEXT_CHARS, MAX_USER_ATTACHMENT_STORAGE_BYTES
+from app.rag.agent import attachment_context, query_with_attachments
 DEFAULT_CONVERSATION_TITLE = settings.DEFAULT_CONVERSATION_TITLE
 MAX_TITLE_PREVIEW_LENGTH = 50
-# 讀取路徑的上限：對話清單只列最近的對話，每段附最近幾則訊息；單段對話只回最近的訊息
+# 讀取路徑的上限：對話清單只列最近的對話；單段對話只回最近的訊息
 MAX_LISTED_CONVERSATIONS = 200
-LIST_PREVIEW_MESSAGES = 5
 MAX_CONVERSATION_MESSAGES = 500
+MAX_HISTORY_ATTACHMENT_CHARS = MAX_ATTACHMENT_TEXT_CHARS
 
 
 class AttachmentQuotaExceeded(Exception):
     pass
 
 
-def _strip_attachment_data(attachments: List[Dict]) -> List[Dict]:
-    return [{k: v for k, v in att.items() if k != "data_url"} for att in attachments if isinstance(att, dict)]
-
-
-def _build_message_response(msg: Message, include_attachment_data: bool = True) -> MessageResponse:
+def _build_message_response(msg: Message) -> MessageResponse:
     sources = []
     sources_detail = []
     research_trace = []
@@ -39,8 +36,6 @@ def _build_message_response(msg: Message, include_attachment_data: bool = True) 
                 sources = parsed
         except Exception:
             pass
-    if not include_attachment_data:
-        attachments = _strip_attachment_data(attachments)
     # 解析後的欄位已完整回傳，原始 context_used（含附件 base64）不再重複輸出
     return MessageResponse(
         id=msg.id,
@@ -54,9 +49,17 @@ def _build_message_response(msg: Message, include_attachment_data: bool = True) 
         sources_detail=sources_detail,
         research_trace=research_trace
     )
+
+
+def _stored_attachments(msg: Message) -> List[Dict]:
+    try:
+        parsed = json.loads(msg.context_used)
+    except ValueError:
+        return []
+    return parsed.get("attachments", []) if isinstance(parsed, dict) else []
+
+
 class ChatService:
-    def __init__(self):
-        pass
     def get_recent_history(
         self,
         db: Session,
@@ -71,11 +74,21 @@ class ChatService:
             Message.conversation_id == conversation_id,
             Message.id < before_message_id
         ).order_by(Message.id.desc()).limit(limit).all()
-        history = [
-            {"role": "user" if msg.is_user else "assistant", "content": msg.content}
-            for msg in reversed(rows)
-            if msg.content
-        ]
+        attachment_budget = MAX_HISTORY_ATTACHMENT_CHARS
+        history = []
+        for msg in rows:
+            content = msg.content
+            if msg.is_user and msg.context_used and attachment_budget > 0:
+                doc_contexts = []
+                for att in _stored_attachments(msg):
+                    text = (att.get("content") or "")[:attachment_budget]
+                    if text:
+                        doc_contexts.append(attachment_context(att["filename"], text))
+                        attachment_budget -= len(text)
+                content = query_with_attachments(content, doc_contexts)
+            if content:
+                history.append({"role": "user" if msg.is_user else "assistant", "content": content})
+        history.reverse()
         while history and history[0]["role"] != "user":
             history.pop(0)
         return history
@@ -110,19 +123,18 @@ class ChatService:
         context_used: Optional[str] = None,
         model_name: Optional[str] = None
     ):
-        if conversation_id is None:
-            conversation = self.create_conversation(db, user_id)
-            conversation_id = conversation.id
-        else:
+        conversation = None
+        if conversation_id is not None:
             conversation = db.query(Conversation).filter(
                 Conversation.id == conversation_id,
                 Conversation.user_id == user_id
             ).first()
-            if not conversation:
-                conversation = self.create_conversation(db, user_id)
-                conversation_id = conversation.id
+        if not conversation:
+            if not is_user:
+                return None
+            conversation = self.create_conversation(db, user_id)
         message = Message(
-            conversation_id=conversation_id,
+            conversation_id=conversation.id,
             content=content,
             is_user=is_user,
             created_at=datetime.utcnow(),
@@ -137,41 +149,36 @@ class ChatService:
         db.commit()
         db.refresh(message)
         return message
+    def save_attachment_texts(self, db: Session, message_id: int, contents: List[Optional[str]]) -> None:
+        message = db.query(Message).filter(Message.id == message_id).first()
+        if not message or not message.context_used:
+            return
+        context = json.loads(message.context_used)
+        for attachment, content in zip(context["attachments"], contents):
+            if content:
+                attachment["content"] = content
+        updated = json.dumps(context, ensure_ascii=False)
+        user_id = db.query(Conversation.user_id).filter(Conversation.id == message.conversation_id).scalar()
+        try:
+            self.ensure_attachment_quota(db, user_id, len(updated) - len(message.context_used))
+        except AttachmentQuotaExceeded:
+            return
+        message.context_used = updated
+        db.commit()
     def get_user_conversations(self, db: Session, user_id: int) -> List[ConversationResponse]:
         conversations = db.query(Conversation).filter(
             Conversation.user_id == user_id
         ).order_by(Conversation.updated_at.desc()).limit(MAX_LISTED_CONVERSATIONS).all()
-        conv_ids = [conv.id for conv in conversations]
-        if not conv_ids:
-            return []
-        # 每段對話只取最近 LIST_PREVIEW_MESSAGES 則，不把整段歷史（含附件）讀進記憶體
-        ranked = db.query(
-            Message.id.label("id"),
-            func.row_number().over(
-                partition_by=Message.conversation_id,
-                order_by=(Message.created_at.desc(), Message.id.desc()),
-            ).label("rank"),
-        ).filter(Message.conversation_id.in_(conv_ids)).subquery()
-        recent = db.query(Message).join(ranked, ranked.c.id == Message.id).filter(
-            ranked.c.rank <= LIST_PREVIEW_MESSAGES
-        ).order_by(Message.conversation_id, Message.created_at.asc(), Message.id.asc()).all()
-        messages_by_conv: Dict[int, List[Message]] = {}
-        for msg in recent:
-            messages_by_conv.setdefault(msg.conversation_id, []).append(msg)
-        result = []
-        for conv in conversations:
-            messages = [
-                _build_message_response(msg, include_attachment_data=False)
-                for msg in messages_by_conv.get(conv.id, [])
-            ]
-            result.append(ConversationResponse(
+        return [
+            ConversationResponse(
                 id=conv.id,
                 title=conv.title,
                 created_at=conv.created_at,
                 updated_at=conv.updated_at,
-                messages=messages
-            ))
-        return result
+                messages=[]
+            )
+            for conv in conversations
+        ]
     def get_conversation_with_messages(
         self, 
         db: Session, 
@@ -184,16 +191,12 @@ class ChatService:
         ).first()
         if not conversation:
             return None
-        messages = db.query(Message).filter(
-            Message.conversation_id == conversation_id
-        ).order_by(Message.created_at.desc(), Message.id.desc()).limit(MAX_CONVERSATION_MESSAGES).all()
-        message_responses = [_build_message_response(msg) for msg in reversed(messages)]
         return ConversationResponse(
             id=conversation.id,
             title=conversation.title,
             created_at=conversation.created_at,
             updated_at=conversation.updated_at,
-            messages=message_responses
+            messages=[]
         )
     def delete_conversation(self, db: Session, conversation_id: int, user_id: int) -> bool:
         conversation = db.query(Conversation).filter(

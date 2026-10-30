@@ -2,7 +2,7 @@
 
 [繁體中文](api.md) | [English](api_en.md)
 
-> REST and SSE streaming endpoints of the AskMiao **6.0.0** backend, written against the actual routers in `backend/app/api/`. With `ENABLE_API_DOCS=true` the backend also serves interactive docs at `http://localhost:8001/docs` (Swagger UI) and `http://localhost:8001/redoc`, and the OpenAPI document at `/openapi.json`. These three paths need no sign-in and list every endpoint and parameter, so keep `ENABLE_API_DOCS=false` (the template value) for public deployments; all three then return `404`.
+> REST and SSE streaming endpoints of the AskMiao **7.0.0** backend, written against the actual routers in `backend/app/api/`. With `ENABLE_API_DOCS=true` the backend also serves interactive docs at `http://localhost:8001/docs` (Swagger UI) and `http://localhost:8001/redoc`, and the OpenAPI document at `/openapi.json`. These three paths need no sign-in and list every endpoint and parameter, so keep `ENABLE_API_DOCS=false` (the template value) for public deployments; all three then return `404`.
 
 ## Contents
 
@@ -54,7 +54,7 @@ API messages are in Traditional Chinese; the English glosses in this document ar
 | POST | `/api/auth/login` | Public | Sign in |
 | POST | `/api/auth/refresh` | Public (cookie required) | Exchange the refresh token for new tokens |
 | GET | `/api/auth/me` | Signed in | Get the current profile |
-| PUT | `/api/auth/me` | Signed in | Update email or password |
+| PUT | `/api/auth/me` | Signed in | Update email |
 | POST | `/api/auth/change-password` | Signed in | Change the password |
 | POST | `/api/auth/logout` | Access token (signature only) | Sign out and revoke tokens |
 | POST | `/api/auth/validate-token` | Signed in | Check that the access token is valid |
@@ -64,7 +64,7 @@ API messages are in Traditional Chinese; the English glosses in this document ar
 | POST | `/api/chat/approvals/{approval_id}` | Signed in (asking user only) | Approve or deny a pending tool call |
 | GET | `/api/chat/conversations` | Signed in | Your conversations |
 | POST | `/api/chat/conversations` | Signed in | Create a conversation |
-| GET | `/api/chat/conversations/{conversation_id}` | Signed in | One conversation with all messages |
+| GET | `/api/chat/conversations/{conversation_id}` | Signed in | One conversation (without messages) |
 | GET | `/api/chat/conversations/{conversation_id}/messages` | Signed in | Paged messages |
 | DELETE | `/api/chat/conversations/{conversation_id}` | Signed in | Delete a conversation |
 | GET | `/api/llm-connections/providers` | Signed in | Supported providers with their default API address and models |
@@ -150,7 +150,7 @@ API messages are in Traditional Chinese; the English glosses in this document ar
 
 Tokens are always signed RS256 with an RSA-2048 private key; the backend refuses to start if the RSA keys cannot be loaded. `tokens.refresh_token` in the JSON response is always an empty string because the real refresh token only lives in the cookie, and `expires_in` is currently always `1800`; the `exp` claim inside the token is authoritative. The `iat` of access and refresh tokens is in seconds with a microsecond fraction (RFC 7519 NumericDate allows fractions, for example `1791561600.640123`), while `exp` stays in whole seconds; clients that decode tokens themselves should not assume `iat` is an integer.
 
-**A password change revokes every token**: `users.tokens_valid_after` equals the creation time when an account is created and is set to the current time on a password change ([1.5](#15-put-apiauthme) with `new_password`, or [1.6](#16-post-apiauthchange-password)); access and refresh tokens issued (`iat`) before it get `401`, including the access token that made the request and sessions on other devices. The comparison is to the microsecond, so tokens issued earlier in the same second as the password change are rejected too, while tokens issued after the change (for example by signing in again right away) work as usual. A successful change also clears the refresh token cookie, so the client must sign in again with the new password (the frontend clears its sign-in state and returns to the login page).
+**A password change revokes every token**: `users.tokens_valid_after` equals the creation time when an account is created and is set to the current time on a password change ([1.6](#16-post-apiauthchange-password)) or when an admin deactivates the account, so reactivating it later does not bring old tokens back; access and refresh tokens issued (`iat`) before it get `401`, including the access token that made the request and sessions on other devices. The comparison is to the microsecond, so tokens issued earlier in the same second as the password change are rejected too, while tokens issued after the change (for example by signing in again right away) work as usual. A successful change also clears the refresh token cookie, so the client must sign in again with the new password (the frontend clears its sign-in state and returns to the login page).
 
 ### 1.1 POST /api/auth/register
 
@@ -162,7 +162,7 @@ Registration is open only when the required setting `ALLOW_REGISTRATION` is `tru
 
 | Field | Type | Required | Rules |
 |---|---|---|---|
-| `username` | string | Yes | 3–50 characters: letters (including CJK), digits, underscores, and hyphens only |
+| `username` | string | Yes | 3–50 characters: Chinese characters, ASCII letters, digits, underscores, and hyphens only (other scripts and full-width letters are rejected) |
 | `email` | string | Yes | A valid email address |
 | `password` | string | Yes | 8–256 characters with an uppercase letter, a lowercase letter, and a digit |
 
@@ -245,17 +245,13 @@ Get the signed-in user's profile (`UserProfile`: `id`, `username`, `email`, `rol
 
 ### 1.5 PUT /api/auth/me
 
-Update the email or password; send only the fields you change.
+Update the email; change the password with [1.6](#16-post-apiauthchange-password).
 
 | Field | Type | Required | Description |
 |---|---|---|---|
 | `email` | string | No | New email, unique across users |
-| `current_password` | string | When changing the password | Current password |
-| `new_password` | string | No | New password, same rules as registration |
 
-Password fields accept at most 256 characters. **Response**: `200 OK` with the updated `UserProfile`. Errors return `400`: email taken (`該電子郵件已被使用`), current password missing (`請提供目前的密碼`) or wrong (`目前的密碼錯誤`), or a password strength message.
-
-When `new_password` is set and the change succeeds, every token issued to the account, including the access token used for this request, stops working at once; the response also clears the refresh token cookie, and the client must sign in again with the new password (see [Token model](#token-model)). Changing only `email` leaves tokens alone.
+**Response**: `200 OK` with the updated `UserProfile`. An email already in use returns `400` (`該電子郵件已被使用`). Changing the email leaves tokens alone.
 
 ### 1.6 POST /api/auth/change-password
 
@@ -318,12 +314,12 @@ Send a message and start the `ResearchAgent`. The response is a **Server-Sent Ev
 | Field | Type | Description |
 |---|---|---|
 | `filename` | string | File name, at most 255 characters |
-| `file_type` | string | MIME type, at most 255 characters; `image/*` goes to the vision model, other types are extracted as text |
+| `file_type` | string | MIME type, at most 255 characters; `image/png`, `image/jpeg`, `image/gif`, and `image/webp` go to the vision model, `image/svg+xml` and non-image types are extracted as text; other image types (for example BMP or TIFF) are not read, and the model is told to ask the user for PNG, JPEG, GIF, or WebP instead |
 | `file_size` | integer | Optional file size |
 | `data_url` | string | Optional; must be a base64 `data:` URL (remote URLs such as `http(s)://` are rejected), at most 15 MiB decoded per attachment and 20 MiB in total per message; required for images |
 | `content` | string | Optional pre-extracted plain text, at most 50,000 characters; when absent, text is extracted from the decoded `data_url` (at most 20 PDF pages are OCR'd) |
 
-At most 50,000 characters of each attachment's text go into the model context; the rest is truncated. Text extracted from a `data_url` is subject to a chat attachment parsing budget that is stricter than for admin uploads (for example, at most 64 MiB uncompressed for a `.docx`, `.pptx`, or `.xlsx`, and at most 8 MiB in total of the XML that `.docx` and `.pptx` parsing builds into a DOM), and each backend process parses at most 2 attachments at a time while the rest wait. An attachment over budget does not fail the request; the model is told that it was not read (附件超過解析上限，未讀取內容, "the attachment exceeds the parsing limit; content not read"). See [configuration reference: resource limits](configuration_en.md#resource-limits) for all limits.
+At most 50,000 characters of each attachment's text go into the model context; the rest is truncated. Text extracted from a `data_url` is subject to a chat attachment parsing budget that is stricter than for admin uploads (for example, at most 64 MiB uncompressed for a `.docx`, `.pptx`, or `.xlsx`, and at most 8 MiB in total of the XML that `.docx` and `.pptx` parsing builds into a DOM), and each backend process parses at most 2 attachments at a time while the rest wait. An attachment over budget does not fail the request; the model is told that it was not read (附件超過解析上限，未讀取內容, "the attachment exceeds the parsing limit; content not read"). An attachment that cannot be read (for example an invalid Office file, or a PDF that is password-protected or has no extractable text) does not fail the request either; the model is told it was not read, with the reason (附件未讀取內容, "attachment content not read"). The extracted text (at most 50,000 characters per attachment) is saved back to the `content` of that user message's attachment and returned by [2.7](#27-get-apichatconversationsconversation_idmessages); later questions in the same conversation carry it in the history, with earlier attachments' text capped at 50,000 characters in total, counted from the newest message back. See [configuration reference: resource limits](configuration_en.md#resource-limits) for all limits.
 
 | Status | When |
 |---|---|
@@ -332,7 +328,7 @@ At most 50,000 characters of each attachment's text go into the model context; t
 | `422` | Field validation failed: message too long, too many or too large attachments, a `data_url` that is not a base64 `data:` URL, and so on |
 | `429` | This user already has 2 answers streaming |
 
-**How `reasoning_effort` is handled**: the frontend offers `none`, `low`, `medium`, `high`, `xhigh`, and `max`; the backend accepts `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, and `max`, and drops any other value. Per-provider mapping: GPT models on OpenAI and Microsoft Foundry get it as is (`gpt-6*` and GPT models on Foundry use the Responses API, where only `luna` models accept `none` and the rest get `low`, and `minimal` always becomes `low`); Claude gets `output_config.effort` (`none` is omitted, `minimal` becomes `low`); Gemini maps to `minimal` through `high` (`none` becomes `minimal`, `xhigh` and `max` become `high`); Ollama maps to `think` (`none` is `false`, `xhigh` and `max` become `high`); non-OpenAI models on Foundry get nothing. For OpenAI models on Chat Completions, those whose name contains `gpt-5` always get `none` when tools are attached.
+**How `reasoning_effort` is handled**: the frontend offers `none`, `low`, `medium`, `high`, `xhigh`, and `max`; the backend accepts `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, and `max`, and drops any other value. Per-provider mapping: GPT models on OpenAI and Microsoft Foundry get it as is (`gpt-6*` and GPT models on Foundry use the Responses API, where only `luna` models accept `none` and the rest get `low`, and `minimal` always becomes `low`); Claude gets `output_config.effort` (`none` and `minimal` become `low`); Gemini maps to `minimal` through `high` (`none` becomes `minimal`, `xhigh` and `max` become `high`); Ollama maps to `think` (`none` is `false`, `xhigh` and `max` become `high`); non-OpenAI models on Foundry get nothing. For OpenAI models on Chat Completions, `gpt-5.x` models (names containing `gpt-5.`) always get `none` when tools are attached; the original `gpt-5`, `gpt-5-mini`, and `gpt-5-nano` do not accept `none`, `xhigh`, or `max`: `none` becomes `minimal` and `xhigh` and `max` become `high`, and otherwise the user's choice is sent.
 
 #### SSE events
 
@@ -347,7 +343,7 @@ Each event is formatted as `event: <name>\ndata: <JSON>\n\n`, in this order:
 | `step_end` | A tool call ends | `step`, `tool`, `arguments`, `output_preview` (first 300 characters of the result JSON), `duration_seconds`, `status` (`success` / `error`) |
 | `token` | Answer text | `content` |
 | `sources` | After the answer | `sources` (deduplicated source names), `sources_detail` (see below) |
-| `done` | The assistant message has been saved | `message_id`, `conversation_id`, `answer`, `sources`, `sources_detail`, `research_trace` (every `step_end` payload) |
+| `done` | The assistant message has been saved; it is not saved when the conversation was deleted during the stream | `message_id` (`null` when not saved), `conversation_id`, `answer`, `sources`, `sources_detail`, `research_trace` (every `step_end` payload) |
 | `error` | An unexpected exception in the API layer | `detail` (a message with an error code), `error_id` |
 
 `sources_detail` lists only the entries the answer cites as `[n]`, in order of first citation; with no citations, `sources` and `sources_detail` are both empty. Fields depend on the source:
@@ -471,7 +467,7 @@ If loading external tools raises an exception, `status` is `partial` with `error
 
 ### 2.4 GET /api/chat/conversations
 
-Your conversations, most recently updated first, at most **200**; each includes its **5 most recent** messages in chronological order, whose attachments list the file name and similar details but no `data_url`.
+Your conversations, most recently updated first, at most **200**; `messages` is always an empty array, so read messages with [2.7](#27-get-apichatconversationsconversation_idmessages).
 
 ```json
 [
@@ -480,26 +476,10 @@ Your conversations, most recently updated first, at most **200**; each includes 
     "title": "特休假申請流程",
     "created_at": "2026-09-25T01:00:00",
     "updated_at": "2026-09-25T01:30:00",
-    "messages": [
-      {
-        "id": 108,
-        "content": "特休假需先在系統填寫假單……[1]。",
-        "is_user": false,
-        "created_at": "2026-09-25T01:30:00",
-        "context_used": null,
-        "model_name": "gpt-6-sol",
-        "reasoning_effort": null,
-        "attachments": [],
-        "sources": ["員工手冊.pdf"],
-        "sources_detail": [...],
-        "research_trace": [...]
-      }
-    ]
+    "messages": []
   }
 ]
 ```
-
-A message's `sources`, `sources_detail`, `research_trace`, and `attachments` are parsed from the `context_used` database column; `context_used` in the response is always `null` (the raw value holds attachment base64 and is no longer repeated). `reasoning_effort` is not stored and is always `null`.
 
 ### 2.5 POST /api/chat/conversations
 
@@ -507,7 +487,7 @@ Create an empty conversation; no request body is needed, and the title is `DEFAU
 
 ### 2.6 GET /api/chat/conversations/{conversation_id}
 
-One conversation with its latest 500 messages in chronological order. Returns `404` `找不到該對話` (conversation not found) when it does not exist or is not yours.
+One conversation; `messages` is always an empty array, so read messages with [2.7](#27-get-apichatconversationsconversation_idmessages). Returns `404` `找不到該對話` (conversation not found) when it does not exist or is not yours.
 
 ### 2.7 GET /api/chat/conversations/{conversation_id}/messages
 
@@ -519,6 +499,26 @@ Paged messages.
 | `offset` | `0` | Number of newest messages to skip |
 
 Returns the newest `limit` messages in chronological order; page back with `offset`. An unknown conversation, or one that is not yours, returns an empty array.
+
+```json
+[
+  {
+    "id": 108,
+    "content": "特休假需先在系統填寫假單……[1]。",
+    "is_user": false,
+    "created_at": "2026-09-25T01:30:00",
+    "context_used": null,
+    "model_name": "gpt-6-sol",
+    "reasoning_effort": null,
+    "attachments": [],
+    "sources": ["員工手冊.pdf"],
+    "sources_detail": [...],
+    "research_trace": [...]
+  }
+]
+```
+
+A message's `sources`, `sources_detail`, `research_trace`, and `attachments` are parsed from the `context_used` database column; `context_used` in the response is always `null` (the raw value holds attachment base64 and is no longer repeated). A user message's `attachments` keep the fields sent with it (including `data_url`), and `content` holds the text extracted from the attachment (at most 50,000 characters each). `reasoning_effort` is not stored and is always `null`.
 
 ### 2.8 DELETE /api/chat/conversations/{conversation_id}
 
@@ -561,8 +561,9 @@ Upload documents to the knowledge base. Each file goes through: name and extensi
 - Supported extensions: `.txt`, `.md`, `.markdown`, `.pdf`, `.docx`, `.pptx`, `.xlsx`, `.csv`, `.json`, `.jsonl`, `.yaml`, `.yml`, `.xml`, `.html`, `.htm`, `.log`, `.py`, `.js`, `.ts`, `.tsx`, `.jsx`, `.java`, `.cpp`, `.c`, `.sql`, `.sh`, `.ini`, `.env`.
 - Per-file limit: `MAX_FILE_SIZE_MB` (10 MB in the template). The whole request body may be 10 × `MAX_FILE_SIZE_MB` MiB + 1 MiB, but only with a valid access token whose `is_admin` claim is `true` (1 MiB otherwise); larger bodies get `413`. The limit is chosen from the token's claims before the request is parsed; admin status itself still comes from the database, so an account that has lost admin rights gets `403`.
 - A `.docx`, `.pptx`, or `.xlsx` whose total uncompressed size exceeds 200 MiB, that contains more than 10,000 files, or that compresses more than 100:1 (checked for each member and for the whole file once they exceed 10 MiB uncompressed) is rejected before parsing; scanned PDF pages are rasterized at no more than 25 MP each.
-- Spaces in file names become underscores; a name that already exists gets a `_1`, `_2`, … suffix; names containing `/`, `\`, `..`, `<`, `>`, `:`, `"`, `|`, `?`, or `*` are rejected.
+- Spaces in file names become underscores; a name already used by a file in the upload directory or by an existing document (including one whose original file is missing) gets a `_1`, `_2`, … suffix; names containing `/`, `\`, `..`, `<`, `>`, `:`, `"`, `|`, `?`, or `*`, or longer than 255 bytes in UTF-8, are rejected.
 - A file whose extracted text (with surrounding whitespace removed) is identical to an existing document's is a duplicate and is not stored again.
+- A file that cannot be stored gets `400` with the reason in `detail` (in Chinese), such as exceeding an extraction limit, an invalid Office file, no extractable text (including a PDF whose every page is an image while OCR is not configured or fails), or a password-protected PDF; a file whose header does not match its declared type only gets `安全驗證失敗: 上傳的檔案未通過安全檢查` (security check failed).
 - Chunking: JSON, JSONL, YAML, CSV, XLSX, and JS declarations are parsed into structured records that become one chunk each, with long records split into parts; Q&A in other formats becomes one chunk per pair; everything else is split recursively by `CHUNK_SIZE` / `CHUNK_OVERLAP`. The record format is described in [Architecture](architecture_en.md#structured-data).
 
 **Response**: `200 OK` with one result per file; `http_status` reports each file's outcome. In a successful item, `qa_pairs` is the number of Q&A pairs, `record_count` the number of structured records, and `warning` explains when a structured format failed to parse or exceeded the parse limit and was handled as plain text, and is `null` otherwise:
@@ -637,11 +638,11 @@ Edit the summary. **Request body**: `{"description": "Custom summary"}`; **respo
 
 Delete a document: delete the database record first, then remove its chunks, vectors, and BM25 entries, and finally delete the uploaded file. An index write in progress checks, while holding the lock, that the document still exists, so chunks of a deleted document are never written back.
 
-**Response**: `200 OK` `{"message": "文件刪除成功"}`; `404` `文件不存在` (document not found).
+**Response**: `200 OK` `{"message": "文件刪除成功"}`; `404` `文件不存在` (document not found). If the database record is deleted but removing it from the indexes fails, it returns `500`, and the leftover chunks are removed by the reconciliation at the next startup.
 
 ### 3.6 POST /api/documents/rebuild-index
 
-Rebuild the index from the documents in the database: after clearing chunks and indexes, every document is re-extracted (from the uploaded file when it still exists, overwriting `documents.content`) and re-chunked and re-embedded with the current settings; documents without a summary get an AI summary, and existing summaries, including hand-edited ones, are kept. The knowledge base returns nothing until the rebuild finishes, and a second call while one is running returns `409` `索引重建正在進行中，請等待完成後再試` (a rebuild is already running). A document whose uploaded file is gone is chunked from the stored content as plain text and listed in `missing_source_files`; re-upload it. Run it once after upgrading from 2.x; it takes longer the more documents you have.
+Rebuild the index from the documents in the database: every document is re-extracted (from the uploaded file when it still exists, overwriting `documents.content`) and re-chunked and re-embedded with the current settings; documents without a summary get an AI summary, and the new chunks then replace that document's old ones; existing summaries, including hand-edited ones, are kept. Other documents stay searchable during the rebuild; only the document whose chunks are being replaced is briefly missing. A document that fails keeps its old chunks and is listed in `failed_documents` (`document_id`, `filename`), and `message` mentions how many failed; a second call while one is running returns `409` `索引重建正在進行中，請等待完成後再試` (a rebuild is already running). A document whose uploaded file is gone is chunked from the stored content as plain text and listed in `missing_source_files`; re-upload it. Run it once after upgrading from 2.x; it takes longer the more documents you have.
 
 ```json
 {
@@ -651,13 +652,14 @@ Rebuild the index from the documents in the database: after clearing chunks and 
   "qa_pairs_detected": 0,
   "records_detected": 42,
   "missing_source_files": [],
+  "failed_documents": [],
   "chunk_size": 300,
   "chunk_overlap": 100,
   "timestamp": "2026-09-25T10:00:00.000000"
 }
 ```
 
-With no documents in the database it returns `{"message": "索引重建完成（沒有文件）", "document_count": 0, "chunk_count": 0, "qa_pairs_detected": 0, "records_detected": 0, "missing_source_files": [], "timestamp": "..."}`.
+With no documents in the database it returns `{"message": "索引重建完成（沒有文件）", "document_count": 0, "chunk_count": 0, "qa_pairs_detected": 0, "records_detected": 0, "missing_source_files": [], "failed_documents": [], "timestamp": "..."}`.
 
 ---
 
@@ -705,7 +707,7 @@ Register external HTTP APIs as tools the agent can call. Enabled tools are loade
 
 **Credential encryption and masking**: `headers` and `auth_config` are encrypted with `TOOL_SECRETS_KEY` (Fernet) before they reach the database, and at startup the backend encrypts rows that earlier versions stored in plaintext. Admin API responses show `••••••••` in place of secret values (empty values are not masked), so a credential cannot be read back through the API once saved. On update, a `headers` or `auth_config` you send replaces the whole field, and keys whose value is still `••••••••` keep their stored value; if such a key has no stored value (including when the stored credentials cannot be decrypted), the API returns `400` `欄位 <name> 沒有已儲存的值，請輸入實際內容` ("field <name> has no stored value; enter the actual value"). After `TOOL_SECRETS_KEY` changes, stored credentials can no longer be decrypted (`credentials_unreadable` is `true`), and the tool cannot run until they are entered again: an agent call returns an error with an error ID, and the [test endpoint](#49-post-apiapi-toolstool_idtest) returns `400` `無法以目前的 TOOL_SECRETS_KEY 解密工具憑證，請重新輸入` ("stored tool credentials cannot be decrypted with the current TOOL_SECRETS_KEY; enter them again"); see [configuration reference: tool credential encryption](configuration_en.md#tool-credential-encryption) for the key and what it covers.
 
-**Parameter assembly**: parameters that appear as `{name}` in the URL or are located in `path` are substituted into the URL; `header` parameters go into headers, `query` parameters into the query string, and `body` parameters into the body. The body is sent as JSON, as a form (`application/x-www-form-urlencoded`), or as `multipart/form-data` fields (no files) according to `body_content_type`; in both form encodings, object and array values become JSON strings and booleans become `true` / `false`. Parameters without a location go into the body for `POST`, `PUT`, and `PATCH`, and into the query string otherwise. A `request_body` object passed by the model replaces the whole body.
+**Parameter assembly**: parameters that appear as `{name}` in the URL or are located in `path` are substituted into the URL; `header` parameters go into headers, `query` parameters into the query string, and `body` parameters into the body. The body is sent as JSON, as a form (`application/x-www-form-urlencoded`), or as `multipart/form-data` fields (no files) according to `body_content_type`; in both form encodings, object and array values become JSON strings and booleans become `true` / `false`. Parameters without a location go into the body for `POST`, `PUT`, and `PATCH`, and into the query string otherwise. When `request_body` is located in `body` (for example when an imported request body is not an object with `properties`), the `request_body` passed by the model replaces the whole body whether it is an object, array, string, or number; when it is located elsewhere, only an object replaces the body.
 
 **Only declared parameters**: every parameter the caller (the agent or the [4.9](#49-post-apiapi-toolstool_idtest) test) passes must be listed in `parameters_schema.properties`; otherwise no request is sent and the result's `status_code` is `400` (`工具參數無效：未宣告的參數 …`, "invalid tool parameters: undeclared parameter …"). A tool that declares no parameters accepts none. `request_body` must be declared as well, and when `request_body_schema` has `properties` and `additionalProperties` is not `true`, the fields of the `request_body` object must be listed there too; undeclared fields are reported as `request_body.<field>`.
 
@@ -762,7 +764,9 @@ Spec URLs are SSRF-validated first (every hop is pinned to the validated IP) and
 
 Tool names come from `operationId` (lowercased, with non-alphanumeric characters replaced by underscores); without an `operationId`, the method and path are combined, such as `get_pets_petid`.
 
-`body_content_type` is chosen from the spec's request body formats in the order `application/json`, `application/x-www-form-urlencoded`, `multipart/form-data`; other formats (such as XML) fall back to JSON. `auth_type` and `auth_config` come from the endpoint's `security` (or the spec's top-level `security`) and `securitySchemes` (under `components` in 3.x) or `securityDefinitions` (2.0); only the settings are filled in, and credentials are left empty:
+A request body that is an object with `properties` becomes one `body` parameter per field; any other type (an array, string, number, or object without `properties`) becomes a single `request_body` parameter located in `body` that keeps the full schema (such as an array's `items`). Swagger 2.0 `in: formData` parameters also become `body` parameters. Each `$ref` is expanded to its full structure wherever it is used; a reference that cycles back on the same reference path, and every reference past the first 200 (`MAX_OPENAPI_SCHEMA_REFS`) in one parameter or body schema, is replaced by an object schema holding only a description. Parameters (`components/parameters`, Swagger 2.0 `parameters`), request bodies (`components/requestBodies`), and security schemes (`securitySchemes` / `securityDefinitions`) given as a `$ref` are first followed to the object they point to (chained references included) and then handled by the usual rules.
+
+`body_content_type` is chosen from the spec's request body formats (for Swagger 2.0, the endpoint's `consumes`, or the spec's top-level `consumes` when the endpoint has none) in the order `application/json`, `application/x-www-form-urlencoded`, `multipart/form-data`; other formats (such as XML) fall back to JSON. `auth_type` and `auth_config` come from the endpoint's `security` (or the spec's top-level `security`) and `securitySchemes` (under `components` in 3.x) or `securityDefinitions` (2.0); only the settings are filled in, and credentials are left empty:
 
 | Auth in the spec | `auth_type` | `auth_config` filled in |
 |---|---|---|
@@ -779,7 +783,7 @@ Tool names come from `operationId` (lowercased, with non-alphanumeric characters
 
 ### 4.2 POST /api/api-tools/import
 
-Bulk-import the endpoints selected from a parsed spec. Tools with the same name are overwritten and re-enabled.
+Bulk-import the endpoints selected from a parsed spec. Tools with the same name get the new URL, parameters, and body settings and keep their enabled state (a disabled tool is not re-enabled).
 
 | Field | Type | Required | Description |
 |---|---|---|---|
@@ -791,7 +795,7 @@ Bulk-import the endpoints selected from a parsed spec. Tools with the same name 
 
 An endpoint's declared auth wins: the Bearer token in the frontend import dialog only goes into endpoints that declare no auth or declare Bearer, and credentials for other auth types are entered by editing the tool with 4.6 after import. An `auth_type` or `body_content_type` outside the allowed values returns `422`.
 
-Newly imported tools get `requires_approval` from their method (`true` for anything other than `GET`, `HEAD`, and `OPTIONS`). When an existing tool is overwritten, a tool that required approval keeps requiring it, while `headers` and `auth_config` are replaced with what this import sends (including `global_headers` and `global_auth_config`): stored credentials are not kept and are cleared when none are sent. Change tools afterwards with 4.6.
+Newly imported tools get `requires_approval` from their method (`true` for anything other than `GET`, `HEAD`, and `OPTIONS`). When an existing tool is overwritten, a tool that required approval keeps requiring it, stored `headers` are kept and only headers this import sends with a value are added or overridden (including `global_headers`); with the same auth type, `auth_config` is overridden only by fields this import sends with a value, and with a different auth type the new settings apply only if the tool had no auth or this import sends a credential such as a key, otherwise the stored auth is kept. Empty keys never overwrite stored credentials. Change tools afterwards with 4.6.
 
 ```json
 {
@@ -856,7 +860,7 @@ Send one real request with the given arguments.
 
 - `data` is the parsed object for JSON responses and the first 4000 characters of text otherwise. If the upstream body exceeds 1 MiB, reading stops and `status_code` is `502`.
 - Credentials injected into this request (header values, Bearer token, API key, Basic auth) are replaced with `[已遮蔽]` ("redacted") wherever they appear in `data` or `url`; in `url`, the values of a query-string API key and of the tool URL's fixed query parameters are masked too.
-- The backend follows redirects itself, at most 5, and never reads the body of a redirect response; a redirect to another origin (different scheme, host, or port) does not carry the admin-configured headers or the auth header.
+- The backend follows redirects itself, at most 5, and never reads the body of a redirect response. For `GET`, `HEAD`, and `OPTIONS`, a redirect to another origin (different scheme, host, or port) does not carry the admin-configured headers or the auth header; other methods follow only same-origin redirects and stop at a redirect to another origin, so the request body never goes to another domain; like exceeding the redirect limit, this returns `status_code: 400` with an `error` explaining why (`上游轉址未跟隨：…`).
 - The whole call, including redirects and reading the response, has an overall deadline of the tool's `timeout` seconds; past it the call is aborted and `status_code` is `504` (`上游在 <timeout> 秒內沒有完成回應`, "the upstream did not finish responding within <timeout> seconds").
 - The first request and every redirect are SSRF-validated again, with the connection pinned to the validated IP; a rejection reports `status_code` `403`, `is_success` `false`, an `error` that only states the SSRF rejection with an error code, and `error_id`; the full reason goes to the server log.
 - An undeclared parameter, an invalid path parameter, a host mismatch after substitution, or an attempt to override a fixed query parameter of the tool URL stops the request before it is sent and reports `status_code` `400` with the reason in `error` (see [Tool object](#tool-object)).

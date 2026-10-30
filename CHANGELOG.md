@@ -6,6 +6,7 @@
 
 | 版本 | 發行日期 | 重點 |
 |---|---|---|
+| [7.0.0](#700---2026-10-31) | 2026-10-31 | 各帳號自行設定的 API 連線與管理員開放的共用連線、使用者管理、停用帳號撤銷權杖、工具轉址與聯網白名單逐跳檢查、VM 用的 Docker Compose 部署、FAQ 與 PDF 擷取修正、重建索引不再清空知識庫 |
 | [6.0.0](#600---2026-10-26) | 2026-10-26 | Agent Skills、MCP Streamable HTTP 與 OAuth、結構化資料重新解析、Responses API、Microsoft Foundry（含 Claude）、推理強度對應五家供應商、Ollama 與 Gemini 串接修正 |
 | [5.0.0](#500---2026-10-10) | 2026-10-10 | 第二輪安全稽核修正：登入失敗節流、變更密碼撤銷權杖、可關閉自行註冊、工具憑證加密、改用 PyJWT、相依套件雜湊鎖定、PostgreSQL 非超級使用者 |
 | [4.0.0](#400---2026-09-27) | 2026-09-27 | 安全稽核修正：權杖綁定資料庫帳號、工具呼叫需使用者核准、出站連線固定 IP、資源上限 |
@@ -18,6 +19,9 @@
 | [1.0.0](#100---2026-08-01) | 2026-08-01 | 混合 RAG 與安全基礎 |
 
 > [!TIP]
+> 從 6.0.0 升級到 7.0.0 前，請先閱讀 [升級指南](docs/upgrading.md#從-600-升級到-700)：聊天改用各帳號的 API 連線，每個帳號（含管理員）都要有個人連線或管理員開放的共用連線才能對話，`POST /api/chat/send` 必須帶 `connection_id` 與 `model_name`；`PUT /api/auth/me` 不再變更密碼，對話清單與單一對話不再附帶訊息。後端與前端的相依套件與 6.0.0 相同，不需要重新安裝。
+
+> [!TIP]
 > 從 5.0.0 升級到 6.0.0 前，請先閱讀 [升級指南](docs/upgrading.md#從-500-升級到-600)：領域設定檔新增兩個必填欄位、`.env` 新增必填的 `SKILLS_DIR`、Azure OpenAI 設定改名為 Microsoft Foundry（舊名稱仍可讀取）。
 
 > [!TIP]
@@ -27,8 +31,29 @@
 
 ## [Unreleased]
 
+---
+
+## [7.0.0] - 2026-10-31
+
 > [!IMPORTANT]
 > 聊天不再使用 `.env` 的模型與金鑰。升級後每個帳號（含管理員）都要有 API 連線才能對話：管理員在「管理後台 → 共用 API 連線」把原本 `.env` 的供應商建成共用連線並指定可使用的帳號，或請各帳號在「個人資料 → 我的 API 連線」設定自己的金鑰。`POST /api/chat/send` 必須帶 `connection_id` 與 `model_name`。
+>
+> 自行串接 API 的客戶端另需調整：`PUT /api/auth/me` 只更新電子郵件，變更密碼改用 `POST /api/auth/change-password`；`GET /api/chat/conversations` 與 `GET /api/chat/conversations/{conversation_id}` 的 `messages` 一律為空陣列，訊息改由 `GET /api/chat/conversations/{conversation_id}/messages` 讀取。後端與前端的相依套件與 6.0.0 相同，詳見 [升級指南](docs/upgrading.md#從-600-升級到-700)。
+
+### 安全性 (Security)
+
+- **一般帳號的個人連線只能連到公開位址**：建立或修改時檢查 API 位址，每次呼叫模型也經 SSRF 檢查並把連線固定到核可的 IP（Anthropic SDK 使用的 httpx2 也一樣），無法藉由自己的連線讓後端連到內部網路或雲端中繼資料服務；錯誤訊息不透露解析出的內部位址。管理員的個人連線與共用連線可以指向內部網路（例如本機 Ollama）。
+- **停用帳號時撤銷它的權杖**：管理員停用帳號時把 `users.tokens_valid_after` 更新為當下。停用期間權杖原本就無法使用，現在重新啟用後，停用前簽發的存取與重新整理權杖也不會恢復，該帳號必須重新登入。
+- **變更連線的供應商或 API 位址時不沿用已儲存的金鑰**：更新個人或共用連線時改了 `provider` 或 `api_base` 而沒有帶新的金鑰，已儲存的金鑰會被清除，需要金鑰的供應商回傳 `400` 要求重新輸入；`POST /api/llm-connections/discover-models` 只在供應商與 API 位址都與已儲存的連線相同時才使用它的金鑰。已儲存的金鑰不會被送到另一個供應商或位址。
+- **使用者名稱只接受中文、英文字母、數字、`_` 與 `-`**：註冊、管理員新增與編輯帳號、`scripts/create_user.py` 都套用同一個規則。先前的 `\w` 規則也接受西里爾字母等外觀相近的字母、全形字母，以及結尾的換行，可以建立與既有帳號看起來相同的名稱；既有帳號不受影響，照常登入。
+- **技能的 `allowed-tools` 列出 `run_skill_script` 時，只預先核准該技能自己的腳本**：先前啟用這樣的技能後，同一次提問中執行其他技能的腳本也不再要求核准。
+- **對話取消時終止技能腳本**：使用者停止回答或連線中斷時，執行中的 `run_skill_script` 腳本連同其子行程一併結束，不會在背景繼續執行。
+- **`web_fetch` 的網域白名單檢查每一次轉址**：`WEB_FETCH_ALLOWED_DOMAINS` 不是 `*` 時，轉址的目標也必須在白名單內（先前只檢查初始網址，白名單內的網站可以把請求轉到任何網域），也不再使用 Ollama Web Fetch（轉址由 Ollama 端追蹤，無法逐跳檢查）。
+- **會改變狀態的自訂 API 工具不跟隨跨來源轉址**：`GET`、`HEAD`、`OPTIONS` 以外的方法只跟隨同一來源的轉址，請求主體不會被送到其他網域；轉址被拒絕或超過 5 次時，結果的 `status_code` 為 `400`，`error` 以「上游轉址未跟隨：…」說明原因，遭 SSRF 防護拒絕時仍為 `403`。
+- **新增根目錄的 `.dockerignore`**：以 repo 根目錄建置映像時排除各層的 `.env`、`backend/keys`、`backend/data`、`backend/logs`、`node_modules`、`.git`、`.venv` 等，金鑰、資料與本機設定不會被打包進映像。
+- **`deploy/gen-env.sh` 依 `PUBLIC_ORIGIN` 設定 `COOKIE_SECURE`**：`PUBLIC_ORIGIN` 以 `https://` 開頭時寫入 `COOKIE_SECURE=true`，重新整理權杖 Cookie 只經 HTTPS 傳送。
+- **正式映像不安裝測試套件**：`deploy/Dockerfile.backend` 安裝時略過 `requirements.txt` 中的 `pytest`、`pytest-asyncio`、`psutil`、`iniconfig` 與 `pluggy`。
+- **一般日誌無法被偽造出額外的紀錄**：`app.log` 與主控台日誌會把訊息中的換行字元跳脫成 `\n`，使用者送來的內容（例如模型名稱、工具名稱、網址）無法在日誌中偽造出看似正常的一行；例外的 traceback 仍維持多行。這是以 CodeQL 掃描（`py/log-injection`）發現的。
 
 ### 新增 (Added)
 
@@ -43,6 +68,7 @@
   - 可替其他帳號重設密碼（`PUT /api/admin/users/{id}/password`），該帳號所有裝置的登入隨即失效。
   - 編輯帳號時可直接勾選它能用的共用連線（`GET/PUT /api/admin/users/{id}/llm-connections`），也能看到它自己設定的個人連線。
   - 使用者清單可搜尋，並顯示最後登入時間。
+- **VM 用的 Docker Compose 部署**（`deploy/`）：`docker-compose.yml` 啟動 PostgreSQL 17、後端與 nginx 前端，資料庫與後端的 `data`、`keys`、`logs` 存在具名資料卷。後端映像只安裝 CPU 版 torch，並略過 `nvidia-`、`triton`、`cuda-` 套件；nginx 提供前端建置結果並反向代理 `/api`，以 Docker 內建 DNS 動態解析後端位址，後端容器重建後不會回傳 `502`；前端建置前把 `index.html` 轉成 LF。`deploy/gen-env.sh` 在目標主機產生 `deploy/.env`（PostgreSQL 與應用程式帳號的密碼、`TOOL_SECRETS_KEY` 等），需要 `PUBLIC_ORIGIN`、`WEB_PORT`、`NETWORK_SUBNET`、`WEB_CONTAINER_IP`，密鑰不進版本庫。
 
 ### 變更 (Changed)
 
@@ -50,11 +76,77 @@
 - `.env` 的 LLM 設定（`MODEL_NAME`、`AVAILABLE_MODELS`、各供應商金鑰與 `LLM_API_BASE`）只用於系統背景工作：上傳文件時的 AI 摘要與 `GET /api/tags`。
 - 自行註冊的帳號不會用到營運者的 LLM 金鑰，開放註冊（`ALLOW_REGISTRATION=true`）時只需留意所有帳號仍共用知識庫與已啟用的工具。
 - 管理員不能停用、刪除自己的帳號，也不能移除自己的管理員權限（回傳 `400`），避免沒有人能管理系統；`PUT /api/admin/users/{id}` 會檢查使用者名稱與電子郵件格式（不符時回傳 `422`），切換管理員權限時 `role` 一併改為 `admin` 或 `user`。
+- **`PUT /api/auth/me` 只更新電子郵件**：不再接受 `current_password` 與 `new_password`（送出時會被忽略，密碼不會變更），變更密碼改用 `POST /api/auth/change-password`。
+- **對話端點不再附帶訊息**：`GET /api/chat/conversations`（先前每段附最近 5 則）與 `GET /api/chat/conversations/{conversation_id}`（先前附最新 500 則）的 `messages` 一律為空陣列，訊息改由 `GET /api/chat/conversations/{conversation_id}/messages` 分頁讀取；常數 `LIST_PREVIEW_MESSAGES` 移除。
+- `POST /api/documents/rebuild-index` 的回應新增 `failed_documents`（每筆含 `document_id`、`filename`），有文件失敗時 `message` 註明份數，知識庫頁也會列出失敗的檔名。
+- `scripts/reprocess_existing_docs.py` 改用與重建索引端點相同的流程：不再先清空所有索引，也不再重新生成每份文件的摘要（手動修訂的摘要保留），並列出失敗的文件。
+- BM25 索引寫入重試 3 次仍失敗時，改為讓該次操作失敗（上傳檔案、刪除或重建文件、啟動時的 BM25 重建），不再只寫一行錯誤日誌而讓 BM25 與向量索引不一致。
+- **Claude 的快取、推理強度與拒答備援**：最後一則使用者訊息加上快取斷點，多輪對話與工具迴圈可以讀取快取，日誌記錄 `cache_read`、`cache_creation` 的 token 數；推理強度 `none` 改送 effort `low`（先前不送，模型會用預設的較高強度）；`claude-opus-4-8`、`claude-opus-4-7`、`claude-opus-4-6`、`claude-sonnet-4-6` 在推理強度不是 `none` 時明確啟用 adaptive thinking；直接連到 Claude API 的 `claude-opus-5-5`、`claude-opus-5`、`claude-fable-5-1`、`claude-sonnet-5-5` 啟用伺服器端拒答備援（`fallbacks: "default"`）；工具迴圈改用串流，長回應不再受單次請求逾時限制。
 
-### 安全性 (Security)
+### 修正 (Fixed)
 
-- **一般帳號的個人連線只能連到公開位址**：建立或修改時檢查 API 位址，每次呼叫模型也經 SSRF 檢查並把連線固定到核可的 IP（Anthropic SDK 使用的 httpx2 也一樣），無法藉由自己的連線讓後端連到內部網路或雲端中繼資料服務；錯誤訊息不透露解析出的內部位址。管理員的個人連線與共用連線可以指向內部網路（例如本機 Ollama）。
+#### 知識庫與文件擷取
 
+- 只有第一個「Q：」行之前沒有其他文字的文件才當成 FAQ 切成問答對：中間有一段 FAQ 的手冊會完整收錄，先前第一個「Q：」行之前的內容不會進入索引；超過 `CHUNK_SIZE` 的問答對也會再切塊，不再整段成為一個片段。
+- 指定 `target_document` 的 `search_knowledge_base` 只在該文件的片段中檢索：先前先從整個知識庫取前幾名再篩選，知識庫大時該文件的片段常排不進來，而誤報查無資料。
+- 上傳到一半中斷（例如後端當掉）而沒有任何片段的文件，啟動時會以與重建索引相同的擷取方式補建索引。
+- 刪除文件時移除索引失敗會回傳 `500`，不再回報成功；殘留的片段在下次啟動校正時清除。
+- 重建索引不再先清空整個索引：逐份以新片段取代該文件的舊片段，其他文件在重建期間照常可查；重新擷取或切塊失敗的文件保留原本的片段，列在 `failed_documents`。
+- 檢索時的查詢向量改在索引鎖外計算，其他人的檢索與文件寫入不必排隊等它算完。
+- PDF：擷取前替內嵌 TrueType 字型中 ToUnicode 沒有對應、或對到 U+FFFD 的替代字形補上對應（依字型 GSUB 的單一替換反查原本的字元），例如 Illustrator 輸出的 Noto Sans TC 數字不再被擷取成「俸」「俻」；原本無法正確運作的字型修復程式已移除。
+- 沒有任何一頁擷取得到文字的 PDF（例如掃描檔而 OCR 未設定或辨識失敗）改為回傳 `400` 並說明原因，不再以「[本頁為圖檔或無可提取純文字]」佔位文字入庫；不同的掃描檔也不會再因佔位文字相同而被判定為重複。
+- 上傳檔名與既有文件（含原檔已遺失的文件）相同時也會加上 `_1`、`_2` 後綴；加上後綴的檔名不超過 `MAX_FILENAME_BYTES`（255 位元組，以 UTF-8 計算）。
+- 上傳失敗時顯示真正的原因（超過解析上限、無效的 Office 文件、沒有可擷取的文字、PDF 有密碼保護等），不再一律顯示「安全驗證失敗」；有密碼保護的 PDF 與超過 255 位元組的中文檔名改回傳 `400`，不再是 `500`。
+- 批次上傳中一份檔案寫入資料庫失敗時先回復交易，同一批的其他檔案照常處理。
+- PPTX 會擷取群組內的圖形與表格，以及每頁的備忘稿；DOCX 依文件中的順序輸出段落與表格，表格留在所屬標題之下，不再全部排在文末。
+- 新建立的 SQLite 資料庫中，`rag_chunks` 以 `AUTOINCREMENT` 建立，刪除後的片段 id 不會被重用；既有資料表不變。
+
+#### 自訂 API 工具、OpenAPI 與 MCP
+
+- 交給模型的工具名稱最多 64 字元（`MAX_TOOL_NAME_CHARS`）：由 OpenAPI `operationId` 或 MCP 產生的名稱，以及資料庫中既有的過長名稱，截斷後加上 8 碼雜湊；手動建立或匯入時名稱超過 64 字元回傳 `400`。先前過長的名稱會讓供應商拒絕整個請求。
+- 重新匯入 OpenAPI 時保留已儲存的標頭與憑證（只以這次帶有值的欄位覆寫）與工具的啟用狀態，停用的工具不會被重新啟用。
+- 請求主體是陣列、字串、數字或沒有 `properties` 的物件時，模型傳入的 `request_body` 整個當成主體送出，並保留完整的 schema（例如陣列的 `items`）；搭配表單或 `multipart/form-data` 而主體不是物件時，回傳 `400` 說明原因。
+- 同一個 `$ref` 用在多處時每處都展開成完整結構（先前第二次之後只剩一段說明）；每個參數或主體 schema 最多展開 200 個參照（`MAX_OPENAPI_SCHEMA_REFS`）。
+- Swagger 2.0 的 `in: formData` 參數成為主體欄位，並依端點或規格頂層的 `consumes` 以表單送出。
+- 以 `$ref` 引用的參數、請求主體與認證方式可以正確匯入：先前解析後會失去 `name`、`in`、`content` 等欄位。
+- 變更 MCP 伺服器的網址時，清除先前以動態註冊取得的 OAuth client（管理員自行填入的保留），不會把舊伺服器的 client 帶到新的授權伺服器。
+- `web_fetch` 回傳的頁面標題取第一個 `<title>`，頁面中有多個 `<title>`（例如內嵌 SVG）時不再取到最後一個。
+
+#### 對話與模型
+
+- 有提供 `run_skill_script` 時，系統提示詞與技能內容不再告訴模型「本系統不會執行技能內的腳本」，改為說明以 `run_skill_script` 執行、只能執行它列出的技能中的腳本。
+- `PUT /api/auth/me` 不再在密碼檢查失敗前就先存下新的電子郵件（密碼欄位已移除，見「變更」）。
+- 對話清單與單一對話不再從資料庫讀出訊息與附件內容。
+- 追問時帶入先前附件的文字：附件抽出的文字（每個最多 `MAX_ATTACHMENT_TEXT_CHARS`，50,000 字元）存回該則使用者訊息，之後在同一段對話提問時隨前文帶入，從最新的訊息往前合計最多 50,000 字元；存回的文字計入附件配額，超過配額時不存。先前追問時模型看不到前面附件的內容。
+- 送出訊息後「載入更早的訊息」不再重複顯示訊息。
+- 原始的 `gpt-5`、`gpt-5-mini`、`gpt-5-nano` 選 `none` 時改送 `minimal`，選 `xhigh`、`max` 時改送 `high`；帶工具時一律送 `none` 只套用到 `gpt-5.x`（這三個模型不接受 `none`）。
+- 查詢 Claude 模型的輸出上限時不再持有全域的鎖，一個連線查得慢不會讓其他 Claude 請求排隊。
+- `claude-haiku-4-5` 不再收到它不支援的 effort（先前回傳 `400`）；送給 Claude 的 `max_tokens` 取設定的輸出 token 上限（API 連線的設定，系統模型為 `ANTHROPIC_MAX_TOKENS`）與 Models API 回報的模型輸出上限的較小值（Foundry 不查詢），輸出上限較低的模型不再回傳 `400`。
+- 聊天附件只有 PNG、JPEG、GIF、WebP 以圖片交給模型，SVG 以文字讀取；其他圖片格式（例如 BMP、TIFF）與無法讀取的附件（無效的 Office 文件、有密碼保護或沒有文字的 PDF）不讀取內容，改以說明告知模型原因。
+- 回答串流期間刪除對話時，助理訊息不再寫進一段新建的孤立對話；`done` 事件的 `message_id` 此時為 `null`。
+- 前文移除先前回答的 `[n]` 引用標記時，不再動到程式碼區塊與行內程式碼（例如 `arr[1]`）。
+- 更新連線時把 `name`、`provider`、`api_base` 或 `models` 設為 `null` 會回傳 `400`，不再造成伺服器錯誤或寫入無效的模型清單。
+
+#### 前端
+
+- 載入時與每次切換頁面時重新讀取個人資料，管理員權限被授予或移除後不必重新登入即生效，管理頁也以最新的個人資料判斷權限。
+- 超過 15 MiB 的附件在選擇檔案時就被拒絕並顯示訊息。
+- 回答串流中斷時，仍在執行的工具步驟標示為「結果不明」而不是失敗，並提醒重新傳送前先確認結果，避免重複執行有副作用的工具。
+- 知識庫頁在文件的 `created_at` 為空值時不再當掉。
+- 連線表單的金鑰提示依是否會沿用已儲存的金鑰顯示：變更供應商或 API 位址後提示要重新輸入，需要金鑰的供應商也改為必填。
+
+#### 部署與腳本
+
+- 新增 `.gitattributes`，`*.sh` 與 `frontend/index.html` 一律以 LF 換行：Windows 上 `core.autocrlf=true` 的工作副本會把它們轉成 CRLF，`init-app-role.sh` 在容器內無法執行，`index.html` 的 CSP 內嵌腳本雜湊不符而出現白畫面。
+- `scripts/reset_faiss.py` 依 `.env` 的 `FAISS_INDEX_PATH`、`METADATA_PATH`、`BM25_INDEX_DIR` 刪除索引，不再寫死 `backend/data/` 下的檔名。
+
+### 移除 (Removed)
+
+- `scripts/migrate_sqlite_to_postgres.py`：引用早已移除的 `app.models.custom_agent`，無法執行。
+- 前端沒有呼叫端的 `utils/logger.js`、`utils/offlineCache.jsx`、`utils/motion.js`、`utils/secureLogger.ts` 中未使用的匯出，以及 `authService.updateProfile`、`authService.isAdmin`、`chatService.getConversations` 與 `chatService.getConversation`。
+- 後端沒有呼叫端的程式碼：`crud_user` 的 `get_users`、`deactivate_user`、`activate_user`、`delete_user`、`update_user_role`、`count_users`，`schemas/auth.py` 的 `TokenRefresh`、`PasswordReset`、`UserCreate`，`RSAKeyManager.load_private_key`、`load_public_key`，`jwt_auth.sanitize_username`，`ChunkStore.delete_ids`，`DocumentProcessor.get_file_info`，以及 SSRF 驗證未使用的 `allow_private_ips`、`allowed_schemes` 參數。
+
+---
 
 ## [6.0.0] - 2026-10-26
 
@@ -163,7 +255,7 @@
 - `init.sql` 與遷移腳本中已無對應功能的 `custom_agents` 資料表（既有資料庫中的資料表不會被刪除）。
 
 > [!IMPORTANT]
-> 升級前請在領域設定檔補上 `record_label_fields` 與 `record_ignore_fields`、在 `.env` 加上 `SKILLS_DIR`，否則後端無法啟動；依新的 `requirements.txt` 重新安裝後端套件；升級後由管理員執行一次「重建索引」，既有文件才會改用新的記錄格式。詳見 [升級指南](docs/upgrading.md#從-500-升級到下一版)。
+> 升級前請在領域設定檔補上 `record_label_fields` 與 `record_ignore_fields`、在 `.env` 加上 `SKILLS_DIR`，否則後端無法啟動；依新的 `requirements.txt` 重新安裝後端套件；升級後由管理員執行一次「重建索引」，既有文件才會改用新的記錄格式。詳見 [升級指南](docs/upgrading.md#從-500-升級到-600)。
 
 ---
 

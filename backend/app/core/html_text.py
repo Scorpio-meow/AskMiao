@@ -46,11 +46,11 @@ def extract_text_and_title(document: str) -> Tuple[str, str, List[str]]:
             close_start = lowered.find(f"</{name}", position)
             if close_start < 0:
                 if name == "title":
-                    title = document[position:]
+                    title = title or document[position:]
                 break
             if name == "title":
-                title = document[position:close_start]
-                parts.append(" " + title + " ")
+                title = title or document[position:close_start]
+                parts.append(" " + document[position:close_start] + " ")
             close_end = document.find(">", close_start)
             if close_end < 0:
                 break

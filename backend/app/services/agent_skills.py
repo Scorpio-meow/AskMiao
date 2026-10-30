@@ -353,7 +353,7 @@ def read_skill_resource(name: str, relative_path: str) -> Dict[str, Any]:
     }
 
 
-def format_skill_activation(skill: ParsedSkill, resources: List[str], listing_truncated: bool) -> str:
+def format_skill_activation(skill: ParsedSkill, resources: List[str], listing_truncated: bool, allow_scripts: bool) -> str:
     body = skill.body
     truncated_note = ""
     if len(body) > MAX_SKILL_RESOURCE_CHARS:
@@ -362,10 +362,12 @@ def format_skill_activation(skill: ParsedSkill, resources: List[str], listing_tr
     parts = [f'<skill_content name="{skill.name}">', body + truncated_note]
     if skill.compatibility:
         parts.append(f"\n相容性說明：{skill.compatibility}")
-    parts.append(
-        "\n技能中的相對路徑以技能目錄為基準；需要時以 read_skill_resource 讀取，"
-        "本系統不會執行技能內的腳本，腳本只能讀取內容參考。"
+    script_note = (
+        "技能指示要求執行腳本時以 run_skill_script 執行。"
+        if allow_scripts
+        else "本系統不會執行技能內的腳本，腳本只能讀取內容參考。"
     )
+    parts.append(f"\n技能中的相對路徑以技能目錄為基準；需要時以 read_skill_resource 讀取，{script_note}")
     if resources:
         listing = "\n".join(f"  <file>{path}</file>" for path in resources)
         more = "\n  <!-- 檔案過多，清單不完整 -->" if listing_truncated else ""
@@ -383,7 +385,7 @@ def allowed_tool_names(allowed_tools: Optional[str]) -> List[str]:
     return [token.split("(", 1)[0] for token in (allowed_tools or "").split() if token.split("(", 1)[0]]
 
 
-def activate_skill(name: str) -> Dict[str, Any]:
+def activate_skill(name: str, allow_scripts: bool) -> Dict[str, Any]:
     try:
         skill = load_skill(name)
     except SkillError as e:
@@ -392,7 +394,7 @@ def activate_skill(name: str) -> Dict[str, Any]:
     return {
         "skill": name,
         "allowed_tools": allowed_tool_names(skill.allowed_tools),
-        "content": format_skill_activation(skill, resources, listing_truncated),
+        "content": format_skill_activation(skill, resources, listing_truncated, allow_scripts),
     }
 
 
@@ -484,11 +486,13 @@ async def run_skill_script(name: str, relative_path: str, args: Any, stdin_text:
             except asyncio.TimeoutError:
                 timed_out = True
                 stdout, stdout_cut, stderr, stderr_cut = "", False, "", False
-                await kill_process_tree(process)
-                try:
-                    await asyncio.wait_for(process.wait(), timeout=5)
-                except asyncio.TimeoutError:
-                    process.kill()
+            finally:
+                if process.returncode is None:
+                    await kill_process_tree(process)
+                    try:
+                        await asyncio.wait_for(process.wait(), timeout=5)
+                    except asyncio.TimeoutError:
+                        process.kill()
     return {
         "skill": name,
         "path": path.as_posix(),

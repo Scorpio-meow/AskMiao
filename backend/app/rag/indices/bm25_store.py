@@ -11,6 +11,7 @@ logger = logging.getLogger(__name__)
 
 # 建立索引時的斷詞簽章；與目前設定不同時，索引裡的詞項已不可信，需重建
 SIGNATURE_FILENAME = "tokenizer_signature.json"
+WRITE_ATTEMPTS = 3
 
 if HAS_WHOOSH:
     from whoosh import fields, scoring
@@ -90,22 +91,22 @@ class BM25StoreManager:
             return False
 
     def _write(self, apply: Callable, action: str) -> None:
+        if self.bm25_index is None:
+            os.makedirs(self.bm25_index_dir, exist_ok=True)
+            storage = FileStorage(self.bm25_index_dir)
+            self.bm25_index = storage.create_index(self._create_bm25_schema())
+            with open(self._signature_path(), "w", encoding="utf-8") as f:
+                json.dump(tokenizer_signature(), f, ensure_ascii=False)
+        self._close_searcher()
+
+        lock_path = os.path.join(self.bm25_index_dir, "bm25_write.lock")
         try:
-            if self.bm25_index is None:
-                os.makedirs(self.bm25_index_dir, exist_ok=True)
-                storage = FileStorage(self.bm25_index_dir)
-                self.bm25_index = storage.create_index(self._create_bm25_schema())
-                with open(self._signature_path(), "w", encoding="utf-8") as f:
-                    json.dump(tokenizer_signature(), f, ensure_ascii=False)
-            self._close_searcher()
+            from filelock import FileLock
+        except Exception:
+            FileLock = None
 
-            lock_path = os.path.join(self.bm25_index_dir, "bm25_write.lock")
-            try:
-                from filelock import FileLock
-            except Exception:
-                FileLock = None
-
-            for attempt in range(3):
+        try:
+            for attempt in range(1, WRITE_ATTEMPTS + 1):
                 try:
                     if FileLock is not None:
                         with FileLock(lock_path, timeout=5):
@@ -116,16 +117,15 @@ class BM25StoreManager:
                             apply(writer)
                     break
                 except Exception as e:
-                    logger.warning(f"BM25 {action} attempt {attempt + 1} failed: {e}")
+                    logger.warning(f"BM25 {action} attempt {attempt} failed: {e}")
+                    if attempt == WRITE_ATTEMPTS:
+                        raise
                     time.sleep(0.3)
-
+        finally:
             try:
                 self.bm25_searcher = self.bm25_index.searcher(weighting=scoring.BM25F())
             except Exception as e:
                 logger.warning(f"Failed to open BM25 searcher after {action}: {e}")
-
-        except Exception as e:
-            logger.error(f"Failed to {action} BM25 index: {e}")
 
     def add_documents(self, chunks: Dict[int, Document]) -> None:
         if not HAS_WHOOSH or not chunks:
@@ -153,8 +153,10 @@ class BM25StoreManager:
 
         self._write(apply, "delete")
 
-    def search(self, query: str, chunks: Dict[int, Document], top_k: int = 50) -> List[Tuple[Document, float]]:
-        if not HAS_WHOOSH or not self.bm25_searcher or not self.bm25_index:
+    def search(
+        self, query: str, chunks: Dict[int, Document], top_k: int = 50, chunk_ids: Optional[List[int]] = None
+    ) -> List[Tuple[Document, float]]:
+        if not HAS_WHOOSH or not self.bm25_searcher or not self.bm25_index or chunk_ids == []:
             return []
 
         try:
@@ -163,7 +165,8 @@ class BM25StoreManager:
             if not terms:
                 return []
             query_obj = Or([Term("content", term) for term in terms])
-            results = self.bm25_searcher.search(query_obj, limit=top_k)
+            id_filter = None if chunk_ids is None else Or([Term("doc_id", str(chunk_id)) for chunk_id in chunk_ids])
+            results = self.bm25_searcher.search(query_obj, limit=top_k, filter=id_filter)
 
             bm25_results = []
             for hit in results:

@@ -13,17 +13,17 @@ from app.models import (
     CustomApiTool,
     CustomApiToolCreate,
     CustomApiToolUpdate,
-    CustomApiToolResponse,
     OpenApiParseRequest,
     OpenApiImportRequest,
     OAUTH2_CLIENT_CREDENTIALS,
     ToolTestRequest,
 )
 from app.core.jwt_auth import get_current_admin_user
+from app.core.limits import MAX_TOOL_NAME_CHARS
 from app.core.ssrf_protection import DnsPool, SSRFProtectionError, SSRFSafeTransport, same_origin, send_following_redirects
 from app.services.oauth_client import OAuthError, client_credentials_token, invalidate_client_credentials_token
 from app.services.openapi_parser import OpenApiParser
-from app.rag.tool_approval import default_requires_approval
+from app.rag.tool_approval import SAFE_HTTP_METHODS, default_requires_approval
 from app.core.error_response import SafeClientError, log_and_get_error_id, format_client_error, format_ssrf_rejection
 from app.core.tool_secrets import (
     NON_SECRET_HEADER_NAMES,
@@ -146,7 +146,9 @@ def _form_value(value: Any) -> str:
     return str(value)
 
 
-def _body_kwargs(content_type: str, body: Dict[str, Any]) -> Dict[str, Any]:
+def _body_kwargs(content_type: str, body: Any) -> Dict[str, Any]:
+    if content_type in (FORM_CONTENT_TYPE, MULTIPART_CONTENT_TYPE) and not isinstance(body, dict):
+        raise SafeClientError(f"工具參數無效：{content_type} 的請求主體必須是物件")
     if content_type == FORM_CONTENT_TYPE:
         return {"data": {name: _form_value(value) for name, value in body.items()}}
     if content_type == MULTIPART_CONTENT_TYPE:
@@ -278,7 +280,7 @@ async def execute_http_api_tool(tool_dict: Dict[str, Any], arguments: Dict[str, 
     if auth_type == OAUTH2_CLIENT_CREDENTIALS:
         secrets.add(headers["Authorization"].split(" ", 1)[1])
     query_params: Dict[str, Any] = {}
-    body_data: Dict[str, Any] = {}
+    body_data: Any = {}
     path_replaced_url = url
     try:
         for k, v in arguments.items():
@@ -306,7 +308,7 @@ async def execute_http_api_tool(tool_dict: Dict[str, Any], arguments: Dict[str, 
             "url": _without_query(url),
             "error": f"工具參數無效：{e}",
         }
-    if "request_body" in arguments and isinstance(arguments["request_body"], dict):
+    if "request_body" in arguments and (param_locations.get("request_body") == "body" or isinstance(arguments["request_body"], dict)):
         body_data = arguments["request_body"]
 
     # 工具網址中固定的查詢參數（可能是寫在網址裡的金鑰）與憑證查詢參數，回傳時一律遮蔽其值
@@ -347,7 +349,7 @@ async def execute_http_api_tool(tool_dict: Dict[str, Any], arguments: Dict[str, 
             "headers": headers,
             "params": request_params,
         }
-        if method in ["POST", "PUT", "PATCH", "DELETE"] and body_data:
+        if method in ["POST", "PUT", "PATCH", "DELETE"] and body_data != {}:
             req_kwargs.update(_body_kwargs(tool_dict.get("body_content_type") or JSON_CONTENT_TYPE, body_data))
 
         async def perform() -> Dict[str, Any]:
@@ -357,9 +359,14 @@ async def execute_http_api_tool(tool_dict: Dict[str, Any], arguments: Dict[str, 
                 transport=SSRFSafeTransport(DnsPool.CONFIGURED_ENDPOINT),
                 event_hooks={"request": [strip_credentials_cross_origin]},
             ) as client:
-                response = await send_following_redirects(
-                    client, client.build_request(**req_kwargs), MAX_API_TOOL_REDIRECTS, allow_cross_origin=True
-                )
+                try:
+                    response = await send_following_redirects(
+                        client, client.build_request(**req_kwargs), MAX_API_TOOL_REDIRECTS, allow_cross_origin=method in SAFE_HTTP_METHODS
+                    )
+                except SSRFProtectionError:
+                    raise
+                except ValueError as e:
+                    raise SafeClientError(f"上游轉址未跟隨：{e}") from e
                 try:
                     content_length = response.headers.get("content-length")
                     if content_length and content_length.isdigit() and int(content_length) > MAX_API_TOOL_RESPONSE_BYTES:
@@ -484,6 +491,16 @@ def _import_auth(item, global_auth_type: str, global_auth_config: Dict[str, Any]
     return item.auth_type, config
 
 
+def _reimport_auth(existing: CustomApiTool, auth_type: str, auth_config: Dict[str, Any]) -> tuple:
+    stored = decrypt_for_display(existing.auth_config)[0] or {}
+    provided = {key: value for key, value in auth_config.items() if value not in (None, "")}
+    if auth_type == existing.auth_type:
+        return auth_type, {**stored, **provided}
+    if existing.auth_type in (None, "none") or any(is_secret_auth_key(key) for key in provided):
+        return auth_type, auth_config
+    return existing.auth_type, stored
+
+
 @router.post("/import")
 async def import_openapi_tools(
     import_data: OpenApiImportRequest,
@@ -497,6 +514,9 @@ async def import_openapi_tools(
     global_headers = import_data.global_headers or {}
     global_auth_type = import_data.global_auth_type or "none"
     global_auth_config = import_data.global_auth_config or {}
+    too_long = [item.name for item in import_data.tools if len(item.name) > MAX_TOOL_NAME_CHARS]
+    if too_long:
+        raise HTTPException(status_code=400, detail=f"工具名稱最多 {MAX_TOOL_NAME_CHARS} 個字元：{', '.join(too_long)}")
     for item in import_data.tools:
         effective_base = item.base_url or global_base_url or ""
         effective_url = item.full_url
@@ -514,15 +534,15 @@ async def import_openapi_tools(
             existing.url = effective_url
             existing.base_url = effective_base
             existing.path = item.path
-            existing.headers = encrypt_json(merged_headers)
-            existing.auth_type = effective_auth_type
-            existing.auth_config = encrypt_json(effective_auth_config)
+            stored_headers = decrypt_for_display(existing.headers)[0] or {}
+            existing.headers = encrypt_json({**stored_headers, **{name: value for name, value in merged_headers.items() if value}})
+            existing.auth_type, reimported_auth_config = _reimport_auth(existing, effective_auth_type, effective_auth_config)
+            existing.auth_config = encrypt_json(reimported_auth_config)
             existing.parameters_schema = json.dumps(item.parameters_schema, ensure_ascii=False) if item.parameters_schema else None
             existing.request_body_schema = json.dumps(item.request_body_schema, ensure_ascii=False) if item.request_body_schema else None
             existing.param_locations = json.dumps(item.param_locations, ensure_ascii=False) if item.param_locations else None
             existing.body_content_type = item.body_content_type
             existing.spec_version = item.spec_version
-            existing.is_enabled = True
             # 重新匯入不會自動放寬既有的核准設定
             existing.requires_approval = bool(existing.requires_approval) or default_requires_approval(item.method)
             updated_count += 1
@@ -591,6 +611,8 @@ async def create_api_tool(
     current_user: dict = Depends(get_current_admin_user)
 ):
     """手動建立自訂 API 工具"""
+    if len(tool_data.name.strip()) > MAX_TOOL_NAME_CHARS:
+        raise HTTPException(status_code=400, detail=f"工具名稱最多 {MAX_TOOL_NAME_CHARS} 個字元")
     clean_name = OpenApiParser._generate_tool_name(tool_data.method, tool_data.path or tool_data.url, tool_data.name)
     existing = db.query(CustomApiTool).filter(CustomApiTool.name == clean_name).first()
     if existing:

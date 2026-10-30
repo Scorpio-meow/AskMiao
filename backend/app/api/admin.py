@@ -1,8 +1,7 @@
 import asyncio
 import json
-import re
 from fastapi import APIRouter, Depends, HTTPException, Request
-from sqlalchemy.orm import Session, joinedload
+from sqlalchemy.orm import Session
 from sqlalchemy import func
 from app.models.database import get_db
 from app.models import User, Conversation, Message, Document, CustomApiTool, McpServer, AgentSkill
@@ -16,13 +15,11 @@ from app.core.security_logging import log_security_event
 from app.services.document_removal import remove_document
 from app.services.llm_connections import remove_user_connections, set_user_shared_access, user_connection_access
 from app.api.documents import DOCUMENT_LIST_COLUMNS
-from app.schemas.auth import UserProfile
+from app.schemas.auth import UserProfile, validate_username
 from typing import List, Dict, Any, Optional
 from datetime import datetime, timedelta
 from pydantic import BaseModel, EmailStr, Field, field_validator
-from functools import lru_cache
 router = APIRouter()
-USERNAME_PATTERN = re.compile(r"^[\w\-]+$")
 
 
 class UserUpdate(BaseModel):
@@ -34,9 +31,7 @@ class UserUpdate(BaseModel):
     @field_validator("username")
     @classmethod
     def _validate_username(cls, value: Optional[str]) -> Optional[str]:
-        if value is not None and not USERNAME_PATTERN.match(value):
-            raise ValueError("使用者名稱只能包含字母、數字、底線和連字號")
-        return value
+        return value if value is None else validate_username(value)
 
 
 class AdminUserCreate(BaseModel):
@@ -302,6 +297,8 @@ async def update_user(
         user.email = user_update.email
     
     if user_update.is_active is not None:
+        if user.is_active and not user_update.is_active:
+            user.tokens_valid_after = datetime.utcnow()
         user.is_active = user_update.is_active
     
     if user_update.is_admin is not None and user_update.is_admin != user.is_admin:

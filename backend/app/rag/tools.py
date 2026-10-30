@@ -344,7 +344,7 @@ class ResearchToolRegistry:
 
         ollama_key = settings.OLLAMA_API_KEY or ''
 
-        if ollama_key:
+        if ollama_key and settings.web_fetch_allowed_domains == ["*"]:
             try:
                 fetch_endpoint = settings.OLLAMA_FETCH_ENDPOINT
                 async with httpx.AsyncClient(timeout=15.0) as client:
@@ -369,7 +369,8 @@ class ResearchToolRegistry:
                 dns_pool=DnsPool.USER_URL,
                 timeout=12.0,
                 max_redirects=5,
-                max_size_bytes=5 * 1024 * 1024
+                max_size_bytes=5 * 1024 * 1024,
+                is_url_allowed=is_web_fetch_domain_allowed
             )
             # HTML 解析是 CPU 密集工作，移到執行緒以免阻塞事件迴圈
             title, clean_text = await asyncio.to_thread(extract_html_text, raw_html)
@@ -561,6 +562,7 @@ class ResearchToolRegistry:
             from app.models.database import SessionLocal
             from app.models import CustomApiTool, McpServer
             from app.services.mcp_service import McpManager
+            from app.services.openapi_parser import fit_tool_name
             db = SessionLocal()
             custom_tools = db.query(CustomApiTool).filter(CustomApiTool.is_enabled == True).all()
             for ct in custom_tools:
@@ -575,7 +577,7 @@ class ResearchToolRegistry:
                 base_tools.append({
                     "type": "function",
                     "function": {
-                        "name": ct.name,
+                        "name": fit_tool_name(ct.name),
                         "description": f"[外部自訂 API]{ct.display_name}：{desc}",
                         "parameters": p_schema
                     }
@@ -757,9 +759,10 @@ class ResearchToolRegistry:
     def _visible_skill(self, name: str, user_id: Optional[int]):
         return next((skill for skill in self._enabled_skills(user_id) if skill.name == name), None)
     async def activate_skill(self, name: str, user_id: Optional[int] = None) -> Dict[str, Any]:
-        if await asyncio.to_thread(self._visible_skill, name, user_id) is None:
+        skill = await asyncio.to_thread(self._visible_skill, name, user_id)
+        if skill is None:
             return {"error": f"沒有啟用中的技能：{name}"}
-        return await asyncio.to_thread(agent_skills.activate_skill, name)
+        return await asyncio.to_thread(agent_skills.activate_skill, name, bool(skill.allow_scripts))
     async def read_skill_resource(self, skill: str, path: str, user_id: Optional[int] = None) -> Dict[str, Any]:
         if await asyncio.to_thread(self._visible_skill, skill, user_id) is None:
             return {"error": f"沒有啟用中的技能：{skill}"}
@@ -778,6 +781,7 @@ class ResearchToolRegistry:
     def _find_mcp_tool(db, name: str):
         """依 Agent 看到的函式名稱找出啟用中的 MCP 伺服器與其工具原名"""
         from app.models import McpServer
+        from app.services.mcp_service import mcp_function_name
         for ms in db.query(McpServer).filter(McpServer.is_enabled == True).all():
             if not ms.discovered_tools:
                 continue
@@ -785,12 +789,18 @@ class ResearchToolRegistry:
                 tools_list = json.loads(ms.discovered_tools)
             except Exception:
                 continue
-            clean_s = re.sub(r'[^a-zA-Z0-9_]', '_', ms.name).lower()
             for mt in tools_list:
-                clean_t = re.sub(r'[^a-zA-Z0-9_]', '_', mt.get("name", "")).lower()
-                if f"mcp_{clean_s}_{clean_t}" == name:
+                if mcp_function_name(ms.name, mt.get("name", "")) == name:
                     return ms, mt.get("name")
         return None, None
+    @staticmethod
+    def _find_custom_api_tool(db, name: str):
+        from app.models import CustomApiTool
+        from app.services.openapi_parser import fit_tool_name
+        for tool in db.query(CustomApiTool).filter(CustomApiTool.is_enabled == True).all():
+            if fit_tool_name(tool.name) == name:
+                return tool
+        return None
     def approval_requirement(self, name: str, arguments: Optional[Dict[str, Any]] = None) -> Optional[Dict[str, str]]:
         """需要使用者核准的工具回傳顯示資訊，其餘（含內建工具與找不到的工具）回傳 None。
         target 說明實際送出的位置（HTTP 方法與主機、MCP 的傳輸方式與主機或指令），讓核准者知道資料會送到哪裡"""
@@ -803,7 +813,6 @@ class ResearchToolRegistry:
             program = os.path.basename(interpreter[0]) if interpreter else "?"
             return {"kind": "skill_script", "display_name": f"{arguments.get('skill', '')} → {path}", "target": f"本機指令 {program}"}
         from app.models.database import SessionLocal
-        from app.models import CustomApiTool
         db = SessionLocal()
         try:
             if name in MCP_CATALOG_TOOL_NAMES:
@@ -816,7 +825,7 @@ class ResearchToolRegistry:
                 if server is not None and server.requires_approval:
                     return {"kind": "mcp", "display_name": f"{server.display_name} → {tool_name}", "target": self._mcp_target(server)}
                 return None
-            tool = db.query(CustomApiTool).filter(CustomApiTool.name == name, CustomApiTool.is_enabled == True).first()
+            tool = self._find_custom_api_tool(db, name)
             if tool is not None and tool.requires_approval:
                 configured_url = tool.url or f"{(tool.base_url or '').rstrip('/')}/{(tool.path or '').lstrip('/')}"
                 target = f"{(tool.method or 'GET').upper()} {_url_host(configured_url)}"
@@ -900,11 +909,10 @@ class ResearchToolRegistry:
 
             try:
                 from app.models.database import SessionLocal
-                from app.models import CustomApiTool
                 from app.api.api_tools import execute_http_api_tool, _serialize_tool_model
                 db = SessionLocal()
-                custom_tool = db.query(CustomApiTool).filter(CustomApiTool.name == name).first()
-                if custom_tool and custom_tool.is_enabled:
+                custom_tool = self._find_custom_api_tool(db, name)
+                if custom_tool:
                     tool_dict = _serialize_tool_model(custom_tool)
                     db.close()
                     return await execute_http_api_tool(tool_dict, arguments, name)

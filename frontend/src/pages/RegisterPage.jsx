@@ -136,7 +136,7 @@ const RegisterPage = () => {
             autoFocus
             autoComplete="username"
             required
-            helperText="3–50 個字元，只能包含英文字母、數字、底線（_）與連字號（-）"
+            helperText="3–50 個字元，只能包含中文、英文字母、數字、底線（_）與連字號（-）"
           />
           <TextField
             fullWidth

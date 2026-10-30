@@ -2,7 +2,7 @@
 
 [繁體中文](configuration.md) | [English](configuration_en.md)
 
-> 本文件逐一說明後端 `backend/.env` 與前端 `frontend/.env` 的每個設定、預設值與實際作用，適用於 **6.0.0**（從 5.0.0 升級見 [升級指南](upgrading.md#從-500-升級到-600)）。設定以 `backend/app/core/config.py` 的 `Settings` 為準，範本見 [`backend/.env.example`](../backend/.env.example)。
+> 本文件逐一說明後端 `backend/.env` 與前端 `frontend/.env` 的每個設定、預設值與實際作用，適用於 **7.0.0**（從 6.0.0 升級見 [升級指南](upgrading.md#從-600-升級到-700)）。設定以 `backend/app/core/config.py` 的 `Settings` 為準，範本見 [`backend/.env.example`](../backend/.env.example)。
 
 - [讀取規則](#讀取規則)
 - [必填設定](#必填設定)
@@ -107,7 +107,7 @@ python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().d
 
 預設模型依序取 `MODEL_NAME`、第一個 Foundry 部署、遠端清單回報的預設模型，不在清單內時改用清單第一個。
 
-| 供應商 | 內建清單（6.0.0） |
+| 供應商 | 內建清單（7.0.0） |
 |---|---|
 | OpenAI | `gpt-6.1-sol`、`gpt-6-sol`、`gpt-6-luna`、`gpt-6-astra`、`gpt-5.6-sol`、`gpt-5.6-luna`、`gpt-5.6-terra`、`gpt-5.4`、`gpt-5.4-mini` |
 | Anthropic | `claude-opus-5-5`、`claude-fable-5-1`、`claude-sonnet-5-5`、`claude-haiku-5-5`、`claude-sonnet-5`、`claude-opus-5`、`claude-fable-5`、`claude-opus-4-8`、`claude-haiku-4-5` |
@@ -126,7 +126,7 @@ python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().d
 |---|---|
 | 供應商 | `openai`（OpenAI 或相容的 API）、`anthropic`、`gemini`、`foundry`、`ollama`；呼叫方式與 `.env` 的同名供應商相同，`gpt-6*` 走 Responses API，Foundry 上以 `claude-` 開頭的部署走 `{API 位址}/anthropic` |
 | API 位址 | 例如 `https://api.openai.com/v1`、`https://api.anthropic.com`、`https://<資源名稱>.services.ai.azure.com`、`https://ollama.com` |
-| API 金鑰 | Anthropic、Gemini、Foundry 必填，OpenAI 相容服務與 Ollama 選填；以 `TOOL_SECRETS_KEY` 加密存放，儲存後不會再從 API 讀出，編輯時留空即沿用原值 |
+| API 金鑰 | Anthropic、Gemini、Foundry 必填，OpenAI 相容服務與 Ollama 選填；以 `TOOL_SECRETS_KEY` 加密存放，儲存後不會再從 API 讀出；編輯時留空即沿用原值，但變更供應商或 API 位址時不會沿用，需要重新輸入 |
 | 模型 | 這個連線可選的模型名稱（Foundry 為部署名稱），最多 50 個 |
 | 輸出 token 上限 | Claude（`anthropic`，或 Foundry 上的 Claude 部署）必填，與模型的輸出上限取較小值 |
 
@@ -148,7 +148,7 @@ python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().d
 | 以上皆不符合 | Ollama | `{LLM_API_BASE}/api/chat` |
 
 > [!NOTE]
-> `reasoning_effort` 會依供應商對應後傳給模型（規則見 [API 參考](api.md)）；走 Chat Completions 且名稱含 `gpt-5` 的模型在帶工具呼叫時一律改送 `none`，以符合推理模型與工具呼叫的相容性限制。
+> `reasoning_effort` 會依供應商對應後傳給模型（規則見 [API 參考](api.md)）；走 Chat Completions 的 `gpt-5.x` 模型（名稱含 `gpt-5.`）在帶工具呼叫時一律改送 `none`，以符合推理模型與工具呼叫的相容性限制；原始的 `gpt-5`、`gpt-5-mini`、`gpt-5-nano` 不接受 `none`、`xhigh`、`max`，選 `none` 時改送 `minimal`，選 `xhigh`、`max` 時改送 `high`，其他情況送使用者選擇的程度。
 
 ## Agent 與聯網工具
 
@@ -251,7 +251,7 @@ python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().d
 | `backend/docker-compose.yml` 啟動的 PostgreSQL 17 | `postgresql+psycopg2://<POSTGRES_APP_USER>:<POSTGRES_APP_PASSWORD>@localhost:7690/chatbot`（容器只綁定 `127.0.0.1:7690`） |
 | 自行架設的 PostgreSQL | `postgresql+psycopg2://<使用者>:<密碼>@<主機>:5432/<資料庫>`（建議使用非超級使用者，見下節） |
 
-資料表在後端啟動時自動建立，缺少的新欄位（例如 `custom_api_tools.requires_approval`、`mcp_servers.requires_approval`、`users.tokens_valid_after`）也會在啟動時自動補上並回填，以明文存放的舊工具憑證也在啟動時改為加密（見 [工具憑證加密](#工具憑證加密)）。新建立的 SQLite 資料庫中，`users` 與 `documents` 以 `AUTOINCREMENT` 建立，刪除後的 id 不會被重用；既有 SQLite 資料表不會被改寫。`init_db.py` 是為舊版 PostgreSQL 資料庫補欄位與索引的相容腳本，SQLite 不需要執行（其中的 `ADD COLUMN IF NOT EXISTS` 語法 SQLite 不支援）。
+資料表在後端啟動時自動建立，缺少的新欄位（例如 `custom_api_tools.requires_approval`、`mcp_servers.requires_approval`、`users.tokens_valid_after`）也會在啟動時自動補上並回填，以明文存放的舊工具憑證也在啟動時改為加密（見 [工具憑證加密](#工具憑證加密)）。新建立的 SQLite 資料庫中，`users`、`documents` 與 `rag_chunks` 以 `AUTOINCREMENT` 建立，刪除後的 id 不會被重用；既有 SQLite 資料表不會被改寫。`init_db.py` 是為舊版 PostgreSQL 資料庫補欄位與索引的相容腳本，SQLite 不需要執行（其中的 `ADD COLUMN IF NOT EXISTS` 語法 SQLite 不支援）。
 
 ### PostgreSQL 非超級使用者帳號
 
@@ -324,7 +324,7 @@ python scripts/create_user.py --username root --email root@example.com --admin
 
 ### 變更密碼與權杖撤銷
 
-簽發時間早於帳號 `users.tokens_valid_after` 的存取與重新整理權杖一律無效。這個欄位在建立帳號時等於建立時間（帳號刪除後 id 被重用時，舊權杖不能沿用），變更密碼時更新為當下：`POST /api/auth/change-password` 或帶新密碼的 `PUT /api/auth/me` 成功後，該帳號先前簽發的所有權杖（含目前這一個與其他裝置上的）立即失效，被盜的重新整理權杖也無法再換發；回應會清除重新整理權杖 Cookie，所有工作階段都要以新密碼重新登入。既有資料庫在後端啟動時自動補上此欄位，並以 `created_at` 回填。
+簽發時間早於帳號 `users.tokens_valid_after` 的存取與重新整理權杖一律無效。這個欄位在建立帳號時等於建立時間（帳號刪除後 id 被重用時，舊權杖不能沿用），變更密碼時更新為當下：`POST /api/auth/change-password` 成功後，該帳號先前簽發的所有權杖（含目前這一個與其他裝置上的）立即失效，被盜的重新整理權杖也無法再換發；回應會清除重新整理權杖 Cookie，所有工作階段都要以新密碼重新登入。既有資料庫在後端啟動時自動補上此欄位，並以 `created_at` 回填。
 
 ## 工具憑證加密
 
@@ -384,28 +384,31 @@ python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().d
 | `MAX_CHAT_REQUEST_BODY_BYTES` | 約 27.7 MiB | `POST /api/chat/send` 的本文上限（附件總量 20 MiB 經 base64 膨脹 4/3 後再加 1 MiB）；只有帶著簽章有效的存取權杖時才放寬，否則仍為 1 MiB |
 | 文件上傳本文上限 | `MAX_FILES_PER_UPLOAD` × `MAX_FILE_SIZE_MB` MiB + 1 MiB | `POST /api/documents/upload` 的本文上限（範本值 `MAX_FILE_SIZE_MB=10` 時為 101 MiB）；只有存取權杖簽章有效且其 `is_admin` 聲明為 `true` 時才放寬，其他請求仍為 1 MiB |
 | `MAX_FILES_PER_UPLOAD` | 10 | 單次上傳的檔案數 |
+| `MAX_FILENAME_BYTES` | 255 位元組 | 上傳檔名以 UTF-8 計算的長度（Linux 檔案系統的檔名上限），超過時該檔回報 `400` |
 | `MAX_CHAT_MESSAGE_CHARS` | 20,000 字元 | 單則聊天訊息長度，超過回傳 `422` |
 | `MAX_CHAT_ATTACHMENTS` | 5 | 單則訊息的附件數 |
 | `MAX_CHAT_ATTACHMENT_BYTES` | 15 MiB | 單一附件解碼後的大小；附件的 `data_url` 必須是 base64 編碼的 `data:` URL，遠端網址會被拒絕 |
 | `MAX_CHAT_ATTACHMENTS_TOTAL_BYTES` | 20 MiB | 單則訊息所有附件解碼後的合計大小 |
-| `MAX_ATTACHMENT_TEXT_CHARS` | 50,000 字元 | 每個附件放進模型脈絡的文字上限（超過的部分截斷），也是請求中附件 `content` 欄位的長度上限 |
+| `MAX_ATTACHMENT_TEXT_CHARS` | 50,000 字元 | 每個附件放進模型脈絡的文字上限（超過的部分截斷），也是請求中附件 `content` 欄位與存回資料庫的附件文字的長度上限 |
 | `MAX_USER_ATTACHMENT_STORAGE_BYTES` | 200 MiB | 每位使用者存在資料庫的附件總量，超過時送出訊息回傳 `413`；系統不會自動清除舊附件，刪除含附件的對話即可釋放 |
 | `MAX_CONCURRENT_CHAT_STREAMS_PER_USER` | 2 | 每位使用者同時進行中的回答串流數，超過回傳 `429` |
 | `MAX_LISTED_CONVERSATIONS`（`services/chat_service.py`） | 200 | `GET /api/chat/conversations` 只列最近更新的 200 段對話 |
-| `LIST_PREVIEW_MESSAGES`（`services/chat_service.py`） | 5 | 對話清單中每段對話附帶的最近訊息數（不含附件本文） |
-| `MAX_CONVERSATION_MESSAGES`（`services/chat_service.py`） | 500 | 讀取單段對話時最多回傳的最新訊息數 |
+| `MAX_CONVERSATION_MESSAGES`（`services/chat_service.py`） | 500 | `GET /api/chat/conversations/{conversation_id}/messages` 單次最多回傳的訊息數（`limit` 的上限） |
+| `MAX_HISTORY_ATTACHMENT_CHARS`（`services/chat_service.py`） | 50,000 字元 | 前文帶入的先前使用者訊息附件文字合計上限，從最新的訊息往前計算；等於 `MAX_ATTACHMENT_TEXT_CHARS` |
 
 **工具與出站請求**
 
 | 常數 | 值 | 說明 |
 |---|---|---|
 | `MAX_TOOL_RESULT_CHARS` | 20,000 字元 | 每次工具呼叫的結果放進模型脈絡前的上限，超過的部分截斷 |
+| `MAX_TOOL_NAME_CHARS` | 64 字元 | 交給模型的工具函式名稱長度（OpenAI 等供應商的上限）；由 OpenAPI operationId 或 MCP 產生的名稱超過時截斷並加上 8 碼雜湊，手動建立或匯入的名稱超過時回傳 `400` |
+| `MAX_OPENAPI_SCHEMA_REFS` | 200 | 解析 OpenAPI 規格時，每個參數或請求主體 schema 最多展開的 `$ref` 數；超過的參照與循環參照改以只含說明的物件 schema 取代 |
 | `MAX_KB_CATALOG_CHARS` | 4,000 字元 | `search_knowledge_base` 工具說明中文件目錄（檔名與摘要）的長度；每次呼叫模型都會送出，超過時只列出前面的文件並告知其餘份數 |
 | `MAX_MCP_CATALOG_CHARS` | 8,000 字元 | `read_mcp_resource`、`get_mcp_prompt` 工具說明中各自列出的 MCP resources 或 prompts 清單長度；放不下的伺服器不列出並寫入警告日誌 |
 | `MAX_TEXT_CLEANUP_CHARS` | 2,000,000 字元 | `web_fetch` 抽取文字前先截斷 HTML 的長度 |
 | `MAX_DATE_RANGE_CHARS`、`MAX_TARGET_DATES`、`MAX_FILTER_RECORDS`（`rag/tools.py`） | 200 字元、93 天、50 筆 | `filter_and_count_records` 的 `date_range` 長度、展開後的日期數與回傳筆數（`limit` 超過時夾到 50） |
 | `MAX_API_TOOL_RESPONSE_BYTES`（`api/api_tools.py`） | 1 MiB | 自訂 API 工具的回應本文上限，超過即中止讀取並回傳 `502` |
-| `MAX_API_TOOL_REDIRECTS`（`api/api_tools.py`）、`MAX_MCP_HTTP_REDIRECTS`（`services/mcp_service.py`） | 5 次、5 次 | 自訂 API 工具與 HTTP MCP 手動跟隨轉址的次數上限：轉址回應的本文不讀取，每一跳都重新做 SSRF 檢查；HTTP MCP 只跟隨同一來源的轉址，自訂 API 工具轉址到其他來源時不轉送憑證標頭。整個呼叫（含轉址）另以該工具或伺服器的 `timeout` 設定為總時限，自訂 API 工具逾時回傳 `504` |
+| `MAX_API_TOOL_REDIRECTS`（`api/api_tools.py`）、`MAX_MCP_HTTP_REDIRECTS`（`services/mcp_service.py`） | 5 次、5 次 | 自訂 API 工具與 HTTP MCP 手動跟隨轉址的次數上限：轉址回應的本文不讀取，每一跳都重新做 SSRF 檢查；HTTP MCP 與自訂 API 工具的 `GET`、`HEAD`、`OPTIONS` 以外的方法只跟隨同一來源的轉址，自訂 API 工具的 `GET`、`HEAD`、`OPTIONS` 轉址到其他來源時不轉送憑證標頭。整個呼叫（含轉址）另以該工具或伺服器的 `timeout` 設定為總時限，自訂 API 工具逾時回傳 `504` |
 | `MAX_MCP_HTTP_RESPONSE_BYTES`（`services/mcp_service.py`） | 4 MiB | HTTP 傳輸 MCP 伺服器的單次回應上限 |
 | `MAX_MCP_STDIO_LINE_BYTES`（`services/mcp_service.py`） | 4 MiB | `stdio` MCP 子行程單行 JSON-RPC 訊息的上限，與 HTTP 回應上限相同 |
 | `MCP_STDERR_TAIL_BYTES`（`services/mcp_service.py`） | 2,048 位元組 | `stdio` 子行程的 stderr 持續讀出（避免管線寫滿而卡住），只保留最後這麼多位元組，子行程異常結束時寫入伺服器日誌 |

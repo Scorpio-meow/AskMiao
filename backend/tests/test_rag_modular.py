@@ -7,7 +7,7 @@ from app.models.database import Base
 from app.core.domain_profile import domain_profile
 from app.rag.types import Document, RecursiveCharacterTextSplitter
 from app.rag.tokenizers import configure_tokenizer, get_chinese_analyzer
-from app.rag.contextual_rag import HybridContextualRAG, ContextualRAG
+from app.rag.contextual_rag import HybridContextualRAG
 @pytest.fixture(autouse=True)
 def setup_env():
     from app.core.config import settings

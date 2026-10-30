@@ -13,7 +13,6 @@ SSRF 防護單元測試與整合測試
 import ipaddress
 from unittest.mock import AsyncMock, patch, MagicMock
 import pytest
-import httpx
 
 from app.core.ssrf_protection import (
     DISALLOWED_IPV6_NETWORKS,

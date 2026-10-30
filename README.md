@@ -10,7 +10,7 @@
 
 [繁體中文](README.md) | [English](README_en.md)
 
-[![Version](https://img.shields.io/badge/version-6.0.0-2563eb?style=flat)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-7.0.0-2563eb?style=flat)](CHANGELOG.md)
 [![Python](https://img.shields.io/badge/Python-3.12+-3776AB?style=flat&logo=python&logoColor=white)](https://www.python.org/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-005571?style=flat&logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
 [![React](https://img.shields.io/badge/React-19.2-61DAFB?style=flat&logo=react&logoColor=black)](https://react.dev/)
@@ -153,8 +153,8 @@ flowchart LR
 ### 知識庫與文件處理
 
 - 支援 28 種副檔名：`.txt`、`.md`、`.markdown`、`.pdf`、`.docx`、`.pptx`、`.xlsx`、`.csv`、`.json`、`.jsonl`、`.yaml`、`.yml`、`.xml`、`.html`、`.htm`、`.log`、`.py`、`.js`、`.ts`、`.tsx`、`.jsx`、`.java`、`.cpp`、`.c`、`.sql`、`.sh`、`.ini`、`.env`。
-- **PDF 強化擷取**：PyMuPDF 擷取並修復缺少 ToUnicode 的內嵌字型；空白或亂碼頁改以視覺模型 OCR（Microsoft Foundry、OpenAI 或 Gemini），最後以 pypdf 備援。
-- **智慧切塊**：JSON、JSONL、YAML、CSV、XLSX 解析成結構化記錄逐筆成為片段（保留巢狀欄位，過長的記錄分段並重複標頭），Q&A 文件一問一答成一個片段，其餘依中文標點遞迴切塊。
+- **PDF 強化擷取**：PyMuPDF 擷取文字，擷取前先替內嵌 TrueType 字型中 ToUnicode 沒有對應（或對到 U+FFFD）的替代字形補上對應：依字型 GSUB 的單一替換反查原本的字元，例如 Illustrator 輸出的 Noto Sans TC 數字，否則會被擷取成「俸」這類字；空白或亂碼頁改以視覺模型 OCR（Microsoft Foundry、OpenAI 或 Gemini），最後以 pypdf 備援。
+- **智慧切塊**：JSON、JSONL、YAML、CSV、XLSX 解析成結構化記錄逐筆成為片段（保留巢狀欄位，過長的記錄分段並重複標頭），以「Q：」開頭的 Q&A 文件一問一答成一個片段（超過切塊長度的再切開），其餘依中文標點遞迴切塊。
 - **AI 大綱與摘要**：上傳時自動生成文件摘要，可重新生成或手動修訂；LLM 失敗時改用規則摘要。摘要也會組成知識庫目錄，幫助 Agent 判斷該查哪份文件。
 
 ### 外部工具與 MCP
@@ -648,11 +648,10 @@ bun run build        # 產出 build/
 |---|---|
 | `create_user.py` | 建立帳號（含第一位管理員）：`--username`、`--email` 必填，`--admin` 建立管理員，密碼以互動方式輸入；見 [建立第一位管理員](#4-建立第一位管理員) |
 | `evaluate_retrieval.py` | 以問答集評估檢索品質並比較相關性門檻（唯讀，可與後端同時執行），見 [校準相關性門檻](docs/configuration.md#校準相關性門檻) |
-| `reprocess_existing_docs.py` | 離線重建：重新擷取文字、生成摘要、切塊並寫入索引。請先停止後端 |
-| `reset_faiss.py` | 刪除 `backend/data` 內的 FAISS 與 BM25 索引檔，再依 `rag_chunks` 重新計算（會先詢問確認） |
+| `reprocess_existing_docs.py` | 離線執行與「重建索引」相同的重建：重新擷取文字、替沒有摘要的文件生成摘要（既有摘要保留）、切塊並寫入索引。請先停止後端 |
+| `reset_faiss.py` | 刪除 `FAISS_INDEX_PATH`、`METADATA_PATH` 與 `BM25_INDEX_DIR` 指向的索引檔，再依 `rag_chunks` 重新計算（會先詢問確認） |
 | `test_llm_clients.py` | 以模擬回應檢查模型清單與各供應商的呼叫格式，不會真的呼叫 API |
 | `docx_to_txt.py` | 把上傳目錄中的 `.docx` 轉成 `.txt` |
-| `migrate_sqlite_to_postgres.py` | 已知問題：引用了已移除的 `app.models.custom_agent`，目前無法執行 |
 
 ## 疑難排解
 
@@ -767,7 +766,7 @@ MCP 伺服器預設需要核准，自訂 API 工具則依 HTTP 方法決定。�
 | [API 參考](docs/api.md) | 所有端點的權限、請求與回應格式、SSE 事件規格與錯誤代碼 |
 | [系統架構與設計](docs/architecture.md) | 分層架構、資料模型、檢索管線、Agent 迴圈、認證與安全設計 |
 | [設定參考](docs/configuration.md) | 每個環境變數的預設值與作用、供應商路由、門檻校準、前端設定 |
-| [升級指南](docs/upgrading.md) | 從 2.x 升級到 3.0.0、從 3.0.0 升級到 4.0.0、從 4.0.0 升級到 5.0.0 的步驟、回退方式與常見問題 |
+| [升級指南](docs/upgrading.md) | 從 2.x 升級到 3.0.0，以及之後各版（到 6.0.0 升級到 7.0.0）的步驟、回退方式與常見問題 |
 | [架構決策紀錄（ADR）](docs/adr/README.md) | 重大設計的背景、取捨與後續修訂 |
 | [llms.txt](llms.txt) | 給 AI Agent 讀的檔案地圖、系統約束與驗證方式 |
 | [版本變更紀錄](CHANGELOG.md) | 每個版本的新增、變更、移除與修正 |
@@ -775,7 +774,7 @@ MCP 伺服器預設需要核准，自訂 API 工具則依 HTTP 方法決定。�
 
 ## 版本資訊
 
-- **目前版本**：6.0.0（2026-10-26），變更內容見 [CHANGELOG](CHANGELOG.md)。
+- **目前版本**：7.0.0（2026-10-31），變更內容見 [CHANGELOG](CHANGELOG.md)。
 - **版本規則**：遵循 [語意化版本](https://semver.org/lang/zh-TW/)。不相容的變更（例如新增必填設定、改變 API 權限或索引格式）升主版號。
 - **版本號位置**：後端 `backend/app/__init__.py` 的 `__version__`（OpenAPI 文件與 MCP 交握皆引用）、前端 `frontend/package.json`，發行時與 `CHANGELOG.md` 一併更新。
 

@@ -10,7 +10,6 @@ from app.models import (
     McpServer,
     McpServerCreate,
     McpServerUpdate,
-    McpServerResponse,
     McpToolTestRequest,
 )
 from app.core.jwt_auth import get_current_admin_user
@@ -237,6 +236,8 @@ async def update_server(
     if server_data.url is not None and server_data.url != server.url:
         server.url = server_data.url
         server.oauth_tokens = None
+        if (decrypt_for_display(server.oauth_config)[0] or {}).get("client_source") != "admin":
+            server.oauth_config = None
     try:
         if server_data.oauth_client is not None:
             _apply_oauth_client(server, server_data.oauth_client)

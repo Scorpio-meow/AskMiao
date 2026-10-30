@@ -241,6 +241,7 @@ export const ChatPage: React.FC = () => {
           attachments={attachments}
           onAddAttachments={(newAtts) => setAttachments((prev) => [...prev, ...newAtts])}
           onRemoveAttachment={(idx) => setAttachments((prev) => prev.filter((_, i) => i !== idx))}
+          onRejectAttachments={(message) => showSnackbar(message, 'error')}
         />
       </div>
       <ConfirmDialog

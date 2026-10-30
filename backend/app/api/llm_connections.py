@@ -70,6 +70,10 @@ async def _validate(connection: LlmConnection, public_only: bool) -> None:
 
 
 def _apply_update(connection: LlmConnection, changes: Dict[str, Any]) -> None:
+    cleared = [field for field in ("name", "provider", "api_base", "models") if field in changes and changes[field] is None]
+    if cleared:
+        raise HTTPException(status_code=400, detail=f"這些欄位不可設為空值：{', '.join(cleared)}")
+    endpoint_changed = any(field in changes and changes[field] != getattr(connection, field) for field in ("provider", "api_base"))
     for field in ("name", "provider", "api_base", "max_output_tokens"):
         if field in changes:
             setattr(connection, field, changes[field])
@@ -77,6 +81,8 @@ def _apply_update(connection: LlmConnection, changes: Dict[str, Any]) -> None:
         connection.models = json.dumps(changes["models"], ensure_ascii=False)
     if changes.get("api_key"):
         connection.api_key = encrypt_api_key(changes["api_key"])
+    elif endpoint_changed:
+        connection.api_key = None
 
 
 def _new_connection(data: LlmConnectionCreate, owner_id) -> LlmConnection:
@@ -176,10 +182,11 @@ async def discover_models(
         )
         if not allowed:
             raise HTTPException(status_code=404, detail="找不到這個 API 連線")
-        try:
-            api_key = (decrypt_json(connection.api_key) or {}).get("api_key")
-        except SafeClientError as e:
-            raise HTTPException(status_code=400, detail=str(e))
+        if data.provider == connection.provider and data.api_base == connection.api_base:
+            try:
+                api_key = (decrypt_json(connection.api_key) or {}).get("api_key")
+            except SafeClientError as e:
+                raise HTTPException(status_code=400, detail=str(e))
     db.close()
     endpoint = LlmEndpoint(data.provider, data.api_base, api_key, None, not current_user["is_admin"])
     try:

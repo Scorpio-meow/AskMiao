@@ -70,7 +70,7 @@ export default function UserEditDialog({ user, isSelf, onClose, onSaved }) {
               autoComplete="off"
               value={form.username}
               onChange={(e) => update({ username: e.target.value })}
-              helperText="3–50 個字元，只能包含英文字母、數字、底線（_）與連字號（-）"
+              helperText="3–50 個字元，只能包含中文、英文字母、數字、底線（_）與連字號（-）"
               disabled={saving}
             />
             <TextField

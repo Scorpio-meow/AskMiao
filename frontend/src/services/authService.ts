@@ -140,24 +140,6 @@ class AuthService {
       throw error;
     }
   }
-  async updateProfile(data: Partial<User>): Promise<{ success: boolean; user?: User; error?: string }> {
-    try {
-      const response = await withTimeout(
-        (signal) => api.put<User>('/auth/me', data, { signal }),
-        45000
-      );
-      const user = response.data;
-      this.saveUser(user);
-      return { success: true, user };
-    } catch (error: any) {
-      console.error('更新用戶資料失敗:', describeRequestError(error));
-      const errorMsg = error.isTimeout ? error.message : (error.response?.data?.detail || '更新失敗');
-      return {
-        success: false,
-        error: errorMsg
-      };
-    }
-  }
   async changePassword(currentPassword: string, newPassword: string, confirmPassword: string): Promise<{ success: boolean; message?: string; error?: string }> {
     try {
       const response = await withTimeout(
@@ -208,10 +190,6 @@ class AuthService {
   }
   isAuthenticated(): boolean {
     return !!this.getAccessToken();
-  }
-  isAdmin(): boolean {
-    const user = this.getUser();
-    return user?.is_admin === true;
   }
   clearAuth() {
     localStorage.removeItem(TOKEN_KEY);
