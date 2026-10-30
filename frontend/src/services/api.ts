@@ -70,6 +70,12 @@ export interface User {
   is_active: boolean;
   is_admin: boolean;
   role: string;
+  created_at?: string;
+  last_login?: string | null;
+}
+export interface UserConnectionAccess {
+  personal: ChatConnectionOption[];
+  shared: Array<ChatConnectionOption & { all_users: boolean; allowed: boolean }>;
 }
 const RAW_API_URL = (import.meta.env.VITE_API_BASE as string) || (import.meta.env.VITE_API_URL as string) || '/api';
 const ensureTrailingApi = (urlString: string): string => {
@@ -340,6 +346,24 @@ export const adminService = {
   async deleteUser(userId: number): Promise<any> {
     const response = await api.delete<any>(`/admin/users/${userId}`);
     return response.data;
+  },
+  async createUser(payload: { username: string; email: string; password: string; is_admin: boolean }): Promise<User> {
+    const response = await api.post<User>('/admin/users', payload);
+    return response.data;
+  },
+  async resetPassword(userId: number, newPassword: string): Promise<{ message: string }> {
+    const response = await api.put<{ message: string }>(`/admin/users/${userId}/password`, { new_password: newPassword });
+    return response.data;
+  },
+  async getUserConnections(userId: number): Promise<UserConnectionAccess> {
+    const response = await api.get<UserConnectionAccess>(`/admin/users/${userId}/llm-connections`);
+    return response.data;
+  },
+  async updateUserConnections(userId: number, sharedConnectionIds: number[]): Promise<UserConnectionAccess> {
+    const response = await api.put<UserConnectionAccess>(`/admin/users/${userId}/llm-connections`, {
+      shared_connection_ids: sharedConnectionIds,
+    });
+    return response.data;
   }
 };
 export interface LlmProviderPreset {
@@ -399,6 +423,10 @@ export const llmConnectionService = {
       { model_name: modelName }
     );
     return response.data;
+  },
+  async discoverModels(payload: { provider: string; api_base: string; api_key?: string; connection_id?: number }): Promise<string[]> {
+    const response = await api.post<{ models: string[] }>('/llm-connections/discover-models', payload);
+    return response.data.models;
   },
   async getShared(): Promise<LlmConnectionItem[]> {
     const response = await api.get<{ connections: LlmConnectionItem[] }>('/admin/llm-connections');

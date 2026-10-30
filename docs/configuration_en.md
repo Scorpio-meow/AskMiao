@@ -313,7 +313,7 @@ Self-registered accounts can only use their own API connections and the shared c
 - `true`: anyone who can reach the API can create a regular account with `POST /api/auth/register`.
 - `false`: `POST /api/auth/register` returns `403` and writes `REGISTER_REJECTED` to the security log. The frontend checks `GET /api/auth/registration` (no login required; it returns `{"enabled": false}`), hides the sign-up link on the login page, and shows an explanation on the sign-up page.
 
-An admin creates accounts, including the first admin, by running `scripts/create_user.py` in `backend/`:
+Once the first admin exists, other accounts can be added, and their passwords reset, under "Admin → User management". The first admin (or any account when no admin can sign in) is created by running `scripts/create_user.py` in `backend/`:
 
 ```bash
 python scripts/create_user.py --username alice --email alice@example.com

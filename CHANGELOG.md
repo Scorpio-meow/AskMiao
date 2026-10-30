@@ -36,12 +36,20 @@
 - **管理員開放的共用連線**：「管理後台 → 共用 API 連線」建立共用連線，並指定可使用的帳號（所有帳號，或只限勾選的帳號）；沒被指定的帳號在模型清單裡看不到它。新增 `GET/POST /api/admin/llm-connections`、`PUT/DELETE /api/admin/llm-connections/{id}`。刪除帳號時一併刪除其個人連線，並從共用連線的名單移除。
 - **測試連線**：`POST /api/llm-connections/{id}/test` 以指定模型送出一則很短的訊息，回傳模型回覆或錯誤原因；個人連線由本人測試，共用連線只限管理員。
 - 聊天頁的模型選單依連線分組（個人／共用）；帳號沒有任何可用模型時提示到「個人資料」新增。
+- **從 API 取得模型**：新增或編輯連線時按一下即列出供應商回報的模型（OpenAI 相容的 `/models`、Gemini、Claude 的 Models API、Ollama 的 `/api/tags`），勾選加入；編輯時沿用已儲存的金鑰。新增 `POST /api/llm-connections/discover-models`。Foundry 無法列出部署，仍需手動填寫。
+- 共用連線的帳號清單可搜尋，並可對搜尋結果全選或全部取消；停用的帳號會標示。
+- **使用者管理**：
+  - 管理員可在「管理後台」新增帳號（`POST /api/admin/users`，規則與自行註冊相同）。
+  - 可替其他帳號重設密碼（`PUT /api/admin/users/{id}/password`），該帳號所有裝置的登入隨即失效。
+  - 編輯帳號時可直接勾選它能用的共用連線（`GET/PUT /api/admin/users/{id}/llm-connections`），也能看到它自己設定的個人連線。
+  - 使用者清單可搜尋，並顯示最後登入時間。
 
 ### 變更 (Changed)
 
 - **聊天只使用帳號可用的連線**：`GET /api/chat/models` 改為需要登入，回傳 `{"connections": [{id, name, provider, scope, models}]}`；`POST /api/chat/send` 的 `connection_id` 與 `model_name` 改為必填，連線不屬於自己、未開放給自己或模型不在該連線的清單內時回傳 `400`，不再落回 `MODEL_NAME` 或 `.env` 的金鑰。
 - `.env` 的 LLM 設定（`MODEL_NAME`、`AVAILABLE_MODELS`、各供應商金鑰與 `LLM_API_BASE`）只用於系統背景工作：上傳文件時的 AI 摘要與 `GET /api/tags`。
 - 自行註冊的帳號不會用到營運者的 LLM 金鑰，開放註冊（`ALLOW_REGISTRATION=true`）時只需留意所有帳號仍共用知識庫與已啟用的工具。
+- 管理員不能停用、刪除自己的帳號，也不能移除自己的管理員權限（回傳 `400`），避免沒有人能管理系統；`PUT /api/admin/users/{id}` 會檢查使用者名稱與電子郵件格式（不符時回傳 `422`），切換管理員權限時 `role` 一併改為 `admin` 或 `user`。
 
 ### 安全性 (Security)
 

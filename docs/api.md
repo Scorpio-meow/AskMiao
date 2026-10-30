@@ -71,6 +71,7 @@
 | PUT | `/api/llm-connections/{connection_id}` | 登入（僅限本人） | 更新個人連線 |
 | DELETE | `/api/llm-connections/{connection_id}` | 登入（僅限本人） | 刪除個人連線 |
 | POST | `/api/llm-connections/{connection_id}/test` | 登入（個人連線限本人，共用連線限管理員） | 以指定模型測試連線 |
+| POST | `/api/llm-connections/discover-models` | 登入 | 向供應商查詢可用的模型名稱 |
 | POST | `/api/documents/upload` | 管理員 | 上傳文件並建立索引 |
 | GET | `/api/documents/` | 管理員 | 文件清單 |
 | POST | `/api/documents/{document_id}/regenerate-summary` | 管理員 | 重新生成 AI 摘要 |
@@ -108,6 +109,10 @@
 | GET | `/api/tags` | 公開 | 相容 Ollama 格式的模型清單 |
 | GET | `/api/admin/users` | 管理員 | 使用者清單 |
 | PUT | `/api/admin/users/{user_id}` | 管理員 | 更新使用者 |
+| POST | `/api/admin/users` | 管理員 | 新增使用者 |
+| PUT | `/api/admin/users/{user_id}/password` | 管理員 | 重設其他帳號的密碼 |
+| GET | `/api/admin/users/{user_id}/llm-connections` | 管理員 | 帳號的個人連線與可使用的共用連線 |
+| PUT | `/api/admin/users/{user_id}/llm-connections` | 管理員 | 設定帳號可使用的共用連線 |
 | DELETE | `/api/admin/users/{user_id}` | 管理員 | 刪除使用者 |
 | GET | `/api/admin/llm-connections` | 管理員 | 共用連線清單（含可使用的帳號） |
 | POST | `/api/admin/llm-connections` | 管理員 | 新增共用連線 |
@@ -422,6 +427,7 @@ data: {"message_id": 108, "conversation_id": 42, "answer": "特休假需先在�
 - `PUT /api/llm-connections/{connection_id}`：只更新有帶的欄位；`api_key` 留空或不帶即沿用原值。不是本人的連線回傳 `404`。
 - `DELETE /api/llm-connections/{connection_id}`：刪除連線與其金鑰。
 - `POST /api/llm-connections/{connection_id}/test`：主體 `{"model_name": "gpt-6-sol"}`，以該模型送出一則很短的訊息；成功回傳 `{"ok": true, "reply": "OK"}`，失敗回傳 `{"ok": false, "error": "原因"}`（狀態碼仍為 `200`）。
+- `POST /api/llm-connections/discover-models`：主體 `provider`、`api_base`，加上 `api_key` 或 `connection_id`（沿用該連線已儲存的金鑰；個人連線限本人，共用連線限管理員）。回傳 `{"models": [...]}`（排序後最多 500 個），失敗時回傳 `400` 與原因。依供應商查詢 OpenAI 相容的 `{api_base}/models`、Gemini 的 `/v1beta/openai/models`、Claude 的 Models API 或 Ollama 的 `/api/tags`；Foundry 無法列出部署，回傳 `400`。一般帳號的查詢同樣只能連到公開位址，逾時為 `LLM_TAGS_TIMEOUT`。
 
 儲存時檢查：Anthropic、Gemini、Foundry 必須有金鑰；Claude（含 Foundry 上的 Claude 部署）必須設定 `max_output_tokens`，Foundry 上的 Claude 部署必須使用 `*.services.ai.azure.com` 端點；一般帳號的 `api_base` 必須能解析到公開位址。不符合時回傳 `400` 與原因，欄位格式錯誤回傳 `422`。
 
@@ -1108,11 +1114,17 @@ Agent 以漸進揭露使用技能：有啟用且檔案存在的技能時，[`GET
 |---|---|---|
 | GET | `/api/admin/users` | 所有使用者，每筆為 `UserProfile`（`id`、`username`、`email`、`role`、`is_active`、`is_admin`、`created_at`、`last_login`），不含 `hashed_password` |
 | PUT | `/api/admin/users/{user_id}` | 更新 `username`、`email`、`is_active`、`is_admin`（只需帶入要變更的欄位）；名稱或電子郵件重複時回傳 `400`（`使用者名稱已存在`、`電子郵件已存在`） |
-| DELETE | `/api/admin/users/{user_id}` | 刪除使用者與其所有對話；該帳號上傳的文件與建立的工具保留，建立者欄位改為空值；該帳號從技能的 `allowed_user_ids` 中移除（見 [6.7](#67-patch-apiskillsskill_idsettings)） |
+| POST | `/api/admin/users` | 新增使用者：主體 `username`、`email`、`password`、`is_admin`，套用與自行註冊相同的規則；不符或重複時回傳 `400` 與原因，成功回傳 `201` 與 `UserProfile` |
+| PUT | `/api/admin/users/{user_id}/password` | 重設密碼：主體 `{"new_password": "..."}`，須符合密碼強度規則；成功後該帳號已簽發的權杖全部失效。不能用來變更自己的密碼（`400`，請改用 [1.6](#16-post-apiauthchange-password)） |
+| GET | `/api/admin/users/{user_id}/llm-connections` | `{"personal": [...], "shared": [...]}`：該帳號的個人連線，以及每個共用連線另帶 `all_users`（開放給所有帳號）與 `allowed`（這個帳號能否使用） |
+| PUT | `/api/admin/users/{user_id}/llm-connections` | 主體 `{"shared_connection_ids": [...]}`：把帳號加入列出的限定帳號共用連線，並從其餘限定帳號的共用連線移除；開放給所有帳號的連線不受影響，不存在的連線 ID 回傳 `400`。回傳與 GET 相同的格式 |
+| DELETE | `/api/admin/users/{user_id}` | 刪除使用者與其所有對話與個人 API 連線；該帳號上傳的文件與建立的工具保留，建立者欄位改為空值；該帳號從技能的 `allowed_user_ids` 與共用連線的名單中移除（見 [6.7](#67-patch-apiskillsskill_idsettings)） |
+
+管理員不能停用或刪除自己的帳號，也不能移除自己的管理員權限，這些請求回傳 `400`。`PUT` 的 `username` 須為 3–50 個字母、數字、底線或連字號，`email` 須為有效的電子郵件，否則回傳 `422`；切換 `is_admin` 時 `role` 一併改為 `admin` 或 `user`。
 
 `PUT` 回傳 `{"message": "使用者更新成功", "user": {...}}`，`user` 是更新後的 `UserProfile`；`DELETE` 回傳 `{"message": "使用者刪除成功"}`。兩者找不到使用者時回傳 `404` `使用者不存在`，成功時都會清除統計快取。停用、刪除帳號或取消管理員身分在下一個請求立即生效：停用或刪除的帳號已簽發的權杖隨即失效，也無法再登入；取消管理員身分後，管理端點回傳 `403`。
 
-變更與刪除帳號會寫入安全日誌並記錄操作的管理員：`PUT` 有實際變更時寫入 `ADMIN_USER_UPDATED`（目標帳號 id，以及 `username`、`email`、`is_active`、`is_admin` 變更前後的值），`DELETE` 寫入 `ADMIN_USER_DELETED`（目標帳號 id、使用者名稱與是否為管理員）。
+變更與刪除帳號會寫入安全日誌並記錄操作的管理員：`PUT` 有實際變更時寫入 `ADMIN_USER_UPDATED`（目標帳號 id，以及 `username`、`email`、`is_active`、`is_admin` 變更前後的值），`DELETE` 寫入 `ADMIN_USER_DELETED`（目標帳號 id、使用者名稱與是否為管理員）；新增帳號、重設密碼與設定共用連線分別寫入 `ADMIN_USER_CREATED`、`ADMIN_PASSWORD_RESET`、`ADMIN_USER_LLM_ACCESS_UPDATED`。
 
 ### 8.2 統計
 

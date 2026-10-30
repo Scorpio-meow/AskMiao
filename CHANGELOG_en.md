@@ -36,12 +36,20 @@ All notable changes to AskMiao are documented in this file. The format is based 
 - **Shared connections granted by admins**: "Admin → Shared API connections" creates shared connections and picks which accounts may use them (all accounts, or only the checked ones); other accounts never see them in the model list. New endpoints: `GET/POST /api/admin/llm-connections`, `PUT/DELETE /api/admin/llm-connections/{id}`. Deleting an account deletes its personal connections and removes it from shared connection lists.
 - **Connection test**: `POST /api/llm-connections/{id}/test` sends one short message with the chosen model and returns the reply or the reason it failed; owners test personal connections, admins test shared ones.
 - The chat model menu groups models by connection (personal / shared) and tells accounts without any model to add one in their profile.
+- **Fetch models from the API**: when adding or editing a connection, one click lists the models the provider reports (OpenAI-compatible `/models`, Gemini, Claude's Models API, Ollama's `/api/tags`) to check off; editing reuses the stored key. New endpoint: `POST /api/llm-connections/discover-models`. Foundry cannot list deployments, so those are still typed in.
+- The account list of a shared connection is searchable, with select all / clear for the search results; deactivated accounts are labelled.
+- **User management**:
+  - Admins can add accounts in the admin dashboard (`POST /api/admin/users`, with the same rules as self-registration).
+  - Admins can reset other accounts' passwords (`PUT /api/admin/users/{id}/password`), which signs that account out everywhere.
+  - Editing an account lets admins check the shared connections it may use (`GET/PUT /api/admin/users/{id}/llm-connections`) and see its personal connections.
+  - The user list is searchable and shows the last sign-in time.
 
 ### Changed
 
 - **Chat only uses the connections an account may use**: `GET /api/chat/models` now requires sign-in and returns `{"connections": [{id, name, provider, scope, models}]}`; `connection_id` and `model_name` are required in `POST /api/chat/send`, which returns `400` when the connection is not the caller's own or granted to them, or the model is not in its list. It no longer falls back to `MODEL_NAME` or the keys in `.env`.
 - The LLM settings in `.env` (`MODEL_NAME`, `AVAILABLE_MODELS`, the provider keys, and `LLM_API_BASE`) only serve background system work: AI summaries of uploaded documents and `GET /api/tags`.
 - Self-registered accounts never use the operator's LLM keys; with `ALLOW_REGISTRATION=true`, remember that all accounts still share the knowledge base and the enabled tools.
+- Admins cannot deactivate or delete their own account or remove their own admin rights (`400`), so the system always keeps someone who can manage it; `PUT /api/admin/users/{id}` validates the username and email format (`422` otherwise), and toggling admin rights sets `role` to `admin` or `user` accordingly.
 
 ### Security
 

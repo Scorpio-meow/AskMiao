@@ -750,3 +750,27 @@ def test_openai_compatible_payload_keeps_provider_extra_fields_on_tool_calls():
     payload = llm_client._openai_payload("gemini", [assistant], "gemini-3.8-flash", [KB_TOOL], "high", stream=False)
 
     assert payload["messages"][0]["tool_calls"][0]["extra_content"] == {"google": {"thought_signature": "sig-abc"}}
+
+
+@pytest.mark.asyncio
+async def test_list_models_reads_each_providers_model_endpoint(monkeypatch):
+    seen = []
+
+    def handler(request):
+        seen.append((request.url.path, request.headers.get("Authorization")))
+        if request.url.path == "/api/tags":
+            return httpx.Response(200, json={"models": [{"name": "qwen3:8b"}, {"name": "gemma4:e2b"}]})
+        if request.url.path == "/v1beta/openai/models":
+            return httpx.Response(200, json={"data": [{"id": "models/gemini-3.8-flash"}]})
+        return httpx.Response(200, json={"data": [{"id": "gpt-6-sol"}, {"id": "gpt-6-luna"}, {"id": "gpt-6-sol"}]})
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    monkeypatch.setattr(llm_client, "_http_client", client)
+
+    assert await llm_client.list_models(LlmEndpoint("openai", "https://api.example.com/v1/", "k1", None, False)) == ["gpt-6-luna", "gpt-6-sol"]
+    assert await llm_client.list_models(LlmEndpoint("gemini", "https://g.example.com", "k2", None, False)) == ["gemini-3.8-flash"]
+    assert await llm_client.list_models(LOCAL_OLLAMA) == ["gemma4:e2b", "qwen3:8b"]
+    assert seen == [("/v1/models", "Bearer k1"), ("/v1beta/openai/models", "Bearer k2"), ("/api/tags", None)]
+    with pytest.raises(ValueError, match="手動填寫"):
+        await llm_client.list_models(LlmEndpoint("foundry", "https://x.services.ai.azure.com", "k", None, False))
+    await client.aclose()

@@ -168,6 +168,34 @@ def validated_user_ids(db: Session, user_ids: List[int]) -> Optional[str]:
     return json.dumps(unique_ids) if unique_ids else None
 
 
+def user_connection_access(db: Session, user_id: int) -> Dict[str, Any]:
+    connections = db.query(LlmConnection).filter(
+        (LlmConnection.owner_id == user_id) | LlmConnection.owner_id.is_(None)
+    ).order_by(LlmConnection.id).all()
+    return {
+        "personal": [chat_option(c) for c in connections if c.owner_id is not None],
+        "shared": [
+            {**chat_option(c), "all_users": c.allowed_user_ids is None, "allowed": visible_to(c, user_id)}
+            for c in connections if c.owner_id is None
+        ],
+    }
+
+
+def set_user_shared_access(db: Session, user_id: int, connection_ids: List[int]) -> None:
+    shared = db.query(LlmConnection).filter(LlmConnection.owner_id.is_(None)).all()
+    unknown = sorted(set(connection_ids) - {c.id for c in shared})
+    if unknown:
+        raise SafeClientError(f"找不到共用 API 連線：{', '.join(map(str, unknown))}")
+    wanted = set(connection_ids)
+    for connection in shared:
+        if connection.allowed_user_ids is None:
+            continue
+        ids = [uid for uid in _user_ids(connection.allowed_user_ids) if uid != user_id]
+        if connection.id in wanted:
+            ids.append(user_id)
+        connection.allowed_user_ids = json.dumps(sorted(ids))
+
+
 def remove_user_connections(db: Session, user_id: int) -> None:
     db.query(LlmConnection).filter(LlmConnection.owner_id == user_id).delete(synchronize_session=False)
     for connection in db.query(LlmConnection).filter(LlmConnection.allowed_user_ids.isnot(None)).all():

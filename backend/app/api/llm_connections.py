@@ -8,13 +8,15 @@ from sqlalchemy.orm import Session
 from app.core.config import settings
 from app.core.error_response import SafeClientError
 from app.core.jwt_auth import get_current_active_user, get_current_admin_user
-from app.core.llm_client import call_llm
+from app.core.llm_client import LlmEndpoint, call_llm, list_models
 from app.core.security_logging import log_security_event
+from app.core.tool_secrets import decrypt_json
 from app.models import (
     LlmConnection,
     LlmConnectionCreate,
     LlmConnectionTestRequest,
     LlmConnectionUpdate,
+    LlmModelDiscoveryRequest,
     SharedLlmConnectionCreate,
     SharedLlmConnectionUpdate,
 )
@@ -158,6 +160,34 @@ def delete_my_connection(
         "connection_id": connection_id
     })
     return {"message": "已刪除 API 連線"}
+
+
+@router.post("/discover-models")
+async def discover_models(
+    data: LlmModelDiscoveryRequest,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_active_user),
+):
+    api_key = data.api_key
+    if api_key is None and data.connection_id is not None:
+        connection = db.get(LlmConnection, data.connection_id)
+        allowed = connection is not None and (
+            connection.owner_id == current_user["user_id"] or (connection.owner_id is None and current_user["is_admin"])
+        )
+        if not allowed:
+            raise HTTPException(status_code=404, detail="找不到這個 API 連線")
+        try:
+            api_key = (decrypt_json(connection.api_key) or {}).get("api_key")
+        except SafeClientError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+    db.close()
+    endpoint = LlmEndpoint(data.provider, data.api_base, api_key, None, not current_user["is_admin"])
+    try:
+        models = await list_models(endpoint)
+    except Exception as e:
+        logger.info("取得 %s 的模型清單失敗", data.provider, exc_info=True)
+        raise HTTPException(status_code=400, detail=describe_connection_error(e))
+    return {"models": models}
 
 
 @router.post("/{connection_id}/test")

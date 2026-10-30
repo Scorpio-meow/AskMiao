@@ -14,37 +14,8 @@ import sys
 backend_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, backend_dir)
 
-from pydantic import ValidationError
-from sqlalchemy.orm import Session
-
-from app.core.jwt_auth import validate_password_strength
-from app.crud.crud_user import create_user, get_user_by_email, get_user_by_username
-from app.models import User
+from app.crud.crud_user import create_account
 from app.models.database import Base, SessionLocal, engine, upgrade_schema
-from app.schemas.auth import UserRegister
-
-
-def create_account(db: Session, username: str, email: str, password: str, is_admin: bool) -> User:
-    """套用與自行註冊相同的使用者名稱、電子郵件與密碼規則；不符合時拋出 ValueError"""
-    try:
-        validated = UserRegister(username=username, email=email, password=password)
-    except ValidationError as e:
-        raise ValueError("; ".join(error["msg"] for error in e.errors())) from e
-    is_valid, error_msg = validate_password_strength(validated.password)
-    if not is_valid:
-        raise ValueError(error_msg)
-    if get_user_by_username(db, validated.username):
-        raise ValueError("使用者名稱已被使用")
-    if get_user_by_email(db, validated.email):
-        raise ValueError("電子郵件已被使用")
-    return create_user(
-        db=db,
-        username=validated.username,
-        email=validated.email,
-        password=validated.password,
-        role="admin" if is_admin else "user",
-        is_admin=is_admin,
-    )
 
 
 def main() -> int:

@@ -73,6 +73,7 @@ API messages are in Traditional Chinese; the English glosses in this document ar
 | PUT | `/api/llm-connections/{connection_id}` | Signed in (owner only) | Update a personal connection |
 | DELETE | `/api/llm-connections/{connection_id}` | Signed in (owner only) | Delete a personal connection |
 | POST | `/api/llm-connections/{connection_id}/test` | Signed in (owner for personal, admin for shared connections) | Test a connection with one model |
+| POST | `/api/llm-connections/discover-models` | Signed in | Ask the provider which model names it offers |
 | POST | `/api/documents/upload` | Admin | Upload and index documents |
 | GET | `/api/documents/` | Admin | List documents |
 | POST | `/api/documents/{document_id}/regenerate-summary` | Admin | Regenerate the AI summary |
@@ -110,6 +111,10 @@ API messages are in Traditional Chinese; the English glosses in this document ar
 | GET | `/api/tags` | Public | Model list in the Ollama `tags` format |
 | GET | `/api/admin/users` | Admin | List users |
 | PUT | `/api/admin/users/{user_id}` | Admin | Update a user |
+| POST | `/api/admin/users` | Admin | Add a user |
+| PUT | `/api/admin/users/{user_id}/password` | Admin | Reset another account's password |
+| GET | `/api/admin/users/{user_id}/llm-connections` | Admin | The account's personal connections and the shared connections it may use |
+| PUT | `/api/admin/users/{user_id}/llm-connections` | Admin | Set the shared connections an account may use |
 | DELETE | `/api/admin/users/{user_id}` | Admin | Delete a user |
 | GET | `/api/admin/llm-connections` | Admin | Shared connections, with the accounts allowed to use them |
 | POST | `/api/admin/llm-connections` | Admin | Add a shared connection |
@@ -424,6 +429,7 @@ The account's own personal connections (sign-in required). Connection object:
 - `PUT /api/llm-connections/{connection_id}`: updates only the fields sent; a blank or missing `api_key` keeps the stored key. Someone else's connection returns `404`.
 - `DELETE /api/llm-connections/{connection_id}`: deletes the connection and its key.
 - `POST /api/llm-connections/{connection_id}/test`: body `{"model_name": "gpt-6-sol"}`; sends one short message with that model and returns `{"ok": true, "reply": "OK"}`, or `{"ok": false, "error": "reason"}` (still status `200`) when it fails.
+- `POST /api/llm-connections/discover-models`: body with `provider` and `api_base`, plus `api_key` or `connection_id` (reuses that connection's stored key; owner only for personal connections, admins only for shared ones). Returns `{"models": [...]}` (sorted, at most 500) or `400` with the reason. It queries the OpenAI-compatible `{api_base}/models`, Gemini's `/v1beta/openai/models`, Claude's Models API, or Ollama's `/api/tags`; Foundry cannot list deployments and returns `400`. A member's query can likewise only reach public addresses; the timeout is `LLM_TAGS_TIMEOUT`.
 
 Saving checks that Anthropic, Gemini, and Foundry have a key; that Claude (including Claude deployments on Foundry) has `max_output_tokens`, and that Claude on Foundry uses a `*.services.ai.azure.com` endpoint; and that a member's `api_base` resolves to a public address. Failures return `400` with the reason; malformed fields return `422`.
 
@@ -1110,11 +1116,17 @@ Returns the system model list and default model configured in `.env` (see [Confi
 |---|---|---|
 | GET | `/api/admin/users` | All users, each as a `UserProfile` (`id`, `username`, `email`, `role`, `is_active`, `is_admin`, `created_at`, `last_login`) without `hashed_password` |
 | PUT | `/api/admin/users/{user_id}` | Update `username`, `email`, `is_active`, or `is_admin` (send only what changes); duplicate names or emails return `400` (`使用者名稱已存在`, `電子郵件已存在`) |
-| DELETE | `/api/admin/users/{user_id}` | Delete a user and all their conversations; documents they uploaded and tools they created stay, with the creator field set to null; the account is removed from skills' `allowed_user_ids` (see [6.7](#67-patch-apiskillsskill_idsettings)) |
+| POST | `/api/admin/users` | Add a user: body `username`, `email`, `password`, `is_admin`, with the same rules as self-registration; invalid or duplicate values return `400` with the reason, success returns `201` with the `UserProfile` |
+| PUT | `/api/admin/users/{user_id}/password` | Reset a password: body `{"new_password": "..."}`, which must meet the password rules; every token already issued to that account stops working. It cannot change your own password (`400`; use [1.6](#16-post-apiauthchange-password)) |
+| GET | `/api/admin/users/{user_id}/llm-connections` | `{"personal": [...], "shared": [...]}`: the account's personal connections, and every shared connection with `all_users` (granted to all accounts) and `allowed` (whether this account may use it) |
+| PUT | `/api/admin/users/{user_id}/llm-connections` | Body `{"shared_connection_ids": [...]}`: adds the account to the listed restricted shared connections and removes it from the other restricted ones; connections granted to all accounts are unaffected, and unknown connection IDs return `400`. Returns the same shape as GET |
+| DELETE | `/api/admin/users/{user_id}` | Delete a user with all their conversations and personal API connections; documents they uploaded and tools they created stay, with the creator field set to null; the account is removed from skills' `allowed_user_ids` and from shared connection lists (see [6.7](#67-patch-apiskillsskill_idsettings)) |
+
+Admins cannot deactivate or delete their own account or remove their own admin rights; such requests return `400`. In `PUT`, `username` must be 3–50 letters, digits, underscores, or hyphens and `email` must be a valid address, otherwise `422`; toggling `is_admin` sets `role` to `admin` or `user` accordingly.
 
 `PUT` returns `{"message": "使用者更新成功", "user": {...}}`, where `user` is the updated `UserProfile`, and `DELETE` returns `{"message": "使用者刪除成功"}`. Both return `404` `使用者不存在` (user not found) for an unknown user and clear the statistics cache on success. Deactivation, deletion, and removal of admin rights apply from the next request: tokens already issued to a deactivated or deleted account stop working and the account can no longer sign in, and an account that lost admin rights gets `403` from admin endpoints.
 
-Account changes and deletions are written to the security log along with the acting admin: `PUT` writes `ADMIN_USER_UPDATED` when something actually changed (the target account id and the before and after values of `username`, `email`, `is_active`, and `is_admin`), and `DELETE` writes `ADMIN_USER_DELETED` (the target account id, the username, and whether it was an admin).
+Account changes and deletions are written to the security log along with the acting admin: `PUT` writes `ADMIN_USER_UPDATED` when something actually changed (the target account id and the before and after values of `username`, `email`, `is_active`, and `is_admin`), and `DELETE` writes `ADMIN_USER_DELETED` (the target account id, the username, and whether it was an admin); adding an account, resetting a password, and setting shared connections write `ADMIN_USER_CREATED`, `ADMIN_PASSWORD_RESET`, and `ADMIN_USER_LLM_ACCESS_UPDATED`.
 
 ### 8.2 Statistics
 

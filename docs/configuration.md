@@ -313,7 +313,7 @@ docker compose exec postgres bash /docker-entrypoint-initdb.d/20-app-role.sh
 - `true`：任何能連到 API 的人都能以 `POST /api/auth/register` 建立一般使用者帳號。
 - `false`：`POST /api/auth/register` 回傳 `403`，並以 `REGISTER_REJECTED` 寫入安全日誌。前端依 `GET /api/auth/registration`（不需登入，回傳 `{"enabled": false}`）隱藏登入頁的註冊入口，註冊頁改為顯示說明。
 
-帳號（含第一位管理員）由管理員在 `backend/` 執行 `scripts/create_user.py` 建立：
+有了第一位管理員之後，其他帳號可以在「管理後台 → 使用者管理」新增，也可以在那裡替帳號重設密碼。第一位管理員（或沒有登入介面時）由管理員在 `backend/` 執行 `scripts/create_user.py` 建立：
 
 ```bash
 python scripts/create_user.py --username alice --email alice@example.com

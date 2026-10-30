@@ -5,8 +5,10 @@ from sqlalchemy.orm import Session
 from sqlalchemy import or_
 from typing import Optional, List
 from datetime import datetime
+from pydantic import ValidationError
 from app.models import User
-from app.core.jwt_auth import PasswordManager
+from app.core.jwt_auth import PasswordManager, validate_password_strength
+from app.schemas.auth import UserRegister
 @lru_cache(maxsize=1)
 def _dummy_password_hash() -> str:
     return PasswordManager.hash_password(secrets.token_urlsafe(16))
@@ -59,6 +61,26 @@ def create_user(
     db.refresh(db_user)
     
     return db_user
+def create_account(db: Session, username: str, email: str, password: str, is_admin: bool) -> User:
+    try:
+        validated = UserRegister(username=username, email=email, password=password)
+    except ValidationError as e:
+        raise ValueError("; ".join(error["msg"].removeprefix("Value error, ") for error in e.errors())) from e
+    is_valid, error_msg = validate_password_strength(validated.password)
+    if not is_valid:
+        raise ValueError(error_msg)
+    if get_user_by_username(db, validated.username):
+        raise ValueError("使用者名稱已被使用")
+    if get_user_by_email(db, validated.email):
+        raise ValueError("電子郵件已被使用")
+    return create_user(
+        db=db,
+        username=validated.username,
+        email=validated.email,
+        password=validated.password,
+        role="admin" if is_admin else "user",
+        is_admin=is_admin,
+    )
 def authenticate_user(
     db: Session,
     username_or_email: str,

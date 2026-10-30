@@ -121,6 +121,80 @@
   margin-bottom: 0;
 }
 
+.headerActions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.searchInput {
+  background: var(--bg-input);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  padding: var(--space-2) var(--space-3);
+  min-height: 36px;
+  min-width: 0;
+  width: 240px;
+  max-width: 100%;
+  font-size: var(--font-size-sm);
+  color: var(--text-primary);
+  font-family: inherit;
+  outline: none;
+}
+
+.searchInput:focus {
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 2px var(--border-focus);
+}
+
+@media (pointer: coarse) {
+  .searchInput {
+    font-size: var(--font-size-base);
+  }
+}
+
+@media (max-width: 599px) {
+  .headerActions,
+  .searchInput {
+    width: 100%;
+  }
+}
+
+.chipStack {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+}
+
+.timeStack {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: var(--font-size-xs);
+  color: var(--text-secondary);
+}
+
+.table td.actionsCell {
+  white-space: normal;
+}
+
+.actionsCell .tableActions {
+  flex-wrap: wrap;
+}
+
+.nameCell {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+}
+
+.emptyCell {
+  text-align: center;
+  color: var(--text-tertiary);
+}
+
 .cardHint {
   font-size: var(--font-size-sm);
   color: var(--text-secondary);

@@ -1,28 +1,57 @@
 import asyncio
 import json
+import re
 from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import func
 from app.models.database import get_db
 from app.models import User, Conversation, Message, Document, CustomApiTool, McpServer, AgentSkill
 from app.core.rag_manager import get_rag_system
-from app.core.jwt_auth import get_current_admin_user
+from app.core.error_response import SafeClientError
+from app.core.jwt_auth import get_current_admin_user, validate_password_strength
+from app.core.limits import MAX_PASSWORD_CHARS
+from app.crud.crud_user import create_account, update_user_password
 from app.core.cache import cache_response, invalidate_cache
 from app.core.security_logging import log_security_event
 from app.services.document_removal import remove_document
-from app.services.llm_connections import remove_user_connections
+from app.services.llm_connections import remove_user_connections, set_user_shared_access, user_connection_access
 from app.api.documents import DOCUMENT_LIST_COLUMNS
 from app.schemas.auth import UserProfile
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 from datetime import datetime, timedelta
-from pydantic import BaseModel
+from pydantic import BaseModel, EmailStr, Field, field_validator
 from functools import lru_cache
 router = APIRouter()
+USERNAME_PATTERN = re.compile(r"^[\w\-]+$")
+
+
 class UserUpdate(BaseModel):
-    username: str = None
-    email: str = None
-    is_active: bool = None
-    is_admin: bool = None
+    username: Optional[str] = Field(default=None, min_length=3, max_length=50)
+    email: Optional[EmailStr] = None
+    is_active: Optional[bool] = None
+    is_admin: Optional[bool] = None
+
+    @field_validator("username")
+    @classmethod
+    def _validate_username(cls, value: Optional[str]) -> Optional[str]:
+        if value is not None and not USERNAME_PATTERN.match(value):
+            raise ValueError("使用者名稱只能包含字母、數字、底線和連字號")
+        return value
+
+
+class AdminUserCreate(BaseModel):
+    username: str = Field(max_length=50)
+    email: str = Field(max_length=254)
+    password: str = Field(max_length=MAX_PASSWORD_CHARS)
+    is_admin: bool
+
+
+class AdminPasswordReset(BaseModel):
+    new_password: str = Field(max_length=MAX_PASSWORD_CHARS)
+
+
+class UserSharedConnectionsUpdate(BaseModel):
+    shared_connection_ids: List[int]
 class AdminUserUpdateResponse(BaseModel):
     message: str
     user: UserProfile
@@ -32,8 +61,85 @@ async def get_users(
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_admin_user)
 ):
-    users = db.query(User).all()
+    users = db.query(User).order_by(User.id).all()
     return users
+
+
+@router.post("/users", response_model=UserProfile, status_code=201)
+async def create_user_account(
+    data: AdminUserCreate,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_admin_user)
+):
+    try:
+        user = await asyncio.to_thread(create_account, db, data.username, data.email, data.password, data.is_admin)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    log_security_event("ADMIN_USER_CREATED", request=request, user_id=current_user["user_id"], details={
+        "target_user_id": user.id,
+        "username": user.username,
+        "is_admin": bool(user.is_admin)
+    }, severity="WARNING")
+    invalidate_cache("admin_stats")
+    return UserProfile.model_validate(user)
+
+
+@router.put("/users/{user_id}/password")
+async def reset_user_password(
+    user_id: int,
+    data: AdminPasswordReset,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_admin_user)
+):
+    if user_id == current_user["user_id"]:
+        raise HTTPException(status_code=400, detail="請在「個人資料」以目前的密碼變更自己的密碼")
+    if not db.get(User, user_id):
+        raise HTTPException(status_code=404, detail="使用者不存在")
+    is_valid, error_msg = validate_password_strength(data.new_password)
+    if not is_valid:
+        raise HTTPException(status_code=400, detail=error_msg)
+    await asyncio.to_thread(update_user_password, db, user_id, data.new_password)
+    log_security_event("ADMIN_PASSWORD_RESET", request=request, user_id=current_user["user_id"], details={
+        "target_user_id": user_id
+    }, severity="WARNING")
+    return {"message": "已重設密碼，這個帳號在所有裝置都需要以新密碼重新登入"}
+
+
+@router.get("/users/{user_id}/llm-connections")
+def get_user_llm_connections(
+    user_id: int,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_admin_user)
+):
+    if not db.get(User, user_id):
+        raise HTTPException(status_code=404, detail="使用者不存在")
+    return user_connection_access(db, user_id)
+
+
+@router.put("/users/{user_id}/llm-connections")
+def update_user_llm_connections(
+    user_id: int,
+    data: UserSharedConnectionsUpdate,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_admin_user)
+):
+    if not db.get(User, user_id):
+        raise HTTPException(status_code=404, detail="使用者不存在")
+    try:
+        set_user_shared_access(db, user_id, data.shared_connection_ids)
+    except SafeClientError as e:
+        db.rollback()
+        raise HTTPException(status_code=400, detail=str(e))
+    db.commit()
+    access = user_connection_access(db, user_id)
+    log_security_event("ADMIN_USER_LLM_ACCESS_UPDATED", request=request, user_id=current_user["user_id"], details={
+        "target_user_id": user_id,
+        "shared_connection_ids": [c["id"] for c in access["shared"] if c["allowed"]]
+    })
+    return access
 @router.get("/statistics")
 @cache_response(ttl=180, key_prefix="admin_stats")
 async def get_statistics(
@@ -173,6 +279,8 @@ async def update_user(
     user = db.query(User).filter(User.id == user_id).first()
     if not user:
         raise HTTPException(status_code=404, detail="使用者不存在")
+    if user_id == current_user["user_id"] and (user_update.is_active is False or user_update.is_admin is False):
+        raise HTTPException(status_code=400, detail="不能停用自己的帳號或移除自己的管理員權限")
     before = {field: getattr(user, field) for field in ("username", "email", "is_active", "is_admin")}
     
     if user_update.username is not None:
@@ -196,8 +304,12 @@ async def update_user(
     if user_update.is_active is not None:
         user.is_active = user_update.is_active
     
-    if user_update.is_admin is not None:
+    if user_update.is_admin is not None and user_update.is_admin != user.is_admin:
         user.is_admin = user_update.is_admin
+        if user.is_admin:
+            user.role = "admin"
+        elif user.role == "admin":
+            user.role = "user"
     
     changes = {
         field: {"from": before[field], "to": getattr(user, field)}
@@ -223,6 +335,8 @@ async def delete_user(
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_admin_user)
 ):
+    if user_id == current_user["user_id"]:
+        raise HTTPException(status_code=400, detail="不能刪除自己的帳號")
     user = db.query(User).filter(User.id == user_id).first()
     if not user:
         raise HTTPException(status_code=404, detail="使用者不存在")

@@ -7,6 +7,7 @@ import httpx
 from urllib.parse import urlparse
 from typing import Any, AsyncIterator, Dict, List, Optional, Tuple
 from app.core.config import settings
+from app.core.limits import MAX_DISCOVERED_MODELS
 from app.core.ssrf_protection import DnsPool, SSRFSafeHttpx2Transport, SSRFSafeTransport
 logger = logging.getLogger(__name__)
 _http_client: Optional[httpx.AsyncClient] = None
@@ -798,6 +799,32 @@ async def stream_completion(
         stream = _openai_stream(endpoint, messages, model_name, reasoning_effort)
     async for chunk in stream:
         yield chunk
+async def _http_model_ids(endpoint: LlmEndpoint, url: str, headers: Dict[str, str]) -> List[str]:
+    client = await get_llm_http_client(endpoint.public_only)
+    response = await client.get(url, headers=headers, timeout=httpx.Timeout(settings.LLM_TAGS_TIMEOUT, pool=LLM_POOL_ACQUIRE_TIMEOUT_SECONDS))
+    if response.status_code != 200:
+        raise RuntimeError(f"{endpoint.provider} 模型清單錯誤 ({response.status_code}): {response.text[:500]}")
+    payload = response.json()
+    if endpoint.provider == "ollama":
+        return [item.get("name") for item in payload.get("models") or [] if item.get("name")]
+    return [item.get("id") for item in payload.get("data") or [] if item.get("id")]
+async def list_models(endpoint: LlmEndpoint) -> List[str]:
+    base = endpoint.api_base.rstrip("/")
+    if endpoint.provider == "foundry":
+        raise ValueError("Foundry 無法從 API 列出部署，請手動填寫部署名稱")
+    if endpoint.provider == "anthropic":
+        client = _anthropic_client(endpoint).with_options(timeout=settings.LLM_TAGS_TIMEOUT)
+        models = [model.id async for model in client.models.list(limit=MAX_DISCOVERED_MODELS)]
+    elif endpoint.provider == "ollama":
+        models = await _http_model_ids(endpoint, f"{base}/api/tags", _ollama_request_headers(endpoint))
+    elif endpoint.provider == "gemini":
+        _, headers = _openai_endpoint(endpoint)
+        ids = await _http_model_ids(endpoint, f"{base}/v1beta/openai/models", headers)
+        models = [model_id.removeprefix("models/") for model_id in ids]
+    else:
+        _, headers = _openai_endpoint(endpoint)
+        models = await _http_model_ids(endpoint, f"{base}/models", headers)
+    return sorted(dict.fromkeys(models))[:MAX_DISCOVERED_MODELS]
 async def call_llm(
     messages: List[Dict[str, str]],
     *,

@@ -225,6 +225,13 @@ class SharedLlmConnectionUpdate(LlmConnectionUpdate):
 
 class LlmConnectionTestRequest(BaseModel):
     model_name: str = Field(min_length=1, max_length=200)
+
+
+class LlmModelDiscoveryRequest(LlmConnectionValidator):
+    provider: str = Field(pattern=LLM_PROVIDER_PATTERN)
+    api_base: str = Field(max_length=500)
+    api_key: Optional[str] = Field(default=None, min_length=1, max_length=1000)
+    connection_id: Optional[int] = None
 class UserCreate(BaseModel):
     username: str
     email: str
