@@ -9,7 +9,17 @@ import ToolApprovalCard from './ToolApprovalCard';
 
 const noop = () => {};
 const ENTITIES: Record<string, string> = { '&quot;': '"', '&#x27;': "'", '&lt;': '<', '&gt;': '>', '&amp;': '&' };
-const textOf = (html: string) => html.replace(/<[^>]+>/g, '').replace(/&(quot|#x27|lt|gt|amp);/g, (entity) => ENTITIES[entity]);
+const stripTags = (html: string) => {
+  let text = '';
+  let inTag = false;
+  for (const char of html) {
+    if (char === '<') inTag = true;
+    else if (char === '>') inTag = false;
+    else if (!inTag) text += char;
+  }
+  return text;
+};
+const textOf = (html: string) => stripTags(html).replace(/&(quot|#x27|lt|gt|amp);/g, (entity) => ENTITIES[entity]);
 const buttons = (html: string) => [...html.matchAll(/<button([^>]*)>(.*?)<\/button>/gs)]
   .map(([, attrs, inner]) => ({ attrs, text: textOf(inner) }));
 const buttonNamed = (html: string, text: string) => buttons(html).find((button) => button.text.includes(text));

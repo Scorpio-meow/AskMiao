@@ -6,7 +6,16 @@ import McpServerRow from './McpServerRow';
 import SkillRow from './SkillRow';
 
 const noop = () => {};
-const textOf = (html) => html.replace(/<[^>]+>/g, '');
+const textOf = (html) => {
+  let text = '';
+  let inTag = false;
+  for (const char of html) {
+    if (char === '<') inTag = true;
+    else if (char === '>') inTag = false;
+    else if (!inTag) text += char;
+  }
+  return text;
+};
 const buttonNamed = (html, text) => [...html.matchAll(/<button([^>]*)>(.*?)<\/button>/gs)]
   .map(([, attrs, inner]) => ({ attrs, text: textOf(inner) }))
   .find((button) => button.text.startsWith(text));
