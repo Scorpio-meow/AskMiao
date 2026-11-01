@@ -7,9 +7,11 @@ import { copyText } from '../../utils/clipboard';
 import { describeRequestError } from '../../utils/secureLogger';
 import { SnackbarState, ChatAttachment } from './types';
 import ChatSidebar from './ChatSidebar';
-import ChatHeader, { REASONING_EFFORT_OPTIONS, choiceKey, parseChoice, resolveReasoningEffort } from './ChatHeader';
+import ChatHeader, { choiceKey, parseChoice } from './ChatHeader';
+import { REASONING_EFFORT_OPTIONS, resolveReasoningEffort } from '../../utils/reasoningEffort';
 import ChatMessageList from './ChatMessageList';
 import ChatInputArea from './ChatInputArea';
+import { findRetryQuestion } from './chatFormat';
 import { Snackbar, Alert, ConfirmDialog } from '../../components/ui';
 import styles from './Chat.module.css';
 const describeSendError = (err: unknown): string => {
@@ -110,16 +112,16 @@ export const ChatPage: React.FC = () => {
     setReasoningEffort(effort);
     writeStorage(REASONING_EFFORT_STORAGE_KEY, effort);
   };
-  const handleToggleThinking = (id: number | string) => {
+  const handleToggleThinking = useCallback((id: number | string) => {
     setThinkOpenArr((prev) => ({
       ...prev,
       [id]: !prev[id],
     }));
-  };
-  const handleCopyMessage = async (text: string) => {
+  }, []);
+  const handleCopyMessage = useCallback(async (text: string) => {
     const copied = await copyText(text);
     showSnackbar(copied ? '已複製內容至剪貼簿' : '無法自動複製，請手動選取文字後複製', copied ? 'success' : 'error');
-  };
+  }, [showSnackbar]);
   const [attachments, setAttachments] = useState<ChatAttachment[]>([]);
   const handleSend = async () => {
     if (sending) return;
@@ -142,13 +144,17 @@ export const ChatPage: React.FC = () => {
     }
   };
   const handleRetry = (failedMessage: Message) => {
-    const index = messages.indexOf(failedMessage);
-    const question = messages.slice(0, index).reverse().find((m) => m.is_user);
+    const question = findRetryQuestion(messages, failedMessage);
     if (!question || sending || !selectedModel) return;
     sendChatMessage(question.content, selectedModel, effectiveReasoningEffort, question.attachments).catch((err) => {
       showSnackbar(`訊息沒有送出：${describeSendError(err)}`, 'error');
     });
   };
+  const retryRef = useRef(handleRetry);
+  useEffect(() => {
+    retryRef.current = handleRetry;
+  });
+  const handleStableRetry = useCallback((failedMessage: Message) => retryRef.current(failedMessage), []);
   const handleSelectConversation = useCallback(async (id: number) => {
     await fetchConversation(id);
   }, [fetchConversation]);
@@ -229,7 +235,7 @@ export const ChatPage: React.FC = () => {
           onToggleThinking={handleToggleThinking}
           onCopyMessage={handleCopyMessage}
           onSelectPrompt={setNewMessage}
-          onRetry={handleRetry}
+          onRetry={handleStableRetry}
         />
         <ChatInputArea
           value={newMessage}

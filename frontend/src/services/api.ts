@@ -436,6 +436,25 @@ export const llmConnectionService = {
     return response.data;
   }
 };
+export interface SystemModelAssignment {
+  connection_id: number;
+  model_name: string;
+  reasoning_effort: string;
+}
+export interface SystemModels {
+  document_summary: SystemModelAssignment | null;
+  pdf_ocr: SystemModelAssignment | null;
+}
+export const systemModelService = {
+  async get(): Promise<SystemModels> {
+    const response = await api.get<SystemModels>('/admin/system-models');
+    return response.data;
+  },
+  async update(payload: SystemModels): Promise<SystemModels> {
+    const response = await api.put<SystemModels>('/admin/system-models', payload);
+    return response.data;
+  }
+};
 export interface CustomApiToolItem {
   id: number;
   name: string;
@@ -461,10 +480,11 @@ export interface CustomApiToolItem {
   updated_at: string;
 }
 export const apiToolService = {
-  async parseOpenApiSpec(spec_content_or_url: string, default_base_url?: string): Promise<{ status: string; data: any }> {
+  async parseOpenApiSpec(spec_content_or_url: string, default_base_url: string | undefined, overlays: string[]): Promise<{ status: string; data: any }> {
     const response = await api.post<{ status: string; data: any }>('/api-tools/parse-spec', {
       spec_content_or_url,
       default_base_url,
+      overlays,
     });
     return response.data;
   },

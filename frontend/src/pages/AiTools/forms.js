@@ -22,7 +22,8 @@ const EMPTY_AUTH = {
   scope: '',
   client_auth: 'basic',
 };
-export const BODY_CONTENT_TYPES = ['application/json', 'application/x-www-form-urlencoded', 'multipart/form-data'];
+export const BODY_CONTENT_TYPES = ['application/json', 'application/x-www-form-urlencoded', 'multipart/form-data', 'application/xml', 'text/plain'];
+export const HTTP_METHODS = ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'HEAD', 'OPTIONS', 'QUERY'];
 export const EMPTY_TOOL_FORM = {
   name: '',
   display_name: '',

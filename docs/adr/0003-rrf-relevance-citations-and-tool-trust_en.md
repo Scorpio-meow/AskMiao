@@ -82,3 +82,9 @@ Supersedes the "score normalization fusion" decision in [ADR-0001](./0001-hybrid
 - **Upgrade**: add `RRF_K`, `RERANK_RELEVANCE_THRESHOLD`, `WEB_FETCH_ALLOWED_DOMAINS`, `BLOCK_WEB_TOOLS_AFTER_KB`, and `DOMAIN_PROFILE_PATH` to `.env` before starting. The old `HYBRID_ALPHA`, `NORMALIZATION`, and `FINAL_THRESHOLD` are ignored. On the first start the existing BM25 index has no tokenizer signature, so BM25 is rebuilt from the database chunks automatically without recomputing vectors.
 - **Rollback**: delete the `BM25_INDEX_DIR` directory before reverting to the old code, and the old version rebuilds BM25 from the database at startup. Otherwise the old version matches non-lowercased queries against the lowercased index, and terms with capital letters (such as `MES`) no longer match.
 - **Upgrading from 2.2.x**: the steps above assume a version that already uses the chunk_id index. 3.0.0 also contains the index format change of [ADR-0005](./0005-chunk-id-index-and-database-source-of-truth_en.md), so upgrading from 2.2.x requires one full index rebuild; see the [upgrade guide](../upgrading_en.md).
+
+---
+
+## Amendments
+
+- **2026-11-01 | Han unigram and bigram fields in BM25**: besides jieba words, BM25 now has `han_unigrams` and `han_bigrams` fields, the query combines the terms of all three fields with OR, and `TOKENIZER_RULES_VERSION` becomes 3 (BM25 is rebuilt automatically on the first start). The evaluation tool gains chunk-level metrics labelled with `relevant_passages` and a `--corpus` temporary knowledge base mode, and the RRF and threshold decisions of this ADR were re-measured on the built-in benchmark; see [ADR-0007](./0007-han-ngram-bm25-and-passage-level-evaluation_en.md).

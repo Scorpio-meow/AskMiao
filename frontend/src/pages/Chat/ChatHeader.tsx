@@ -2,52 +2,13 @@ import React from 'react';
 import { ChatHeaderProps } from './types';
 import { IconButton, Tooltip, Spinner, Icon } from '../../components/ui';
 import styles from './ChatHeader.module.css';
-export const REASONING_EFFORT_OPTIONS = [
-  { value: 'none', label: '無推理 (None / 快速)', shortLabel: '無 (None)' },
-  { value: 'low', label: '輕度推理 (Low / 平衡)', shortLabel: '輕度 (Low)' },
-  { value: 'medium', label: '標準推理 (Medium / 預設)', shortLabel: '標準 (Medium)' },
-  { value: 'high', label: '深度推理 (High / 嚴密)', shortLabel: '深度 (High)' },
-  { value: 'xhigh', label: '極致推理 (X-High / 長程)', shortLabel: '極致 (X-High)' },
-  { value: 'max', label: '最大推理 (Max / 無限制)', shortLabel: '最大 (Max)' },
-];
-const CLAUDE_XHIGH_MODELS = [
-  'claude-fable-5-1',
-  'claude-fable-5',
-  'claude-opus-5-5',
-  'claude-opus-5',
-  'claude-opus-4-8',
-  'claude-opus-4-7',
-  'claude-sonnet-5-5',
-  'claude-sonnet-5',
-  'claude-haiku-5-5',
-];
-export const supportsReasoningEffort = (model: string, effort: string): boolean => {
-  if (model.startsWith('claude-')) {
-    return (effort !== 'xhigh' && effort !== 'max') || CLAUDE_XHIGH_MODELS.includes(model);
-  }
-  if (model.startsWith('gemini-')) {
-    if (effort === 'none') {
-      return model.startsWith('gemini-2.5');
-    }
-    return effort !== 'xhigh' && effort !== 'max';
-  }
-  if (effort === 'max') {
-    return model.startsWith('gpt-6');
-  }
-  return true;
-};
+import { REASONING_EFFORT_OPTIONS, supportsReasoningEffort } from '../../utils/reasoningEffort';
 export const choiceKey = (connectionId: number, model: string): string => `${connectionId}::${model}`;
 export const parseChoice = (choice: string): { connectionId: number; model: string } | null => {
   const separator = choice.indexOf('::');
   if (separator <= 0) return null;
   const connectionId = Number(choice.slice(0, separator));
   return Number.isInteger(connectionId) ? { connectionId, model: choice.slice(separator + 2) } : null;
-};
-export const resolveReasoningEffort = (model: string, effort: string): string => {
-  if (supportsReasoningEffort(model, effort)) {
-    return effort;
-  }
-  return effort === 'none' ? 'low' : 'high';
 };
 export const ChatHeader: React.FC<ChatHeaderProps> = ({
   connections,
@@ -68,12 +29,12 @@ export const ChatHeader: React.FC<ChatHeaderProps> = ({
   const title = currentConversation?.title || '新對話';
   return (
     <header className={styles.header}>
-      <div className={styles.leftGroup}>
+      <div className={styles.titleGroup}>
         {onOpenSidebar && (
           <IconButton
             size="sm"
             onClick={onOpenSidebar}
-            className={styles.mobileMenuBtn}
+            className={styles.menuButton}
             aria-label="開啟對話清單"
             aria-expanded={sidebarOpen}
             aria-controls={sidebarOpen ? sidebarId : undefined}
@@ -85,8 +46,8 @@ export const ChatHeader: React.FC<ChatHeaderProps> = ({
           {title}
         </h1>
       </div>
-      <div className={styles.rightGroup}>
-        <div className={styles.selectWrapper}>
+      <div className={styles.controls} role="group" aria-label="模型設定">
+        <div className={`${styles.selectWrapper} ${styles.modelSelect}`}>
           <select
             className={styles.select}
             value={currentChoice}
@@ -117,7 +78,7 @@ export const ChatHeader: React.FC<ChatHeaderProps> = ({
             <Icon name="expand-more" size={16} />
           </span>
         </div>
-        <Tooltip title="設定模型思考與推理深度 (Reasoning Effort)" placement="bottom">
+        <Tooltip title="設定模型思考與推理深度 (Reasoning Effort)" placement="bottom" className={styles.effortSelect}>
           <div className={styles.selectWrapper}>
             <select
               className={styles.select}
@@ -147,6 +108,7 @@ export const ChatHeader: React.FC<ChatHeaderProps> = ({
             onClick={onRefreshModels}
             disabled={modelsLoading}
             aria-label="重新整理可用模型清單"
+            className={styles.refreshButton}
           >
             {modelsLoading ? (
               <Spinner size={18} aria-hidden="true" />

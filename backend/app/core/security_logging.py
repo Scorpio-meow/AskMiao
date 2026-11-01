@@ -1,32 +1,50 @@
 
 import logging
 import json
+import threading
 from logging.handlers import RotatingFileHandler
 from datetime import datetime
 from typing import Optional, Dict, Any
 from fastapi import Request
 import os
+from app.core.config import settings
 from app.core.limits import LOG_FILE_BACKUP_COUNT, LOG_FILE_MAX_BYTES, MAX_LOG_FIELD_CHARS
+from app.core.request_context import current_request_id
+LOG_FORMAT = '%(asctime)s - %(name)s - %(levelname)s - [%(request_id)s] %(message)s'
+LOG_DATE_FORMAT = '%Y-%m-%d %H:%M:%S'
 class SingleLineMessageFormatter(logging.Formatter):
+    def format(self, record: logging.LogRecord) -> str:
+        if not hasattr(record, "request_id"):
+            record.request_id = current_request_id()
+        return super().format(record)
     def formatMessage(self, record: logging.LogRecord) -> str:
         return super().formatMessage(record).replace("\r", "\\r").replace("\n", "\\n")
+def log_formatter() -> SingleLineMessageFormatter:
+    return SingleLineMessageFormatter(LOG_FORMAT, datefmt=LOG_DATE_FORMAT)
+def configure_log_handler(handler: logging.Handler) -> logging.Handler:
+    handler.setLevel(settings.LOG_LEVEL)
+    handler.setFormatter(log_formatter())
+    return handler
+def rotating_log_file_handler(filename: str) -> RotatingFileHandler:
+    os.makedirs(settings.LOG_DIR, exist_ok=True)
+    return RotatingFileHandler(
+        os.path.join(settings.LOG_DIR, filename), maxBytes=LOG_FILE_MAX_BYTES, backupCount=LOG_FILE_BACKUP_COUNT, encoding='utf-8', delay=True
+    )
 security_logger = logging.getLogger("security")
 security_logger.setLevel(logging.INFO)
 # 安全事件只寫 security.log，不再重複落地到 app.log
 security_logger.propagate = False
-log_dir = "logs"
-os.makedirs(log_dir, exist_ok=True)
-security_log_file = os.path.join(log_dir, "security.log")
-file_handler = RotatingFileHandler(
-    security_log_file, maxBytes=LOG_FILE_MAX_BYTES, backupCount=LOG_FILE_BACKUP_COUNT, encoding='utf-8'
-)
-file_handler.setLevel(logging.INFO)
-formatter = logging.Formatter(
-    '%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    datefmt='%Y-%m-%d %H:%M:%S'
-)
-file_handler.setFormatter(formatter)
-security_logger.addHandler(file_handler)
+_security_handler_lock = threading.Lock()
+def security_file_handlers() -> list[RotatingFileHandler]:
+    return [h for h in security_logger.handlers if isinstance(h, RotatingFileHandler)]
+def ensure_security_log_handler() -> None:
+    with _security_handler_lock:
+        if security_file_handlers():
+            return
+        file_handler = rotating_log_file_handler("security.log")
+        file_handler.setLevel(logging.INFO)
+        file_handler.setFormatter(log_formatter())
+        security_logger.addHandler(file_handler)
 import re
 SENSITIVE_KEYS = {
     "password",
@@ -60,6 +78,16 @@ def truncate_log_value(value: Any) -> Any:
     if isinstance(value, (list, tuple)):
         return [truncate_log_value(item) for item in value]
     return value
+def log_fields(**fields: Any) -> str:
+    parts = []
+    for key, value in fields.items():
+        if value is None:
+            continue
+        text = truncate_log_value(str(value))
+        if not text or any(ch.isspace() or ch in '"=' for ch in text):
+            text = json.dumps(text, ensure_ascii=False)
+        parts.append(f"{key}={text}")
+    return " ".join(parts)
 def sanitize_sensitive_data(data: Any) -> Any:
     if isinstance(data, dict):
         sanitized = {}
@@ -88,6 +116,7 @@ def log_security_event(
         "event_type": event_type,
         "severity": severity,
         "user_id": user_id,
+        "request_id": current_request_id(),
     }
     
     if request:
@@ -104,7 +133,8 @@ def log_security_event(
     sanitized_entry = truncate_log_value(sanitize_sensitive_data(log_entry))
     log_message = json.dumps(sanitized_entry, ensure_ascii=False)
     log_message = SENSITIVE_JSON_RE.sub(r'\1"[REDACTED]"', log_message)
-    
+
+    ensure_security_log_handler()
     if severity == "CRITICAL":
         security_logger.critical(log_message)
     elif severity == "ERROR":

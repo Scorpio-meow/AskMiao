@@ -2,7 +2,7 @@
 
 [繁體中文](api.md) | [English](api_en.md)
 
-> REST and SSE streaming endpoints of the AskMiao **7.0.0** backend, written against the actual routers in `backend/app/api/`. With `ENABLE_API_DOCS=true` the backend also serves interactive docs at `http://localhost:8001/docs` (Swagger UI) and `http://localhost:8001/redoc`, and the OpenAPI document at `/openapi.json`. These three paths need no sign-in and list every endpoint and parameter, so keep `ENABLE_API_DOCS=false` (the template value) for public deployments; all three then return `404`.
+> REST and SSE streaming endpoints of the AskMiao **8.0.0** backend, written against the actual routers in `backend/app/api/`. With `ENABLE_API_DOCS=true` the backend also serves interactive docs at `http://localhost:8001/docs` (Swagger UI) and `http://localhost:8001/redoc`, and the OpenAPI document at `/openapi.json`. These three paths need no sign-in and list every endpoint and parameter, so keep `ENABLE_API_DOCS=false` (the template value) for public deployments; all three then return `404`.
 
 ## Contents
 
@@ -13,7 +13,7 @@
 - [4. Custom API tools `/api/api-tools`](#4-custom-api-tools-apiapi-tools)
 - [5. MCP servers `/api/mcp`](#5-mcp-servers-apimcp)
 - [6. Agent Skills `/api/skills`](#6-agent-skills-apiskills)
-- [7. Model lists `/api/tags`](#7-model-lists-apitags)
+- [7. Model lists (removed)](#7-model-lists-removed)
 - [8. Admin `/api/admin`](#8-admin-apiadmin)
 - [9. Health checks](#9-health-checks)
 - [10. Error handling](#10-error-handling)
@@ -80,7 +80,7 @@ API messages are in Traditional Chinese; the English glosses in this document ar
 | PUT | `/api/documents/{document_id}/summary` | Admin | Edit the summary |
 | DELETE | `/api/documents/{document_id}` | Admin | Delete a document |
 | POST | `/api/documents/rebuild-index` | Admin | Fully rebuild the index from the database |
-| POST | `/api/api-tools/parse-spec` | Admin | Parse an OpenAPI spec |
+| POST | `/api/api-tools/parse-spec` | Admin | Parse a Swagger 2.0, OpenAPI 3.0–3.2, or Arazzo document (optionally applying Overlays) |
 | POST | `/api/api-tools/import` | Admin | Bulk-import tools |
 | GET | `/api/api-tools` | Admin | List tools |
 | POST | `/api/api-tools` | Admin | Create a tool manually |
@@ -108,7 +108,6 @@ API messages are in Traditional Chinese; the English glosses in this document ar
 | PATCH | `/api/skills/{skill_id}/toggle` | Admin | Toggle enabled state |
 | PATCH | `/api/skills/{skill_id}/settings` | Admin | Set script execution and which accounts may use the skill |
 | DELETE | `/api/skills/{skill_id}` | Admin | Delete a skill and its files |
-| GET | `/api/tags` | Public | Model list in the Ollama `tags` format |
 | GET | `/api/admin/users` | Admin | List users |
 | PUT | `/api/admin/users/{user_id}` | Admin | Update a user |
 | POST | `/api/admin/users` | Admin | Add a user |
@@ -120,6 +119,8 @@ API messages are in Traditional Chinese; the English glosses in this document ar
 | POST | `/api/admin/llm-connections` | Admin | Add a shared connection |
 | PUT | `/api/admin/llm-connections/{connection_id}` | Admin | Update a shared connection or its accounts |
 | DELETE | `/api/admin/llm-connections/{connection_id}` | Admin | Delete a shared connection |
+| GET | `/api/admin/system-models` | Admin | Connection and model chosen for document summaries and PDF OCR |
+| PUT | `/api/admin/system-models` | Admin | Choose or clear the connection and model for document summaries and PDF OCR |
 | GET | `/api/admin/statistics` | Admin | System statistics (cached for 180 seconds) |
 | GET | `/api/admin/conversations` | Admin | The 50 most recent conversations |
 | GET | `/api/admin/conversations/{conversation_id}/messages` | Admin | Messages of any conversation |
@@ -135,7 +136,7 @@ API messages are in Traditional Chinese; the English glosses in this document ar
 | GET | `/health` | Public | Health check |
 
 > [!NOTE]
-> `GET /api/external-tags`, which needed no sign-in, and the demo WebSocket `/api/chat/ws/{user_id}` have been removed (the frontend used neither): use `GET /api/chat/models` or `GET /api/tags` for model lists and the [SSE endpoint in 2.1](#21-post-apichatsend) for chat.
+> `GET /api/external-tags`, which needed no sign-in, and the demo WebSocket `/api/chat/ws/{user_id}` have been removed (the frontend used neither): use `GET /api/chat/models` for model lists and the [SSE endpoint in 2.1](#21-post-apichatsend) for chat.
 
 ---
 
@@ -305,7 +306,7 @@ Send a message and start the `ResearchAgent`. The response is a **Server-Sent Ev
 | `content` | string | Yes | — | The user's question, at most 20,000 characters; when it starts with `/skill-name` for an enabled skill, that skill is loaded first, the prefix is removed, and an `activate_skill` step is recorded in the research trace |
 | `conversation_id` | integer | No | `null` | Conversation ID; a new conversation is created when it is empty, unknown, or not yours |
 | `connection_id` | integer | Yes | — | API connection to use; it must be the caller's personal connection or a shared connection granted to them (see [2.2](#22-get-apichatmodels)), otherwise `400` `找不到這個 API 連線，或你沒有使用權限` ("connection not found or not allowed") |
-| `model_name` | string | Yes | — | Model to use; it must be in that connection's model list, otherwise `400` `這個 API 連線沒有提供此模型` ("model not offered by this connection"); never falls back to `MODEL_NAME` or the keys in `.env` |
+| `model_name` | string | Yes | — | Model to use; it must be in that connection's model list, otherwise `400` `這個 API 連線沒有提供此模型` ("model not offered by this connection"); never falls back to another connection or a system model |
 | `reasoning_effort` | string | No | `medium` | Reasoning level, mapped per provider before it is sent; see below |
 | `attachments` | array | No | `[]` | Attachments, at most 5; see the table below |
 
@@ -344,7 +345,7 @@ Each event is formatted as `event: <name>\ndata: <JSON>\n\n`, in this order:
 | `token` | Answer text | `content` |
 | `sources` | After the answer | `sources` (deduplicated source names), `sources_detail` (see below) |
 | `done` | The assistant message has been saved; it is not saved when the conversation was deleted during the stream | `message_id` (`null` when not saved), `conversation_id`, `answer`, `sources`, `sources_detail`, `research_trace` (every `step_end` payload) |
-| `error` | An unexpected exception in the API layer | `detail` (a message with an error code), `error_id` |
+| `error` | An unexpected exception in the API layer | `detail` (a message with an error code), `error_id`, `request_id` |
 
 `sources_detail` lists only the entries the answer cites as `[n]`, in order of first citation; with no citations, `sources` and `sources_detail` are both empty. Fields depend on the source:
 
@@ -646,7 +647,7 @@ Rebuild the index from the documents in the database: every document is re-extra
 
 ```json
 {
-  "message": "索引重建成功（已用新配置重新分塊，並替缺少摘要的文件生成 AI 智能大綱）",
+  "message": "索引重建成功（已用新配置重新分塊，並替缺少摘要的文件生成 AI 智慧大綱）",
   "document_count": 6,
   "chunk_count": 214,
   "qa_pairs_detected": 0,
@@ -678,28 +679,30 @@ Register external HTTP APIs as tools the agent can call. Enabled tools are loade
 | `display_name` | string | Display name |
 | `description` | string | Purpose; it affects whether the model calls the tool |
 | `category` | string | Category, `custom_api` by default |
-| `method` | string | HTTP method |
+| `method` | string | HTTP method; any HTTP token works (for example OpenAPI 3.2's `QUERY` or a `PURGE` from `additionalOperations`); Arazzo workflow tools use `WORKFLOW` |
 | `url` | string | Full request URL, with path parameters written as `{name}` |
 | `base_url` / `path` | string | Base URL and path, combined when `url` is empty |
 | `headers` | object | Fixed request headers; responses show every header value as `••••••••` except `Accept`, `Accept-Encoding`, `Accept-Language`, `Cache-Control`, `Content-Type`, and `User-Agent` |
 | `auth_type` | string | `none`, `bearer`, `api_key`, `basic`, or `oauth2_client_credentials`; other values return `422` |
 | `auth_config` | object | Auth settings; see the table below. `token`, `key_value`, `password`, and `client_secret` are shown as `••••••••` in responses |
-| `body_content_type` | string | Request body format: `application/json` (default), `application/x-www-form-urlencoded`, or `multipart/form-data`; other values return `422` |
+| `body_content_type` | string | Media type of the request body, such as `application/json` (default), `application/merge-patch+json`, `application/x-www-form-urlencoded`, `multipart/form-data`, `application/xml`, or `text/plain`; anything not in `type/subtype` form returns `422` |
 | `parameters_schema` | object | JSON Schema of the parameters, used as the `parameters` the model sees; calls accept only the parameters declared in its `properties` |
 | `request_body_schema` | object | Request body structure; when it has `properties`, it is also used to check the fields of `request_body` |
-| `param_locations` | object | Where each parameter goes: `path`, `query`, `header`, or `body` |
+| `param_locations` | object | Where each parameter goes: `path`, `query`, `querystring`, `header`, `cookie`, or `body` |
+| `param_styles` | object | How each parameter is serialized (generated on import): `name` (the name actually sent, used when the argument was renamed to avoid a clash), `in`, `style`, `explode`, `allow_reserved`, `content_type` (parameters or body fields serialized as a media type), and `whole` (a `request_body` that replaces the whole body); the `$body` key can carry the XML root element name `xml_root`. Without it, OpenAPI defaults apply per location |
+| `workflow_definition` | object | Arazzo workflow tools only: the workflows, steps, and resolved operations parsed on import; see [4.10](#410-arazzo-workflow-tools) |
 | `response_mapping` | string | Reserved, currently unused |
 | `is_enabled` | boolean | Whether the tool is enabled |
 | `requires_approval` | boolean | Whether the asking user must approve in the chat before the agent calls it (see [2.9](#29-post-apichatapprovalsapproval_id)). When omitted on create or import it follows the method: `false` for `GET`, `HEAD`, and `OPTIONS`, `true` for everything else |
 | `timeout` | integer | Timeout in seconds, 15 by default |
-| `spec_version` | string | Source spec version, `manual` for hand-made tools |
+| `spec_version` | string | Source spec version: `swagger_2.0`, `openapi_3.0`, `openapi_3.1`, `openapi_3.2`, `arazzo_1.0`, `arazzo_1.1`, or `manual` for hand-made tools |
 | `created_at` / `updated_at` | string | Timestamps |
 | `credentials_unreadable` | boolean | Responses only: `true` when `headers` or `auth_config` cannot be decrypted with the current `TOOL_SECRETS_KEY`; the unreadable field is returned as `null` and must be entered again |
 
 | `auth_type` | `auth_config` fields |
 |---|---|
 | `bearer` | `token` |
-| `api_key` | `key_name` (default `X-API-Key`), `key_value`, `key_in` (`header` or `query`) |
+| `api_key` | `key_name` (default `X-API-Key`), `key_value`, `key_in` (`header`, `query`, or `cookie`) |
 | `basic` | `username`, `password` |
 | `oauth2_client_credentials` | `token_url`, `client_id`, `client_secret`, `scope`, `client_auth` (`basic` sends the client credentials with HTTP Basic, `post` puts them in the form body) |
 
@@ -707,7 +710,20 @@ Register external HTTP APIs as tools the agent can call. Enabled tools are loade
 
 **Credential encryption and masking**: `headers` and `auth_config` are encrypted with `TOOL_SECRETS_KEY` (Fernet) before they reach the database, and at startup the backend encrypts rows that earlier versions stored in plaintext. Admin API responses show `••••••••` in place of secret values (empty values are not masked), so a credential cannot be read back through the API once saved. On update, a `headers` or `auth_config` you send replaces the whole field, and keys whose value is still `••••••••` keep their stored value; if such a key has no stored value (including when the stored credentials cannot be decrypted), the API returns `400` `欄位 <name> 沒有已儲存的值，請輸入實際內容` ("field <name> has no stored value; enter the actual value"). After `TOOL_SECRETS_KEY` changes, stored credentials can no longer be decrypted (`credentials_unreadable` is `true`), and the tool cannot run until they are entered again: an agent call returns an error with an error ID, and the [test endpoint](#49-post-apiapi-toolstool_idtest) returns `400` `無法以目前的 TOOL_SECRETS_KEY 解密工具憑證，請重新輸入` ("stored tool credentials cannot be decrypted with the current TOOL_SECRETS_KEY; enter them again"); see [configuration reference: tool credential encryption](configuration_en.md#tool-credential-encryption) for the key and what it covers.
 
-**Parameter assembly**: parameters that appear as `{name}` in the URL or are located in `path` are substituted into the URL; `header` parameters go into headers, `query` parameters into the query string, and `body` parameters into the body. The body is sent as JSON, as a form (`application/x-www-form-urlencoded`), or as `multipart/form-data` fields (no files) according to `body_content_type`; in both form encodings, object and array values become JSON strings and booleans become `true` / `false`. Parameters without a location go into the body for `POST`, `PUT`, and `PATCH`, and into the query string otherwise. When `request_body` is located in `body` (for example when an imported request body is not an object with `properties`), the `request_body` passed by the model replaces the whole body whether it is an object, array, string, or number; when it is located elsewhere, only an object replaces the body.
+**Parameter assembly**: each parameter goes where `param_styles` (or, without it, `param_locations`) says, serialized by OpenAPI `style`/`explode`:
+
+| Location | Default style | Supported styles and results (for `color`) |
+|---|---|---|
+| `path` | `simple` | `simple`: `blue,black`, objects `R,100,G,200` (`R=100,G=200` when exploded); `label`: `.blue`; `matrix`: `;color=blue`. Every value is percent-encoded (`/`, `?`, `#`, and `%` included), and `.` or `..` is always rejected |
+| `query` | `form`, `explode: true` | `form`: arrays `color=blue&color=black` (`color=blue,black` unexploded), objects `R=100&G=200`; `spaceDelimited` (`%20`), `pipeDelimited` (`%7C`), `deepObject` (`color[R]=100`); `allow_reserved` keeps `:/?@!$'()*,;[]` unencoded; Swagger 2.0 `collectionFormat` maps `csv` to unexploded `form`, `ssv` to `spaceDelimited`, `pipes` to `pipeDelimited`, `tsv` to tab-separated, and `multi` to exploded `form` |
+| `querystring` | — (OpenAPI 3.2) | The value is the whole query string: with `application/x-www-form-urlencoded` an object is expanded field by field, other media types are encoded as one piece; it cannot be combined with fixed query parameters in the tool URL |
+| `header` | `simple` | Arrays `a,b`, objects `k,v` (`k=v` when exploded); parameters cannot set `Authorization`, `Content-Type`, `Accept`, `Cookie`, `Host`, `Content-Length`, or an admin-configured header, which returns `400` |
+| `cookie` | `form`, `explode: true` | Merged with an admin-configured `Cookie` header and a `key_in: cookie` API key into one `Cookie` header (`name=value; …`); 3.2's `style: cookie` skips percent-encoding |
+| `body` | — | Encoded by `body_content_type` |
+
+Parameters described with `content` (a JSON-family `content_type`) are turned into compact JSON before encoding. Booleans are always sent as `true` / `false`, and `null` query parameters are left out.
+
+The request body is encoded by `body_content_type`: the JSON family (`application/json`, `*/*+json`, and so on) is sent as compact JSON with the declared media type; `application/x-www-form-urlencoded` expands arrays and objects per the OpenAPI Encoding defaults (`form`, `explode: true`), sending a field as a JSON string when its `content_type` is JSON; `multipart/form-data` sends arrays as repeated parts with the same name and objects as `application/json` parts; XML media types turn objects into XML rooted at `xml_root` and send strings as is; `text/*` and other media types send the text. `GET`, `HEAD`, `OPTIONS`, and `TRACE` never send a body; other methods, `QUERY` and custom methods included, send one when there is a body. Parameters without a location go into the body for `POST`, `PUT`, and `PATCH` and into the query string for other methods. When `request_body` is marked `whole` (or is located in `body` with no `param_styles`), the `request_body` the model passes replaces the entire body, whether it is an object, array, string, or number.
 
 **Only declared parameters**: every parameter the caller (the agent or the [4.9](#49-post-apiapi-toolstool_idtest) test) passes must be listed in `parameters_schema.properties`; otherwise no request is sent and the result's `status_code` is `400` (`工具參數無效：未宣告的參數 …`, "invalid tool parameters: undeclared parameter …"). A tool that declares no parameters accepts none. `request_body` must be declared as well, and when `request_body_schema` has `properties` and `additionalProperties` is not `true`, the fields of the `request_body` object must be listed there too; undeclared fields are reported as `request_body.<field>`.
 
@@ -717,31 +733,46 @@ Register external HTTP APIs as tools the agent can call. Enabled tools are loade
 
 ### 4.1 POST /api/api-tools/parse-spec
 
-Parse an OpenAPI / Swagger spec (OAS 2.0, 3.0, 3.1) from JSON / YAML text or a spec URL.
+Parses an API description, passed as JSON / YAML text or a document URL. Supported formats:
+
+| Format | Versions | Imported as |
+|---|---|---|
+| Swagger / OpenAPI | 2.0 | One tool per operation |
+| OpenAPI | 3.0.0–3.0.4, 3.1.0–3.1.2, 3.2.0–3.2.1 | One tool per operation (including `trace` from 3.0 and 3.2's `query` and `additionalOperations`) |
+| Overlay | 1.0, 1.1, 1.2 | Applied to the spec before importing (see `overlays` below) |
+| Arazzo | 1.0, 1.1 | One tool per workflow; see [4.10](#410-arazzo-workflow-tools) |
+
+Swagger 1.x, documents without a version, and OpenAPI 3.3 or later (including 4.x) return `400` with the supported versions.
 
 | Field | Type | Required | Description |
 |---|---|---|---|
-| `spec_content_or_url` | string | Yes | Spec text, or a spec URL starting with `http://` or `https://` |
-| `default_base_url` | string | No | Overrides the server URL in the spec |
+| `spec_content_or_url` | string | Yes | The document text, or a URL starting with `http://` or `https://`. An Overlay with `extends` fetches the spec it points to and applies itself |
+| `default_base_url` | string | No | Replaces the spec's top-level server; path- and operation-level `servers` still win |
+| `overlays` | array | No | Overlay documents (text or URL, at most 10), applied in order before parsing; anything that is not an Overlay returns `400` |
 
-Spec URLs are SSRF-validated first (every hop is pinned to the validated IP) and fetched with a 10 MB limit, a 15-second timeout, and at most 5 redirects. YAML specs must not use aliases (`*alias`), or the request gets `400`: aliases are expanded during later processing, so a spec of a few KB could produce hundreds of MB of data.
+**Fetching and references**: document URLs and external reference documents are SSRF-validated (every hop is pinned to the validated IP), with a 10 MB limit per download, 30 MB in total, a 15-second timeout, and at most 5 redirects. When imported by URL, external `$ref`s (such as `schemas/pet.yaml#/Pet` or a path item `$ref`) are resolved against the document location (3.2's `$self`) and downloaded, at most 20 documents; pasted text cannot resolve relative references, which are listed in `warnings`. JSON Schema `$id`, `$anchor`, and `$defs` references from 3.1 on are resolved. YAML documents must not use aliases (`*alias`), or the request returns `400`: aliases are expanded one by one in later processing, so a spec of a few KB can grow to hundreds of MB.
 
-**Response**: `200 OK` with the parsed endpoints only, not the raw spec (the former `raw_spec` field has been removed)
+**Server URL**: the first entry of the operation-level, then path-level, then top-level `servers` (variables substituted with their `default`); relative URLs are completed from the document URL. A Swagger 2.0 spec without `host` takes the document URL's host, and without `schemes` its scheme (`https` preferred when listed). A URL that is still relative is listed in `warnings`.
+
+**Response**: `200 OK` with the parsed endpoints only, never the raw spec
 
 ```json
 {
   "status": "success",
   "data": {
-    "version": "openapi_3.0",
+    "kind": "openapi",
+    "version": "openapi_3.2",
+    "spec_version": "3.2.0",
     "title": "Pet Store",
     "description": "",
     "base_url": "https://api.example.com",
     "endpoints_count": 4,
+    "warnings": ["webhooks（1 個）是 API 主動呼叫外部的回呼，不會匯入成工具"],
     "endpoints": [
       {
         "name": "get_pet_by_id",
-        "display_name": "Get a pet",
-        "description": "Get a pet",
+        "display_name": "Find pet",
+        "description": "Find pet",
         "long_description": "",
         "method": "GET",
         "path": "/pets/{petId}",
@@ -751,35 +782,50 @@ Spec URLs are SSRF-validated first (every hop is pinned to the validated IP) and
         "body_content_type": "application/json",
         "auth_type": "api_key",
         "auth_config": {"key_name": "X-API-Key", "key_in": "header", "key_value": ""},
+        "headers": {},
         "param_locations": {"petId": "path"},
+        "param_styles": {"petId": {"name": "petId", "in": "path", "style": "simple", "explode": false, "allow_reserved": false}},
         "parameters_schema": {"type": "object", "properties": {"petId": {"type": "integer"}}, "required": ["petId"]},
         "function_definition": {"type": "function", "function": {"name": "get_pet_by_id", "...": "..."}},
+        "operation_id": "getPetById",
         "tags": ["pets"],
-        "spec_version": "openapi_3.0"
+        "deprecated": false,
+        "spec_version": "openapi_3.2",
+        "warnings": []
       }
     ]
   }
 }
 ```
 
-Tool names come from `operationId` (lowercased, with non-alphanumeric characters replaced by underscores); without an `operationId`, the method and path are combined, such as `get_pets_petid`.
+The tool name comes from `operationId` (lowercased, with non-alphanumerics turned into underscores); without one it is built from the method and path, such as `get_pets_petid`. Duplicate names within one spec get `_2`, `_3`, and so on.
 
-A request body that is an object with `properties` becomes one `body` parameter per field; any other type (an array, string, number, or object without `properties`) becomes a single `request_body` parameter located in `body` that keeps the full schema (such as an array's `items`). Swagger 2.0 `in: formData` parameters also become `body` parameters. Each `$ref` is expanded to its full structure wherever it is used; a reference that cycles back on the same reference path, and every reference past the first 200 (`MAX_OPENAPI_SCHEMA_REFS`) in one parameter or body schema, is replaced by an object schema holding only a description. Parameters (`components/parameters`, Swagger 2.0 `parameters`), request bodies (`components/requestBodies`), and security schemes (`securitySchemes` / `securityDefinitions`) given as a `$ref` are first followed to the object they point to (chained references included) and then handled by the usual rules.
+**Parameters**: path-level and operation-level parameters are merged by name plus location, with the operation level overriding the path level (`required` included). Same-named parameters in different locations are all kept; later ones are renamed `<name>_<location>`, and `name` in `param_styles` records the name actually sent. Header parameters named `Accept`, `Content-Type`, or `Authorization` are ignored, as the spec requires. Parameters described with `content` use the schema of the first media type and record `content_type`. Deprecated parameters and endpoints are marked in their descriptions.
 
-`body_content_type` is chosen from the spec's request body formats (for Swagger 2.0, the endpoint's `consumes`, or the spec's top-level `consumes` when the endpoint has none) in the order `application/json`, `application/x-www-form-urlencoded`, `multipart/form-data`; other formats (such as XML) fall back to JSON. `auth_type` and `auth_config` come from the endpoint's `security` (or the spec's top-level `security`) and `securitySchemes` (under `components` in 3.x) or `securityDefinitions` (2.0); only the settings are filled in, and credentials are left empty:
+**Request body**: the media type is picked in this order: the JSON family (including `*/*` and `application/*`), `application/x-www-form-urlencoded`, `multipart/form-data`, `text/*`, XML, then anything else, and `body_content_type` keeps the actual media type (such as `application/merge-patch+json`). An object body with `properties` turns each field into a `body` parameter (renamed `<field>_body` when it clashes with another parameter), with the Encoding Object's `contentType`, `style`, and `explode` recorded in `param_styles`; any other body becomes one `request_body` parameter. 3.2's `components.mediaTypes` references and the `itemSchema` of sequential media types are resolved. Swagger 2.0 `in: body` takes its media type from `consumes`; `in: formData` uses `multipart/form-data` when there is a `type: file` parameter and `consumes` otherwise.
 
-| Auth in the spec | `auth_type` | `auth_config` filled in |
+**Schema normalization**: schemas are turned into parameter schemas every provider accepts: `allOf` merges fields and required lists; a `oneOf`/`anyOf` of objects merges all fields, keeps only the fields every option requires, and names the options in the description, and a `discriminator` field becomes a required enum; a `type` array takes its first non-`null` type; `const` becomes a one-value `enum`; `prefixItems` becomes `items` by element type; `format`, numeric and length limits, `default`, `enum`, and `additionalProperties` are kept; `readOnly` fields are dropped from requests. From 3.1 on, keywords next to a `$ref` are merged in; 3.0 and 2.0 only keep a sibling `description`. Cycles on the same reference path, more than 200 references (`MAX_OPENAPI_SCHEMA_REFS`), or structures deeper than 32 levels are replaced with a description-only object.
+
+**Auth**: taken from the endpoint's `security` (or the top-level `security`) and `securitySchemes` (2.0's `securityDefinitions`), filling in settings only and leaving credentials empty. When several requirements are allowed, a scheme that needs no manual step is preferred; `{}` (no auth) is used when nothing else works.
+
+| Auth in the spec | `auth_type` | Notes |
 |---|---|---|
-| `apiKey` (`in` is `header` or `query`) | `api_key` | `key_name`, `key_in` |
+| `apiKey` (`in` is `header`, `query`, or `cookie`) | `api_key` | `key_name`, `key_in` |
 | `http` `basic`, 2.0 `basic` | `basic` | — |
 | `http` `bearer` | `bearer` | — |
-| `oauth2` `clientCredentials` flow, 2.0 `application` flow | `oauth2_client_credentials` | `token_url` (`tokenUrl`), `scope` (the scopes in the requirement, space-separated), `client_auth` `basic` |
-| `apiKey` with `in: cookie`, other OAuth flows, requirements that combine several schemes | `none` | — |
+| `oauth2` `clientCredentials` flow, 2.0 `application` flow | `oauth2_client_credentials` | `token_url`, `scope` (the requirement's scopes), `client_auth` set to `basic` |
+| `oauth2` `authorizationCode`, `implicit`, `password`, `deviceAuthorization` (2.0 `accessCode`), `openIdConnect` | `bearer` | These need user authorization, which AskMiao does not perform; `warnings` asks you to obtain an access token and enter it |
+| A requirement that needs several schemes at once | The first scheme | Other API key headers or cookies go into `headers` with empty values to fill in after import; other combinations cannot be applied together and are listed in `warnings` |
+| `mutualTLS`, other `http` schemes (such as `digest`) | `none` | Not supported; listed in `warnings` |
+
+`warnings` (for the document and for each endpoint) lists what could not be imported fully, such as unresolvable references, relative server URLs, binary bodies that can only be sent as text, `webhooks`, and the auth cases above.
 
 | Status | When |
 |---|---|
-| `400` | Invalid spec (including one that uses YAML aliases), unrecognized version, or an unreachable URL (the message is safe to show to users); a URL rejected by the SSRF guard only reports the rejection with an error code, and the full reason goes to the server log |
-| `500` | Any other unexpected exception; only an error code is returned |
+| `400` | Invalid document (including YAML aliases), an unsupported version, an invalid Overlay action, or an unreachable URL (the message can be shown to users); an SSRF rejection only states that it was blocked plus an error code, with the full reason in the server log |
+| `500` | Any other unexpected exception, with an error code only |
+
+**Overlay**: `actions` run in order, with `target` as an RFC 9535 JSONPath (filters and the `length`, `count`, `match`, `search`, and `value` functions included). `update` merges into objects (same-named fields merged recursively, arrays concatenated, primitives replaced), appends to arrays, or replaces primitives; `remove: true` deletes the selected nodes and wins over `update`; 1.1's `copy` merges the single selected source node into the targets; `components.actions` can be reused with `$ref`. Selecting nothing succeeds; mismatched kinds, mixed node kinds, or removing the whole document return `400`.
 
 ### 4.2 POST /api/api-tools/import
 
@@ -787,7 +833,7 @@ Bulk-import the endpoints selected from a parsed spec. Tools with the same name 
 
 | Field | Type | Required | Description |
 |---|---|---|---|
-| `tools` | array | Yes | Endpoints with the parsed fields: `name`, `display_name`, `description`, `method`, `path`, `full_url` (required), plus optional `base_url`, `headers`, `auth_type`, `auth_config`, `body_content_type`, `parameters_schema`, `request_body_schema`, `param_locations`, `spec_version` |
+| `tools` | array | Yes | Endpoints with the parsed fields: `name`, `display_name`, `description`, `method`, `path`, `full_url` (required), plus optional `base_url`, `headers`, `auth_type`, `auth_config`, `body_content_type`, `parameters_schema`, `request_body_schema`, `param_locations`, `param_styles`, `workflow_definition`, `requires_approval` (workflows only), and `spec_version` |
 | `global_base_url` | string | No | Used when an endpoint has no `base_url` |
 | `global_headers` | object | No | Shared headers; an endpoint's own header of the same name wins |
 | `global_auth_type` | string | No | Used when an endpoint's `auth_type` is empty or `none` |
@@ -795,7 +841,7 @@ Bulk-import the endpoints selected from a parsed spec. Tools with the same name 
 
 An endpoint's declared auth wins: the Bearer token in the frontend import dialog only goes into endpoints that declare no auth or declare Bearer, and credentials for other auth types are entered by editing the tool with 4.6 after import. An `auth_type` or `body_content_type` outside the allowed values returns `422`.
 
-Newly imported tools get `requires_approval` from their method (`true` for anything other than `GET`, `HEAD`, and `OPTIONS`). When an existing tool is overwritten, a tool that required approval keeps requiring it, stored `headers` are kept and only headers this import sends with a value are added or overridden (including `global_headers`); with the same auth type, `auth_config` is overridden only by fields this import sends with a value, and with a different auth type the new settings apply only if the tool had no auth or this import sends a credential such as a key, otherwise the stored auth is kept. Empty keys never overwrite stored credentials. Change tools afterwards with 4.6.
+Newly imported tools get `requires_approval` from their method (`true` for anything other than `GET`, `HEAD`, and `OPTIONS`); Arazzo workflows use the parsed `requires_approval` (`true` when any step uses a method other than `GET`, `HEAD`, or `OPTIONS`). When an existing tool is overwritten, a tool that required approval keeps requiring it, stored `headers` are kept and only headers this import sends with a value are added or overridden (including `global_headers`); with the same auth type, `auth_config` is overridden only by fields this import sends with a value, and with a different auth type the new settings apply only if the tool had no auth or this import sends a credential such as a key, otherwise the stored auth is kept. Empty keys never overwrite stored credentials. Change tools afterwards with 4.6.
 
 ```json
 {
@@ -867,6 +913,23 @@ Send one real request with the given arguments.
 - Other failures report `status_code` `500` with only `error` (including an error code) and `error_id`.
 - Custom API tools, the MCP HTTP transport, and `web_fetch`'s direct fetches ignore the `HTTP_PROXY` and `HTTPS_PROXY` environment variables and always connect directly.
 - Agent calls run the same code; when `requires_approval` is `true` they need the user's approval first, while this admin test endpoint does not.
+- For an Arazzo workflow tool, `result` is `{"status_code": 200 or 502, "is_success", "duration_seconds", "workflow", "outputs", "steps": [{"workflow", "step", "status_code", "success", "url", "error"}], "error"}`; see 4.10.
+
+### 4.10 Arazzo workflow tools
+
+Importing an Arazzo 1.0/1.1 document turns each workflow into one tool (named `workflow_<workflowId>`) whose parameters are the workflow `inputs` (JSON Schema 2020-12). Sources in `sourceDescriptions` with `type: openapi` are downloaded and parsed by the rules in 4.1 (relative URLs resolve against the Arazzo document URL); `asyncapi` and `arazzo` sources and AsyncAPI message steps are not supported, are listed in `warnings`, and make the steps that use them fail at run time.
+
+Steps run in order, each through the same SSRF validation, redirect rules, response limits, and credential redaction as a plain tool, using the tool's `headers`, `auth_type`, and `auth_config` (taken from the first step's operation; steps with different auth are listed in `warnings`):
+
+- **Step targets**: `operationId` (optionally prefixed with `$sourceDescriptions.<source>.`), `operationPath` (`{$sourceDescriptions.<source>.url}#/paths/~1…/<method>`), or a `workflowId` in the same document (a nested workflow, at most 5 levels deep).
+- **Parameters and body**: workflow and step `parameters` are merged (the step wins, and `$components.parameters` can be reused with an overriding `value`), matched to the operation's parameters by name and location, and serialized with their style; runtime expressions and `{$…}` embeds in `requestBody.payload` are substituted, `replacements` (JSON Pointer or JSONPath) are applied, and the payload is sent as the whole body.
+- **Runtime expressions**: `$url`, `$method`, `$statusCode`, `$self`, `$request.header|query|path|body`, `$response.header|body` (with an optional `#/JSON Pointer`), `$inputs`, `$outputs`, `$steps.<id>.outputs`, `$workflows.<id>.inputs|outputs`, `$sourceDescriptions.<source>.url`, and `$components.<kind>.<name>`; Selector Objects support `jsonpath` and `jsonpointer`.
+- **Success criteria**: a step succeeds when every `successCriteria` entry holds, or on a 2xx status when there are none. `simple` conditions support `== != < <= > >= ! && || ()` plus `[n]` and `.field`, with case-insensitive string comparison; `regex` matches the first 20,000 characters of the context; `jsonpath` queries the context with RFC 9535 and holds when the result is non-empty; `xpath` is not supported and never holds.
+- **Next actions**: `onSuccess`/`onFailure` (falling back to the workflow's `successActions`/`failureActions`) use the first action whose criteria hold: `end` stops, `goto` jumps to a step or runs another workflow, and `retry` waits `retryAfter` seconds (a numeric `Retry-After` response header wins, capped at 30 seconds) and retries, at most `retryLimit` times (default 1), after which the next action is considered. A failure with no usable action fails the workflow.
+- **Limits**: at most 50 step runs per execution (retries and `goto` included, which stops loops) and 300 seconds in total; a step's `timeout` (milliseconds) replaces the tool timeout.
+- **Output**: a successful run returns the workflow `outputs`; `steps` lists every step call in order, and `dependsOn` workflows run first.
+
+The approval card lists every step's method and host, for example `Arazzo 工作流程：GET api.example.com、POST api.example.com`.
 
 ---
 
@@ -1096,17 +1159,9 @@ Sets script execution and which accounts may use the skill; send only the fields
 
 ---
 
-## 7. Model lists `/api/tags`
+## 7. Model lists (removed)
 
-A model list in the Ollama `tags` format; no sign-in is required. The former `GET /api/external-tags` has been removed.
-
-### 7.1 GET /api/tags
-
-Returns the system model list and default model configured in `.env` (see [Configuration: model list](configuration_en.md#model-list)), under the field `tags`; chat does not use this list, see [2.2](#22-get-apichatmodels) for the models an account may use. With no model source configured (`AVAILABLE_MODELS` or a cloud key), it queries the remote list at `EXTERNAL_TAGS_URL` (or `{LLM_API_BASE}/api/tags`) and returns an empty list if that fails. The remote query runs in a worker thread, its result (failures included) is cached for 30 seconds, and only one query runs at a time, so anonymous requests do not trigger an outbound call each time.
-
-```json
-{"tags": ["gpt-6-sol", "gpt-6-luna"], "default": "gpt-6-sol"}
-```
+`GET /api/tags` has been removed: it only returned the system model list configured in `.env`, and `.env` no longer configures any provider. See [2.2](#22-get-apichatmodels) for the models an account can use and [8.6](#86-system-models) for the models used by document summaries and PDF OCR.
 
 ---
 
@@ -1215,7 +1270,18 @@ Connections created by admins and granted to accounts; the fields match the [con
 - `PUT /api/admin/llm-connections/{connection_id}`: updates only the fields sent; `allowed_user_ids` follows the same rule.
 - `DELETE /api/admin/llm-connections/{connection_id}`: deletes the connection for every account.
 
-The API address of a shared connection is not limited to public addresses and may point at the internal network (for example a local Ollama). Creating, updating, and deleting one writes `ADMIN_LLM_CONNECTION_*` to the security log.
+The API address of a shared connection is not limited to public addresses and may point at the internal network (for example a local Ollama). Creating, updating, and deleting one writes `ADMIN_LLM_CONNECTION_*` to the security log. When an update drops the model a system model uses, or the connection is deleted, that purpose is cleared as well (see 8.6).
+
+### 8.6 System models
+
+Document summaries and OCR of scanned PDFs call a model on the system's behalf; each purpose names one shared connection and one of its models (see [Configuration: system models](configuration_en.md#system-models)).
+
+- `GET /api/admin/system-models`: `{"document_summary": choice, "pdf_ocr": choice}`, where a choice is `{"connection_id": 1, "model_name": "gemma3:12b", "reasoning_effort": "none"}` or `null` (not chosen).
+- `PUT /api/admin/system-models`: the body has the same shape as the response, and both keys are required (`422` when one is missing); `null` clears that purpose. All three fields of a choice are required, and `reasoning_effort` must be one of `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max` (`422` otherwise). If a connection does not exist, is not a shared connection, or does not offer the model, the request returns `400` and neither purpose changes. On success it returns the new choices and writes `ADMIN_SYSTEM_MODELS_UPDATED` to the security log.
+
+```json
+{"document_summary": {"connection_id": 3, "model_name": "qwen3:8b", "reasoning_effort": "none"}, "pdf_ocr": null}
+```
 
 ---
 
@@ -1257,6 +1323,8 @@ Unexpected server exceptions **never** return exception messages or stack traces
 }
 ```
 
+Every response carries an `X-Request-ID` header, and the chat stream's `error` event and the tool list's `partial` response also include the same `request_id`. Once the error code leads you to a log line, search for the request ID in that line's brackets to see the request's access entry and its model and tool calls (see [Architecture: logging](architecture_en.md#logging-and-request-tracing)).
+
 Validation errors that only describe the user's own input (such as an invalid OpenAPI spec) return an actionable message instead. SSRF rejection reasons can contain intranet IPs resolved on the server or redirect targets, so `parse-spec`, custom API tools, and `web_fetch` only report "SSRF 防護拒絕連線" (connection rejected by the SSRF guard) with an error code, and the full reason goes to the server log.
 
 ### Common status codes
@@ -1284,7 +1352,6 @@ Every response carries `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY
 
 The current state, worth knowing when integrating:
 
-- `GET /api/tags` requires no sign-in (`GET /api/chat/models` and `GET /api/chat/tools` now do). Restrict it at the reverse proxy when deploying on a public network.
 - `expires_in` in token responses is always `1800`, regardless of `ACCESS_TOKEN_EXPIRE_MINUTES`.
 - The token revocation list, rate limit counters, login throttling counts and pauses, per-user concurrent streams, and pending tool approvals live in one backend process's memory; they are not shared across processes or hosts and are cleared on restart (which also lifts any login pause). Rate limiting tracks at most 10,000 source IPs and evicts the least recently active first; login throttling likewise tracks at most 10,000 login identifiers and 10,000 source IPs and evicts those that have gone longest without a new failure first.
 - Rate limiting and login throttling both work per source IP: without `FORWARDED_ALLOW_IPS`, every user who connects through the Vite dev proxy or a reverse proxy shares one source IP, so they share the rate limit and their failed logins add up toward the per-address threshold; once it is reached, every login through that proxy is paused.

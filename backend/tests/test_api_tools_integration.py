@@ -33,7 +33,7 @@ paths:
           required: true
           type: string
 """
-    parsed = await OpenApiParser.parse(oas2_yaml)
+    parsed = await OpenApiParser.parse(oas2_yaml, None, [])
     assert len(parsed["endpoints"]) == 1
     endpoint = parsed["endpoints"][0]
     db = SessionLocal()

@@ -5,13 +5,15 @@ import time
 import shutil
 import logging
 from ..types import Document
-from ..tokenizers import get_chinese_analyzer, tokenizer_signature, HAS_WHOOSH
+from ..tokenizers import get_chinese_analyzer, get_han_ngram_analyzer, tokenizer_signature, HAS_WHOOSH
 
 logger = logging.getLogger(__name__)
 
 # 建立索引時的斷詞簽章；與目前設定不同時，索引裡的詞項已不可信，需重建
 SIGNATURE_FILENAME = "tokenizer_signature.json"
 WRITE_ATTEMPTS = 3
+HAN_NGRAM_FIELDS = {"han_unigrams": 1, "han_bigrams": 2}
+QUERY_FIELDS = ("content",) + tuple(HAN_NGRAM_FIELDS)
 
 if HAS_WHOOSH:
     from whoosh import fields, scoring
@@ -48,7 +50,8 @@ class BM25StoreManager:
             content=fields.TEXT(stored=True, analyzer=analyzer),
             title=fields.TEXT(stored=True),
             source=fields.TEXT(stored=True),
-            chunk_index=fields.NUMERIC(stored=True)
+            chunk_index=fields.NUMERIC(stored=True),
+            **{name: fields.TEXT(analyzer=get_han_ngram_analyzer(size)) for name, size in HAN_NGRAM_FIELDS.items()}
         )
 
     def load_index(self) -> None:
@@ -138,7 +141,8 @@ class BM25StoreManager:
                     content=chunk.page_content,
                     title=chunk.metadata.get("source", ""),
                     source=chunk.metadata.get("source", ""),
-                    chunk_index=chunk.metadata.get("chunk_index", 0)
+                    chunk_index=chunk.metadata.get("chunk_index", 0),
+                    **{name: chunk.page_content for name in HAN_NGRAM_FIELDS}
                 )
 
         self._write(apply, "add")
@@ -160,11 +164,14 @@ class BM25StoreManager:
             return []
 
         try:
-            content_field = self.bm25_index.schema["content"]
-            terms = list(dict.fromkeys(content_field.process_text(query, mode="query")))
+            terms = [
+                Term(field_name, term)
+                for field_name in QUERY_FIELDS
+                for term in dict.fromkeys(self.bm25_index.schema[field_name].process_text(query, mode="query"))
+            ]
             if not terms:
                 return []
-            query_obj = Or([Term("content", term) for term in terms])
+            query_obj = Or(terms)
             id_filter = None if chunk_ids is None else Or([Term("doc_id", str(chunk_id)) for chunk_id in chunk_ids])
             results = self.bm25_searcher.search(query_obj, limit=top_k, filter=id_filter)
 

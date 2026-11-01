@@ -11,6 +11,7 @@ from app.core.limits import (
     MAX_CHAT_ATTACHMENTS_TOTAL_BYTES,
     MAX_CHAT_MESSAGE_CHARS,
 )
+from app.core.llm_client import REASONING_EFFORT_VALUES
 from .database import Base
 class User(Base):
     __tablename__ = "users"
@@ -93,6 +94,8 @@ class CustomApiTool(Base):
     parameters_schema = Column(Text, nullable=True)
     request_body_schema = Column(Text, nullable=True)
     param_locations = Column(Text, nullable=True)
+    param_styles = Column(Text, nullable=True)
+    workflow_definition = Column(Text, nullable=True)
     body_content_type = Column(String, nullable=True)
     response_mapping = Column(Text, nullable=True)
     is_enabled = Column(Boolean, default=True)
@@ -163,8 +166,19 @@ class LlmConnection(Base):
     allowed_user_ids = Column(Text, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class SystemModel(Base):
+    __tablename__ = "system_models"
+    purpose = Column(String, primary_key=True)
+    connection_id = Column(Integer, ForeignKey("llm_connections.id"), nullable=False, index=True)
+    model_name = Column(String, nullable=False)
+    reasoning_effort = Column(String, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 LLM_PROVIDER_PATTERN = r"^(openai|anthropic|gemini|foundry|ollama)$"
 MAX_LLM_CONNECTION_MODELS = 50
+SYSTEM_MODEL_PURPOSES = ("document_summary", "pdf_ocr")
+REASONING_EFFORT_PATTERN = f"^({'|'.join(REASONING_EFFORT_VALUES)})$"
 
 
 class LlmConnectionValidator(BaseModel):
@@ -233,6 +247,17 @@ class LlmModelDiscoveryRequest(LlmConnectionValidator):
     api_base: str = Field(max_length=500)
     api_key: Optional[str] = Field(default=None, min_length=1, max_length=1000)
     connection_id: Optional[int] = None
+
+
+class SystemModelAssignment(BaseModel):
+    connection_id: int
+    model_name: str = Field(min_length=1, max_length=200)
+    reasoning_effort: str = Field(pattern=REASONING_EFFORT_PATTERN)
+
+
+class SystemModelsUpdate(BaseModel):
+    document_summary: Optional[SystemModelAssignment]
+    pdf_ocr: Optional[SystemModelAssignment]
 class UserCreate(BaseModel):
     username: str
     email: str
@@ -313,6 +338,7 @@ class ChatResponse(BaseModel):
     message: MessageResponse
     conversation_id: int
 BODY_CONTENT_TYPES = ("application/json", "application/x-www-form-urlencoded", "multipart/form-data")
+MEDIA_TYPE_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9!#$&^_.+-]{0,126}/[A-Za-z0-9][A-Za-z0-9!#$&^_.+-]{0,126}$")
 OAUTH2_CLIENT_CREDENTIALS = "oauth2_client_credentials"
 AUTH_TYPES = ("none", "bearer", "api_key", "basic", OAUTH2_CLIENT_CREDENTIALS)
 
@@ -321,8 +347,8 @@ class ApiToolOptionsValidator(BaseModel):
     @field_validator("body_content_type", check_fields=False)
     @classmethod
     def _validate_body_content_type(cls, value: Optional[str]) -> Optional[str]:
-        if value is not None and value not in BODY_CONTENT_TYPES:
-            raise ValueError(f"body_content_type 只能是 {', '.join(BODY_CONTENT_TYPES)}")
+        if value is not None and not MEDIA_TYPE_PATTERN.match(value):
+            raise ValueError("body_content_type 必須是媒體型別，例如 application/json、application/merge-patch+json、application/xml")
         return value
 
     @field_validator("auth_type", check_fields=False)
@@ -348,6 +374,7 @@ class CustomApiToolCreate(ApiToolOptionsValidator):
     parameters_schema: Optional[Dict[str, Any]] = None
     request_body_schema: Optional[Dict[str, Any]] = None
     param_locations: Optional[Dict[str, str]] = None
+    param_styles: Optional[Dict[str, Dict[str, Any]]] = None
     body_content_type: Optional[str] = None
     response_mapping: Optional[str] = None
     is_enabled: Optional[bool] = True
@@ -370,6 +397,7 @@ class CustomApiToolUpdate(ApiToolOptionsValidator):
     parameters_schema: Optional[Dict[str, Any]] = None
     request_body_schema: Optional[Dict[str, Any]] = None
     param_locations: Optional[Dict[str, str]] = None
+    param_styles: Optional[Dict[str, Dict[str, Any]]] = None
     body_content_type: Optional[str] = None
     response_mapping: Optional[str] = None
     is_enabled: Optional[bool] = None
@@ -391,6 +419,8 @@ class CustomApiToolResponse(BaseModel):
     parameters_schema: Optional[Dict[str, Any]] = None
     request_body_schema: Optional[Dict[str, Any]] = None
     param_locations: Optional[Dict[str, str]] = None
+    param_styles: Optional[Dict[str, Dict[str, Any]]] = None
+    workflow_definition: Optional[Dict[str, Any]] = None
     body_content_type: Optional[str] = None
     response_mapping: Optional[str] = None
     is_enabled: bool
@@ -402,6 +432,7 @@ class CustomApiToolResponse(BaseModel):
 class OpenApiParseRequest(BaseModel):
     spec_content_or_url: str
     default_base_url: Optional[str] = None
+    overlays: List[str] = Field(default_factory=list, max_length=10)
 class OpenApiImportItem(ApiToolOptionsValidator):
     name: str
     display_name: str
@@ -416,6 +447,9 @@ class OpenApiImportItem(ApiToolOptionsValidator):
     parameters_schema: Optional[Dict[str, Any]] = None
     request_body_schema: Optional[Dict[str, Any]] = None
     param_locations: Optional[Dict[str, str]] = None
+    param_styles: Optional[Dict[str, Dict[str, Any]]] = None
+    workflow_definition: Optional[Dict[str, Any]] = None
+    requires_approval: Optional[bool] = None
     body_content_type: Optional[str] = None
     spec_version: Optional[str] = None
 class OpenApiImportRequest(BaseModel):

@@ -46,29 +46,38 @@ const ToolApprovalCard: React.FC<ToolApprovalCardProps> = ({ approval }) => {
   return (
     <div className={styles.card} role="group" aria-label="工具執行確認">
       <div className={styles.header}>
-        <Icon name="warning" size={16} />
+        <Icon name="warning" size={16} className={styles.headerIcon} />
         <span>AI 想執行外部工具，需要你確認</span>
       </div>
-      <div className={styles.toolName}>{approval.tool_display_name}</div>
-      <div className={styles.target}>
-        送往：<code>{approval.target}</code>
+      <dl className={styles.summary}>
+        <div className={styles.summaryRow}>
+          <dt>工具</dt>
+          <dd className={styles.toolName}>{approval.tool_display_name}</dd>
+        </div>
+        <div className={styles.summaryRow}>
+          <dt>送往</dt>
+          <dd><code className={styles.target}>{approval.target}</code></dd>
+        </div>
+      </dl>
+      <div className={styles.argumentsSection}>
+        <p className={styles.sectionLabel}>參數</p>
+        {entries.length === 0 ? (
+          <p className={styles.noArguments}>（沒有參數）</p>
+        ) : (
+          <dl className={styles.arguments}>
+            {entries.map(([name, value]) => (
+              <div key={name} className={styles.argument}>
+                <dt>{revealHiddenCharacters(name)}</dt>
+                <dd>{formatValue(value)}</dd>
+              </div>
+            ))}
+          </dl>
+        )}
       </div>
-      {entries.length === 0 ? (
-        <p className={styles.noArguments}>（沒有參數）</p>
-      ) : (
-        <dl className={styles.arguments}>
-          {entries.map(([name, value]) => (
-            <div key={name} className={styles.argument}>
-              <dt>{revealHiddenCharacters(name)}</dt>
-              <dd>{formatValue(value)}</dd>
-            </div>
-          ))}
-        </dl>
-      )}
       <p className={styles.hint}>
         此工具可能會修改外部系統的資料。請逐一確認上方每個參數與送出位置再核准；以 ⟦U+…⟧ 標示的是原本看不見的控制字元。未回應會在 5 分鐘後視為拒絕。
       </p>
-      {error && <p className={styles.error}>{error}</p>}
+      {error && <p className={styles.error} role="alert">{error}</p>}
       <div className={styles.actions}>
         <Button size="sm" variant="outline" onClick={() => decide(false)} disabled={submitting !== null} loading={submitting === 'deny'}>
           拒絕

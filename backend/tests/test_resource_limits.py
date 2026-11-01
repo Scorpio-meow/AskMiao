@@ -25,7 +25,6 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from app.api import chat as chat_api
-from app.api import tags as tags_api
 from app.api.documents import split_faq
 from app.core import body_limit
 from app.core.body_limit import RequestBodyLimitMiddleware
@@ -310,11 +309,12 @@ async def test_attachment_parsing_runs_off_the_event_loop(monkeypatch):
     loop_thread = threading.get_ident()
     seen = {}
 
-    def fake_extract(fname, ftype, url):
+    def fake_extract(fname, ftype, url, ocr):
         seen["thread"] = threading.get_ident()
         return "附件內容" * 100000
 
     monkeypatch.setattr(agent_module, "_extract_attachment_text", fake_extract)
+    monkeypatch.setattr(agent_module, "_attachment_ocr", lambda: None)
 
     async def fake_chat_completion(messages, **kwargs):
         seen["user_content"] = messages[-1]["content"]
@@ -343,7 +343,6 @@ def blank_pdf(tmp_path, pages, size=(595, 842)):
 
 def test_ocr_rendering_is_single_threaded_pixel_bounded_and_page_capped(monkeypatch, tmp_path):
     monkeypatch.setattr(pdf_service, "MAX_OCR_PIXELS", 40_000)
-    monkeypatch.setattr(PDFService, "_is_vision_available", classmethod(lambda cls: True))
     main_thread = threading.get_ident()
     rendered = []
     original_render = PDFService._render_page_png.__func__
@@ -356,9 +355,9 @@ def test_ocr_rendering_is_single_threaded_pixel_bounded_and_page_capped(monkeypa
 
     ocr_calls = []
     monkeypatch.setattr(PDFService, "_render_page_png", classmethod(recording_render))
-    monkeypatch.setattr(PDFService, "_ocr_page_sync", classmethod(lambda cls, img, page_num: ocr_calls.append(page_num) or f"第{page_num}頁文字"))
+    monkeypatch.setattr(PDFService, "_ocr_page_sync", classmethod(lambda cls, ocr, img, page_num: ocr_calls.append(page_num) or f"第{page_num}頁文字"))
 
-    text = PDFService.extract_text_robust(blank_pdf(tmp_path, 5, size=(14400, 14400)), max_ocr_pages=2)
+    text = PDFService.extract_text_robust(blank_pdf(tmp_path, 5, size=(14400, 14400)), max_ocr_pages=2, ocr=lambda png: "")
 
     assert sorted(ocr_calls) == [1, 2]
     assert [thread for thread, _ in rendered] == [main_thread, main_thread]
@@ -389,7 +388,7 @@ def write_zip(path, members):
 def test_ooxml_decompression_bomb_is_rejected(tmp_path):
     path = write_zip(tmp_path / "bomb.docx", {"[Content_Types].xml": "<Types/>", "word/document.xml": b"\0" * (64 * MIB)})
     with pytest.raises(DocumentLimitExceeded, match="壓縮"):
-        DocumentProcessor.extract_text_from_file(path, DOCX_TYPE, ADMIN_UPLOAD_EXTRACTION_LIMITS)
+        DocumentProcessor.extract_text_from_file(path, DOCX_TYPE, ADMIN_UPLOAD_EXTRACTION_LIMITS, None)
 
 
 def test_ooxml_ratio_is_checked_across_small_members(tmp_path):
@@ -399,7 +398,7 @@ def test_ooxml_ratio_is_checked_across_small_members(tmp_path):
     path = write_zip(tmp_path / "split.docx", members)
     for limits in (ADMIN_UPLOAD_EXTRACTION_LIMITS, CHAT_ATTACHMENT_EXTRACTION_LIMITS):
         with pytest.raises(DocumentLimitExceeded, match="壓縮"):
-            DocumentProcessor.extract_text_from_file(path, DOCX_TYPE, limits)
+            DocumentProcessor.extract_text_from_file(path, DOCX_TYPE, limits, None)
 
 
 def test_attachment_xml_budget_follows_content_types(tmp_path):
@@ -407,7 +406,7 @@ def test_attachment_xml_budget_follows_content_types(tmp_path):
     xml_body = ("<w:p>" + "段落文字" * 1000 + "</w:p>").encode()
     renamed = write_zip(tmp_path / "renamed.docx", {"[Content_Types].xml": CONTENT_TYPES_XML, "word/body.bin": xml_body})
     with pytest.raises(DocumentLimitExceeded, match="XML"):
-        DocumentProcessor.extract_text_from_file(renamed, DOCX_TYPE, limits)
+        DocumentProcessor.extract_text_from_file(renamed, DOCX_TYPE, limits, None)
     # 圖片等非 XML 部件只占記憶體一次，不計入 DOM 預算；串流讀取的 xlsx 也不套用
     media = write_zip(tmp_path / "media.docx", {"[Content_Types].xml": CONTENT_TYPES_XML, "word/media/image1.png": xml_body})
     DocumentProcessor._check_ooxml_archive(media, limits, builds_dom=True)
@@ -424,16 +423,16 @@ def test_ooxml_member_count_is_bounded(tmp_path):
     members.update({f"ppt/slides/slide{index}.xml": "<p/>" for index in range(3)})
     path = write_zip(tmp_path / "many.pptx", members)
     with pytest.raises(DocumentLimitExceeded, match="檔案數"):
-        DocumentProcessor.extract_text_from_file(path, "application/vnd.openxmlformats-officedocument.presentationml.presentation", limits)
+        DocumentProcessor.extract_text_from_file(path, "application/vnd.openxmlformats-officedocument.presentationml.presentation", limits, None)
 
 
 def test_structured_parse_budget_skips_json_loads(tmp_path):
     path = tmp_path / "posts.json"
     path.write_text('[{"author": "喵", "content": "第一則"}]', encoding="utf-8")
-    structured = DocumentProcessor.extract_text_from_file(str(path), "application/json", ADMIN_UPLOAD_EXTRACTION_LIMITS)
+    structured = DocumentProcessor.extract_text_from_file(str(path), "application/json", ADMIN_UPLOAD_EXTRACTION_LIMITS, None)
     assert structured.startswith("[記錄 1]")
     raw = DocumentProcessor.extract_text_from_file(
-        str(path), "application/json", replace(CHAT_ATTACHMENT_EXTRACTION_LIMITS, max_structured_parse_chars=10)
+        str(path), "application/json", replace(CHAT_ATTACHMENT_EXTRACTION_LIMITS, max_structured_parse_chars=10), None
     )
     assert raw.startswith("[{")
 
@@ -443,7 +442,7 @@ def test_attachment_over_budget_is_reported_instead_of_parsed(monkeypatch, tmp_p
     path = write_zip(tmp_path / "a.docx", {"[Content_Types].xml": CONTENT_TYPES_XML, "word/body.bin": "<w:p/>"})
     with open(path, "rb") as handle:
         url = f"data:{DOCX_TYPE};base64," + base64.b64encode(handle.read()).decode()
-    text = agent_module._extract_attachment_text("a.docx", DOCX_TYPE, url)
+    text = agent_module._extract_attachment_text("a.docx", DOCX_TYPE, url, None)
     assert text.startswith("[附件超過解析上限") and "檔案數" in text
 
 
@@ -453,7 +452,7 @@ def test_rejected_attachment_is_reported_to_the_model(monkeypatch):
 
     monkeypatch.setattr(DocumentProcessor, "extract_text_from_file", reject)
     url = "data:application/pdf;base64," + base64.b64encode(b"%PDF-1.7").decode()
-    assert agent_module._extract_attachment_text("scan.pdf", "application/pdf", url) == "[附件未讀取內容：PDF 文件中沒有可提取的文字]"
+    assert agent_module._extract_attachment_text("scan.pdf", "application/pdf", url, None) == "[附件未讀取內容：PDF 文件中沒有可提取的文字]"
 
 
 @pytest.mark.anyio
@@ -464,7 +463,7 @@ async def test_attachment_extractions_are_bounded_process_wide(monkeypatch):
     lock = threading.Lock()
     running = {"now": 0, "peak": 0}
 
-    def slow_extract(fname, ftype, url):
+    def slow_extract(fname, ftype, url, ocr):
         with lock:
             running["now"] += 1
             running["peak"] = max(running["peak"], running["now"])
@@ -477,6 +476,7 @@ async def test_attachment_extractions_are_bounded_process_wide(monkeypatch):
         return {"role": "assistant", "content": "好"}
 
     monkeypatch.setattr(agent_module, "_extract_attachment_text", slow_extract)
+    monkeypatch.setattr(agent_module, "_attachment_ocr", lambda: None)
     monkeypatch.setattr(agent_module, "chat_completion", fake_chat_completion)
     registry = ResearchToolRegistry()
     monkeypatch.setattr(registry, "get_tool_definitions", lambda user_id=None: [])
@@ -544,13 +544,3 @@ async def test_filter_records_bounds_date_range_and_limit():
     assert result["returned_count"] <= 50
     too_long = await registry.filter_and_count_records(date_range="2026-08-01 " * 100)
     assert "error" in too_long
-
-
-@pytest.mark.anyio
-async def test_remote_model_list_is_cached(monkeypatch):
-    calls = []
-    monkeypatch.setattr(tags_api, "_remote_models_cache", None)
-    monkeypatch.setattr(tags_api, "_fetch_remote_models", lambda: calls.append(1) or (["m1"], "m1"))
-    results = await asyncio.gather(*[tags_api.fetch_remote_models_cached() for _ in range(10)])
-    assert all(result == (["m1"], "m1") for result in results)
-    assert len(calls) == 1

@@ -41,7 +41,7 @@ def blocks(result):
 def extract_file(tmp_path, name, content):
     path = tmp_path / name
     path.write_text(content, encoding="utf-8")
-    return DocumentProcessor.extract_document(str(path), "", ADMIN_UPLOAD_EXTRACTION_LIMITS)
+    return DocumentProcessor.extract_document(str(path), "", ADMIN_UPLOAD_EXTRACTION_LIMITS, None)
 
 
 def test_json_array_keeps_nested_fields_and_original_keys():
@@ -230,7 +230,7 @@ def test_xlsx_rows_use_sheet_names_column_letters_and_iso_dates(tmp_path):
     path = tmp_path / "staff.xlsx"
     workbook.save(path)
 
-    result = DocumentProcessor.extract_document(str(path), "", ADMIN_UPLOAD_EXTRACTION_LIMITS)
+    result = DocumentProcessor.extract_document(str(path), "", ADMIN_UPLOAD_EXTRACTION_LIMITS, None)
 
     assert result.kind == "xlsx"
     assert blocks(result) == [
@@ -250,7 +250,7 @@ def test_pptx_text_inside_groups_and_speaker_notes_is_extracted(tmp_path):
     path = tmp_path / "grouped.pptx"
     presentation.save(path)
 
-    result = DocumentProcessor.extract_document(str(path), "", ADMIN_UPLOAD_EXTRACTION_LIMITS)
+    result = DocumentProcessor.extract_document(str(path), "", ADMIN_UPLOAD_EXTRACTION_LIMITS, None)
 
     assert result.text == "--- 投影片 1 ---\n群組內的標題\n巢狀群組的內容\n備忘稿：講者備忘"
 
@@ -265,7 +265,7 @@ def test_docx_tables_stay_under_their_headings(tmp_path):
     path = tmp_path / "handbook.docx"
     document.save(path)
 
-    result = DocumentProcessor.extract_document(str(path), "", ADMIN_UPLOAD_EXTRACTION_LIMITS)
+    result = DocumentProcessor.extract_document(str(path), "", ADMIN_UPLOAD_EXTRACTION_LIMITS, None)
 
     assert result.text == "一、加班費率\n平日 | 1.34 倍\n二、請假規定"
 

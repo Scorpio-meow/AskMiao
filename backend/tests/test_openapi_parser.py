@@ -25,7 +25,7 @@ paths:
         200:
           description: OK
 """
-    res2 = await OpenApiParser.parse(oas2_yaml)
+    res2 = await OpenApiParser.parse(oas2_yaml, None, [])
     assert res2["version"] == "swagger_2.0"
     assert res2["base_url"] == "https://petstore.swagger.io/v2"
     assert len(res2["endpoints"]) == 1
@@ -58,7 +58,7 @@ paths:
               required:
                 - username
 """
-    res3 = await OpenApiParser.parse(oas3_yaml)
+    res3 = await OpenApiParser.parse(oas3_yaml, None, [])
     assert res3["version"] == "openapi_3.0"
     assert res3["base_url"] == "https://api.example.com/v3"
     assert len(res3["endpoints"]) == 1
@@ -95,7 +95,7 @@ paths:
                     - number
                     - 'null'
 """
-    res31 = await OpenApiParser.parse(oas31_yaml)
+    res31 = await OpenApiParser.parse(oas31_yaml, None, [])
     assert res31["version"] == "openapi_3.1"
     assert res31["base_url"] == "https://api.v31.com"
     assert len(res31["endpoints"]) == 1
@@ -117,9 +117,9 @@ x-copy: *info
 paths: {}
 """
     with pytest.raises(SafeClientError, match="別名"):
-        await OpenApiParser.parse(spec_with_alias)
+        await OpenApiParser.parse(spec_with_alias, None, [])
     # 只有錨點、沒有別名的規格照常解析，回應不再夾帶整份原始規格
-    parsed = await OpenApiParser.parse(spec_with_alias.replace("x-copy: *info\n", ""))
+    parsed = await OpenApiParser.parse(spec_with_alias.replace("x-copy: *info\n", ""), None, [])
     assert parsed["title"] == "Alias API"
     assert "raw_spec" not in parsed
 
@@ -162,13 +162,18 @@ async def test_reused_ref_keeps_its_fields_in_every_branch():
             "application/json": {"schema": {"$ref": "#/components/schemas/Trip"}},
         }}}}},
     }
-    properties = (await OpenApiParser.parse(json.dumps(spec)))["endpoints"][0]["parameters_schema"]["properties"]
+    properties = (await OpenApiParser.parse(json.dumps(spec), None, []))["endpoints"][0]["parameters_schema"]["properties"]
     loc = {"lat": {"type": "number"}, "lng": {"type": "number"}}
     assert properties["origin"]["properties"] == loc
     assert properties["destination"]["properties"] == loc
-    node = OpenApiParser._clean_schema({"$ref": "#/components/schemas/Node"}, spec)
+    from app.services.openapi_documents import INLINE_DOCUMENT_URI, SpecDocuments
+    from app.services.openapi_schema import SchemaNormalizer
+
+    docs = SpecDocuments(root=spec, root_uri=INLINE_DOCUMENT_URI, retrieval_url=None)
+    docs.register(INLINE_DOCUMENT_URI, spec)
+    node = SchemaNormalizer(docs, False, True).normalize({"$ref": "#/components/schemas/Node"}, INLINE_DOCUMENT_URI)
     assert "properties" not in node["properties"]["child"]
-    fan_out = OpenApiParser._clean_schema({"$ref": "#/components/schemas/L0"}, spec)
+    fan_out = SchemaNormalizer(docs, False, True).normalize({"$ref": "#/components/schemas/L0"}, INLINE_DOCUMENT_URI)
     assert json.dumps(fan_out).count('"properties"') <= MAX_OPENAPI_SCHEMA_REFS
 
 
@@ -200,7 +205,7 @@ async def test_referenced_parameters_bodies_and_security_schemes_keep_their_fiel
             "requestBody": {"$ref": "#/components/requestBodies/Pet"},
         }}},
     }
-    endpoint = (await OpenApiParser.parse(json.dumps(spec)))["endpoints"][0]
+    endpoint = (await OpenApiParser.parse(json.dumps(spec), None, []))["endpoints"][0]
     assert endpoint["param_locations"] == {"petId": "path", "limit": "query", "name": "body"}
     assert endpoint["parameters_schema"]["properties"] == {
         "petId": {"type": "integer"}, "limit": {"type": "integer"}, "name": {"type": "string"},

@@ -6,7 +6,7 @@ import ConnectionTestDialog from '../../components/LlmConnections/ConnectionTest
 import ConnectionList from '../../components/LlmConnections/ConnectionList';
 import { Alert, Button, ConfirmDialog, Icon, Spinner } from '../../components/ui';
 import styles from '../AdminDashboard.module.css';
-export default function SharedConnectionsCard({ users, refreshKey }) {
+export default function SharedConnectionsCard({ users, refreshKey, onConnectionsChanged }) {
   const providers = useLlmProviders();
   const [connections, setConnections] = useState(null);
   const [error, setError] = useState('');
@@ -37,6 +37,7 @@ export default function SharedConnectionsCard({ users, refreshKey }) {
     setEditing(null);
     setNotice(message);
     load();
+    onConnectionsChanged();
   };
   const handleConfirmDelete = async () => {
     setDeleting(true);
@@ -44,6 +45,7 @@ export default function SharedConnectionsCard({ users, refreshKey }) {
       await llmConnectionService.removeShared(pendingDelete.id);
       setNotice(`已刪除「${pendingDelete.name}」`);
       load();
+      onConnectionsChanged();
     } catch (err) {
       setError('刪除共用 API 連線失敗：' + (err.response?.data?.detail || err.message));
     } finally {
@@ -66,7 +68,7 @@ export default function SharedConnectionsCard({ users, refreshKey }) {
         </Button>
       </div>
       <p className={styles.cardHint}>
-        各帳號預設只能用自己在「個人資料」設定的 API，不會使用 .env 的金鑰。要讓某些帳號使用公司的金鑰或內部網路的模型（例如本機 Ollama），在這裡建立共用連線並指定可使用的帳號。
+        各帳號預設只能用自己在「個人資料」設定的 API。要讓某些帳號使用公司的金鑰或內部網路的模型（例如本機 Ollama），在這裡建立共用連線並指定可使用的帳號。
       </p>
       {notice && <Alert severity="success" onClose={() => setNotice('')} style={{ marginBottom: '16px' }}>{notice}</Alert>}
       {error && <Alert severity="error" onClose={() => setError('')} style={{ marginBottom: '16px' }}>{error}</Alert>}
@@ -100,7 +102,7 @@ export default function SharedConnectionsCard({ users, refreshKey }) {
       <ConfirmDialog
         open={Boolean(pendingDelete)}
         title="刪除這個共用 API 連線？"
-        description={`「${pendingDelete?.name}」與其中儲存的金鑰會被刪除，所有帳號都無法再用它的模型對話。`}
+        description={`「${pendingDelete?.name}」與其中儲存的金鑰會被刪除，所有帳號都無法再用它的模型對話；指定它作為系統模型的用途也會取消。`}
         confirmLabel="刪除"
         destructive
         loading={deleting}

@@ -9,7 +9,7 @@ from app.rag import tokenizers
 from app.rag.indices import bm25_store as bm25_store_module
 from app.rag.indices.bm25_store import BM25StoreManager, SIGNATURE_FILENAME
 from app.rag.retrievers.hybrid import HybridRetriever
-from app.rag.tokenizers import configure_tokenizer, get_chinese_analyzer
+from app.rag.tokenizers import configure_tokenizer, get_chinese_analyzer, get_han_ngram_analyzer
 from app.rag.types import Document
 
 
@@ -100,6 +100,60 @@ def test_jieba_analyzer_lowercases_tokens(profile_tokenizer):
 
     assert {"mes", "pakka"} <= set(tokens)
     assert not {"MES", "PAKKA"} & set(tokens)
+
+
+@pytest.mark.parametrize("size, expected", [
+    (1, ["系", "統", "設", "定", "字"]),
+    (2, ["系統", "設定"]),
+])
+def test_han_ngram_analyzer_emits_ngrams_within_runs_of_han_characters(size, expected):
+    tokens = [token.text for token in get_han_ngram_analyzer(size)("MES 系統（v2）設定，OK！A字B")]
+
+    assert tokens == expected
+
+
+def test_bm25_matches_traditional_text_that_jieba_segments_differently(tmp_path, profile_tokenizer):
+    content = "於大眾捷運系統禁止飲食區內飲食"
+    query = "捷運上可以吃東西嗎"
+    words = get_chinese_analyzer()
+    assert not {t.text for t in words(query, mode="query")} & {t.text for t in words(content)}
+    store = BM25StoreManager(data_dir=str(tmp_path), bm25_index_dir=str(tmp_path / "bm25"))
+    chunks = {
+        1: Document(page_content=content, metadata={"source": "mrt.txt"}),
+        2: Document(page_content="加班費依勞動基準法計算。", metadata={"source": "overtime.txt"}),
+    }
+    store.add_documents(chunks)
+
+    hits = store.search(query, chunks, top_k=5)
+
+    assert [doc.metadata["source"] for doc, _ in hits] == ["mrt.txt"]
+
+
+def test_bm25_ranks_adjacent_characters_above_scattered_ones(tmp_path, profile_tokenizer):
+    store = BM25StoreManager(data_dir=str(tmp_path), bm25_index_dir=str(tmp_path / "bm25"))
+    chunks = {
+        1: Document(page_content="上海車站旁邊新開的店", metadata={"source": "scattered.txt"}),
+        2: Document(page_content="週末去海邊散步", metadata={"source": "adjacent.txt"}),
+    }
+    store.add_documents(chunks)
+
+    hits = store.search("海邊", chunks, top_k=5)
+
+    assert [doc.metadata["source"] for doc, _ in hits] == ["adjacent.txt", "scattered.txt"]
+
+
+def test_bm25_index_built_with_previous_rules_version_is_stale(tmp_path, profile_tokenizer):
+    index_dir = tmp_path / "bm25"
+    chunks = {1: Document(page_content="MES 系統的工時填寫說明", metadata={"source": "mes.txt"})}
+    store = BM25StoreManager(data_dir=str(tmp_path), bm25_index_dir=str(index_dir))
+    store.add_documents(chunks)
+    store.bm25_searcher.close()
+    previous = {**tokenizers.tokenizer_signature(), "rules_version": tokenizers.TOKENIZER_RULES_VERSION - 1}
+    (index_dir / SIGNATURE_FILENAME).write_text(json.dumps(previous), encoding="utf-8")
+
+    reopened = BM25StoreManager(data_dir=str(tmp_path), bm25_index_dir=str(index_dir))
+
+    assert not reopened.tokenizer_matches()
 
 
 def test_bm25_matches_natural_language_question(tmp_path, profile_tokenizer):

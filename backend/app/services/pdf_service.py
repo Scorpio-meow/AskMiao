@@ -1,15 +1,12 @@
-import base64
 import io
 import math
 import os
 import logging
 import re
-from typing import Optional, List, Dict, Set
-import httpx
+from typing import Callable, Optional, List, Dict, Set
 import pymupdf as fitz
 from fontTools.ttLib import TTFont
 from pypdf import PdfReader
-from app.core.config import settings
 from app.core.limits import MAX_OCR_PIXELS
 from app.services.document_processor import DocumentRejected
 logger = logging.getLogger(__name__)
@@ -17,6 +14,7 @@ TOUNICODE_SECTION_PATTERN = re.compile(rb"begin(bfchar|bfrange)(.*?)end\1", re.S
 TOUNICODE_TOKEN_PATTERN = re.compile(rb"<([0-9A-Fa-f]+)>|\[[^\]]*\]")
 OBJECT_REFERENCE_PATTERN = re.compile(r"(\d+) 0 R")
 REPLACEMENT_CHARACTER = 0xFFFD
+PageOcr = Callable[[bytes], str]
 class PDFService:
     """企業級穩健 PDF 處理服務"""
     OCR_RENDER_DPI = 150
@@ -131,14 +129,6 @@ class PDFService:
                 except Exception as e:
                     logger.debug(f"字型 {name} (xref={xref}) 的替代字形對應檢查失敗: {e}")
         return added
-    @staticmethod
-    def _is_vision_available() -> bool:
-        """檢查是否配置了可用的 Vision 模型端點"""
-        return bool(
-            (settings.FOUNDRY_ENDPOINT and settings.FOUNDRY_API_KEY)
-            or settings.OPENAI_API_KEY
-            or settings.GEMINI_API_KEY
-        )
     @classmethod
     def _render_page_png(cls, page) -> bytes:
         """把頁面點陣化為 PNG。輸出像素數超過 MAX_OCR_PIXELS 時降低解析度，
@@ -152,127 +142,29 @@ class PDFService:
         pix = page.get_pixmap(matrix=fitz.Matrix(zoom, zoom), alpha=False)
         return pix.tobytes("png")
     @classmethod
-    def _ocr_page_sync(cls, img_bytes: bytes, page_num: int) -> str:
+    def _ocr_page_sync(cls, ocr: PageOcr, img_bytes: bytes, page_num: int) -> str:
         """
-        把已點陣化的頁面影像交給 Vision 模型識別（同步執行；只做網路呼叫，可並行）
+        把已點陣化的頁面影像交給系統模型識別（同步執行；只做網路呼叫，可並行）
         """
-        if not cls._is_vision_available():
-            logger.warning(f"第 {page_num} 頁文字為空，但未配置 Vision API 端點，略過 OCR")
-            return f"[第 {page_num} 頁為掃描圖片或複雜版面]"
         try:
-            b64_img = base64.b64encode(img_bytes).decode("utf-8")
-            if settings.FOUNDRY_ENDPOINT and settings.FOUNDRY_API_KEY:
-                endpoint = settings.FOUNDRY_ENDPOINT.rstrip('/')
-                api_key = settings.FOUNDRY_API_KEY
-                foundry_deployments = [d.strip() for d in (settings.FOUNDRY_DEPLOYMENT or "").split(",") if d.strip()]
-                deployment = foundry_deployments[0] if foundry_deployments else settings.OPENAI_VISION_MODEL
-                
-                url = f"{endpoint}/openai/v1/chat/completions"
-                headers = {
-                    "api-key": api_key,
-                    "Authorization": f"Bearer {api_key}",
-                    "Content-Type": "application/json"
-                }
-                payload = {
-                    "model": deployment,
-                    "messages": [
-                        {
-                            "role": "user",
-                            "content": [
-                            {
-                                "type": "text",
-                                "text": "精確識別並提取此頁面中的所有繁體中文、英文、表格與文字內容，保留標題結構與階層，排版整潔，不要添加任何多餘的問候或客套話。"
-                            },
-                            {
-                                "type": "image_url",
-                                "image_url": {"url": f"data:image/png;base64,{b64_img}"}
-                            }
-                        ]
-                    }
-                ]
-            }
-                with httpx.Client(timeout=settings.LLM_TIMEOUT) as client:
-                    resp = client.post(url, headers=headers, json=payload)
-                    if resp.status_code == 200:
-                        content = resp.json()["choices"][0]["message"]["content"].strip()
-                        logger.info(f"第 {page_num} 頁使用 Foundry Vision OCR 識別成功 ({len(content)} 字)")
-                        return content
-                    else:
-                        logger.warning(f"第 {page_num} 頁 Foundry Vision OCR 回傳錯誤 ({resp.status_code}): {resp.text[:200]}")
-            elif settings.OPENAI_API_KEY:
-                base_url = settings.OPENAI_API_BASE.rstrip('/')
-                url = f"{base_url}/chat/completions"
-                headers = {
-                    "Authorization": f"Bearer {settings.OPENAI_API_KEY}",
-                    "Content-Type": "application/json"
-                }
-                payload = {
-                    "model": settings.OPENAI_VISION_MODEL,
-                    "messages": [
-                        {
-                            "role": "user",
-                            "content": [
-                                {
-                                    "type": "text",
-                                    "text": "請精確識別並提取此頁面中的所有繁體中文、英文、表格與文字內容，保留標題結構與階層，排版整潔，不要添加任何多餘的問候或客套話。"
-                                },
-                                {
-                                    "type": "image_url",
-                                    "image_url": {"url": f"data:image/png;base64,{b64_img}"}
-                                }
-                            ]
-                        }
-                    ]
-                }
-                with httpx.Client(timeout=settings.LLM_TIMEOUT) as client:
-                    resp = client.post(url, headers=headers, json=payload)
-                    if resp.status_code == 200:
-                        content = resp.json()["choices"][0]["message"]["content"].strip()
-                        logger.info(f"第 {page_num} 頁使用 OpenAI Vision OCR 識別成功 ({len(content)} 字)")
-                        return content
-            elif settings.GEMINI_API_KEY:
-                base_url = settings.GEMINI_API_BASE.rstrip('/')
-                url = f"{base_url}/v1beta/openai/chat/completions"
-                headers = {
-                    "Authorization": f"Bearer {settings.GEMINI_API_KEY}",
-                    "Content-Type": "application/json"
-                }
-                payload = {
-                    "model": settings.GEMINI_VISION_MODEL,
-                    "messages": [
-                        {
-                            "role": "user",
-                            "content": [
-                                {
-                                    "type": "text",
-                                    "text": "請精確識別並提取此頁面中的所有繁體中文、英文、表格與文字內容，保留標題結構與階層，排版整潔，不要添加任何多餘的問候或客套話。"
-                                },
-                                {
-                                    "type": "image_url",
-                                    "image_url": {"url": f"data:image/png;base64,{b64_img}"}
-                                }
-                            ]
-                        }
-                    ]
-                }
-                with httpx.Client(timeout=settings.LLM_TIMEOUT) as client:
-                    resp = client.post(url, headers=headers, json=payload)
-                    if resp.status_code == 200:
-                        content = resp.json()["choices"][0]["message"]["content"].strip()
-                        logger.info(f"第 {page_num} 頁使用 Gemini Vision OCR 識別成功 ({len(content)} 字)")
-                        return content
+            content = ocr(img_bytes).strip()
+            if content:
+                logger.info(f"第 {page_num} 頁 Vision OCR 識別成功 ({len(content)} 字)")
+                return content
+            logger.warning(f"第 {page_num} 頁 Vision OCR 沒有回傳文字")
         except Exception as e:
-            logger.warning(f"第 {page_num} 頁執行 Vision OCR 失敗: {e}")
+            logger.warning(f"第 {page_num} 頁執行 Vision OCR 失敗: {type(e).__name__}: {e}")
         return f"[第 {page_num} 頁為掃描圖片或複雜版面，已記錄]"
     @classmethod
-    def extract_text_robust(cls, file_path: str, max_ocr_pages: Optional[int]) -> str:
+    def extract_text_robust(cls, file_path: str, max_ocr_pages: Optional[int], ocr: Optional[PageOcr]) -> str:
         """
         同步/標準進入點：執行多層防護 PDF 抽取（支援 Vision OCR 智慧補全）
         max_ocr_pages：最多送 Vision OCR 的頁數（每頁一次付費呼叫）；None 表示不限，只用於管理員上傳
+        ocr：管理員指定的 PDF OCR 系統模型；None 表示未指定，掃描頁不做 OCR
         """
-        return cls._extract_sync_internal(file_path, max_ocr_pages)
+        return cls._extract_sync_internal(file_path, max_ocr_pages, ocr)
     @classmethod
-    def _extract_sync_internal(cls, file_path: str, max_ocr_pages: Optional[int]) -> str:
+    def _extract_sync_internal(cls, file_path: str, max_ocr_pages: Optional[int], ocr: Optional[PageOcr]) -> str:
         """內部提取實作：PyMuPDF（補上 ToUnicode 漏掉的替代字形）+ Vision OCR + pypdf 雙重備援"""
         import concurrent.futures
         try:
@@ -309,7 +201,7 @@ class PDFService:
                 for page_idx, page_num, _ in ocr_jobs[max_ocr_pages:]:
                     pages_text[page_idx] = f"--- 第 {page_num} 頁 ---\n[本頁未進行 OCR：超過每份文件的 OCR 頁數上限]\n"
                 ocr_jobs = ocr_jobs[:max_ocr_pages]
-            if ocr_jobs and cls._is_vision_available():
+            if ocr_jobs and ocr is not None:
                 logger.info(f"正在對 {len(ocr_jobs)} 頁純圖檔/掃描頁面啟動 Vision OCR 並行識別...")
                 # 點陣化在本執行緒依序完成（PyMuPDF 不支援多執行緒），只有 Vision API 呼叫並行
                 rendered_jobs = []
@@ -322,7 +214,7 @@ class PDFService:
                 max_workers = max(1, min(len(rendered_jobs), 4))
                 with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
                     future_to_job = {
-                        executor.submit(cls._ocr_page_sync, job[2], job[1]): job
+                        executor.submit(cls._ocr_page_sync, ocr, job[2], job[1]): job
                         for job in rendered_jobs
                     }
                     for future in concurrent.futures.as_completed(future_to_job):

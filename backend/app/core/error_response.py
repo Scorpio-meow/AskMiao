@@ -7,6 +7,7 @@
 import logging
 import uuid
 from typing import Any, Dict
+from app.core.request_context import current_request_id
 
 GENERIC_ERROR_MESSAGE = "伺服器內部錯誤，請聯繫系統管理員並提供錯誤代碼"
 
@@ -55,4 +56,4 @@ def build_error_payload(
 ) -> Dict[str, Any]:
     """記錄例外並產生可安全回傳給前端的錯誤內容。"""
     error_id = log_and_get_error_id(logger, context, exc, level)
-    return {"detail": format_client_error(error_id), "error_id": error_id}
+    return {"detail": format_client_error(error_id), "error_id": error_id, "request_id": current_request_id()}

@@ -6,7 +6,6 @@ from urllib.parse import urlparse
 import httpx
 from sqlalchemy.orm import Session
 
-from app.core.config import settings
 from app.core.error_response import SafeClientError
 from app.core.llm_client import (
     DEFAULT_CLAUDE_MODELS,
@@ -23,6 +22,9 @@ from app.models import LlmConnection, User
 logger = logging.getLogger(__name__)
 
 PROVIDERS_REQUIRING_API_KEY = ("anthropic", "gemini", "foundry")
+OPENAI_API_BASE = "https://api.openai.com/v1"
+ANTHROPIC_API_BASE = "https://api.anthropic.com"
+GEMINI_API_BASE = "https://generativelanguage.googleapis.com"
 PRIVATE_ADDRESS_MESSAGE = "API 位址無法使用：個人連線只能連到可從網際網路解析的公開位址，內部網路的服務請管理員設為共用連線"
 CONNECTION_TEST_PROMPT = [{"role": "user", "content": "請只回覆「OK」。"}]
 CONNECTION_TEST_REPLY_CHARS = 200
@@ -30,11 +32,11 @@ CONNECTION_TEST_REPLY_CHARS = 200
 
 def provider_presets() -> List[Dict[str, Any]]:
     return [
-        {"provider": "openai", "label": "OpenAI 或相容的 API", "api_base": settings.OPENAI_API_BASE,
+        {"provider": "openai", "label": "OpenAI 或相容的 API", "api_base": OPENAI_API_BASE,
          "models": DEFAULT_OPENAI_MODELS, "requires_api_key": False, "uses_max_output_tokens": False},
-        {"provider": "anthropic", "label": "Anthropic Claude", "api_base": settings.ANTHROPIC_API_BASE,
+        {"provider": "anthropic", "label": "Anthropic Claude", "api_base": ANTHROPIC_API_BASE,
          "models": DEFAULT_CLAUDE_MODELS, "requires_api_key": True, "uses_max_output_tokens": True},
-        {"provider": "gemini", "label": "Google Gemini", "api_base": settings.GEMINI_API_BASE,
+        {"provider": "gemini", "label": "Google Gemini", "api_base": GEMINI_API_BASE,
          "models": DEFAULT_GEMINI_MODELS, "requires_api_key": True, "uses_max_output_tokens": False},
         {"provider": "foundry", "label": "Microsoft Foundry／Azure OpenAI", "api_base": "",
          "models": [], "requires_api_key": True, "uses_max_output_tokens": True},

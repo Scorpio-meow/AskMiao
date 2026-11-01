@@ -48,8 +48,11 @@ COLUMN_UPGRADES = (
     ("mcp_servers", "oauth_tokens", "TEXT", "UPDATE mcp_servers SET oauth_tokens = NULL"),
     ("agent_skills", "allow_scripts", "BOOLEAN", "UPDATE agent_skills SET allow_scripts = FALSE"),
     ("agent_skills", "allowed_user_ids", "TEXT", "UPDATE agent_skills SET allowed_user_ids = NULL"),
+    ("custom_api_tools", "param_styles", "TEXT", "UPDATE custom_api_tools SET param_styles = NULL"),
+    ("custom_api_tools", "workflow_definition", "TEXT", "UPDATE custom_api_tools SET workflow_definition = NULL"),
     # 既有帳號沿用原本「權杖不得早於帳號建立時間」的規則
     ("users", "tokens_valid_after", "TIMESTAMP", "UPDATE users SET tokens_valid_after = created_at"),
+    ("system_models", "reasoning_effort", "VARCHAR", "UPDATE system_models SET reasoning_effort = 'none'"),
 )
 # 每次啟動都執行的補值：回退到舊版期間建立的帳號沒有 tokens_valid_after（舊版不寫入此欄位），
 # 再升級時欄位已存在、不會重跑上面的補值，而值為 NULL 的帳號所有權杖都會被拒絕

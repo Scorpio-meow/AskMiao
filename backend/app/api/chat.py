@@ -68,7 +68,8 @@ def get_available_tools(user_id: int = Depends(get_current_user_id)):
             "status": "partial",
             "tools": tool_defs,
             "error": error_payload["detail"],
-            "error_id": error_payload["error_id"]
+            "error_id": error_payload["error_id"],
+            "request_id": error_payload["request_id"]
         }
 @router.post("/send")
 async def send_message(
@@ -161,8 +162,7 @@ async def send_message(
                         collected_sources_detail = data.get("sources_detail", [])
                         yield f"event: sources\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
                     elif ev == "done":
-                        if not collected_tokens:
-                            collected_tokens = data.get("answer", "")
+                        collected_tokens = data.get("answer") or collected_tokens
                         if not collected_sources:
                             collected_sources = data.get("sources", [])
                             collected_sources_detail = data.get("sources_detail", [])

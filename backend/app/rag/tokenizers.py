@@ -2,6 +2,7 @@ from typing import Dict, Optional, Sequence
 import hashlib
 import logging
 import os
+import re
 
 from app.core.config import settings
 
@@ -26,8 +27,9 @@ try:
 except Exception:
     HAS_JIEBA = False
 
-# 斷詞規則版本：規則改變時遞增，BM25 索引會因簽章不符而自動重建（2：斷詞結果一律轉小寫）
-TOKENIZER_RULES_VERSION = 2
+# 斷詞規則版本：規則改變時遞增，BM25 索引會因簽章不符而自動重建（2：斷詞結果一律轉小寫；3：另建漢字單字與雙字欄位）
+TOKENIZER_RULES_VERSION = 3
+HAN_RUN = re.compile(r"[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]+")
 
 _jieba_tokenizer = None
 _configured_with = None
@@ -135,9 +137,62 @@ else:
     JiebaAnalyzer = None
 
 
+if HAS_WHOOSH:
+    class HanNgramTokenizer(Tokenizer):
+        def __init__(self, size: int):
+            self.size = size
+
+        def __call__(
+            self,
+            value,
+            positions=False,
+            chars=False,
+            keeporiginal=False,
+            removestops=False,
+            start_pos=0,
+            start_char=0,
+            tokenize=True,
+            mode="default",
+            **kwargs
+        ):
+            t = Token(positions, chars, removestops=removestops)
+            if not tokenize:
+                return
+            if isinstance(value, bytes):
+                value = value.decode("utf-8", "ignore")
+            pos = start_pos
+            for run in HAN_RUN.finditer(value):
+                for start in range(run.start(), run.end() - self.size + 1):
+                    t.original = t.text = value[start:start + self.size]
+                    t.boost = 1.0
+                    if positions:
+                        t.pos = pos
+                        pos += 1
+                    if chars:
+                        t.startchar = start_char + start
+                        t.endchar = start_char + start + self.size
+                    yield t
+
+    class HanNgramAnalyzer(Analyzer):
+        def __init__(self, size: int):
+            self._tokenizer = HanNgramTokenizer(size)
+
+        def __call__(self, value, **kwargs):
+            return self._tokenizer(value, **kwargs)
+else:
+    HanNgramTokenizer = None
+    HanNgramAnalyzer = None
+
+
 def get_chinese_analyzer():
     if not HAS_WHOOSH:
         return None
     if HAS_JIEBA:
         return JiebaAnalyzer()
     return StandardAnalyzer()
+
+
+def get_han_ngram_analyzer(size: int):
+    if not HAS_WHOOSH:
+        return None
+    return HanNgramAnalyzer(size)

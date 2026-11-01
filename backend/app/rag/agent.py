@@ -6,7 +6,7 @@ import os
 import re
 import tempfile
 import time
-from typing import Any, Dict, List, Optional, AsyncGenerator
+from typing import Any, AsyncGenerator, Callable, Dict, List, Optional
 from app.core.limits import (
     CHAT_ATTACHMENT_EXTRACTION_LIMITS,
     MAX_ATTACHMENT_TEXT_CHARS,
@@ -18,6 +18,7 @@ from app.services.agent_skills import SKILL_NAME_PATTERN
 from app.rag.research_session import ResearchSession, ToolResultFilter, strip_citations, strip_tool_result_blocks
 from app.rag.tool_approval import approval_broker
 from app.core.error_response import log_and_get_error_id
+from app.core.security_logging import log_fields
 
 logger = logging.getLogger(__name__)
 
@@ -67,7 +68,15 @@ TEXT_IMAGE_TYPES = ("image/svg+xml",)
 _attachment_extraction_slots = asyncio.Semaphore(MAX_CONCURRENT_ATTACHMENT_EXTRACTIONS)
 
 
-def _extract_attachment_text(fname: str, ftype: str, data_url: str) -> Optional[str]:
+def _attachment_ocr() -> Optional[Callable[[bytes], str]]:
+    from app.models.database import SessionLocal
+    from app.services.system_models import page_ocr, system_model_target
+
+    with SessionLocal() as db:
+        return page_ocr(system_model_target(db, "pdf_ocr"))
+
+
+def _extract_attachment_text(fname: str, ftype: str, data_url: str, ocr: Optional[Callable[[bytes], str]]) -> Optional[str]:
     """解碼附件並抽出文字（同步、CPU 與 I/O 密集，須在執行緒中呼叫）。
     超過附件解析預算時回傳說明文字，讓模型能告知使用者附件未被讀取"""
     from app.services.document_processor import DocumentLimitExceeded, DocumentProcessor, DocumentRejected
@@ -79,7 +88,7 @@ def _extract_attachment_text(fname: str, ftype: str, data_url: str) -> Optional[
         tmp.write(file_bytes)
         tmp_path = tmp.name
     try:
-        return DocumentProcessor.extract_text_from_file(tmp_path, ftype, CHAT_ATTACHMENT_EXTRACTION_LIMITS)
+        return DocumentProcessor.extract_text_from_file(tmp_path, ftype, CHAT_ATTACHMENT_EXTRACTION_LIMITS, ocr)
     except DocumentLimitExceeded as e:
         logger.warning(f"附件 {fname} 超過解析上限: {e}")
         return f"[附件超過解析上限，未讀取內容：{e}]"
@@ -173,6 +182,7 @@ class ResearchAgent:
         attachment_texts: List[Optional[str]] = []
 
         if attachments:
+            attachment_ocr = _attachment_ocr()
             for att in attachments:
                 fname = getattr(att, "filename", None) or (att.get("filename") if isinstance(att, dict) else "未知檔案")
                 ftype = getattr(att, "file_type", None) or (att.get("file_type") if isinstance(att, dict) else "")
@@ -195,7 +205,9 @@ class ResearchAgent:
                         try:
                             # 解碼與解析會長時間占用 CPU，移到執行緒以免阻塞其他使用者的請求
                             async with _attachment_extraction_slots:
-                                extracted_text = await asyncio.to_thread(_extract_attachment_text, fname, ftype, data_url)
+                                extracted_text = await asyncio.to_thread(
+                                    _extract_attachment_text, fname, ftype, data_url, attachment_ocr
+                                )
                         except Exception as e:
                             logger.warning(f"即時解析附件 {fname} 失敗: {e}")
 
@@ -246,7 +258,7 @@ class ResearchAgent:
             tool_calls = assistant_msg.get("tool_calls")
             if not tool_calls:
                 # 模型不再呼叫工具時，這次的內容就是最終答案，直接送出，不再重新生成
-                content = strip_tool_result_blocks(assistant_msg.get("content") or "")
+                content = session.drop_unknown_citations(strip_tool_result_blocks(assistant_msg.get("content") or ""))
                 if content.strip():
                     final_answer = content
                     yield {"event": "token", "data": {"content": content}}
@@ -270,7 +282,7 @@ class ResearchAgent:
                     args = {}
 
                 step_num = len(research_trace) + 1
-                logger.info(f"🔍 [Agent Step {step_num}] 調用工具: {fn_name} 參數: {args}")
+                logger.info("🔍 [Agent Step %s] 調用工具 %s", step_num, log_fields(tool=fn_name, arg_keys=",".join(map(str, args)) or None))
 
  
                 yield {
@@ -284,6 +296,7 @@ class ResearchAgent:
 
                 tool_start = time.time()
                 tool_output = session.refuse_tool_call(fn_name, args)
+                skipped_status = "refused" if tool_output is not None else None
                 if tool_output is None:
                     approval = await asyncio.to_thread(self.tools.approval_requirement, fn_name, args)
                     if session.is_preapproved(fn_name, args):
@@ -291,6 +304,7 @@ class ResearchAgent:
                     if approval is not None:
                         if approval_user_id is None:
                             tool_output = {"error": "此工具需要使用者在對話中核准後才能執行，本次無法取得核准，請改以已取得的資料回答"}
+                            skipped_status = "approval_unavailable"
                         else:
                             approval_id, decision = approval_broker.create(approval_user_id)
                             yield {
@@ -308,6 +322,7 @@ class ResearchAgent:
                             yield {"event": "approval_resolved", "data": {"approval_id": approval_id, "approved": approved}}
                             if not approved:
                                 tool_output = {"error": "使用者未核准執行此工具，請改以已取得的資料回答，不要再次呼叫同一工具"}
+                                skipped_status = "not_approved"
                 if tool_output is None:
                     try:
                         tool_output = await self.tools.execute_tool(fn_name, args, user_id=approval_user_id)
@@ -317,6 +332,8 @@ class ResearchAgent:
                         tool_output = {"error": f"工具執行失敗，請檢查參數格式後再試（錯誤代碼：{error_id}）"}
                     session.record_tool_output(fn_name, tool_output)
                 tool_duration = round(time.time() - tool_start, 2)
+                if skipped_status:
+                    logger.info("工具呼叫未執行 %s", log_fields(tool=fn_name, status=skipped_status, duration_ms=round(tool_duration * 1000)))
 
                 output_preview = json.dumps(tool_output, ensure_ascii=False)
                 if len(output_preview) > 300:
@@ -369,6 +386,7 @@ class ResearchAgent:
                 yield {"event": "token", "data": {"content": tail}}
 
         total_time = round(time.time() - start_time, 2)
+        final_answer = session.drop_unknown_citations(final_answer)
 
         # 來源只列答案實際引用的條目；一個引用都沒有時不列來源
         sources_detail = session.cited_sources(final_answer)

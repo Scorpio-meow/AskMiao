@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { skillService } from '../../services/api';
 import { Alert, Button, Dialog, DialogActions, DialogContent, DialogTitle, Icon } from '../../components/ui';
+import { CheckOption, Field } from './FormParts';
 import { getRequestErrorMessage } from './shared';
 import styles from './AiTools.module.css';
 export default function SkillUploadDialog({ skill, onClose, onSaved }) {
@@ -29,40 +30,40 @@ export default function SkillUploadDialog({ skill, onClose, onSaved }) {
   };
   return (
     <Dialog open onClose={onClose} maxWidth="md">
-      <DialogTitle onClose={onClose}>
+      <DialogTitle onClose={onClose} subtitle="技能內的參考檔會提供給 AI 閱讀；腳本不會被執行">
         {skill ? `更新技能：${skill.name}` : '上傳 Agent Skill'}
       </DialogTitle>
       <DialogContent className={styles.dialogBody}>
-        <p className={styles.mutedNote}>
-          上傳技能目錄的 .zip 壓縮檔（根目錄或唯一的頂層目錄內含 SKILL.md），或只有指示的單一 SKILL.md。
-          技能內的參考檔會提供給 AI 閱讀；腳本不會被執行。
-        </p>
-        <div className={styles.formGroup}>
-          <label className={styles.formLabel} htmlFor="skill-upload-file">技能檔案</label>
+        <Field
+          id="skill-upload-file"
+          label="技能檔案"
+          hint="技能目錄的 .zip 壓縮檔（根目錄或唯一的頂層目錄內含 SKILL.md），或只有指示的單一 SKILL.md。"
+        >
           <input
             id="skill-upload-file"
             type="file"
             accept=".zip,.skill,.md"
-            className={styles.formInput}
+            className={styles.fileInput}
             onChange={(e) => {
               setFile(e.target.files?.[0] || null);
               setError('');
               setConflict(false);
             }}
+            aria-describedby="skill-upload-file-hint"
           />
-        </div>
-        <label className={styles.approvalOption}>
-          <input type="checkbox" checked={replace} onChange={(e) => setReplace(e.target.checked)} />
-          <span>
-            取代同名的既有技能
-            <span className={styles.approvalHint}>技能名稱以 SKILL.md 的 name 欄位為準，取代時會換掉整個技能目錄</span>
-          </span>
-        </label>
+        </Field>
+        <CheckOption
+          type="checkbox"
+          checked={replace}
+          onChange={(e) => setReplace(e.target.checked)}
+          label="取代同名的既有技能"
+          hint="技能名稱以 SKILL.md 的 name 欄位為準，取代時會換掉整個技能目錄"
+        />
         {error && (
           <Alert severity="error">
             {error}
             {conflict && !replace && (
-              <div className={styles.inlineButtons}>
+              <div className={styles.alertActions}>
                 <Button variant="secondary" size="sm" onClick={() => handleUpload(true)} loading={uploading}>
                   取代既有技能
                 </Button>

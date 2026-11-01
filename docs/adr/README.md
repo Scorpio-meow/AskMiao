@@ -16,6 +16,7 @@
 | [ADR-0004](./0004-tool-admin-permissions-and-subprocess-isolation.md) | 工具管理權限、MCP 子行程隔離與逐跳 SSRF 驗證 | 已通過 (Accepted) | 2026-09-25 | 3.0.0 | MCP 伺服器與自訂 API 工具只開放管理員管理，stdio 子行程不繼承後端機密環境變數，出站請求的每次轉址都重新做 SSRF 驗證；補充 ADR-0002 |
 | [ADR-0005](./0005-chunk-id-index-and-database-source-of-truth.md) | 以資料庫 chunk_id 為準的片段索引 | 已通過 (Accepted) | 2026-09-24 | 3.0.0 | 片段改存資料庫 `rag_chunks`，FAISS（`IndexIDMap2`）與 BM25 以 chunk_id 對應，啟動時依資料庫校正，取代依清單位置對齊與每日自動重建；補充 ADR-0001 |
 | [ADR-0006](./0006-tool-call-approval.md) | 有副作用工具的對話內核准 | 已通過 (Accepted) | 2026-09-27 | 4.0.0 | 自訂 API 工具與 MCP 伺服器新增 `requires_approval` 旗標，Agent 呼叫前暫停並由發問的使用者在對話中核准，逾時或無人可核准時不執行；補充 ADR-0003 與 ADR-0004 |
+| [ADR-0007](./0007-han-ngram-bm25-and-passage-level-evaluation.md) | BM25 加入漢字單字與雙字欄位，並以片段層級基準評估檢索 | 已通過 (Accepted) | 2026-11-01 | 8.0.0 | BM25 除 jieba 詞外另建漢字單字與雙字欄位，jieba 切錯詞時仍能取回；評估新增以原文片段標註的片段層級指標與內建基準語料，並記錄試過但不採用的調整；補充 ADR-0003 |
 
 ```mermaid
 flowchart LR
@@ -25,6 +26,7 @@ flowchart LR
     A2["ADR-0002<br/>外部工具與出站防護"] -->|權限與隔離補充| A4["ADR-0004<br/>工具權限、子行程隔離"]
     A4 -->|呼叫時機補充| A6["ADR-0006<br/>工具呼叫核准"]
     A3 -->|已知風險的緩解| A6
+    A3 -->|BM25 斷詞與評估補充| A7["ADR-0007<br/>漢字 n-gram BM25 與片段層級評估"]
 ```
 
 ---

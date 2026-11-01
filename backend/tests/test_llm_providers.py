@@ -103,44 +103,9 @@ def claude(monkeypatch):
     return install
 
 
-def test_default_claude_model_ids_use_family_version_format(monkeypatch):
-    monkeypatch.setattr(settings, "AVAILABLE_MODELS", "")
-    monkeypatch.setattr(settings, "FOUNDRY_API_KEY", None)
-    monkeypatch.setattr(settings, "OPENAI_API_KEY", None)
-    monkeypatch.setattr(settings, "GEMINI_API_KEY", None)
-    monkeypatch.setattr(settings, "ANTHROPIC_API_KEY", "anthropic-key")
-
-    claude_models = [model for model in llm_client.get_available_models() if model.startswith("claude-")]
-
-    assert "claude-opus-5" in claude_models
-    assert all(re.fullmatch(r"claude-(opus|sonnet|haiku|fable)-\d+(-\d+)?", model) for model in claude_models)
-
-
-@pytest.mark.parametrize("model, expected", [
-    ("foundry-gpt", "foundry"),
-    ("claude-opus-5-5", "anthropic"),
-    ("gemini-3-pro", "gemini"),
-    ("gpt-5.6-sol", "openai"),
-    ("qwen3:8b", "ollama"),
-])
-def test_resolve_provider(monkeypatch, model, expected):
-    monkeypatch.setattr(settings, "FOUNDRY_API_KEY", "foundry-key")
-    monkeypatch.setattr(settings, "FOUNDRY_ENDPOINT", "https://foundry.example.com")
-    monkeypatch.setattr(settings, "FOUNDRY_DEPLOYMENT", "foundry-gpt")
-    monkeypatch.setattr(settings, "ANTHROPIC_API_KEY", "anthropic-key")
-    monkeypatch.setattr(settings, "GEMINI_API_KEY", "gemini-key")
-    monkeypatch.setattr(settings, "OPENAI_API_KEY", "openai-key")
-
-    assert llm_client.resolve_provider(model) == expected
-
-
-def test_gpt_model_routes_to_foundry_when_only_foundry_is_configured(monkeypatch):
-    monkeypatch.setattr(settings, "FOUNDRY_API_KEY", "foundry-key")
-    monkeypatch.setattr(settings, "FOUNDRY_ENDPOINT", "https://foundry.example.com")
-    monkeypatch.setattr(settings, "FOUNDRY_DEPLOYMENT", "foundry-gpt")
-    monkeypatch.setattr(settings, "OPENAI_API_KEY", None)
-
-    assert llm_client.resolve_provider("gpt-6-sol") == "foundry"
+def test_default_claude_model_ids_use_family_version_format():
+    assert "claude-opus-5" in llm_client.DEFAULT_CLAUDE_MODELS
+    assert all(re.fullmatch(r"claude-(opus|sonnet|haiku|fable)-\d+(-\d+)?", model) for model in llm_client.DEFAULT_CLAUDE_MODELS)
 
 
 def test_anthropic_request_merges_tool_results_and_converts_images():
@@ -393,16 +358,6 @@ async def test_claude_requires_max_output_tokens(claude):
         await llm_client.chat_completion([{"role": "user", "content": "你好"}], endpoint=endpoint, model_name="claude-opus-5")
 
 
-def test_system_endpoint_carries_env_max_tokens_for_claude(monkeypatch):
-    monkeypatch.setattr(settings, "FOUNDRY_API_KEY", None)
-    monkeypatch.setattr(settings, "ANTHROPIC_API_KEY", "anthropic-key")
-    monkeypatch.setattr(settings, "ANTHROPIC_MAX_TOKENS", 24000)
-
-    assert llm_client.system_endpoint("claude-opus-5") == LlmEndpoint(
-        "anthropic", settings.ANTHROPIC_API_BASE, "anthropic-key", 24000, False
-    )
-
-
 def test_ollama_conversion_and_response_normalization():
     converted = llm_client._ollama_messages([
         {"role": "user", "content": [
@@ -595,19 +550,6 @@ def test_responses_endpoint_per_provider():
     assert foundry_headers["api-key"] == "foundry-key"
 
 
-def test_foundry_settings_still_read_legacy_azure_openai_names(monkeypatch):
-    monkeypatch.setenv("AZURE_OPENAI_API_KEY", "legacy-key")
-    monkeypatch.setenv("AZURE_OPENAI_ENDPOINT", "https://legacy.openai.azure.com")
-    monkeypatch.setenv("FOUNDRY_DEPLOYMENT", "new-deployment")
-    monkeypatch.setenv("AZURE_OPENAI_DEPLOYMENT", "legacy-deployment")
-
-    loaded = type(settings)()
-
-    assert loaded.FOUNDRY_API_KEY == "legacy-key"
-    assert loaded.FOUNDRY_ENDPOINT == "https://legacy.openai.azure.com"
-    assert loaded.FOUNDRY_DEPLOYMENT == "new-deployment"
-
-
 def test_responses_streaming_payload_declares_tools_but_forbids_calling_them():
     messages = [{"role": "system", "content": [{"type": "text", "text": "系統"}, {"type": "text", "text": "提示"}]}]
 
@@ -618,25 +560,11 @@ def test_responses_streaming_payload_declares_tools_but_forbids_calling_them():
     assert payload["input"] == [{"role": "system", "content": "系統\n提示"}]
 
 
-def configure_foundry(monkeypatch, endpoint):
-    monkeypatch.setattr(settings, "FOUNDRY_API_KEY", "foundry-key")
-    monkeypatch.setattr(settings, "FOUNDRY_ENDPOINT", endpoint)
-    monkeypatch.setattr(settings, "FOUNDRY_DEPLOYMENT", "claude-sonnet-4-6,my-gpt")
-    monkeypatch.setattr(settings, "ANTHROPIC_API_KEY", None)
+def test_foundry_claude_deployment_uses_the_anthropic_api_and_other_deployments_do_not():
+    endpoint = LlmEndpoint("foundry", "https://res.services.ai.azure.com", "foundry-key", 32000, False)
 
-
-def test_foundry_claude_deployment_routes_to_anthropic_and_other_deployments_stay_on_foundry(monkeypatch):
-    configure_foundry(monkeypatch, "https://res.services.ai.azure.com")
-
-    assert llm_client.resolve_provider("claude-sonnet-4-6") == "anthropic"
-    assert llm_client.resolve_provider("my-gpt") == "foundry"
-    assert llm_client.is_foundry_claude("claude-sonnet-4-6")
-    assert not llm_client.is_foundry_claude("my-gpt")
-    for model in ("claude-sonnet-4-6", "my-gpt"):
-        endpoint = llm_client.system_endpoint(model)
-        assert (endpoint.provider, endpoint.api_base, endpoint.api_key) == ("foundry", "https://res.services.ai.azure.com", "foundry-key")
-    assert llm_client._uses_anthropic_api(llm_client.system_endpoint("claude-sonnet-4-6"), "claude-sonnet-4-6")
-    assert not llm_client._uses_anthropic_api(llm_client.system_endpoint("my-gpt"), "my-gpt")
+    assert llm_client._uses_anthropic_api(endpoint, "claude-sonnet-4-6")
+    assert not llm_client._uses_anthropic_api(endpoint, "my-gpt")
 
 
 def test_foundry_claude_client_uses_anthropic_endpoint_and_api_key():
@@ -653,15 +581,6 @@ def test_foundry_claude_rejects_azure_openai_resource_endpoint():
 
     with pytest.raises(ValueError, match="services.ai.azure.com"):
         llm_client._anthropic_client(endpoint)
-
-
-def test_direct_claude_in_env_uses_the_anthropic_api_even_when_foundry_is_enabled(monkeypatch):
-    configure_foundry(monkeypatch, "https://res.services.ai.azure.com")
-    monkeypatch.setattr(settings, "ANTHROPIC_API_KEY", "anthropic-key")
-
-    endpoint = llm_client.system_endpoint("claude-opus-5-5")
-
-    assert (endpoint.provider, endpoint.api_base, endpoint.api_key) == ("anthropic", settings.ANTHROPIC_API_BASE, "anthropic-key")
 
 
 def test_foundry_chat_completions_skips_reasoning_effort_for_non_openai_models():
@@ -714,19 +633,6 @@ def test_ollama_options_include_num_ctx_only_when_configured(monkeypatch):
 
     monkeypatch.setattr(settings, "OLLAMA_NUM_CTX", 16384)
     assert llm_client._ollama_options() == {"num_ctx": 16384}
-
-
-def test_ollama_cloud_requests_carry_bearer_key_only_for_ollama_com(monkeypatch):
-    monkeypatch.setattr(settings, "OLLAMA_API_KEY", "ollama-key")
-
-    assert llm_client.ollama_auth_headers("https://ollama.com/api/chat") == {"Authorization": "Bearer ollama-key"}
-    assert llm_client.ollama_auth_headers("http://localhost:11434/api/chat") == {}
-    assert llm_client.ollama_auth_headers("https://abc.ngrok-free.app/api/chat") == {}
-    assert llm_client.ollama_auth_headers("https://ollama.com.evil.example/api/chat") == {}
-    monkeypatch.setattr(settings, "LLM_API_BASE", "https://ollama.com")
-    assert llm_client.system_endpoint("qwen3:8b").api_key == "ollama-key"
-    monkeypatch.setattr(settings, "LLM_API_BASE", "http://localhost:11434")
-    assert llm_client.system_endpoint("qwen3:8b").api_key is None
 
 
 def test_connection_api_key_is_sent_to_its_own_ollama_endpoint():

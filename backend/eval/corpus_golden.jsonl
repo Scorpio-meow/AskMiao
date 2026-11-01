@@ -1,0 +1,118 @@
+{"query": "年資兩年半可以休幾天特休？", "relevant_sources": ["員工手冊_2026.md"], "relevant_passages": ["滿 2 年未滿 3 年：10 日"]}
+{"query": "特休沒休完會怎樣", "relevant_sources": ["員工手冊_2026.md"], "relevant_passages": ["年度終結未休畢之特別休假"]}
+{"query": "特休可以只請半天嗎", "relevant_sources": ["員工手冊_2026.md"], "relevant_passages": ["特別休假得以小時為單位申請"]}
+{"query": "特修怎麼算", "relevant_sources": ["員工手冊_2026.md"], "relevant_passages": ["滿 6 個月未滿 1 年：3 日"]}
+{"query": "病假請幾天以上要附診斷證明", "relevant_sources": ["員工手冊_2026.md"], "relevant_passages": ["連續請病假 3 日以上者，應檢附醫療機構診斷證明"]}
+{"query": "請病假薪水怎麼算", "relevant_sources": ["員工手冊_2026.md"], "relevant_passages": ["未超過 30 日部分，工資折半發給"]}
+{"query": "事假一年最多可以請幾天", "relevant_sources": ["員工手冊_2026.md"], "relevant_passages": ["事假一年內合計不得超過 14 日"]}
+{"query": "結婚可以請幾天假", "relevant_sources": ["員工手冊_2026.md"], "relevant_passages": ["婚假 8 日，工資照給"]}
+{"query": "外婆過世可以請幾天喪假", "relevant_sources": ["員工手冊_2026.md"], "relevant_passages": ["祖父母、子女、配偶之父母喪亡者 6 日"]}
+{"query": "老婆生小孩老公可以請什麼假", "relevant_sources": ["員工手冊_2026.md"], "relevant_passages": ["陪產檢及陪產假 7 日"]}
+{"query": "育嬰留停最長可以多久", "relevant_sources": ["員工手冊_2026.md"], "relevant_passages": ["期間至該子女滿 3 歲止，但不得逾 2 年"]}
+{"query": "生理假會扣薪水嗎", "relevant_sources": ["員工手冊_2026.md"], "relevant_passages": ["生理假每月得請 1 日"]}
+{"query": "小孩要打疫苗可以請假嗎", "relevant_sources": ["員工手冊_2026.md"], "relevant_passages": ["家庭成員預防接種"]}
+{"query": "最晚幾點要進公司", "relevant_sources": ["員工手冊_2026.md", "差勤管理辦法.md"], "relevant_passages": ["核心上班時段為上午 10:00 至下午 4:00", "核心時段開始後到班者為遲到"]}
+{"query": "午休時間多久", "relevant_sources": ["員工手冊_2026.md"], "relevant_passages": ["午休時間為中午 12:00 至下午 1:30 之間任選連續 1 小時"]}
+{"query": "忘記打卡怎麼辦", "relevant_sources": ["差勤管理辦法.md"], "relevant_passages": ["忘記刷卡者，應於 3 個工作日內"]}
+{"query": "忘记打卡怎么补", "relevant_sources": ["差勤管理辦法.md"], "relevant_passages": ["忘記刷卡者，應於 3 個工作日內"]}
+{"query": "一個月可以補登幾次卡", "relevant_sources": ["差勤管理辦法.md"], "relevant_passages": ["每月補登以 3 次為限"]}
+{"query": "遲到幾分鐘內不會被記點", "relevant_sources": ["差勤管理辦法.md"], "relevant_passages": ["遲到在 15 分鐘以內"]}
+{"query": "加班需要事先申請嗎", "relevant_sources": ["差勤管理辦法.md"], "relevant_passages": ["加班應於事前在 HR 系統提出申請"]}
+{"query": "每個月加班時數上限", "relevant_sources": ["差勤管理辦法.md"], "relevant_passages": ["每月加班時數合計不得超過 46 小時"]}
+{"query": "补休要在多久内用完", "relevant_sources": ["差勤管理辦法.md"], "relevant_passages": ["應於加班事實發生後 6 個月內休畢"]}
+{"query": "補休過期就沒了嗎", "relevant_sources": ["差勤管理辦法.md"], "relevant_passages": ["補休期限屆滿未休畢之時數"]}
+{"query": "加班费怎么算", "relevant_sources": ["差勤管理辦法.md"], "relevant_passages": ["員工得於申請加班時選擇領取加班費或換取補休", "補休時數依加班時數 1:1 計給"]}
+{"query": "颱風天放假會扣薪水嗎", "relevant_sources": ["差勤管理辦法.md"], "relevant_passages": ["經公告停止上班之日，員工不出勤者不扣薪"]}
+{"query": "我住的縣市停班但公司所在地沒停可以不去嗎", "relevant_sources": ["差勤管理辦法.md"], "relevant_passages": ["申請「防災假」"]}
+{"query": "出去拜訪客戶要怎麼打卡", "relevant_sources": ["差勤管理辦法.md"], "relevant_passages": ["因公務外出者，應於出發前在 HR 系統登錄外勤"]}
+{"query": "輪班可以跟同事換班嗎", "relevant_sources": ["差勤管理辦法.md"], "relevant_passages": ["輪班人員調班應由雙方於班別前 2 日"]}
+{"query": "在家上班要怎麼打卡", "relevant_sources": ["差勤管理辦法.md", "遠端工作規範.md"], "relevant_passages": ["遠端工作日應以公司 VPN 連線後於 App 打卡", "並以 VPN 連線後打卡"]}
+{"query": "出國出差要提前多久申請", "relevant_sources": ["差旅與費用報銷辦法_2026.md", "差旅與費用報銷辦法_2025.md"], "relevant_passages": ["國外出差應於出發前 14 個工作日提出申請", "國外出差應於出發前 10 個工作日提出申請"]}
+{"query": "出差可以搭計程車報帳嗎", "relevant_sources": ["差旅與費用報銷辦法_2026.md", "差旅與費用報銷辦法_2025.md"], "relevant_passages": ["搭乘計程車限以下情形", "計程車費用一律不予核銷"]}
+{"query": "2026 年台北出差住宿一晚上限多少", "relevant_sources": ["差旅與費用報銷辦法_2026.md"], "relevant_passages": ["臺北市、新北市 | 新臺幣 3,200 元"]}
+{"query": "去日本出差住飯店可以報多少", "relevant_sources": ["差旅與費用報銷辦法_2026.md", "差旅與費用報銷辦法_2025.md"], "relevant_passages": ["日本、韓國、新加坡 | 新臺幣 5,500 元", "國外地區新臺幣 5,000 元"]}
+{"query": "出差一天的伙食費補助", "relevant_sources": ["差旅與費用報銷辦法_2026.md", "差旅與費用報銷辦法_2025.md"], "relevant_passages": ["國內出差每日膳雜費新臺幣 600 元", "國內出差每日膳雜費新臺幣 500 元"]}
+{"query": "出差回來多久內要報帳", "relevant_sources": ["差旅與費用報銷辦法_2026.md", "差旅與費用報銷辦法_2025.md"], "relevant_passages": ["出差費用應於返回後 30 日內", "出差費用應於返回後 60 日內"]}
+{"query": "發票抬頭要打哪個統編", "relevant_sources": ["差旅與費用報銷辦法_2026.md"], "relevant_passages": ["統一編號 24681357"]}
+{"query": "收據弄丟了還能報銷嗎", "relevant_sources": ["差旅與費用報銷辦法_2026.md"], "relevant_passages": ["單據遺失切結書"]}
+{"query": "開自己的車出差油錢怎麼算", "relevant_sources": ["差旅與費用報銷辦法_2026.md", "差旅與費用報銷辦法_2025.md"], "relevant_passages": ["油資依每公里新臺幣 4 元計算", "油資依每公里新臺幣 3 元計算"]}
+{"query": "2025 年版的國內出差膳雜費是多少", "relevant_sources": ["差旅與費用報銷辦法_2025.md"], "relevant_passages": ["國內出差每日膳雜費新臺幣 500 元"]}
+{"query": "可以先預支出差費用嗎", "relevant_sources": ["差旅與費用報銷辦法_2026.md"], "relevant_passages": ["國外出差得於出發前 5 個工作日申請預支差旅費"]}
+{"query": "長途飛行可以坐豪華經濟艙嗎", "relevant_sources": ["差旅與費用報銷辦法_2026.md"], "relevant_passages": ["單程飛行時間超過 8 小時者"]}
+{"query": "出差住宿标准", "relevant_sources": ["差旅與費用報銷辦法_2026.md", "差旅與費用報銷辦法_2025.md"], "relevant_passages": ["臺北市、新北市 | 新臺幣 3,200 元", "臺北市、新北市新臺幣 2,800 元"]}
+{"query": "密碼至少要幾個字元", "relevant_sources": ["資訊安全管理政策_v4.2.md"], "relevant_passages": ["帳號密碼長度至少 12 個字元"]}
+{"query": "多久要換一次密碼", "relevant_sources": ["資訊安全管理政策_v4.2.md"], "relevant_passages": ["密碼每 180 天更換一次"]}
+{"query": "帳號被鎖住了怎麼辦", "relevant_sources": ["資訊安全管理政策_v4.2.md", "IT服務台常見問題.jsonl"], "relevant_passages": ["連續輸入錯誤密碼 5 次，帳號鎖定 15 分鐘", "連續輸入錯誤密碼會鎖定帳號 15 分鐘"]}
+{"query": "筆電不見了要通報誰", "relevant_sources": ["資訊安全管理政策_v4.2.md", "IT服務台常見問題.jsonl"], "relevant_passages": ["應於發現後 1 小時內通報資訊安全室", "手機或筆電遺失了該怎麼辦"]}
+{"query": "可以插自己的隨身碟嗎", "relevant_sources": ["資訊安全管理政策_v4.2.md"], "relevant_passages": ["禁止在公司設備上使用未經核准之 USB 隨身碟"]}
+{"query": "收到可疑的信件怎麼處理", "relevant_sources": ["資訊安全管理政策_v4.2.md"], "relevant_passages": ["回報釣魚郵件"]}
+{"query": "社交工程演練不小心點了連結會怎樣", "relevant_sources": ["資訊安全管理政策_v4.2.md"], "relevant_passages": ["演練中點擊連結者須於 2 週內完成線上補強課程"]}
+{"query": "機密文件可以放 Google Drive 嗎", "relevant_sources": ["資訊安全管理政策_v4.2.md"], "relevant_passages": ["機密以上資料不得儲存於個人雲端空間"]}
+{"query": "MFA 要用哪個 app", "relevant_sources": ["資訊安全管理政策_v4.2.md"], "relevant_passages": ["Microsoft Authenticator"]}
+{"query": "電腦好像中毒了", "relevant_sources": ["資訊安全管理政策_v4.2.md"], "relevant_passages": ["應立即中斷網路連線並通報"]}
+{"query": "同事離職後帳號什麼時候停用", "relevant_sources": ["資訊安全管理政策_v4.2.md"], "relevant_passages": ["最後工作日下班後停用所有系統帳號"]}
+{"query": "VPN 連不上", "relevant_sources": ["IT服務台常見問題.jsonl"], "relevant_passages": ["在家無法連線公司 VPN 怎麼處理"]}
+{"query": "想裝軟體要跑什麼流程", "relevant_sources": ["IT服務台常見問題.jsonl"], "relevant_passages": ["軟體安裝申請單"]}
+{"query": "信箱滿了收不到信", "relevant_sources": ["IT服務台常見問題.jsonl"], "relevant_passages": ["個人信箱容量為 50 GB"]}
+{"query": "印表機要怎麼取件", "relevant_sources": ["IT服務台常見問題.jsonl"], "relevant_passages": ["以識別證感應取件"]}
+{"query": "新人的電腦帳號何時開通", "relevant_sources": ["IT服務台常見問題.jsonl"], "relevant_passages": ["報到前 1 個工作日由 HR 系統自動建立"]}
+{"query": "客戶來訪要連哪個 wifi", "relevant_sources": ["IT服務台常見問題.jsonl"], "relevant_passages": ["訪客請連線「Miao-Guest」網路"]}
+{"query": "忘記密碼", "relevant_sources": ["IT服務台常見問題.jsonl"], "relevant_passages": ["忘記電腦登入密碼怎麼辦"]}
+{"query": "筆電壞了要送修", "relevant_sources": ["IT服務台常見問題.jsonl"], "relevant_passages": ["公司筆電故障要怎麼送修"]}
+{"query": "每年健康檢查", "relevant_sources": ["員工福利制度.md"], "relevant_passages": ["員工每年可享免費健康檢查一次"]}
+{"query": "家人可以加保團保嗎", "relevant_sources": ["員工福利制度.md"], "relevant_passages": ["員工眷屬得以團體費率自費加保"]}
+{"query": "員工旅遊補助多少錢", "relevant_sources": ["員工福利制度.md"], "relevant_passages": ["每年補助員工旅遊費用每人新臺幣 8,000 元"]}
+{"query": "旅遊補助沒用完可以換現金嗎", "relevant_sources": ["員工福利制度.md"], "relevant_passages": ["未使用之補助不得折發現金"]}
+{"query": "考證照公司有補助嗎", "relevant_sources": ["員工福利制度.md"], "relevant_passages": ["每人每年補助上限新臺幣 20,000 元", "取得公司認可之專業證照"]}
+{"query": "生小孩公司有發補助嗎", "relevant_sources": ["員工福利制度.md"], "relevant_passages": ["每胎補助新臺幣 10,000 元"]}
+{"query": "結婚公司有包紅包嗎", "relevant_sources": ["員工福利制度.md"], "relevant_passages": ["結婚禮金：員工本人結婚"]}
+{"query": "生日有什麼福利", "relevant_sources": ["員工福利制度.md"], "relevant_passages": ["生日禮券新臺幣 1,000 元"]}
+{"query": "年終獎金怎麼算", "relevant_sources": ["績效考核辦法.md"], "relevant_passages": ["A 等 2.5 個月"]}
+{"query": "考績 A 有名額限制嗎", "relevant_sources": ["績效考核辦法.md"], "relevant_passages": ["各部門 A 等人數以不超過 20% 為原則"]}
+{"query": "升遷需要什麼條件", "relevant_sources": ["績效考核辦法.md"], "relevant_passages": ["現職滿 2 年，且最近 2 年考核均為 B+ 以上"]}
+{"query": "考績拿 C 會怎樣", "relevant_sources": ["績效考核辦法.md"], "relevant_passages": ["為期 3 個月之績效改善計畫"]}
+{"query": "PIP 是什麼", "relevant_sources": ["績效考核辦法.md"], "relevant_passages": ["績效改善計畫（PIP）"]}
+{"query": "一週可以在家上班幾天", "relevant_sources": ["遠端工作規範.md"], "relevant_passages": ["每週遠端工作以 2 日為上限"]}
+{"query": "WFH policy", "relevant_sources": ["遠端工作規範.md"], "relevant_passages": ["每週遠端工作以 2 日為上限", "經直屬主管同意後得申請遠端工作"]}
+{"query": "遠端工作有網路費補助嗎", "relevant_sources": ["遠端工作規範.md"], "relevant_passages": ["每月補助遠端工作者網路費新臺幣 500 元"]}
+{"query": "在咖啡廳用公共 wifi 工作可以嗎", "relevant_sources": ["遠端工作規範.md"], "relevant_passages": ["不得使用咖啡廳、機場等公共 Wi-Fi 處理機密資料"]}
+{"query": "星期一可以遠端嗎", "relevant_sources": ["遠端工作規範.md"], "relevant_passages": ["每週一為部門全員進辦公室日"]}
+{"query": "企業版一個月多少錢", "relevant_sources": ["產品方案價目表.csv"], "relevant_passages": ["方案: 企業版"]}
+{"query": "哪些方案有支援 SSO", "relevant_sources": ["產品方案價目表.csv"], "relevant_passages": ["方案: 企業版", "方案: 教育版"]}
+{"query": "團隊版最多幾個人可以用", "relevant_sources": ["產品方案價目表.csv"], "relevant_passages": ["方案: 團隊版"]}
+{"query": "會議室一次最多可以訂多久", "relevant_sources": ["會議室與公務車借用規則.md"], "relevant_passages": ["單次預約以 3 小時為上限"]}
+{"query": "訂了會議室沒去會怎樣", "relevant_sources": ["會議室與公務車借用規則.md"], "relevant_passages": ["系統自動釋出會議室"]}
+{"query": "大禮堂要怎麼借", "relevant_sources": ["會議室與公務車借用規則.md"], "relevant_passages": ["大型會議室「喵星廳」"]}
+{"query": "要借公務車", "relevant_sources": ["會議室與公務車借用規則.md"], "relevant_passages": ["公務車應於使用日前 1 個工作日"]}
+{"query": "開公務車出車禍怎麼辦", "relevant_sources": ["會議室與公務車借用規則.md"], "relevant_passages": ["公務車發生事故時"]}
+{"query": "報到要帶哪些文件", "relevant_sources": ["新進人員報到指南.md"], "relevant_passages": ["身分證正反面影本"]}
+{"query": "薪轉帳戶要開哪家銀行", "relevant_sources": ["新進人員報到指南.md"], "relevant_passages": ["玉山銀行或國泰世華銀行"]}
+{"query": "試用期多久", "relevant_sources": ["新進人員報到指南.md"], "relevant_passages": ["試用期為 3 個月"]}
+{"query": "每個月幾號發薪水", "relevant_sources": ["新進人員報到指南.md"], "relevant_passages": ["薪資於每月 5 日發放上個月薪資"]}
+{"query": "新人第一週要上什麼課", "relevant_sources": ["新進人員報到指南.md"], "relevant_passages": ["第一週須完成線上新人訓練課程"]}
+{"query": "在捷運上吃東西會被罰多少錢", "relevant_sources": ["大眾捷運法.txt"], "relevant_passages": ["於大眾捷運系統禁止飲食區內飲食", "新臺幣一千五百元以上七千五百元以下罰鍰"]}
+{"query": "搭捷運逃票會怎樣", "relevant_sources": ["大眾捷運法.txt"], "relevant_passages": ["旅客無票、持用失效車票"]}
+{"query": "捷運票價由誰核定", "relevant_sources": ["大眾捷運法.txt"], "relevant_passages": ["報請地方主管機關核定後公告", "運價率之計算公式，由中央主管機關擬訂"]}
+{"query": "可以帶狗搭捷運嗎", "relevant_sources": ["大眾捷運法.txt"], "relevant_passages": ["未經許可攜帶動物進入站區或車輛內"]}
+{"query": "捷運的主管機關是誰", "relevant_sources": ["大眾捷運法.txt"], "relevant_passages": ["在中央為交通部；在直轄市為直轄市政府"]}
+{"query": "捷運公司一定要是股份有限公司嗎", "relevant_sources": ["大眾捷運法.txt"], "relevant_passages": ["以依公司法設立之股份有限公司為限"]}
+{"query": "捷運出事故乘客受傷誰要賠償", "relevant_sources": ["大眾捷運法.txt"], "relevant_passages": ["因行車及其他事故致旅客死亡或傷害"]}
+{"query": "破壞捷運設施會被判幾年", "relevant_sources": ["大眾捷運法.txt"], "relevant_passages": ["處一年以上七年以下有期徒刑"]}
+{"query": "捷運沿線禁建範圍內不能做什麼", "relevant_sources": ["大眾捷運法.txt"], "relevant_passages": ["禁建範圍內除建造其他捷運設施"]}
+{"query": "大眾捷運系統的法律定義", "relevant_sources": ["大眾捷運法.txt"], "relevant_passages": ["本法所稱大眾捷運系統，指利用地面、地下或高架設施"]}
+{"query": "在月台跨越黃線會被罰嗎", "relevant_sources": ["大眾捷運法.txt"], "relevant_passages": ["跨越黃色警戒線"]}
+{"query": "員工認股計畫怎麼參加", "relevant_sources": []}
+{"query": "公司有提供員工宿舍嗎", "relevant_sources": []}
+{"query": "競業禁止條款的期限是多久", "relevant_sources": []}
+{"query": "尾牙抽獎的規則", "relevant_sources": []}
+{"query": "公司有托嬰或幼兒園補助嗎", "relevant_sources": []}
+{"query": "員工停車位怎麼申請", "relevant_sources": []}
+{"query": "制服尺寸要去哪裡登記", "relevant_sources": []}
+{"query": "交通車的路線與時刻表", "relevant_sources": []}
+{"query": "員工買公司產品有員工價嗎", "relevant_sources": []}
+{"query": "如何申請調職到海外分公司", "relevant_sources": []}
+{"query": "夜班津貼一小時多少", "relevant_sources": []}
+{"query": "法定退休年齡是幾歲", "relevant_sources": []}
+{"query": "股票選擇權何時可以行使", "relevant_sources": []}
+{"query": "員工可以帶寵物來上班嗎", "relevant_sources": []}
+{"query": "ISO 27001 稽核什麼時候舉行", "relevant_sources": []}

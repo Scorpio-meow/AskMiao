@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 from typing import Iterable, List, Tuple, Dict, Optional, Sequence
+import hashlib
 import os
 import re
 import threading
@@ -13,6 +14,7 @@ from ..indices.bm25_store import BM25StoreManager
 logger = logging.getLogger(__name__)
 
 CrossEncoder = None
+AutoTokenizer = None
 
 URL_MATCH_SCORE = 1.0
 POST_ID_MATCH_SCORE = 0.98
@@ -113,12 +115,35 @@ class HybridRetriever:
         self.top_k = top_k
         self.rrf_k = rrf_k
         self.rerank_top_k = rerank_top_k
-        # CrossEncoder 的 fast tokenizer 不能被多個執行緒同時使用；重排用自己的鎖，不占用索引鎖
+        # 重排模型的 fast tokenizer 不能被多個執行緒同時使用；重排用自己的鎖，不占用索引鎖
         self._rerank_lock = threading.Lock()
         self.final_k = final_k
         self.rerank_weight = rerank_weight
         self.relevance_threshold = relevance_threshold
 
+        self.cross_encoder = None
+        self.openvino_reranker = None
+        if openvino_device:
+            if openvino_max_length is None:
+                raise RuntimeError("設定 RERANKER_OPENVINO_DEVICE 時必須同時設定 RERANKER_OPENVINO_MAX_LENGTH")
+            self.reranker_tokenizer = self._load_reranker_tokenizer(reranker_model)
+            if openvino_max_length > self.reranker_tokenizer.model_max_length:
+                raise RuntimeError(
+                    f"RERANKER_OPENVINO_MAX_LENGTH ({openvino_max_length}) 超過重排模型 {reranker_model} "
+                    f"可接受的最大長度 {self.reranker_tokenizer.model_max_length}"
+                )
+            self.openvino_batch_size = rerank_top_k
+            self.openvino_max_length = openvino_max_length
+            started = time.time()
+            self.openvino_reranker = self._compile_openvino_reranker(reranker_model, openvino_device)
+            logger.info(
+                f"Cross-Encoder 已以 OpenVINO 編譯至 {openvino_device}: 批次 1~{self.openvino_batch_size}、"
+                f"長度 {self.openvino_max_length}，耗時 {time.time() - started:.1f}s"
+            )
+        else:
+            self._load_cross_encoder(reranker_model, use_fp16)
+
+    def _load_cross_encoder(self, reranker_model: str, use_fp16: bool) -> None:
         global CrossEncoder
         try:
             if CrossEncoder is None:
@@ -144,38 +169,58 @@ class HybridRetriever:
         self.reranker_outputs_probability = isinstance(activation_fn, torch.nn.Sigmoid)
         logger.info(f"Cross-Encoder 已載入至 {self.vector_store.device.upper()}: {reranker_model} (精度: {'FP16' if use_fp16 else 'FP32'})")
 
-        self.openvino_reranker = None
-        if openvino_device:
-            if openvino_max_length is None:
-                raise RuntimeError("設定 RERANKER_OPENVINO_DEVICE 時必須同時設定 RERANKER_OPENVINO_MAX_LENGTH")
-            self.openvino_batch_size = rerank_top_k
-            self.openvino_max_length = openvino_max_length
-            started = time.time()
-            self.openvino_reranker = self._compile_openvino_reranker(reranker_model, openvino_device)
-            logger.info(
-                f"Cross-Encoder 已以 OpenVINO 編譯至 {openvino_device}: 固定形狀 "
-                f"{self.openvino_batch_size}x{self.openvino_max_length}，耗時 {time.time() - started:.1f}s"
-            )
+    def _load_reranker_tokenizer(self, reranker_model: str):
+        global AutoTokenizer
+        try:
+            if AutoTokenizer is None:
+                from transformers import AutoTokenizer as _AT
+                AutoTokenizer = _AT
+            return AutoTokenizer.from_pretrained(reranker_model)
+        except Exception as e:
+            raise RuntimeError(
+                f"無法載入重排模型 ({reranker_model}) 的 tokenizer：{e}。重排模型是必要元件，請檢查 RERANKER_MODEL 設定、模型快取或網路連線"
+            ) from e
+
+    @staticmethod
+    def _reranker_fingerprint(reranker_model: str) -> str:
+        from transformers.utils import cached_file
+        model_dir = os.path.dirname(cached_file(reranker_model, "config.json"))
+        files = sorted(
+            (entry.name, entry.stat().st_size, entry.stat().st_mtime_ns)
+            for entry in os.scandir(model_dir) if entry.is_file()
+        )
+        return hashlib.sha256(repr(files).encode()).hexdigest()[:16]
 
     def _compile_openvino_reranker(self, reranker_model: str, device: str):
         import openvino as ov
         cache_dir = os.path.join(self.vector_store.data_dir, "openvino_cache")
         os.makedirs(cache_dir, exist_ok=True)
-        shape = [self.openvino_batch_size, self.openvino_max_length]
-        model_path = os.path.join(cache_dir, f"{re.sub(r'[^\w.-]', '_', reranker_model)}_{shape[0]}x{shape[1]}.xml")
+        model_path = os.path.join(
+            cache_dir, f"{re.sub(r'[^\w.-]', '_', reranker_model)}_{self._reranker_fingerprint(reranker_model)}.xml"
+        )
+        if not os.path.exists(model_path):
+            self._convert_openvino_reranker(reranker_model, model_path)
         core = ov.Core()
         core.set_property({"CACHE_DIR": cache_dir})
-        if os.path.exists(model_path):
-            model = core.read_model(model_path)
-        else:
-            example = self._tokenize([("", "")] * shape[0], "pt")
-            model = ov.convert_model(self.cross_encoder.model, example_input=dict(example))
-            model.reshape({name: shape for name in example})
-            ov.save_model(model, model_path)
+        model = core.read_model(model_path)
+        shape = ov.PartialShape([ov.Dimension(1, self.openvino_batch_size), self.openvino_max_length])
+        model.reshape({model_input.get_any_name(): shape for model_input in model.inputs})
         return core.compile_model(model, device)
 
+    def _convert_openvino_reranker(self, reranker_model: str, model_path: str) -> None:
+        import openvino as ov
+        from transformers import AutoModelForSequenceClassification
+        model = AutoModelForSequenceClassification.from_pretrained(reranker_model)
+        example = self._tokenize([("", "")] * 2, "pt")
+        converted = ov.convert_model(model, example_input=dict(example))
+        stem = os.path.splitext(model_path)[0]
+        temp_stem = f"{stem}.{os.getpid()}.tmp"
+        ov.save_model(converted, f"{temp_stem}.xml")
+        os.replace(f"{temp_stem}.bin", f"{stem}.bin")
+        os.replace(f"{temp_stem}.xml", model_path)
+
     def _tokenize(self, pairs: Sequence[Tuple[str, str]], tensor_type: str):
-        return self.cross_encoder.tokenizer(
+        return self.reranker_tokenizer(
             [query for query, _ in pairs],
             [text for _, text in pairs],
             padding="max_length",
@@ -185,13 +230,11 @@ class HybridRetriever:
         )
 
     def _openvino_logits(self, pairs: List[Tuple[str, str]]) -> List[float]:
-        size = self.openvino_batch_size
         logits: List[float] = []
-        for start in range(0, len(pairs), size):
-            batch = pairs[start:start + size]
-            encoded = self._tokenize(batch + [("", "")] * (size - len(batch)), "np")
+        for start in range(0, len(pairs), self.openvino_batch_size):
+            encoded = self._tokenize(pairs[start:start + self.openvino_batch_size], "np")
             output = self.openvino_reranker(dict(encoded))[0]
-            logits.extend(np.asarray(output, dtype=float).reshape(-1)[: len(batch)].tolist())
+            logits.extend(np.asarray(output, dtype=float).reshape(-1).tolist())
         return logits
 
     def hybrid_search(
@@ -253,7 +296,7 @@ class HybridRetriever:
         ]
         ranked.sort(key=lambda r: (r.pinned, r.score), reverse=True)
         logger.info(
-            f"Retrieval query='{query}' exact={len(exact)} fused={len(fused)} "
+            f"Retrieval query_chars={len(query)} exact={len(exact)} fused={len(fused)} "
             f"reranked={len(ranked)} in {time.time() - started:.2f}s"
         )
         return ranked

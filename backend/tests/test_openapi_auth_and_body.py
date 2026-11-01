@@ -57,9 +57,10 @@ async def test_body_is_encoded_by_declared_content_type(upstream, content_type, 
     if content_type == "application/json":
         assert json.loads(body) == {"title": "嗨", "tags": ["a", "b"]}
     elif content_type == "application/x-www-form-urlencoded":
-        assert parse_qs(body) == {"title": ["嗨"], "tags": ['["a", "b"]']}
+        assert parse_qs(body) == {"title": ["嗨"], "tags": ["a", "b"]}
     else:
-        assert 'name="title"' in body and "嗨" in body and '["a", "b"]' in body
+        assert 'name="title"' in body and "嗨" in body
+        assert body.count('name="tags"') == 2 and "\r\n\r\na\r\n" in body and "\r\n\r\nb\r\n" in body
 
 
 SPEC = {
@@ -87,7 +88,7 @@ SPEC = {
 
 @pytest.mark.anyio
 async def test_parser_maps_security_schemes_and_body_types():
-    endpoints = {e["name"]: e for e in (await OpenApiParser.parse(json.dumps(SPEC)))["endpoints"]}
+    endpoints = {e["name"]: e for e in (await OpenApiParser.parse(json.dumps(SPEC), None, []))["endpoints"]}
     assert endpoints["a"]["auth_type"] == "api_key"
     assert endpoints["a"]["auth_config"] == {"key_name": "api_key", "key_in": "query", "key_value": ""}
     assert endpoints["b"]["auth_type"] == "bearer"
@@ -95,9 +96,10 @@ async def test_parser_maps_security_schemes_and_body_types():
     assert endpoints["c"]["auth_config"]["token_url"] == "https://auth.example.com/token"
     assert endpoints["c"]["auth_config"]["scope"] == "read"
     assert endpoints["c"]["body_content_type"] == "application/x-www-form-urlencoded"
-    assert endpoints["d"]["auth_type"] == "none"
+    assert endpoints["d"]["auth_type"] == "api_key"
+    assert endpoints["d"]["auth_config"] == {"key_name": "sid", "key_in": "cookie", "key_value": ""}
     assert endpoints["e"]["auth_type"] == "none"
-    assert endpoints["f"]["body_content_type"] == "application/json"
+    assert endpoints["f"]["body_content_type"] == "application/xml"
 
 
 def test_import_merges_global_credentials_only_for_matching_type():
@@ -112,7 +114,7 @@ def test_import_merges_global_credentials_only_for_matching_type():
 def test_unknown_options_are_rejected():
     with pytest.raises(ValueError):
         OpenApiImportItem(name="a", display_name="a", description="a", method="GET", path="/a", full_url="https://x/a",
-                          body_content_type="application/xml")
+                          body_content_type="不是媒體型別")
     with pytest.raises(ValueError):
         OpenApiImportItem(name="a", display_name="a", description="a", method="GET", path="/a", full_url="https://x/a",
                           auth_type="digest")
@@ -197,7 +199,7 @@ PETSTORE_V3 = {
 
 
 async def parsed_tool(spec, name):
-    endpoint = next(e for e in (await OpenApiParser.parse(json.dumps(spec)))["endpoints"] if e["name"] == name)
+    endpoint = next(e for e in (await OpenApiParser.parse(json.dumps(spec), None, []))["endpoints"] if e["name"] == name)
     return {
         "name": endpoint["name"],
         "method": endpoint["method"],

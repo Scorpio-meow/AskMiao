@@ -1,32 +1,17 @@
 import os
 import logging
-from logging.handlers import RotatingFileHandler
 import torch
 import uvicorn
 from fastapi import FastAPI
 from app import __version__
 from app.core.config import settings
-from app.core.limits import LOG_FILE_BACKUP_COUNT, LOG_FILE_MAX_BYTES
 from app.core.lifespan import lifespan
-from app.core.security_logging import SingleLineMessageFormatter
+from app.core.security_logging import configure_log_handler, rotating_log_file_handler
 from app.middleware import setup_middlewares
-from app.api import chat, admin, documents, tags as tags_router, auth, api_tools, mcp, skills, llm_connections
+from app.api import chat, admin, documents, auth, api_tools, mcp, skills, llm_connections
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-LOGS_DIR = os.path.join(BASE_DIR, 'logs')
-os.makedirs(LOGS_DIR, exist_ok=True)
-log_level = settings.LOG_LEVEL.upper()
-log_handlers = [
-    logging.StreamHandler(),
-    RotatingFileHandler(
-        os.path.join(LOGS_DIR, 'app.log'),
-        maxBytes=LOG_FILE_MAX_BYTES,
-        backupCount=LOG_FILE_BACKUP_COUNT,
-        encoding='utf-8'
-    )
-]
-for handler in log_handlers:
-    handler.setFormatter(SingleLineMessageFormatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s', datefmt='%Y-%m-%d %H:%M:%S'))
-logging.basicConfig(level=getattr(logging, log_level), handlers=log_handlers)
+app_log_handler = configure_log_handler(rotating_log_file_handler('app.log'))
+logging.basicConfig(level=settings.LOG_LEVEL, handlers=[configure_log_handler(logging.StreamHandler()), app_log_handler])
 logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
 # httpx／httpcore 的 INFO 日誌會記下完整請求網址，查詢字串型 API 金鑰等憑證會因此明文落地
 logging.getLogger("httpx").setLevel(logging.WARNING)
@@ -53,7 +38,7 @@ app.include_router(mcp.oauth_callback_router, prefix="/api/mcp", tags=["mcp"])
 app.include_router(skills.router, prefix="/api/skills", tags=["skills"])
 app.include_router(llm_connections.router)
 app.include_router(llm_connections.admin_router)
-app.include_router(tags_router.router, prefix="/api", tags=["tags"])
+app.include_router(llm_connections.system_models_router)
 @app.get("/")
 async def root():
     return {"message": "ChatBot API is running"}
@@ -80,6 +65,9 @@ if __name__ == "__main__":
     parser.add_argument("--port", type=int, default=settings.PORT, help=f"Port number (default: {settings.PORT})")
     parser.add_argument("--reload", action=argparse.BooleanOptionalAction, default=settings.RELOAD, help=f"Enable/disable auto-reload (default: RELOAD={settings.RELOAD})")
     args = parser.parse_args()
+    if args.reload:
+        logging.getLogger().removeHandler(app_log_handler)
+        app_log_handler.close()
     reload_dirs = [os.path.join(BASE_DIR, "app")]
     reload_excludes = [
         "*.log", "*.db", "*.bin", "*.pkl", "*.sqlite*",

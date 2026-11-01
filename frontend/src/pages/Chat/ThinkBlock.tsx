@@ -18,10 +18,8 @@ export const ThinkBlock: React.FC<ThinkBlockProps> = ({
         aria-expanded={isOpen}
         aria-controls={bodyId}
       >
-        <span className={styles.titleArea}>
-          <Icon name="lightbulb" size={18} />
-          <span>思考與推論過程</span>
-        </span>
+        <Icon name="lightbulb" size={16} className={styles.icon} />
+        <span className={styles.title}>思考與推論過程</span>
         <span className={`${styles.chevron} ${isOpen ? styles.chevronOpen : ''}`} aria-hidden="true">
           <Icon name="expand-more" size={16} />
         </span>

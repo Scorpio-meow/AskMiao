@@ -1,13 +1,15 @@
 import json
+import time
 import uuid
 import logging
 import asyncio
 from dataclasses import dataclass
 import httpx
 from urllib.parse import urlparse
-from typing import Any, AsyncIterator, Dict, List, Optional, Tuple
+from typing import Any, AsyncIterator, Dict, List, Optional, Tuple, Union
 from app.core.config import settings
 from app.core.limits import MAX_DISCOVERED_MODELS
+from app.core.security_logging import log_fields
 from app.core.ssrf_protection import DnsPool, SSRFSafeHttpx2Transport, SSRFSafeTransport
 logger = logging.getLogger(__name__)
 _http_client: Optional[httpx.AsyncClient] = None
@@ -83,76 +85,124 @@ ANTHROPIC_INCOMPLETE_STOP_REASONS = {
 }
 DEFAULT_GEMINI_MODELS = ["gemini-4-argon", "gemini-3.8-flash", "gemini-3.6-flash", "gemini-3.5-flash-lite", "gemini-3.1-flash-lite"]
 GEMINI_EFFORT_BY_REASONING = {"none": "minimal", "minimal": "minimal", "low": "low", "medium": "medium", "high": "high", "xhigh": "high", "max": "high"}
-def is_foundry_enabled() -> bool:
-    return bool(settings.FOUNDRY_API_KEY and settings.FOUNDRY_ENDPOINT)
-def get_available_models() -> List[str]:
-    available = (settings.AVAILABLE_MODELS or "").strip()
-    if available:
-        return [m.strip() for m in available.split(",") if m.strip()]
-
-    models: List[str] = []
-
-    if is_foundry_enabled():
-        if settings.FOUNDRY_DEPLOYMENT:
-            deployments = [d.strip() for d in settings.FOUNDRY_DEPLOYMENT.split(",") if d.strip()]
-            for dep in deployments:
-                if dep not in models:
-                    models.append(dep)
-        else:
-            models.append("gpt-6-sol")
-
-    if settings.OPENAI_API_KEY:
-        for m in DEFAULT_OPENAI_MODELS:
-            if m not in models:
-                models.append(m)
-
-    if settings.ANTHROPIC_API_KEY:
-        for m in DEFAULT_CLAUDE_MODELS:
-            if m not in models:
-                models.append(m)
-
-    if settings.GEMINI_API_KEY:
-        for m in DEFAULT_GEMINI_MODELS:
-            if m not in models:
-                models.append(m)
-
-    return models
-def _foundry_deployments() -> List[str]:
-    return [d.strip() for d in (settings.FOUNDRY_DEPLOYMENT or "").split(",") if d.strip()]
-def resolve_model_name(model_name: Optional[str]) -> str:
-    target = model_name or settings.MODEL_NAME
-    if target:
-        return target
-    available = get_available_models()
-    if not available:
-        raise ValueError("未指定模型，且未設定 MODEL_NAME、AVAILABLE_MODELS 或任何供應商金鑰")
-    return available[0]
-def resolve_provider(model_name: str) -> str:
-    """依模型名稱決定供應商：foundry、anthropic、gemini、openai 或 ollama"""
-    if is_foundry_enabled() and model_name in _foundry_deployments():
-        return "anthropic" if model_name.startswith("claude-") else "foundry"
-    if model_name.startswith("claude-") and settings.ANTHROPIC_API_KEY:
-        return "anthropic"
-    if model_name.startswith("gemini-") and settings.GEMINI_API_KEY:
-        return "gemini"
-    if model_name.startswith(OPENAI_MODEL_PREFIXES):
-        if settings.OPENAI_API_KEY:
-            return "openai"
-        if is_foundry_enabled():
-            return "foundry"
-    return "ollama"
-def system_endpoint(model_name: str) -> LlmEndpoint:
-    provider = resolve_provider(model_name)
-    if provider == "foundry" or is_foundry_claude(model_name):
-        return LlmEndpoint("foundry", settings.FOUNDRY_ENDPOINT, settings.FOUNDRY_API_KEY, settings.ANTHROPIC_MAX_TOKENS, False)
-    if provider == "anthropic":
-        return LlmEndpoint("anthropic", settings.ANTHROPIC_API_BASE, settings.ANTHROPIC_API_KEY, settings.ANTHROPIC_MAX_TOKENS, False)
-    if provider == "gemini":
-        return LlmEndpoint("gemini", settings.GEMINI_API_BASE, settings.GEMINI_API_KEY, None, False)
-    if provider == "openai":
-        return LlmEndpoint("openai", settings.OPENAI_API_BASE, settings.OPENAI_API_KEY, None, False)
-    ollama_key = settings.OLLAMA_API_KEY if urlparse(settings.LLM_API_BASE).hostname == OLLAMA_CLOUD_HOST else None
-    return LlmEndpoint("ollama", settings.LLM_API_BASE, ollama_key, None, False)
+OLLAMA_DURATION_FIELDS = (
+    ("load_duration", "load_ms"),
+    ("prompt_eval_duration", "prompt_eval_ms"),
+    ("eval_duration", "eval_ms"),
+    ("total_duration", "total_ms"),
+)
+NANOSECONDS_PER_MILLISECOND = 1_000_000
+@dataclass(frozen=True)
+class LlmStreamStats:
+    fields: Dict[str, Any]
+def _int_fields(**fields: Any) -> Dict[str, int]:
+    return {key: value for key, value in fields.items() if isinstance(value, int) and not isinstance(value, bool)}
+def _chat_completions_stats(data: Dict[str, Any]) -> Dict[str, Any]:
+    usage = data.get("usage") or {}
+    return _int_fields(
+        input_tokens=usage.get("prompt_tokens"),
+        output_tokens=usage.get("completion_tokens"),
+        cached_tokens=(usage.get("prompt_tokens_details") or {}).get("cached_tokens"),
+        reasoning_tokens=(usage.get("completion_tokens_details") or {}).get("reasoning_tokens"),
+    )
+def _responses_stats(data: Dict[str, Any]) -> Dict[str, Any]:
+    usage = data.get("usage") or {}
+    stats: Dict[str, Any] = _int_fields(
+        input_tokens=usage.get("input_tokens"),
+        output_tokens=usage.get("output_tokens"),
+        cached_tokens=(usage.get("input_tokens_details") or {}).get("cached_tokens"),
+        reasoning_tokens=(usage.get("output_tokens_details") or {}).get("reasoning_tokens"),
+    )
+    if data.get("status"):
+        stats["stop_reason"] = data["status"]
+    return stats
+def _ollama_stats(data: Dict[str, Any]) -> Dict[str, Any]:
+    stats: Dict[str, Any] = _int_fields(input_tokens=data.get("prompt_eval_count"), output_tokens=data.get("eval_count"))
+    for source, name in OLLAMA_DURATION_FIELDS:
+        if isinstance(data.get(source), int):
+            stats[name] = data[source] // NANOSECONDS_PER_MILLISECOND
+    if data.get("done_reason"):
+        stats["stop_reason"] = data["done_reason"]
+    return stats
+def _anthropic_stats(response, model: str) -> Dict[str, Any]:
+    usage = getattr(response, "usage", None)
+    stats: Dict[str, Any] = _int_fields(
+        input_tokens=getattr(usage, "input_tokens", None),
+        output_tokens=getattr(usage, "output_tokens", None),
+        cache_read_tokens=getattr(usage, "cache_read_input_tokens", None),
+        cache_creation_tokens=getattr(usage, "cache_creation_input_tokens", None),
+    )
+    if getattr(response, "stop_reason", None):
+        stats["stop_reason"] = response.stop_reason
+    served_model = getattr(response, "model", None)
+    if served_model and served_model != model:
+        stats["served_model"] = served_model
+    return stats
+def _prompt_size(messages: List[Dict[str, Any]]) -> Tuple[int, int]:
+    chars = 0
+    images = 0
+    for message in messages:
+        content = message.get("content")
+        if isinstance(content, str):
+            chars += len(content)
+            continue
+        for part in content or []:
+            if part.get("type") == "text":
+                chars += len(part.get("text") or "")
+            elif part.get("type") == "image_url":
+                images += 1
+    return chars, images
+class _LlmCallLog:
+    def __init__(
+        self,
+        mode: str,
+        endpoint: LlmEndpoint,
+        model: str,
+        messages: List[Dict[str, Any]],
+        tools: Optional[List[Dict[str, Any]]],
+        reasoning_effort: Optional[str],
+        timeout: float
+    ):
+        self.fields: Dict[str, Any] = {"mode": mode, "provider": endpoint.provider, "model": model}
+        self.timeout = timeout
+        self.streaming = mode == "stream"
+        self.first_chunk_ms: Optional[int] = None
+        self.chunks = 0
+        self.output_chars = 0
+        self.stats: Dict[str, Any] = {}
+        prompt_chars, images = _prompt_size(messages)
+        logger.info("LLM 呼叫開始 %s", log_fields(
+            **self.fields,
+            host=urlparse(endpoint.api_base).hostname,
+            messages=len(messages),
+            prompt_chars=prompt_chars,
+            images=images,
+            tools=len(tools or []),
+            reasoning=reasoning_effort,
+            timeout_s=timeout
+        ))
+        self.started = time.perf_counter()
+    def _elapsed_ms(self) -> int:
+        return round((time.perf_counter() - self.started) * 1000)
+    def chunk(self, text: str) -> None:
+        if self.first_chunk_ms is None:
+            self.first_chunk_ms = self._elapsed_ms()
+        self.chunks += 1
+        self.output_chars += len(text)
+    def _stream_fields(self) -> Dict[str, Any]:
+        if not self.streaming:
+            return {}
+        return {"first_chunk_ms": self.first_chunk_ms, "chunks": self.chunks, "output_chars": self.output_chars}
+    def _log(self, level: int, event: str, status: str, **fields: Any) -> None:
+        logger.log(level, "%s %s", event, log_fields(**{
+            **self.fields, "status": status, "duration_ms": self._elapsed_ms(), **self._stream_fields(), **fields
+        }))
+    def finished(self, **fields: Any) -> None:
+        self._log(logging.INFO, "LLM 呼叫完成", "ok", **{**fields, **self.stats})
+    def failed(self, exc: BaseException) -> None:
+        self._log(logging.WARNING, "LLM 呼叫失敗", "error", timeout_s=self.timeout, error=type(exc).__name__, detail=str(exc) or None)
+    def cancelled(self) -> None:
+        self._log(logging.INFO, "LLM 呼叫中止", "cancelled")
 def _public_message(message: Dict[str, Any]) -> Dict[str, Any]:
     return {key: value for key, value in message.items() if not key.startswith("_")}
 def _parse_image_url(url: str) -> Tuple[str, str]:
@@ -219,7 +269,7 @@ async def _openai_chat(
     tools: Optional[List[Dict[str, Any]]],
     reasoning_effort: Optional[str],
     timeout: float
-) -> Dict[str, Any]:
+) -> Tuple[Dict[str, Any], Dict[str, Any]]:
     provider = endpoint.provider
     url, headers = _openai_endpoint(endpoint)
     client = await get_llm_http_client(endpoint.public_only)
@@ -231,16 +281,20 @@ async def _openai_chat(
     )
     if response.status_code != 200:
         raise RuntimeError(f"{provider} API 錯誤 ({response.status_code}): {response.text[:500]}")
-    choices = response.json().get("choices") or []
+    data = response.json()
+    choices = data.get("choices") or []
     if not choices:
         raise RuntimeError(f"{provider} API 回傳空的 choices")
-    return choices[0]["message"]
+    stats = _chat_completions_stats(data)
+    if choices[0].get("finish_reason"):
+        stats["stop_reason"] = choices[0]["finish_reason"]
+    return choices[0]["message"], stats
 async def _openai_stream(
     endpoint: LlmEndpoint,
     messages: List[Dict[str, Any]],
     model: str,
     reasoning_effort: Optional[str]
-) -> AsyncIterator[str]:
+) -> AsyncIterator[Union[str, LlmStreamStats]]:
     provider = endpoint.provider
     url, headers = _openai_endpoint(endpoint)
     client = await get_llm_http_client(endpoint.public_only)
@@ -257,9 +311,18 @@ async def _openai_stream(
             if data == "[DONE]":
                 break
             try:
-                content = json.loads(data)["choices"][0].get("delta", {}).get("content")
-            except (ValueError, KeyError, IndexError):
+                event = json.loads(data)
+            except ValueError:
                 continue
+            if isinstance(event, dict) and event.get("usage"):
+                yield LlmStreamStats(_chat_completions_stats(event))
+            try:
+                choice = event["choices"][0]
+            except (TypeError, KeyError, IndexError):
+                continue
+            if choice.get("finish_reason"):
+                yield LlmStreamStats({"stop_reason": choice["finish_reason"]})
+            content = choice.get("delta", {}).get("content")
             if content:
                 yield content
 def uses_responses_api(provider: str, model: str) -> bool:
@@ -372,7 +435,7 @@ async def _responses_chat(
     tools: Optional[List[Dict[str, Any]]],
     reasoning_effort: Optional[str],
     timeout: float
-) -> Dict[str, Any]:
+) -> Tuple[Dict[str, Any], Dict[str, Any]]:
     provider = endpoint.provider
     url, headers = _responses_endpoint(endpoint)
     client = await get_llm_http_client(endpoint.public_only)
@@ -384,14 +447,15 @@ async def _responses_chat(
     )
     if response.status_code != 200:
         raise RuntimeError(f"{provider} Responses API 錯誤 ({response.status_code}): {response.text[:500]}")
-    return _responses_message(response.json())
+    data = response.json()
+    return _responses_message(data), _responses_stats(data)
 async def _responses_stream(
     endpoint: LlmEndpoint,
     messages: List[Dict[str, Any]],
     model: str,
     tools: Optional[List[Dict[str, Any]]],
     reasoning_effort: Optional[str]
-) -> AsyncIterator[str]:
+) -> AsyncIterator[Union[str, LlmStreamStats]]:
     provider = endpoint.provider
     url, headers = _responses_endpoint(endpoint)
     client = await get_llm_http_client(endpoint.public_only)
@@ -411,12 +475,10 @@ async def _responses_stream(
             if kind == "response.output_text.delta":
                 if event.get("delta"):
                     yield event["delta"]
+            elif kind == "response.completed":
+                yield LlmStreamStats(_responses_stats(event.get("response") or {}))
             elif kind in ("response.failed", "response.incomplete", "error"):
                 raise RuntimeError(f"openai Responses 串流中斷: {json.dumps(event, ensure_ascii=False)[:500]}")
-def ollama_auth_headers(url: str) -> Dict[str, str]:
-    if settings.OLLAMA_API_KEY and urlparse(url).hostname == OLLAMA_CLOUD_HOST:
-        return {"Authorization": f"Bearer {settings.OLLAMA_API_KEY}"}
-    return {}
 def _ollama_request_headers(endpoint: LlmEndpoint) -> Dict[str, str]:
     if endpoint.api_key:
         return {**OLLAMA_HEADERS, "Authorization": f"Bearer {endpoint.api_key}"}
@@ -501,7 +563,7 @@ async def _ollama_chat(
     tools: Optional[List[Dict[str, Any]]],
     reasoning_effort: Optional[str],
     timeout: float
-) -> Dict[str, Any]:
+) -> Tuple[Dict[str, Any], Dict[str, Any]]:
     client = await get_llm_http_client(endpoint.public_only)
     response = await client.post(
         f"{endpoint.api_base.rstrip('/')}/api/chat",
@@ -511,13 +573,14 @@ async def _ollama_chat(
     )
     if response.status_code != 200:
         raise RuntimeError(f"Ollama API 錯誤 ({response.status_code}): {response.text[:500]}")
-    return _normalize_ollama_message(response.json().get("message", {}))
+    data = response.json()
+    return _normalize_ollama_message(data.get("message", {})), _ollama_stats(data)
 async def _ollama_stream(
     endpoint: LlmEndpoint,
     messages: List[Dict[str, Any]],
     model: str,
     reasoning_effort: Optional[str]
-) -> AsyncIterator[str]:
+) -> AsyncIterator[Union[str, LlmStreamStats]]:
     client = await get_llm_http_client(endpoint.public_only)
     payload = _ollama_payload(messages, model, None, stream=True, reasoning_effort=reasoning_effort)
     async with client.stream(
@@ -541,8 +604,8 @@ async def _ollama_stream(
             content = chunk.get("message", {}).get("content", "")
             if content:
                 yield content
-def is_foundry_claude(model: str) -> bool:
-    return is_foundry_enabled() and model in _foundry_deployments() and model.startswith("claude-")
+            if chunk.get("done"):
+                yield LlmStreamStats(_ollama_stats(chunk))
 def _uses_anthropic_api(endpoint: LlmEndpoint, model: str) -> bool:
     return endpoint.provider == "anthropic" or (endpoint.provider == "foundry" and model.startswith("claude-"))
 def _anthropic_http_client(public_only: bool):
@@ -615,18 +678,6 @@ def _mark_history_cache_breakpoint(converted: List[Dict[str, Any]]) -> None:
         return
     if content and isinstance(content[-1], dict):
         last["content"] = [*content[:-1], {**content[-1], "cache_control": ANTHROPIC_CACHE_CONTROL}]
-def _log_anthropic_usage(response) -> None:
-    usage = getattr(response, "usage", None)
-    if usage is None:
-        return
-    logger.info(
-        "Claude usage: model=%s, input=%s, cache_read=%s, cache_creation=%s, output=%s",
-        getattr(response, "model", None),
-        getattr(usage, "input_tokens", None),
-        getattr(usage, "cache_read_input_tokens", None),
-        getattr(usage, "cache_creation_input_tokens", None),
-        getattr(usage, "output_tokens", None)
-    )
 def _anthropic_request(
     messages: List[Dict[str, Any]],
     tools: Optional[List[Dict[str, Any]]]
@@ -735,7 +786,7 @@ async def _anthropic_chat(
     tools: Optional[List[Dict[str, Any]]],
     reasoning_effort: Optional[str],
     timeout: float
-) -> Dict[str, Any]:
+) -> Tuple[Dict[str, Any], Dict[str, Any]]:
     client = _anthropic_client(endpoint).with_options(timeout=timeout)
     async with client.messages.stream(
         model=model,
@@ -744,15 +795,14 @@ async def _anthropic_chat(
         **_anthropic_effort_options(reasoning_effort, model, endpoint.provider)
     ) as stream:
         response = await stream.get_final_message()
-    _log_anthropic_usage(response)
-    return _anthropic_message(response)
+    return _anthropic_message(response), _anthropic_stats(response, model)
 async def _anthropic_stream(
     endpoint: LlmEndpoint,
     messages: List[Dict[str, Any]],
     model: str,
     tools: Optional[List[Dict[str, Any]]],
     reasoning_effort: Optional[str]
-) -> AsyncIterator[str]:
+) -> AsyncIterator[Union[str, LlmStreamStats]]:
     request = _anthropic_request(messages, tools)
     if tools:
         request["tool_choice"] = {"type": "none"}
@@ -765,7 +815,7 @@ async def _anthropic_stream(
         async for text in stream.text_stream:
             yield text
         final_message = await stream.get_final_message()
-    _log_anthropic_usage(final_message)
+    yield LlmStreamStats(_anthropic_stats(final_message, model))
     _raise_if_refused(final_message)
 async def chat_completion(
     messages: List[Dict[str, Any]],
@@ -779,14 +829,25 @@ async def chat_completion(
     """單次呼叫 endpoint 指定的供應商，回傳 OpenAI 格式的 assistant 訊息（content、tool_calls）"""
     provider = endpoint.provider
     request_timeout = timeout if timeout is not None else settings.LLM_TIMEOUT
-    logger.info(f"Calling LLM: provider={provider}, model={model_name}, messages={len(messages)}, tools={len(tools or [])}")
-    if _uses_anthropic_api(endpoint, model_name):
-        return await _anthropic_chat(endpoint, messages, model_name, tools, reasoning_effort, request_timeout)
-    if uses_responses_api(provider, model_name):
-        return await _responses_chat(endpoint, messages, model_name, tools, reasoning_effort, request_timeout)
-    if provider == "ollama":
-        return await _ollama_chat(endpoint, messages, model_name, tools, reasoning_effort, request_timeout)
-    return await _openai_chat(endpoint, messages, model_name, tools, reasoning_effort, request_timeout)
+    call_log = _LlmCallLog("chat", endpoint, model_name, messages, tools, reasoning_effort, request_timeout)
+    try:
+        if _uses_anthropic_api(endpoint, model_name):
+            message, stats = await _anthropic_chat(endpoint, messages, model_name, tools, reasoning_effort, request_timeout)
+        elif uses_responses_api(provider, model_name):
+            message, stats = await _responses_chat(endpoint, messages, model_name, tools, reasoning_effort, request_timeout)
+        elif provider == "ollama":
+            message, stats = await _ollama_chat(endpoint, messages, model_name, tools, reasoning_effort, request_timeout)
+        else:
+            message, stats = await _openai_chat(endpoint, messages, model_name, tools, reasoning_effort, request_timeout)
+    except asyncio.CancelledError:
+        call_log.cancelled()
+        raise
+    except Exception as exc:
+        call_log.failed(exc)
+        raise
+    call_log.stats.update(stats)
+    call_log.finished(output_chars=len(message.get("content") or ""), tool_calls=len(message.get("tool_calls") or []))
+    return message
 async def stream_completion(
     messages: List[Dict[str, Any]],
     *,
@@ -797,7 +858,7 @@ async def stream_completion(
 ) -> AsyncIterator[str]:
     """串流產生最終答案；tools 只在歷史含工具呼叫時提供給需要宣告工具的供應商，不會再觸發工具"""
     provider = endpoint.provider
-    logger.info(f"Streaming LLM: provider={provider}, model={model_name}, messages={len(messages)}")
+    call_log = _LlmCallLog("stream", endpoint, model_name, messages, tools, reasoning_effort, settings.LLM_TIMEOUT)
     if _uses_anthropic_api(endpoint, model_name):
         stream = _anthropic_stream(endpoint, messages, model_name, tools, reasoning_effort)
     elif uses_responses_api(provider, model_name):
@@ -806,8 +867,20 @@ async def stream_completion(
         stream = _ollama_stream(endpoint, messages, model_name, reasoning_effort)
     else:
         stream = _openai_stream(endpoint, messages, model_name, reasoning_effort)
-    async for chunk in stream:
-        yield chunk
+    try:
+        async for chunk in stream:
+            if isinstance(chunk, LlmStreamStats):
+                call_log.stats.update(chunk.fields)
+                continue
+            call_log.chunk(chunk)
+            yield chunk
+    except (asyncio.CancelledError, GeneratorExit):
+        call_log.cancelled()
+        raise
+    except Exception as exc:
+        call_log.failed(exc)
+        raise
+    call_log.finished()
 async def _http_model_ids(endpoint: LlmEndpoint, url: str, headers: Dict[str, str]) -> List[str]:
     client = await get_llm_http_client(endpoint.public_only)
     response = await client.get(url, headers=headers, timeout=httpx.Timeout(settings.LLM_TAGS_TIMEOUT, pool=LLM_POOL_ACQUIRE_TIMEOUT_SECONDS))

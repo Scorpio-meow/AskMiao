@@ -1,95 +1,55 @@
-import { useState } from 'react';
+import { useId, useState } from 'react';
 import { apiToolService } from '../../services/api';
 import { describeRequestError } from '../../utils/secureLogger';
-import { Alert, Button, Dialog, DialogActions, DialogContent, DialogTitle, Icon } from '../../components/ui';
-import { getMethodClass, getRequestErrorMessage } from './shared';
+import { Alert, Button, Collapse, Dialog, DialogActions, DialogContent, DialogTitle, Icon } from '../../components/ui';
+import { MethodBadge, Tag } from './CatalogParts';
+import { Field } from './FormParts';
+import {
+  AUTH_TYPE_LABELS,
+  SAMPLE_OAS_SPECS,
+  allEndpointsSelected,
+  countSelected,
+  describeVersion,
+  endpointBadge,
+  endpointParameterCount,
+  endpointTarget,
+  importPayload,
+  parseSpecArgs,
+  selectAllEndpoints,
+  selectedEndpoints as pickSelected,
+  toggleAllEndpoints,
+} from './openApiImport';
+import { getRequestErrorMessage } from './shared';
 import styles from './AiTools.module.css';
-const AUTH_TYPE_LABELS = {
-  bearer: 'Bearer',
-  api_key: 'API Key',
-  basic: 'Basic',
-  oauth2_client_credentials: 'OAuth2',
-};
-const SAMPLE_OAS_SPECS = {
-  oas2: `swagger: '2.0'
-info:
-  title: 即時天氣查詢 API (Swagger 2.0)
-  version: 1.0.0
-host: httpbin.org
-basePath: /
-schemes:
-  - https
-paths:
-  /get:
-    get:
-      summary: 查詢指定城市之即時天氣與氣溫
-      operationId: get_weather_by_city
-      parameters:
-        - name: city
-          in: query
-          required: true
-          type: string
-          description: 城市名稱（例如 Taipei, Tokyo, New York）`,
-  oas30: `openapi: 3.0.3
-info:
-  title: 匯率即時轉換服務 (OpenAPI 3.0)
-  version: 1.0.0
-servers:
-  - url: https://httpbin.org
-paths:
-  /anything/rates:
-    get:
-      summary: 查詢法幣與加密貨幣即時匯率換算
-      operationId: get_exchange_rate
-      parameters:
-        - name: from_currency
-          in: query
-          required: true
-          schema:
-            type: string
-          description: 來源貨幣代碼（例如 USD, TWD, EUR）
-        - name: to_currency
-          in: query
-          required: true
-          schema:
-            type: string
-          description: 目標貨幣代碼（例如 TWD, JPY, USD）`,
-  oas31: `openapi: 3.1.0
-info:
-  title: 工單通知派遣服務 (OpenAPI 3.1)
-  version: 2.0.0
-servers:
-  - url: https://httpbin.org
-paths:
-  /post:
-    post:
-      summary: 發送緊急工單派遣通知
-      operationId: send_dispatch_ticket
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              properties:
-                ticket_id:
-                  type:
-                    - string
-                    - integer
-                  description: 工單編號
-                title:
-                  type: string
-                  description: 工單標題
-                priority:
-                  type: string
-                  enum: [low, medium, high, urgent]
-                  description: 優先等級
-              required: [ticket_id, title]`
-};
-/** 解析 OpenAPI / Swagger 規格並勾選要批次建立的自訂 API 工具；輸入框開啟時保持空白，需要範例時再按按鈕載入 */
+const STEPS = ['提供規格', '選擇端點並匯入'];
+function ImportSteps({ current }) {
+  return (
+    <ol className={styles.steps} aria-label="匯入步驟">
+      {STEPS.map((label, index) => {
+        const state = index < current ? 'done' : index === current ? 'current' : 'upcoming';
+        return (
+          <li
+            key={label}
+            className={`${styles.step} ${state === 'current' ? styles.stepCurrent : ''} ${state === 'done' ? styles.stepDone : ''}`}
+            aria-current={state === 'current' ? 'step' : undefined}
+          >
+            <span className={styles.stepMarker} aria-hidden="true">
+              {state === 'done' ? <Icon name="check" size={14} /> : index + 1}
+            </span>
+            <span>{label}</span>
+            {state === 'done' && <span className="sr-only">（已完成）</span>}
+          </li>
+        );
+      })}
+    </ol>
+  );
+}
 export default function OpenApiImportDialog({ onClose, onImported }) {
+  const overlayRegionId = useId();
   const [specInput, setSpecInput] = useState('');
   const [defaultBaseUrl, setDefaultBaseUrl] = useState('');
+  const [overlayInput, setOverlayInput] = useState('');
+  const [overlayOpen, setOverlayOpen] = useState(false);
   const [parsing, setParsing] = useState(false);
   const [parseResult, setParseResult] = useState(null);
   const [selectedEndpoints, setSelectedEndpoints] = useState({});
@@ -104,14 +64,10 @@ export default function OpenApiImportDialog({ onClose, onImported }) {
     try {
       setParsing(true);
       setError('');
-      const res = await apiToolService.parseOpenApiSpec(specInput, defaultBaseUrl);
+      const res = await apiToolService.parseOpenApiSpec(...parseSpecArgs(specInput, defaultBaseUrl, overlayInput));
       if (res?.data) {
         setParseResult(res.data);
-        const sel = {};
-        res.data.endpoints.forEach((ep) => {
-          sel[ep.name] = true;
-        });
-        setSelectedEndpoints(sel);
+        setSelectedEndpoints(selectAllEndpoints(res.data.endpoints, true));
       }
     } catch (err) {
       setError(getRequestErrorMessage(err, '解析 OpenAPI 規格失敗，請檢查格式'));
@@ -121,7 +77,7 @@ export default function OpenApiImportDialog({ onClose, onImported }) {
   };
   const handleExecuteImport = async () => {
     if (!parseResult) return;
-    const toImport = parseResult.endpoints.filter((ep) => selectedEndpoints[ep.name]);
+    const toImport = pickSelected(parseResult.endpoints, selectedEndpoints);
     if (toImport.length === 0) {
       setError('請至少勾選一個要匯入的 API 端點');
       return;
@@ -129,14 +85,7 @@ export default function OpenApiImportDialog({ onClose, onImported }) {
     try {
       setImporting(true);
       setError('');
-      const authConfig = globalAuthToken ? { token: globalAuthToken } : {};
-      const authType = globalAuthToken ? 'bearer' : 'none';
-      const res = await apiToolService.importTools({
-        tools: toImport,
-        global_base_url: parseResult.base_url || defaultBaseUrl,
-        global_auth_type: authType,
-        global_auth_config: authConfig
-      });
+      const res = await apiToolService.importTools(importPayload({ tools: toImport, parseResult, defaultBaseUrl, globalAuthToken }));
       onImported(res.message);
     } catch (err) {
       console.warn('匯入工具失敗:', describeRequestError(err));
@@ -145,134 +94,180 @@ export default function OpenApiImportDialog({ onClose, onImported }) {
       setImporting(false);
     }
   };
+  const selectedCount = countSelected(selectedEndpoints);
+  const endpointTotal = parseResult?.endpoints.length;
+  const allSelected = endpointTotal > 0 && allEndpointsSelected(selectedEndpoints);
+  const someSelected = selectedCount > 0 && !allSelected;
   return (
     <Dialog open onClose={parsing || importing ? undefined : onClose} maxWidth="lg">
-      <DialogTitle onClose={onClose} closeDisabled={parsing || importing}>
-        匯入 OpenAPI / Swagger 規格
+      <DialogTitle
+        onClose={onClose}
+        closeDisabled={parsing || importing}
+        subtitle="Swagger 2.0、OpenAPI 3.0～3.2 與 Arazzo 1.0～1.1，可先套用 Overlay 1.0～1.2"
+      >
+        匯入 API 規格
       </DialogTitle>
       <DialogContent className={styles.dialogBody}>
+        <ImportSteps current={parseResult ? 1 : 0} />
         {error && <Alert severity="error">{error}</Alert>}
         {!parseResult ? (
           <>
-            <div className={styles.formGroup}>
-              <span className={styles.formLabel} id="oas-samples-label">載入測試範例（會取代下方內容）：</span>
-              <div className={styles.inlineButtons} role="group" aria-labelledby="oas-samples-label">
-                <Button variant="secondary" onClick={() => setSpecInput(SAMPLE_OAS_SPECS.oas2)}>
-                  Swagger 2.0 (即時天氣)
-                </Button>
-                <Button variant="secondary" onClick={() => setSpecInput(SAMPLE_OAS_SPECS.oas30)}>
-                  OpenAPI 3.0 (匯率轉換)
-                </Button>
-                <Button variant="secondary" onClick={() => setSpecInput(SAMPLE_OAS_SPECS.oas31)}>
-                  OpenAPI 3.1 (工單派遣)
-                </Button>
-              </div>
-            </div>
-            <div className={styles.formGroup}>
-              <label className={styles.formLabel} htmlFor="oas-spec">OpenAPI 規格內容 (JSON / YAML) 或遠端 URL</label>
+            <Field
+              id="oas-spec"
+              label="規格內容（JSON / YAML）或遠端 URL"
+              hint="貼上 Swagger 2.0、OpenAPI 3.0～3.2 或 Arazzo 工作流程文件，也可以輸入 https://.../openapi.json 網址。外部 $ref 只在以網址匯入時才會載入。"
+            >
               <textarea
                 id="oas-spec"
-                className={`${styles.formTextarea} ${styles.textareaLg}`}
-                placeholder="貼上 OpenAPI / Swagger 規範 YAML/JSON，或輸入 https://.../openapi.json 網址"
+                className={`${styles.input} ${styles.codeInput} ${styles.textareaLg}`}
+                placeholder={'openapi: 3.1.0\ninfo:\n  title: …\n\n或 https://api.example.com/openapi.json'}
                 value={specInput}
                 onChange={(e) => setSpecInput(e.target.value)}
+                spellCheck={false}
+                aria-describedby="oas-spec-hint"
               />
+            </Field>
+            <div className={styles.presetGroup} role="group" aria-labelledby="oas-samples-label">
+              <span className={styles.presetLabel} id="oas-samples-label">載入測試範例（會取代上方內容）</span>
+              <div className={styles.inlineButtons}>
+                {SAMPLE_OAS_SPECS.map((sample) => (
+                  <Button key={sample.key} variant="secondary" size="sm" onClick={() => setSpecInput(sample.content)}>
+                    {sample.label}
+                  </Button>
+                ))}
+              </div>
             </div>
-            <div className={styles.formGroup}>
-              <label className={styles.formLabel} htmlFor="oas-base-url">預設 Base URL（選填，覆蓋規格中的伺服器位址）</label>
+            <Field id="oas-base-url" label="預設 Base URL（選填）" hint="覆蓋規格中的伺服器位址">
               <input
                 id="oas-base-url"
                 type="url"
-                className={styles.formInput}
+                className={`${styles.input} ${styles.mono}`}
                 placeholder="例如 https://api.example.com"
                 value={defaultBaseUrl}
                 onChange={(e) => setDefaultBaseUrl(e.target.value)}
                 autoComplete="off"
+                aria-describedby="oas-base-url-hint"
               />
+            </Field>
+            <div className={styles.disclosure}>
+              <button
+                type="button"
+                className={styles.disclosureButton}
+                onClick={() => setOverlayOpen((open) => !open)}
+                aria-expanded={overlayOpen}
+                aria-controls={overlayRegionId}
+              >
+                <Icon name={overlayOpen ? 'expand-less' : 'expand-more'} size={16} />
+                <span>套用 Overlay（選填）</span>
+                {!overlayOpen && overlayInput.trim() && <Tag tone="primary">已填寫</Tag>}
+              </button>
+              <Collapse in={overlayOpen} id={overlayRegionId}>
+                <div className={styles.disclosureBody}>
+                  <Field id="oas-overlay" label="Overlay 文件或網址" hint="匯入前先套用到上方規格，例如移除內部端點、補充說明。支援 Overlay 1.0～1.2。">
+                    <textarea
+                      id="oas-overlay"
+                      className={`${styles.input} ${styles.codeInput} ${styles.textareaMd}`}
+                      value={overlayInput}
+                      onChange={(e) => setOverlayInput(e.target.value)}
+                      spellCheck={false}
+                      aria-describedby="oas-overlay-hint"
+                    />
+                  </Field>
+                </div>
+              </Collapse>
             </div>
           </>
         ) : (
           <>
             <div className={styles.parseSummary}>
-              <div>
-                <span className={styles.versionTag}>{parseResult.version}</span>
-                <strong className={styles.parseTitle}>{parseResult.title}</strong>
+              <div className={styles.parseSummaryText}>
+                <div className={styles.parseSummaryTitleLine}>
+                  <Tag tone="primary">{describeVersion(parseResult)}</Tag>
+                  <strong className={styles.parseTitle}>{parseResult.title}</strong>
+                </div>
+                <span className={styles.parseMeta}>
+                  {endpointTotal} 個可匯入項目
+                  {parseResult.base_url && <> · <span className={styles.mono}>{parseResult.base_url}</span></>}
+                </span>
               </div>
-              <Button variant="secondary" onClick={() => setParseResult(null)}>
-                重新解析
+              <Button variant="secondary" size="sm" onClick={() => setParseResult(null)} startIcon={<Icon name="arrow-back" size={16} />}>
+                返回修改規格
               </Button>
             </div>
-            <div className={styles.formGroup}>
-              <label className={styles.formLabel} htmlFor="oas-token">全域 Bearer Token（選填，套用到規格宣告為 Bearer 或沒有宣告驗證的端點）</label>
+            {parseResult.warnings?.length > 0 && (
+              <Alert severity="warning">
+                <ul className={styles.warningList}>
+                  {parseResult.warnings.map((warning) => <li key={warning}>{warning}</li>)}
+                </ul>
+              </Alert>
+            )}
+            <div className={styles.endpointPicker} role="group" aria-labelledby="oas-endpoints-label">
+              <div className={styles.endpointPickerHeader}>
+                <label className={styles.selectAll}>
+                  <input
+                    type="checkbox"
+                    checked={allSelected}
+                    ref={(el) => {
+                      if (el) el.indeterminate = someSelected;
+                    }}
+                    onChange={() => setSelectedEndpoints(toggleAllEndpoints(selectedEndpoints, parseResult.endpoints))}
+                  />
+                  <span>全選</span>
+                </label>
+                <span className={styles.endpointPickerTitle} id="oas-endpoints-label">
+                  選擇要匯入的 API 端點（已選 {selectedCount} / {endpointTotal}）
+                </span>
+              </div>
+              <ul className={styles.endpointList} role="list">
+                {parseResult.endpoints.map((ep) => {
+                  const isChecked = Boolean(selectedEndpoints[ep.name]);
+                  return (
+                    <li key={ep.name}>
+                      <label className={`${styles.endpointItem} ${isChecked ? styles.endpointSelected : ''}`}>
+                        <input
+                          type="checkbox"
+                          className={styles.endpointCheck}
+                          checked={isChecked}
+                          onChange={() => setSelectedEndpoints((prev) => ({ ...prev, [ep.name]: !prev[ep.name] }))}
+                        />
+                        <span className={styles.endpointBody}>
+                          <span className={styles.endpointTitleLine}>
+                            <MethodBadge method={ep.method}>{endpointBadge(ep)}</MethodBadge>
+                            <span className={styles.endpointPath}>{endpointTarget(ep)}</span>
+                          </span>
+                          <span className={styles.endpointSummary}>{ep.display_name}</span>
+                          {ep.warnings?.length > 0 && (
+                            <span className={styles.endpointWarnings}>{ep.warnings.join('；')}</span>
+                          )}
+                        </span>
+                        <span className={styles.endpointTags}>
+                          {ep.auth_type && ep.auth_type !== 'none' && (
+                            <Tag>{AUTH_TYPE_LABELS[ep.auth_type] || ep.auth_type}</Tag>
+                          )}
+                          <Tag>{endpointParameterCount(ep)} 參數</Tag>
+                        </span>
+                      </label>
+                    </li>
+                  );
+                })}
+              </ul>
+            </div>
+            <Field
+              id="oas-token"
+              label="全域 Bearer Token（選填）"
+              hint="套用到規格宣告為 Bearer 或沒有宣告驗證的端點。規格中宣告的 API Key、Basic 與 OAuth2 client credentials 會自動帶入工具設定，匯入後請編輯工具填入金鑰。"
+            >
               <input
                 id="oas-token"
                 type="password"
-                className={styles.formInput}
+                className={styles.input}
                 placeholder="若 API 需要認證請填寫 Bearer Token 或 API Key"
                 value={globalAuthToken}
                 onChange={(e) => setGlobalAuthToken(e.target.value)}
                 autoComplete="off"
                 aria-describedby="oas-token-hint"
               />
-              <span id="oas-token-hint" className={styles.credentialHint}>
-                規格中宣告的 API Key、Basic 與 OAuth2 client credentials 會自動帶入工具設定，匯入後請編輯工具填入金鑰。
-              </span>
-            </div>
-            <div className={styles.formGroup} role="group" aria-labelledby="oas-endpoints-label">
-              <div className={styles.resultHeader}>
-                <span className={styles.formLabel} id="oas-endpoints-label">
-                  選擇要匯入的 API 端點 ({Object.values(selectedEndpoints).filter(Boolean).length} / {parseResult.endpoints.length})
-                </span>
-                <button
-                  type="button"
-                  className={styles.linkButton}
-                  onClick={() => {
-                    const allChecked = Object.values(selectedEndpoints).every(Boolean);
-                    const updated = {};
-                    parseResult.endpoints.forEach((ep) => {
-                      updated[ep.name] = !allChecked;
-                    });
-                    setSelectedEndpoints(updated);
-                  }}
-                >
-                  全選 / 全不選
-                </button>
-              </div>
-              <div className={styles.endpointList}>
-                {parseResult.endpoints.map((ep) => {
-                  const isChecked = Boolean(selectedEndpoints[ep.name]);
-                  return (
-                    <label
-                      key={ep.name}
-                      className={`${styles.endpointItem} ${isChecked ? styles.endpointSelected : ''}`}
-                    >
-                      <span className={styles.endpointInfo}>
-                        <input
-                          type="checkbox"
-                          checked={isChecked}
-                          onChange={() => setSelectedEndpoints((prev) => ({ ...prev, [ep.name]: !prev[ep.name] }))}
-                        />
-                        <span className={`${styles.methodBadge} ${getMethodClass(ep.method)}`}>
-                          {ep.method}
-                        </span>
-                        <span className={styles.endpointText}>
-                          <span className={styles.endpointPath}>{ep.path}</span>
-                          <span className={styles.endpointSummary}>{ep.display_name}</span>
-                        </span>
-                      </span>
-                      <span className={styles.inlineGroup}>
-                        {ep.auth_type && ep.auth_type !== 'none' && (
-                          <span className={styles.versionTag}>{AUTH_TYPE_LABELS[ep.auth_type] || ep.auth_type}</span>
-                        )}
-                        <span className={styles.versionTag}>
-                          {Object.keys(ep.parameters_schema?.properties || {}).length} 參數
-                        </span>
-                      </span>
-                    </label>
-                  );
-                })}
-              </div>
-            </div>
+            </Field>
           </>
         )}
       </DialogContent>
@@ -296,7 +291,7 @@ export default function OpenApiImportDialog({ onClose, onImported }) {
             loading={importing}
             startIcon={<Icon name="check" size={16} />}
           >
-            {importing ? '正在匯入中...' : `確認匯入 (${Object.values(selectedEndpoints).filter(Boolean).length})`}
+            {importing ? '正在匯入中...' : `確認匯入 (${selectedCount})`}
           </Button>
         )}
       </DialogActions>

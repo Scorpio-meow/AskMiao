@@ -285,7 +285,7 @@ async def test_openapi_parser_ssrf_protection():
     ]
     for url in malicious_inputs:
         with pytest.raises(ValueError) as exc_info:
-            await OpenApiParser.parse(url)
+            await OpenApiParser.parse(url, None, [])
         assert "安全防護" in str(exc_info.value) or "SSRF" in str(exc_info.value) or "失敗" in str(exc_info.value)
 
 
@@ -305,7 +305,7 @@ paths:
         '200':
           description: OK
 """
-    res = await OpenApiParser.parse(valid_spec)
+    res = await OpenApiParser.parse(valid_spec, None, [])
     assert res["title"] == "Safe Test API"
     assert res["version"] == "openapi_3.0"
     assert len(res["endpoints"]) == 1

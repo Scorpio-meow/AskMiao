@@ -107,6 +107,34 @@ async def test_send_message_passes_database_history_to_rag(db, monkeypatch):
     assert db.query(Message).filter(Message.conversation_id == conversation_id).count() == 4
 
 
+@pytest.mark.asyncio
+async def test_send_message_saves_and_returns_the_final_answer_of_the_rag_stream(db, monkeypatch):
+    conversation_id = add_conversation(db, []).id
+
+    class FakeRag:
+        async def generate_response_stream(self, query, conversation_history, **kwargs):
+            yield {"event": "token", "data": {"content": "依年資計算 [3]。"}}
+            yield {"event": "done", "data": {"answer": "依年資計算。", "sources": []}}
+
+    monkeypatch.setattr(chat_api, "get_rag_system", lambda: FakeRag())
+    connection = LlmConnection(name="本機", provider="ollama", api_base="https://ollama.example.com",
+                               models=json.dumps(["qwen3:8b"]), owner_id=1)
+    db.add(connection)
+    db.commit()
+
+    response = await chat_api.send_message(
+        MessageCreate(content="特休怎麼算", conversation_id=conversation_id, connection_id=connection.id, model_name="qwen3:8b"),
+        db=db,
+        user_id=1,
+    )
+    body = "".join([chunk async for chunk in response.body_iterator])
+
+    saved = db.query(Message).filter(Message.conversation_id == conversation_id, Message.is_user.is_(False)).one()
+    assert saved.content == "依年資計算。"
+    done_line = next(line for line in body.split("\n\n") if line.startswith("event: done"))
+    assert json.loads(done_line.split("data: ", 1)[1])["answer"] == "依年資計算。"
+
+
 def test_recent_history_attachment_text_is_bounded_from_the_newest(db, monkeypatch):
     monkeypatch.setattr(chat_service_module, "MAX_HISTORY_ATTACHMENT_CHARS", 6)
     conversation = add_conversation(db, [])
@@ -141,7 +169,8 @@ async def test_follow_up_question_sees_earlier_attachment_text(db, monkeypatch):
             return agent.stream_research(query, conversation_history=conversation_history, **kwargs)
 
     monkeypatch.setattr(agent_module, "chat_completion", fake_chat_completion)
-    monkeypatch.setattr(agent_module, "_extract_attachment_text", lambda fname, ftype, url: "特休依年資計算")
+    monkeypatch.setattr(agent_module, "_extract_attachment_text", lambda fname, ftype, url, ocr: "特休依年資計算")
+    monkeypatch.setattr(agent_module, "_attachment_ocr", lambda: None)
     monkeypatch.setattr(settings, "CONVERSATION_HISTORY_MESSAGES", 6)
     monkeypatch.setattr(chat_api, "get_rag_system", lambda: AgentRag())
     connection_id = add_connection(db)

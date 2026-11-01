@@ -157,6 +157,33 @@ async def test_answer_without_citations_lists_no_sources(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_citations_without_any_source_are_removed_from_the_answer(monkeypatch):
+    agent, _ = make_agent(monkeypatch)
+    ScriptedLLM([answer("**RAG** [1]：先檢索再生成 [1]。")]).install(monkeypatch)
+
+    events = await collect(research(agent, "請解釋 RAG"))
+
+    assert [e["data"]["content"] for e in events if e["event"] == "token"] == ["**RAG**：先檢索再生成。"]
+    done = events[-1]["data"]
+    assert (done["answer"], done["sources_detail"]) == ("**RAG**：先檢索再生成。", [])
+
+
+@pytest.mark.asyncio
+async def test_streamed_answer_keeps_known_citations_and_drops_unknown_ones(monkeypatch):
+    agent, _ = make_agent(monkeypatch)
+    ScriptedLLM(
+        [tool_call("search_knowledge_base", {"query": "特休"}), answer("")],
+        stream_text="依年資計算 [1]，另見 [4]。",
+    ).install(monkeypatch)
+
+    events = await collect(research(agent, "特休怎麼算"))
+
+    done = events[-1]["data"]
+    assert done["answer"] == "依年資計算 [1]，另見。"
+    assert done["sources"] == ["leave.txt"]
+
+
+@pytest.mark.asyncio
 async def test_tool_results_are_wrapped_as_untrusted_data_with_citation_numbers(monkeypatch):
     agent, _ = make_agent(monkeypatch)
     llm = ScriptedLLM([tool_call("search_knowledge_base", {"query": "特休"}), answer("好")]).install(monkeypatch)
@@ -186,7 +213,8 @@ async def test_previous_answer_citation_markers_are_not_sent_back(monkeypatch):
 async def test_only_model_supported_image_types_are_sent_as_images(monkeypatch):
     agent, _ = make_agent(monkeypatch)
     llm = ScriptedLLM([answer("好")]).install(monkeypatch)
-    monkeypatch.setattr(agent_module, "_extract_attachment_text", lambda fname, ftype, url: "<svg>圖示</svg>")
+    monkeypatch.setattr(agent_module, "_extract_attachment_text", lambda fname, ftype, url, ocr: "<svg>圖示</svg>")
+    monkeypatch.setattr(agent_module, "_attachment_ocr", lambda: None)
     attachments = [
         {"filename": "a.png", "file_type": "image/png", "data_url": "data:image/png;base64,AAAA"},
         {"filename": "b.svg", "file_type": "image/svg+xml", "data_url": "data:image/svg+xml;base64,PHN2Zz4="},

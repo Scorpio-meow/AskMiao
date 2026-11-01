@@ -1,151 +1,15 @@
-import React, { useMemo, useRef } from 'react';
+import React, { memo, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import ReactMarkdown from 'react-markdown';
-import { ChatMessageItemProps } from './types';
+import { ChatMessageItemProps, ResearchTraceStep } from './types';
 import ThinkBlock from './ThinkBlock';
 import SourceBadges from './SourceBadges';
 import ResearchTraceBlock from './ResearchTraceBlock';
 import ToolApprovalCard from './ToolApprovalCard';
-import remarkGfmSafe from './remarkGfmSafe';
-import { parseServerDate } from '../../utils/serverDate';
-import { Avatar, Tooltip, IconButton, Spinner, Icon, Button, useModalDialog } from '../../components/ui';
+import MarkdownContent from './MarkdownContent';
+import { describeAttachmentType, formatMessageTime, isImageAttachment, splitThinkContent } from './chatFormat';
+import { Tooltip, IconButton, Spinner, Icon, Button, useModalDialog } from '../../components/ui';
 import styles from './ChatMessageItem.module.css';
-const SOCIAL_PLATFORM_DOMAINS = ['threads.com', 'threads.net', 'instagram.com', 'twitter.com', 'x.com'];
-const ACTION_BUTTON_KEYWORDS = ['貼文', '查看', '前往', '開啟', '↗'];
-const POST_TIME_PREFIX_REGEX = /^(上午|下午|\d{1,2}:\d{2}|\d{4}[-/年]\d{1,2}[-/月])/;
-// 不在結尾加上 $：分隔符號與作者名稱都接受「.」，加上 $ 後一長串「.」會回溯成二次方時間，
-// 模型輸出的長段落可讓分頁凍結；需要整段比對時改以比對長度是否等於整段判斷
-const POST_AUTHOR_PREFIX_REGEX = /^(?:(\d+)[\.:\s]+)?(@?[\w\.-]+)/;
-const POST_LINK_PREFIX_REGEX = /^(連結|來源)[：:]\s*/;
-const POST_CONTENT_PREFIX_REGEX = /^(內容)[：:]\s*/;
-const timeFormatter = new Intl.DateTimeFormat('zh-TW', { hour: '2-digit', minute: '2-digit' });
-const monthDayTimeFormatter = new Intl.DateTimeFormat('zh-TW', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' });
-const fullDateTimeFormatter = new Intl.DateTimeFormat('zh-TW', { year: 'numeric', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' });
-const isSocialUrl = (href?: string): boolean => {
-  if (!href) return false;
-  try {
-    const host = new URL(href).hostname.replace(/^www\./, '');
-    return SOCIAL_PLATFORM_DOMAINS.some((domain) => host === domain || host.endsWith(`.${domain}`));
-  } catch {
-    return false;
-  }
-};
-/** 連到其他網站的 http(s) 連結回傳解析後的網址；站內連結與 mailto 等其他協定回傳 null */
-const parseExternalLink = (href?: string): URL | null => {
-  if (!href) return null;
-  try {
-    const url = new URL(href, window.location.href);
-    const isWeb = url.protocol === 'http:' || url.protocol === 'https:';
-    return isWeb && url.origin !== window.location.origin ? url : null;
-  } catch {
-    return null;
-  }
-};
-const formatMessageTime = (value: string) => {
-  const date = parseServerDate(value);
-  if (Number.isNaN(date.getTime())) return null;
-  const now = new Date();
-  const label =
-    date.toDateString() === now.toDateString()
-      ? timeFormatter.format(date)
-      : date.getFullYear() === now.getFullYear()
-        ? monthDayTimeFormatter.format(date)
-        : fullDateTimeFormatter.format(date);
-  return { label, full: fullDateTimeFormatter.format(date) };
-};
-/**
- * 把「作者 ｜ 時間 ｜ 內容 ｜ 社群連結」這類貼文清單轉成卡片。
- * 只在段落確實連到社群平台、且不含行內程式碼時套用，避免一般文字或指令中的 | 被誤判。
- */
-function parsePipeDelimitedPost(children: React.ReactNode): React.ReactNode | null {
-  const childArray = React.Children.toArray(children);
-  let fullText = '';
-  const linkNodes: React.ReactNode[] = [];
-  let hasSocialLink = false;
-  for (const child of childArray) {
-    if (typeof child === 'string') {
-      fullText += child;
-    } else if (React.isValidElement(child)) {
-      const props: any = child.props || {};
-      if (child.type === 'code') {
-        return null;
-      }
-      if (child.type === 'a' || props.href) {
-        linkNodes.push(child);
-        hasSocialLink = hasSocialLink || isSocialUrl(props.href);
-        fullText += ' [[LINK]] ';
-      } else if (props.children) {
-        const textDesc = typeof props.children === 'string' ? props.children : ' ';
-        fullText += textDesc;
-      }
-    }
-  }
-  if (!hasSocialLink) {
-    return null;
-  }
-  if (!fullText.includes('｜') && !fullText.includes('|')) {
-    return null;
-  }
-  const parts = fullText.split(/[｜|]/).map((p) => p.trim()).filter(Boolean);
-  if (parts.length < 2) {
-    return null;
-  }
-  let indexStr = '';
-  let authorStr = '';
-  let timeStr = '';
-  let contentStr = '';
-  for (let i = 0; i < parts.length; i++) {
-    const p = parts[i];
-    if (POST_TIME_PREFIX_REGEX.test(p) && !timeStr) {
-      timeStr = p;
-      continue;
-    }
-    const authorMatchPrefix = p.match(POST_AUTHOR_PREFIX_REGEX);
-    if (authorMatchPrefix && authorMatchPrefix[0].length === p.length && !authorStr && !p.includes('內容') && !p.includes('連結')) {
-      if (authorMatchPrefix[1]) indexStr = authorMatchPrefix[1];
-      authorStr = authorMatchPrefix[2].startsWith('@') ? authorMatchPrefix[2] : `@${authorMatchPrefix[2]}`;
-      continue;
-    }
-    if (authorMatchPrefix && !authorStr && !p.includes('內容') && !p.includes('連結') && !p.includes('[[LINK]]')) {
-      if (authorMatchPrefix[1]) indexStr = authorMatchPrefix[1];
-      authorStr = authorMatchPrefix[2].startsWith('@') ? authorMatchPrefix[2] : `@${authorMatchPrefix[2]}`;
-      const rem = p.replace(authorMatchPrefix[0], '').trim();
-      if (rem) {
-        contentStr += (contentStr ? ' ' : '') + rem;
-      }
-      continue;
-    }
-    if (p.includes('[[LINK]]')) {
-      const cleaned = p.replace(/\[\[LINK\]\]/g, '').replace(POST_LINK_PREFIX_REGEX, '').trim();
-      if (cleaned) {
-        contentStr += (contentStr ? ' ' : '') + cleaned;
-      }
-    } else {
-      const cleaned = p.replace(POST_CONTENT_PREFIX_REGEX, '').trim();
-      contentStr += (contentStr ? ' ' : '') + cleaned;
-    }
-  }
-  if (!authorStr && !contentStr && linkNodes.length === 0) {
-    return null;
-  }
-  return (
-    <div className={styles.socialPostCard}>
-      <div className={styles.socialPostHeader}>
-        <div className={styles.socialPostAuthorRow}>
-          {indexStr && <span className={styles.postIndexBadge}>#{indexStr}</span>}
-          {authorStr && <span className={styles.postAuthorBadge}>{authorStr}</span>}
-        </div>
-        {timeStr && <span className={styles.socialPostTime}>{timeStr}</span>}
-      </div>
-      {contentStr && <div className={styles.socialPostContent}>{contentStr}</div>}
-      {linkNodes.length > 0 && (
-        <div className={styles.socialPostFooter}>
-          {linkNodes}
-        </div>
-      )}
-    </div>
-  );
-}
+const NO_TRACE: ResearchTraceStep[] = [];
 const ImageLightbox: React.FC<{ src: string; alt: string; onClose: () => void }> = ({ src, alt, onClose }) => {
   const dialogRef = useRef<HTMLDialogElement>(null);
   const dialogHandlers = useModalDialog(dialogRef, true, onClose);
@@ -164,226 +28,137 @@ const ImageLightbox: React.FC<{ src: string; alt: string; onClose: () => void }>
     document.body
   );
 };
-export const ChatMessageItem: React.FC<ChatMessageItemProps> = ({
+const ChatMessageItemView: React.FC<ChatMessageItemProps> = ({
   message,
+  thinkId,
   isStreaming,
   isThinkingOpen,
+  deferRendering,
   onToggleThinking,
   onCopyMessage,
   onRetry,
 }) => {
   const isUser = message.is_user;
-  const { thinkContent, mainContent } = useMemo(() => {
-    const rawContent = message.content || '';
-    const thinkMatch = rawContent.match(/<think>([\s\S]*?)<\/think>/);
-    if (thinkMatch) {
-      const think = thinkMatch[1].trim();
-      const content = rawContent.replace(/<think>[\s\S]*?<\/think>/, '').trim();
-      return { thinkContent: think, mainContent: content };
-    }
-    return {
-      thinkContent: null,
-      mainContent: rawContent,
-    };
-  }, [message.content]);
-  const traceFromContext = useMemo(() => message.research_trace || [], [message.research_trace]);
-  const sourcesFromContext = useMemo(() => message.sources || [], [message.sources]);
-  const sourcesDetailFromContext = useMemo(() => message.sources_detail || [], [message.sources_detail]);
-  const attachmentsFromContext = useMemo(() => message.attachments || [], [message.attachments]);
-  const [lightboxImg, setLightboxImg] = React.useState<{ src: string; alt: string } | null>(null);
-  const hasTrace = traceFromContext.length > 0;
+  const { thinkContent, mainContent } = useMemo(() => splitThinkContent(message.content || ''), [message.content]);
+  const [lightboxImg, setLightboxImg] = useState<{ src: string; alt: string } | null>(null);
+  const trace = message.research_trace || NO_TRACE;
+  const attachments = message.attachments || [];
+  const hasTrace = trace.length > 0;
   const hasText = Boolean(mainContent.trim());
-  const hasAttachments = attachmentsFromContext.length > 0;
   const isSettled = Boolean(message.error || message.stopped);
-  const timestamp = message.created_at ? formatMessageTime(message.created_at) : null;
+  const timestamp = message.created_at ? formatMessageTime(message.created_at, new Date()) : null;
+  const attachmentGallery = attachments.length > 0 && (
+    <div className={styles.attachmentGallery}>
+      {attachments.map((att, idx) => {
+        const name = att.filename || '圖片';
+        if (isImageAttachment(att) && att.data_url) {
+          const src = att.data_url;
+          return (
+            <button
+              key={idx}
+              type="button"
+              className={styles.imageButton}
+              onClick={() => setLightboxImg({ src, alt: name })}
+              aria-label={`放大圖片：${name}`}
+            >
+              <img src={src} alt="" className={styles.messageImage} />
+            </button>
+          );
+        }
+        return (
+          <div key={idx} className={styles.fileCard}>
+            <span className={styles.fileBadge}>{describeAttachmentType(att.filename || '').label}</span>
+            <span className={styles.fileName}>{att.filename}</span>
+          </div>
+        );
+      })}
+    </div>
+  );
+  const footer = (
+    <div className={styles.footer}>
+      {timestamp && message.created_at && (
+        <time className={styles.meta} dateTime={message.created_at} title={timestamp.full}>
+          {timestamp.label}
+        </time>
+      )}
+      {!isUser && message.model_name && <span className={`${styles.meta} ${styles.modelName}`}>{message.model_name}</span>}
+      {hasText && (
+        <Tooltip title="複製訊息內容">
+          <IconButton
+            size="sm"
+            onClick={() => onCopyMessage(mainContent)}
+            className={styles.copyButton}
+            aria-label="複製訊息內容"
+          >
+            <Icon name="copy" size={14} />
+          </IconButton>
+        </Tooltip>
+      )}
+    </div>
+  );
   return (
-    <div className={`${styles.container} ${isUser ? styles.userContainer : ''}`}>
-      <Avatar
-        size={36}
-        className={isUser ? styles.avatarUser : styles.avatarBot}
-        aria-hidden="true"
-      >
-        <Icon name={isUser ? 'person' : 'bot'} size={18} />
-      </Avatar>
-      <div
-        className={`${styles.contentWrapper} ${isUser ? styles.alignEnd : styles.alignStart}`}
-      >
-        <div
-          className={`${styles.bubble} ${isUser ? styles.bubbleUser : styles.bubbleBot}`}
-        >
-          <span className="sr-only">{isUser ? '您說：' : 'AskMiao 回覆：'}</span>
-          {/* 訊息附件展示 */}
-          {hasAttachments && (
-            <div className={styles.attachmentGallery}>
-              {attachmentsFromContext.map((att: any, idx: number) => {
-                const isImg = att.file_type?.startsWith('image/') || Boolean(att.data_url?.startsWith('data:image/'));
-                const name = att.filename || '圖片';
-                if (isImg && att.data_url) {
-                  return (
-                    <button
-                      key={idx}
-                      type="button"
-                      className={styles.imageButton}
-                      onClick={() => setLightboxImg({ src: att.data_url, alt: name })}
-                      aria-label={`放大圖片：${name}`}
-                    >
-                      <img src={att.data_url} alt="" className={styles.messageImage} />
-                    </button>
-                  );
-                }
-                const ext = (att.filename || '').split('.').pop()?.toUpperCase() || 'FILE';
-                return (
-                  <div key={idx} className={styles.messageFileCard}>
-                    <span className={styles.fileBadge}>{ext}</span>
-                    <span>{att.filename}</span>
-                  </div>
-                );
-              })}
-            </div>
-          )}
-          {!isUser && hasTrace && (
-            <ResearchTraceBlock
-              trace={traceFromContext}
-              hasContent={hasText}
-              isStreaming={isStreaming}
-            />
-          )}
-          {!isUser && isStreaming && message.pending_approval && (
-            <ToolApprovalCard key={message.pending_approval.approval_id} approval={message.pending_approval} />
-          )}
-          {!isUser && thinkContent && (
-            <ThinkBlock
-              thinkContent={thinkContent}
-              isOpen={isThinkingOpen}
-              onToggle={onToggleThinking}
-            />
-          )}
-          {isUser ? (
-            <div className={styles.userText}>{mainContent}</div>
-          ) : !hasText && !hasTrace && !isSettled ? (
-            <div className={styles.pending}>
-              <Spinner size={16} color="var(--color-primary)" />
-              <span>AI 正在分析您的問題...</span>
-            </div>
-          ) : hasText ? (
-            <div className={styles.markdownBody}>
-              <ReactMarkdown
-                remarkPlugins={[remarkGfmSafe]}
-                components={{
-                  // 回答可能受外部資料影響，連結文字可以與實際網址不同；外部連結一律標示實際前往的網站，
-                  // 不套用站內動作按鈕的樣式，Markdown 中的 title 也不能取代實際網址的提示
-                  a: ({ node, href, children, ...props }) => {
-                    const external = parseExternalLink(href);
-                    const isSocial = isSocialUrl(href);
-                    const text = String(children);
-                    const isPill = isSocial || (!external && ACTION_BUTTON_KEYWORDS.some((kw) => text.includes(kw)));
-                    return (
-                      <a
-                        {...props}
-                        href={href}
-                        target={external ? '_blank' : undefined}
-                        rel={external ? 'noopener noreferrer' : undefined}
-                        className={isPill ? styles.postLinkBadge : styles.markdownLink}
-                        title={external ? `在新分頁開啟 ${external.href}` : props.title}
-                      >
-                        {children}
-                        {external && !text.includes('↗') && (
-                          <span className={styles.externalIcon} aria-hidden="true">↗</span>
-                        )}
-                        {external && <span className="sr-only">（在新分頁開啟 {external.host}）</span>}
-                      </a>
-                    );
-                  },
-                  // 模型回答可能受外部資料影響，圖片若自動載入會在不需點擊的情況下把網址中的資料送往外部主機；
-                  // 一律改成需使用者點擊的連結
-                  img: ({ node, src, alt }) => {
-                    const label = `圖片：${alt || src || '（無說明）'}`;
-                    const isExternal = typeof src === 'string' && /^https?:\/\//i.test(src);
-                    if (!isExternal) return <span>{label}</span>;
-                    return (
-                      <a
-                        href={src}
-                        target="_blank"
-                        rel="noopener noreferrer nofollow"
-                        referrerPolicy="no-referrer"
-                        className={styles.markdownLink}
-                        title={`在新分頁開啟 ${src}`}
-                      >
-                        {label}
-                        <span className={styles.externalIcon} aria-hidden="true">↗</span>
-                        <span className="sr-only">（在新分頁開啟）</span>
-                      </a>
-                    );
-                  },
-                  table: ({ node, ...props }) => (
-                    <div className={styles.tableContainer}>
-                      <table {...props} />
-                    </div>
-                  ),
-                  p: ({ node, children, ...props }) => {
-                    const card = parsePipeDelimitedPost(children);
-                    if (card) return card;
-                    return <p {...props}>{children}</p>;
-                  },
-                  li: ({ node, children, ...props }) => {
-                    const card = parsePipeDelimitedPost(children);
-                    if (card) return <li className={styles.customListItem} {...props}>{card}</li>;
-                    return <li {...props}>{children}</li>;
-                  },
-                }}
-              >
-                {mainContent}
-              </ReactMarkdown>
-            </div>
-          ) : null}
-          {!isUser && message.error && (
-            <div className={styles.errorBlock}>
-              <Icon name="error" size={16} />
-              <span className={styles.errorText}>{message.error}</span>
-              {onRetry && (
-                <Button size="sm" variant="outline" onClick={onRetry} startIcon={<Icon name="refresh" size={14} />}>
-                  重新傳送
-                </Button>
-              )}
-            </div>
-          )}
-          {!isUser && message.stopped && (
-            <div className={styles.stoppedNote}>
-              <Icon name="info" size={14} />
-              <span>已停止產生。這則回答沒有被儲存，重新整理後不會出現。</span>
-            </div>
-          )}
-          {!isUser && (
-            <SourceBadges
-              sources={sourcesFromContext}
-              sourcesDetail={sourcesDetailFromContext}
-            />
-          )}
+    <div className={`${styles.row} ${isUser ? styles.rowUser : styles.rowAssistant} ${deferRendering ? styles.deferred : ''}`}>
+      {isUser ? (
+        <div className={styles.userColumn}>
+          <div className={styles.userBubble}>
+            <span className="sr-only">您說：</span>
+            {attachmentGallery}
+            {mainContent && <div className={styles.userText}>{mainContent}</div>}
+          </div>
+          {footer}
         </div>
-        {lightboxImg && (
-          <ImageLightbox src={lightboxImg.src} alt={lightboxImg.alt} onClose={() => setLightboxImg(null)} />
-        )}
-        <div className={styles.footer}>
-          {timestamp && message.created_at && (
-            <time className={styles.timestamp} dateTime={message.created_at} title={timestamp.full}>
-              {timestamp.label}
-            </time>
-          )}
-          {hasText && (
-            <Tooltip title="複製訊息內容">
-              <IconButton
-                size="sm"
-                onClick={() => onCopyMessage(mainContent)}
-                className={styles.copyButton}
-                aria-label="複製訊息內容"
-              >
-                <Icon name="copy" size={14} />
-              </IconButton>
-            </Tooltip>
-          )}
-        </div>
-      </div>
+      ) : (
+        <>
+          <span className={styles.assistantMark} aria-hidden="true">
+            <Icon name="bot" size={16} />
+          </span>
+          <div className={styles.assistantColumn}>
+            <span className="sr-only">AskMiao 回覆：</span>
+            {attachmentGallery}
+            {hasTrace && (
+              <ResearchTraceBlock trace={trace} hasContent={hasText} isStreaming={isStreaming} />
+            )}
+            {isStreaming && message.pending_approval && (
+              <ToolApprovalCard key={message.pending_approval.approval_id} approval={message.pending_approval} />
+            )}
+            {thinkContent && (
+              <ThinkBlock thinkContent={thinkContent} isOpen={isThinkingOpen} onToggle={() => onToggleThinking(thinkId)} />
+            )}
+            {!hasText && !hasTrace && !isSettled ? (
+              <div className={styles.pending}>
+                <Spinner size={14} color="var(--color-primary)" />
+                <span>AI 正在分析您的問題...</span>
+              </div>
+            ) : hasText ? (
+              <MarkdownContent content={mainContent} />
+            ) : null}
+            {message.error && (
+              <div className={styles.errorBlock}>
+                <Icon name="error" size={16} className={styles.errorIcon} />
+                <span className={styles.errorText}>{message.error}</span>
+                {onRetry && (
+                  <Button size="sm" variant="outline" onClick={() => onRetry(message)} startIcon={<Icon name="refresh" size={14} />}>
+                    重新傳送
+                  </Button>
+                )}
+              </div>
+            )}
+            {message.stopped && (
+              <div className={styles.stoppedNote}>
+                <Icon name="info" size={14} />
+                <span>已停止產生。這則回答沒有被儲存，重新整理後不會出現。</span>
+              </div>
+            )}
+            <SourceBadges sources={message.sources} sourcesDetail={message.sources_detail} />
+            {footer}
+          </div>
+        </>
+      )}
+      {lightboxImg && (
+        <ImageLightbox src={lightboxImg.src} alt={lightboxImg.alt} onClose={() => setLightboxImg(null)} />
+      )}
     </div>
   );
 };
+export const ChatMessageItem = memo(ChatMessageItemView);
 export default ChatMessageItem;

@@ -2,7 +2,7 @@
 export const DEFAULT_TOOLS_METADATA = [
   {
     name: 'search_knowledge_base',
-    displayName: '知識庫智能檢索',
+    displayName: '知識庫智慧檢索',
     category: 'knowledge',
     categoryName: '內部知識庫',
     icon: 'search',

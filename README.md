@@ -10,7 +10,7 @@
 
 [繁體中文](README.md) | [English](README_en.md)
 
-[![Version](https://img.shields.io/badge/version-7.0.0-2563eb?style=flat)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-8.0.0-2563eb?style=flat)](CHANGELOG.md)
 [![Python](https://img.shields.io/badge/Python-3.12+-3776AB?style=flat&logo=python&logoColor=white)](https://www.python.org/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-005571?style=flat&logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
 [![React](https://img.shields.io/badge/React-19.2-61DAFB?style=flat&logo=react&logoColor=black)](https://react.dev/)
@@ -128,7 +128,7 @@
 ```mermaid
 flowchart LR
     Q["提問"] --> V["FAISS 向量搜尋<br/>TOP_K"]
-    Q --> B["BM25 關鍵字搜尋<br/>jieba 斷詞，TOP_K"]
+    Q --> B["BM25 關鍵字搜尋<br/>jieba 詞＋漢字單字與雙字，TOP_K"]
     Q --> E["精確比對<br/>網址／貼文 ID／日期／@帳號"]
     V --> F["RRF 融合<br/>Σ 1 / (RRF_K + 名次)"]
     B --> F
@@ -142,24 +142,25 @@ flowchart LR
 - **兩軌必跑**：只有單一軌道找到的片段也能進入重排候選，專有名詞與代碼查詢不再被淹沒。
 - **相關性門檻看重排機率**：精確比對到網址、貼文 ID、日期的片段不受門檻限制，並排在最前面。
 - **以資料庫為準**：片段存於 `rag_chunks` 資料表，FAISS（`IndexIDMap2`）與 BM25 皆以 chunk_id 對應；後端啟動時自動校正兩份索引，刪除文件只移除該文件的向量。
-- **可量測**：`scripts/evaluate_retrieval.py` 以問答集計算 hit@k、recall@k、MRR 與反例拒絕率，並能一次比較多個門檻。
+- **可量測**：`scripts/evaluate_retrieval.py` 以問答集計算 hit@k、recall@k、MRR 與反例拒絕率，標註原文片段時另計片段層級的 precision@k、nDCG@k 與候選召回，並能一次比較多個門檻；`--corpus` 以內建基準語料在暫存環境比較檢索設定。
 
 ### 多供應商 LLM
 
-- 統一呼叫層支援 **Ollama、OpenAI、Microsoft Foundry、Anthropic Claude（官方 SDK）、Google Gemini**，依模型名稱自動路由，五家都支援工具呼叫與串流。
+- 統一呼叫層支援 **Ollama、OpenAI、Microsoft Foundry、Anthropic Claude（官方 SDK）、Google Gemini**，依連線的供應商與模型名稱路由，五家都支援工具呼叫與串流。
 - 前端可切換模型與六檔推理程度：`無 (None)`、`輕度 (Low)`、`標準 (Medium)`、`深度 (High)`、`極致 (X-High)`、`最大 (Max)`；推理程度會依各供應商的支援範圍對應後傳給模型（OpenAI、Microsoft Foundry、Claude、Gemini、Ollama），不支援的檔位在介面上停用。
-- 每個帳號在「個人資料」設定自己的 API 連線（位址、金鑰、模型），管理員可建立共用連線並指定哪些帳號能用；聊天不使用 `.env` 的金鑰，詳見 [設定參考：API 連線](docs/configuration.md#api-連線)。
+- 每個帳號在「個人資料」設定自己的 API 連線（位址、金鑰、模型），管理員可建立共用連線並指定哪些帳號能用；`.env` 不設定任何模型商，詳見 [設定參考：API 連線](docs/configuration.md#api-連線)。
+- 文件摘要與掃描 PDF 的 OCR 由管理員在「管理後台 → 系統模型」各指定一條共用連線、模型與思考程度，見 [設定參考：系統模型](docs/configuration.md#系統模型)。
 
 ### 知識庫與文件處理
 
 - 支援 28 種副檔名：`.txt`、`.md`、`.markdown`、`.pdf`、`.docx`、`.pptx`、`.xlsx`、`.csv`、`.json`、`.jsonl`、`.yaml`、`.yml`、`.xml`、`.html`、`.htm`、`.log`、`.py`、`.js`、`.ts`、`.tsx`、`.jsx`、`.java`、`.cpp`、`.c`、`.sql`、`.sh`、`.ini`、`.env`。
-- **PDF 強化擷取**：PyMuPDF 擷取文字，擷取前先替內嵌 TrueType 字型中 ToUnicode 沒有對應（或對到 U+FFFD）的替代字形補上對應：依字型 GSUB 的單一替換反查原本的字元，例如 Illustrator 輸出的 Noto Sans TC 數字，否則會被擷取成「俸」這類字；空白或亂碼頁改以視覺模型 OCR（Microsoft Foundry、OpenAI 或 Gemini），最後以 pypdf 備援。
+- **PDF 強化擷取**：PyMuPDF 擷取文字，擷取前先替內嵌 TrueType 字型中 ToUnicode 沒有對應（或對到 U+FFFD）的替代字形補上對應：依字型 GSUB 的單一替換反查原本的字元，例如 Illustrator 輸出的 Noto Sans TC 數字，否則會被擷取成「俸」這類字；空白或亂碼頁交給管理員指定的 OCR 系統模型辨識（未指定時不做 OCR），最後以 pypdf 備援。
 - **智慧切塊**：JSON、JSONL、YAML、CSV、XLSX 解析成結構化記錄逐筆成為片段（保留巢狀欄位，過長的記錄分段並重複標頭），以「Q：」開頭的 Q&A 文件一問一答成一個片段（超過切塊長度的再切開），其餘依中文標點遞迴切塊。
-- **AI 大綱與摘要**：上傳時自動生成文件摘要，可重新生成或手動修訂；LLM 失敗時改用規則摘要。摘要也會組成知識庫目錄，幫助 Agent 判斷該查哪份文件。
+- **AI 大綱與摘要**：上傳時以管理員指定的摘要系統模型生成文件摘要，可重新生成或手動修訂；未指定系統模型或呼叫失敗時改用規則摘要。摘要也會組成知識庫目錄，幫助 Agent 判斷該查哪份文件。
 
 ### 外部工具與 MCP
 
-- **自訂 API 工具**：以表單建立，或貼上 OpenAPI / Swagger 規格（OAS 2.0、3.0、3.1）批次匯入，支援 Bearer、API Key（Header / Query）與 Basic 認證，可即時測試。呼叫時只接受 `parameters_schema` 宣告的參數，工具網址中固定的查詢參數不能被覆寫。
+- **自訂 API 工具**：以表單建立，或匯入 Swagger 2.0、OpenAPI 3.0～3.2 規格（可先套用 Overlay 1.0～1.2，外部 `$ref` 會一併載入）批次建立；Arazzo 1.0／1.1 的工作流程匯入成可串接多個 API 呼叫的工具。參數依 OpenAPI 的 `style`／`explode` 序列化，請求本文依宣告的媒體型別送出，支援 Bearer、API Key（Header / Query / Cookie）、Basic 與 OAuth2 client credentials，可即時測試。呼叫時只接受 `parameters_schema` 宣告的參數，工具網址中固定的查詢參數不能被覆寫。
 - **MCP 用戶端**：支援 `stdio` 與 HTTP 傳輸，自動探索工具並以 `mcp_<伺服器>_<工具>` 名稱加入 Agent 工具集；內建時間與檔案系統兩個範本（檔案系統範本只開放專屬沙箱目錄 `backend/mcp_filesystem_sandbox`）。
 - **動態載入**：啟用中的工具在每次組裝工具定義時從資料庫載入，變更後不需重啟。
 - **呼叫前核准**：有副作用的工具由發問者在對話中核准後才執行，見下方 [工具呼叫核准](#工具呼叫核准)。
@@ -258,7 +259,7 @@ Agent 可以自己查資料，但不會自己替你送出申請、刪除紀錄�
     <td width="33%" valign="top">
       <picture>
         <source media="(prefers-color-scheme: dark)" srcset="site/assets/screens/feature-docs-dark.webp">
-        <img src="site/assets/screens/feature-docs-light.webp" alt="知識庫管理頁：已上傳文件清單，每份文件附 AI 智能大綱與摘要，可編輯、重新生成或刪除">
+        <img src="site/assets/screens/feature-docs-light.webp" alt="知識庫管理頁：已上傳文件清單，每份文件附 AI 智慧大綱與摘要，可編輯、重新生成或刪除">
       </picture>
       <p align="center"><b>知識庫管理</b><br>上傳、AI 摘要與重建索引</p>
     </td>
@@ -412,7 +413,7 @@ cp .env.example .env
    ```
 
    JWT 一律以 `backend/keys/` 的 RSA 金鑰簽署，不需要另設簽署密鑰。
-3. **模型**：使用本機 Ollama 時保持 `LLM_API_BASE=http://localhost:11434`；使用雲端模型時填入對應的 API 金鑰，使用 Claude 另需 `ANTHROPIC_MAX_TOKENS`。
+3. **模型**：`.env` 不需要設定模型商。模型的位址與金鑰在後端啟動後於介面上設定成 API 連線，見步驟 5。
 
 其餘必填設定範本都已提供，在本機開發時可保持範本值：`HOST=127.0.0.1` 只接受本機連線、`RELOAD=false`、`COOKIE_SECURE=false`（以 HTTPS 提供服務時必須改為 `true`）、`ENABLE_API_DOCS=false`、`ALLOW_REGISTRATION=false`（第一位管理員見步驟 4），以及登入失敗節流的四個門檻，各項說明見 [設定](#設定)。接著啟動後端：
 
@@ -467,8 +468,9 @@ python -c "from sqlalchemy import text; from app.models.database import engine; 
 
 ### 5. 上傳文件並開始提問
 
-1. 以管理員進入「知識庫」，上傳文件（單次最多 10 個檔案，單檔上限由 `MAX_FILE_SIZE_MB` 決定）。系統會擷取文字、生成 AI 摘要並建立索引。
-2. 回到「聊天」，選擇模型與推理程度後提問。答案中的 `[n]` 可對應下方的來源標籤。
+1. 以管理員進入「管理後台 → 共用 API 連線」建立連線並指定可使用的帳號（各帳號也可以在「個人資料 → 我的 API 連線」自行建立）。要讓上傳時用模型產生摘要、辨識掃描 PDF，再到「管理後台 → 系統模型」各指定一個模型。
+2. 進入「知識庫」，上傳文件（單次最多 10 個檔案，單檔上限由 `MAX_FILE_SIZE_MB` 決定）。系統會擷取文字、生成摘要並建立索引。
+3. 回到「聊天」，選擇連線的模型與推理程度後提問。答案中的 `[n]` 可對應下方的來源標籤。
 
 ### 使用 PostgreSQL（選用）
 
@@ -514,17 +516,14 @@ docker compose up -d
 | `WEB_FETCH_ALLOWED_DOMAINS` | `*` | `web_fetch` 可讀取的網域；明確寫 `*` 才表示不限制 |
 | `BLOCK_WEB_TOOLS_AFTER_KB` | `true` | 讀過知識庫內容後停用聯網工具 |
 | `RRF_K` | `60` | RRF 融合常數 |
-| `RERANK_RELEVANCE_THRESHOLD` | `0.2` | 重排機率門檻（暫定值，建議以問答集校準） |
+| `RERANK_RELEVANCE_THRESHOLD` | `0.02` | 重排機率門檻（依短文資料校準，換資料後建議以問答集校準） |
 | `DOMAIN_PROFILE_PATH` | `config/domain_profile.json` | 領域設定檔（領域詞、日期欄位、摘要備援規則） |
 
 常用的選填設定：
 
 | 變數 | 說明 |
 |---|---|
-| `LLM_API_BASE` | Ollama 服務位址（範本 `http://localhost:11434`） |
-| `OPENAI_API_KEY`、`FOUNDRY_*`、`ANTHROPIC_API_KEY`、`GEMINI_API_KEY` | 雲端模型金鑰；設定後自動加入模型清單 |
-| `ANTHROPIC_MAX_TOKENS` | Claude 單次回應的輸出上限（使用 Claude 時必填） |
-| `MODEL_NAME`、`AVAILABLE_MODELS` | 預設模型與自訂模型清單 |
+| `LLM_TIMEOUT`、`OLLAMA_TEMPERATURE`、`OLLAMA_NUM_PREDICT`、`OLLAMA_NUM_CTX` | LLM 呼叫逾時，以及套用到所有 Ollama 連線的生成參數 |
 | `CHUNK_SIZE`、`CHUNK_OVERLAP` | 切塊長度與重疊（範本 300 / 100） |
 | `HF_HOME`、`HF_HUB_OFFLINE` | 模型快取位置與離線模式 |
 | `ALLOWED_ORIGINS` | CORS 允許來源（前端直接呼叫後端時需要） |
@@ -569,7 +568,7 @@ AskMiao/
 │   │   ├── services/                 # 對話、文件處理（含 PDF OCR）、OpenAPI 解析、MCP 用戶端
 │   │   └── tasks/uploads_watcher.py  # 上傳檔遺失監看（只記警告）
 │   ├── config/domain_profile.json    # 領域設定檔
-│   ├── eval/                         # 檢索評估問答集
+│   ├── eval/                         # 檢索評估問答集與內建基準語料（corpus/）
 │   ├── scripts/                      # 維運腳本（含建立帳號的 create_user.py）
 │   ├── tests/                        # pytest 測試
 │   ├── docker-compose.yml            # 選用的 PostgreSQL 17（本機 127.0.0.1:7690，需設 POSTGRES_PASSWORD 與 POSTGRES_APP_*）
@@ -647,10 +646,9 @@ bun run build        # 產出 build/
 | 腳本 | 用途 |
 |---|---|
 | `create_user.py` | 建立帳號（含第一位管理員）：`--username`、`--email` 必填，`--admin` 建立管理員，密碼以互動方式輸入；見 [建立第一位管理員](#4-建立第一位管理員) |
-| `evaluate_retrieval.py` | 以問答集評估檢索品質並比較相關性門檻（唯讀，可與後端同時執行），見 [校準相關性門檻](docs/configuration.md#校準相關性門檻) |
+| `evaluate_retrieval.py` | 以問答集評估檢索品質並比較相關性門檻（唯讀，可與後端同時執行；`--corpus` 改在暫存環境以指定文件建立知識庫），見 [校準相關性門檻](docs/configuration.md#校準相關性門檻) |
 | `reprocess_existing_docs.py` | 離線執行與「重建索引」相同的重建：重新擷取文字、替沒有摘要的文件生成摘要（既有摘要保留）、切塊並寫入索引。請先停止後端 |
 | `reset_faiss.py` | 刪除 `FAISS_INDEX_PATH`、`METADATA_PATH` 與 `BM25_INDEX_DIR` 指向的索引檔，再依 `rag_chunks` 重新計算（會先詢問確認） |
-| `test_llm_clients.py` | 以模擬回應檢查模型清單與各供應商的呼叫格式，不會真的呼叫 API |
 | `docx_to_txt.py` | 把上傳目錄中的 `.docx` 轉成 `.txt` |
 
 ## 疑難排解
@@ -766,7 +764,7 @@ MCP 伺服器預設需要核准，自訂 API 工具則依 HTTP 方法決定。�
 | [API 參考](docs/api.md) | 所有端點的權限、請求與回應格式、SSE 事件規格與錯誤代碼 |
 | [系統架構與設計](docs/architecture.md) | 分層架構、資料模型、檢索管線、Agent 迴圈、認證與安全設計 |
 | [設定參考](docs/configuration.md) | 每個環境變數的預設值與作用、供應商路由、門檻校準、前端設定 |
-| [升級指南](docs/upgrading.md) | 從 2.x 升級到 3.0.0，以及之後各版（到 6.0.0 升級到 7.0.0）的步驟、回退方式與常見問題 |
+| [升級指南](docs/upgrading.md) | 從 2.x 升級到 3.0.0，以及之後各版（到 7.0.0 升級到 8.0.0）的步驟、回退方式與常見問題 |
 | [架構決策紀錄（ADR）](docs/adr/README.md) | 重大設計的背景、取捨與後續修訂 |
 | [llms.txt](llms.txt) | 給 AI Agent 讀的檔案地圖、系統約束與驗證方式 |
 | [版本變更紀錄](CHANGELOG.md) | 每個版本的新增、變更、移除與修正 |
@@ -774,7 +772,7 @@ MCP 伺服器預設需要核准，自訂 API 工具則依 HTTP 方法決定。�
 
 ## 版本資訊
 
-- **目前版本**：7.0.0（2026-10-31），變更內容見 [CHANGELOG](CHANGELOG.md)。
+- **目前版本**：8.0.0（2026-11-02），變更內容見 [CHANGELOG](CHANGELOG.md)。
 - **版本規則**：遵循 [語意化版本](https://semver.org/lang/zh-TW/)。不相容的變更（例如新增必填設定、改變 API 權限或索引格式）升主版號。
 - **版本號位置**：後端 `backend/app/__init__.py` 的 `__version__`（OpenAPI 文件與 MCP 交握皆引用）、前端 `frontend/package.json`，發行時與 `CHANGELOG.md` 一併更新。
 

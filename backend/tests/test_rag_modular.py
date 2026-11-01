@@ -1,4 +1,6 @@
 import os
+import shutil
+import stat
 import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
@@ -8,6 +10,9 @@ from app.core.domain_profile import domain_profile
 from app.rag.types import Document, RecursiveCharacterTextSplitter
 from app.rag.tokenizers import configure_tokenizer, get_chinese_analyzer
 from app.rag.contextual_rag import HybridContextualRAG
+def remove_tests_data():
+    if os.path.exists("tests_data"):
+        shutil.rmtree("tests_data", onexc=lambda func, path, exc: (os.chmod(path, stat.S_IWRITE), func(path)))
 @pytest.fixture(autouse=True)
 def setup_env():
     from app.core.config import settings
@@ -19,24 +24,14 @@ def setup_env():
     settings.FAISS_INDEX_PATH = "tests_data/faiss_index.bin"
     settings.BM25_INDEX_DIR = "tests_data/bm25_index"
     settings.METADATA_PATH = "tests_data/index_metadata.json"
-    if os.path.exists("tests_data"):
-        import shutil
-        try:
-            shutil.rmtree("tests_data")
-        except Exception:
-            pass
+    remove_tests_data()
     os.makedirs("tests_data", exist_ok=True)
     yield
-    if os.path.exists("tests_data"):
-        import shutil
-        try:
-            shutil.rmtree("tests_data")
-        except Exception:
-            pass
     settings.DATA_DIR = old_data_dir
     settings.FAISS_INDEX_PATH = old_faiss
     settings.BM25_INDEX_DIR = old_bm25
     settings.METADATA_PATH = old_meta
+    remove_tests_data()
 @pytest.fixture
 def session_factory(tmp_path):
     engine = create_engine(f"sqlite:///{tmp_path / 'rag.db'}")

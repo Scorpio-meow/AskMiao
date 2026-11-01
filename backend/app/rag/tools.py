@@ -1,4 +1,5 @@
 import asyncio
+import html
 import json
 import logging
 import os
@@ -7,13 +8,14 @@ import threading
 import time
 from typing import Any, Dict, List, Optional, Tuple
 from pathlib import PurePosixPath
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, urlparse
 import httpx
 from app.core.config import settings
 from app.core.domain_profile import domain_profile
 from app.core.error_response import format_ssrf_rejection, log_and_get_error_id
-from app.core.html_text import extract_text_and_title
+from app.core.html_text import extract_readable_text, extract_text_and_title
 from app.core.limits import MAX_KB_CATALOG_CHARS, MAX_MCP_CATALOG_CHARS, MAX_SKILL_CATALOG_CHARS, MAX_TEXT_CLEANUP_CHARS
+from app.core.security_logging import log_fields
 from app.rag.retrievers.hybrid import matches_target_document
 from app.services import agent_skills
 from app.services.structured_data import merge_record_parts
@@ -24,6 +26,17 @@ SKILL_TOOL_NAMES = ("activate_skill", "read_skill_resource")
 MCP_CATALOG_TOOL_NAMES = ("read_mcp_resource", "get_mcp_prompt")
 SKILL_SCRIPT_TOOL_NAME = "run_skill_script"
 BUILTIN_TOOL_NAMES = ("search_knowledge_base", "filter_and_count_records") + WEB_TOOL_NAMES + SKILL_TOOL_NAMES
+MCP_TOOL_PREFIX = "mcp_"
+def _tool_kind(name: str) -> str:
+    if name in BUILTIN_TOOL_NAMES:
+        return "builtin"
+    if name == SKILL_SCRIPT_TOOL_NAME:
+        return "skill_script"
+    if name in MCP_CATALOG_TOOL_NAMES or name.startswith(MCP_TOOL_PREFIX):
+        return "mcp"
+    return "api"
+def _elapsed_ms(started: float) -> int:
+    return round((time.perf_counter() - started) * 1000)
 def is_web_fetch_domain_allowed(url: str) -> bool:
     """WEB_FETCH_ALLOWED_DOMAINS 為 * 時不限制；否則主機須為清單中的網域或其子網域"""
     allowed = settings.web_fetch_allowed_domains
@@ -76,6 +89,67 @@ def extract_html_text(html_content: str) -> Tuple[str, str]:
 def clean_html(html_content: str) -> str:
     """清理 HTML 標籤並擷取核心文字內容"""
     return extract_html_text(html_content)[1][:4000]
+
+
+def extract_page_text(html_content: str) -> Tuple[str, str]:
+    return extract_readable_text((html_content or "")[:MAX_TEXT_CLEANUP_CHARS])
+
+
+DUCKDUCKGO_LINK_CLASS = 'class="result__a"'
+DUCKDUCKGO_SNIPPET_CLASS = 'class="result__snippet"'
+HTML_HREF_PATTERN = re.compile(r'\bhref="([^"]*)"', re.IGNORECASE)
+
+
+def _is_duckduckgo_host(host: Optional[str]) -> bool:
+    host = (host or "").lower()
+    return host == "duckduckgo.com" or host.endswith(".duckduckgo.com")
+
+
+def _duckduckgo_target(href: str) -> Optional[str]:
+    link = html.unescape(href)
+    if link.startswith("//"):
+        link = "https:" + link
+    parsed = urlparse(link)
+    if _is_duckduckgo_host(parsed.hostname):
+        link = (parse_qs(parsed.query).get("uddg") or [""])[0]
+        parsed = urlparse(link)
+    if parsed.scheme not in ("http", "https") or not parsed.hostname or _is_duckduckgo_host(parsed.hostname):
+        return None
+    return link
+
+
+def _duckduckgo_snippet(page: str, position: int, block_end: int) -> str:
+    snippet_class = page.find(DUCKDUCKGO_SNIPPET_CLASS, position, block_end)
+    if snippet_class < 0:
+        return ""
+    tag_start = page.rfind("<", position, snippet_class)
+    tag_end = page.find(">", snippet_class, block_end)
+    if tag_start < 0 or tag_end < 0:
+        return ""
+    name = page[tag_start + 1:snippet_class].split()[0].lower()
+    close = page.find(f"</{name}>", tag_end, block_end)
+    return clean_html(page[tag_end + 1:close]) if close >= 0 else ""
+
+
+def parse_duckduckgo_results(page: str, max_results: int) -> List[Dict[str, str]]:
+    results: List[Dict[str, str]] = []
+    block_start = 0
+    link_class = page.find(DUCKDUCKGO_LINK_CLASS)
+    while link_class >= 0 and len(results) < max_results:
+        next_link_class = page.find(DUCKDUCKGO_LINK_CLASS, link_class + len(DUCKDUCKGO_LINK_CLASS))
+        block_end = next_link_class if next_link_class >= 0 else len(page)
+        tag_start = page.rfind("<", block_start, link_class)
+        tag_end = page.find(">", link_class, block_end)
+        title_end = page.find("</a>", tag_end, block_end) if tag_end >= 0 else -1
+        if tag_start >= 0 and title_end >= 0:
+            href = HTML_HREF_PATTERN.search(page, tag_start, tag_end)
+            url = _duckduckgo_target(href.group(1)) if href else None
+            title = clean_html(page[tag_end + 1:title_end])
+            if url and title:
+                results.append({"title": title, "url": url, "snippet": _duckduckgo_snippet(page, title_end, block_end)})
+        block_start = link_class + len(DUCKDUCKGO_LINK_CLASS)
+        link_class = next_link_class
+    return results
 
 
 def _expand_target_dates(date_range: str) -> List[str]:
@@ -293,29 +367,15 @@ class ResearchToolRegistry:
                     params={"q": query}
                 )
                 if resp.status_code == 200:
-                    results = []
-
-                    links = re.findall(r'<a class="result__url"[^>]*href="([^"]+)"[^>]*>([\s\S]*?)</a>', resp.text)
-                    titles = re.findall(r'<a class="result__a"[^>]*>([\s\S]*?)</a>', resp.text)
-                    snippets = re.findall(r'<a class="result__snippet"[^>]*>([\s\S]*?)</a>', resp.text)
-                    
-                    for i in range(min(len(titles), max_results)):
-                        clean_title = clean_html(titles[i]) if i < len(titles) else ""
-                        raw_link = links[i][0] if i < len(links) else ""
-                        clean_snippet = clean_html(snippets[i]) if i < len(snippets) else ""
-                        
-
-                        actual_url = raw_link
-                        uddg_match = re.search(r'uddg=([^&]+)', raw_link)
-                        if uddg_match:
-                            import urllib.parse
-                            actual_url = urllib.parse.unquote(uddg_match.group(1))
-                        if clean_title and actual_url:
-                            results.append({
-                                "title": clean_title,
-                                "url": actual_url,
-                                "snippet": clean_snippet
-                            })
+                    results = parse_duckduckgo_results(resp.text[:MAX_TEXT_CLEANUP_CHARS], max_results)
+                    if not results:
+                        logger.warning(f"DuckDuckGo 回應中解析不到搜尋結果（{len(resp.text)} 字元）")
+                        return {
+                            "query": query,
+                            "engine": "duckduckgo_fallback",
+                            "error": "搜尋引擎沒有回傳可解析的結果（可能查無資料、暫時被阻擋，或結果頁格式已變更），請換關鍵字或改用其他資料回答",
+                            "results": []
+                        }
                     return {
                         "query": query,
                         "engine": "duckduckgo_fallback",
@@ -373,7 +433,7 @@ class ResearchToolRegistry:
                 is_url_allowed=is_web_fetch_domain_allowed
             )
             # HTML 解析是 CPU 密集工作，移到執行緒以免阻塞事件迴圈
-            title, clean_text = await asyncio.to_thread(extract_html_text, raw_html)
+            title, clean_text = await asyncio.to_thread(extract_page_text, raw_html)
             return {
                 "url": url,
                 "title": title or url,
@@ -829,6 +889,12 @@ class ResearchToolRegistry:
             if tool is not None and tool.requires_approval:
                 configured_url = tool.url or f"{(tool.base_url or '').rstrip('/')}/{(tool.path or '').lstrip('/')}"
                 target = f"{(tool.method or 'GET').upper()} {_url_host(configured_url)}"
+                if tool.workflow_definition:
+                    try:
+                        steps = json.loads(tool.workflow_definition).get("step_targets") or []
+                    except (ValueError, AttributeError):
+                        steps = []
+                    target = f"Arazzo 工作流程：{'、'.join(steps) or '（沒有可執行的步驟）'}"
                 return {"kind": "custom_api", "display_name": tool.display_name or tool.name, "target": target}
             return None
         finally:
@@ -857,6 +923,30 @@ class ResearchToolRegistry:
             return {"error": f"執行 MCP 請求失敗（錯誤代碼：{error_id}）"}
     async def execute_tool(self, name: str, arguments: Dict[str, Any], user_id: Optional[int] = None) -> Any:
         """執行指定名稱之工具並回傳結果"""
+        fields = {"tool": name, "kind": _tool_kind(name), "arg_keys": ",".join(map(str, arguments)) or None}
+        started = time.perf_counter()
+        try:
+            result = await self._dispatch_tool(name, arguments, user_id)
+        except asyncio.CancelledError:
+            logger.info("工具呼叫中止 %s", log_fields(**fields, status="cancelled", duration_ms=_elapsed_ms(started)))
+            raise
+        except Exception as e:
+            logger.warning("工具呼叫失敗 %s", log_fields(**fields, status="exception", duration_ms=_elapsed_ms(started), error=type(e).__name__))
+            raise
+        is_error = isinstance(result, dict) and "error" in result
+        logger.log(
+            logging.WARNING if is_error else logging.INFO,
+            "工具呼叫完成 %s",
+            log_fields(
+                **fields,
+                status="error" if is_error else "ok",
+                duration_ms=_elapsed_ms(started),
+                result_chars=len(json.dumps(result, ensure_ascii=False, default=str)),
+                error=result["error"] if is_error else None,
+            ),
+        )
+        return result
+    async def _dispatch_tool(self, name: str, arguments: Dict[str, Any], user_id: Optional[int]) -> Any:
         if name in WEB_TOOL_NAMES and not settings.ENABLE_WEB_SEARCH:
             return {"error": f"聯網工具已停用（ENABLE_WEB_SEARCH=false）: {name}"}
         if name == "search_knowledge_base":
@@ -886,7 +976,7 @@ class ResearchToolRegistry:
             return await self.run_skill_script(arguments, user_id)
         elif name in MCP_CATALOG_TOOL_NAMES:
             return await self._execute_mcp_catalog_tool(name, arguments)
-        elif name.startswith("mcp_"):
+        elif name.startswith(MCP_TOOL_PREFIX):
 
             try:
                 from app.models.database import SessionLocal
@@ -909,13 +999,13 @@ class ResearchToolRegistry:
 
             try:
                 from app.models.database import SessionLocal
-                from app.api.api_tools import execute_http_api_tool, _serialize_tool_model
+                from app.api.api_tools import execute_api_tool, _serialize_tool_model
                 db = SessionLocal()
                 custom_tool = self._find_custom_api_tool(db, name)
                 if custom_tool:
                     tool_dict = _serialize_tool_model(custom_tool)
                     db.close()
-                    return await execute_http_api_tool(tool_dict, arguments, name)
+                    return await execute_api_tool(tool_dict, arguments, name)
                 db.close()
             except Exception as e:
                 error_id = log_and_get_error_id(logger, f"執行自訂 API 工具 {name} 時發生異常", e)

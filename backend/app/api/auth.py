@@ -26,6 +26,7 @@ from app.core.jwt_auth import (
 from app.core.config import settings
 from app.core.limits import MAX_CONCURRENT_PASSWORD_HASHES
 from app.core.login_throttle import login_throttle
+from app.core.request_context import bind_request_user
 from app.core.security_logging import log_security_event
 REFRESH_COOKIE_NAME = "refresh_token"
 REFRESH_COOKIE_PATH = "/api/auth"
@@ -176,6 +177,7 @@ async def login(
                 headers={"WWW-Authenticate": "Bearer"},
             )
 
+    bind_request_user(user.id)
     login_throttle.record_success(credentials.username)
     update_user_last_login(db, user.id)
     

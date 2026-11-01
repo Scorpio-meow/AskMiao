@@ -13,6 +13,7 @@ import {
   Icon
 } from '../components/ui';
 import SharedConnectionsCard from './Admin/SharedConnectionsCard';
+import SystemModelsCard from './Admin/SystemModelsCard';
 import UsersCard from './Admin/UsersCard';
 import styles from './AdminDashboard.module.css';
 const cache = {
@@ -32,6 +33,7 @@ function AdminDashboard() {
   const [error, setError] = useState('');
   const [pendingDelete, setPendingDelete] = useState(null);
   const [accessVersion, setAccessVersion] = useState(0);
+  const [connectionsVersion, setConnectionsVersion] = useState(0);
   const [deleting, setDeleting] = useState(false);
   const abortControllerRef = useRef(null);
   const isMountedRef = useRef(true);
@@ -194,7 +196,12 @@ function AdminDashboard() {
         onUsersChanged={() => loadData(true)}
         onAccessChanged={() => setAccessVersion((version) => version + 1)}
       />
-      <SharedConnectionsCard users={users} refreshKey={accessVersion} />
+      <SharedConnectionsCard
+        users={users}
+        refreshKey={accessVersion}
+        onConnectionsChanged={() => setConnectionsVersion((version) => version + 1)}
+      />
+      <SystemModelsCard refreshKey={connectionsVersion} />
       {/* 文件管理表格 */}
       <div className={styles.card}>
         <h2 className={styles.cardTitle} id="admin-documents-title">文件管理</h2>

@@ -12,6 +12,7 @@ from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from sqlalchemy.orm import Session
 from app.core.config import settings
+from app.core.request_context import bind_request_user
 from app.models import User
 from app.models.database import get_db
 logger = logging.getLogger(__name__)
@@ -171,6 +172,7 @@ def resolve_token_user(db: Session, payload: Dict[str, Any]) -> User:
         raise invalid
     if issued_at < _numeric_date(user.tokens_valid_after):
         raise invalid
+    bind_request_user(user.id)
     return user
 def get_current_user_from_token(
     credentials: HTTPAuthorizationCredentials = Depends(security),

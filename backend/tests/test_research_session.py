@@ -61,6 +61,31 @@ def test_strip_citations_keeps_code():
     assert strip_citations(text) == "取第一筆用 `items[0]` \n```python\nprint(items[1])\n```\n~~~\nrow[2]\n~~~\n結果 "
 
 
+def test_drop_unknown_citations_removes_every_marker_when_nothing_was_cited():
+    session = ResearchSession(["請解釋 RAG"])
+
+    answer = "**RAG 運作原理** [1]：先檢索[2]，再生成 [1]。\n- 檢索 [1, 2]\n總結 [1]"
+
+    assert session.drop_unknown_citations(answer) == "**RAG 運作原理**：先檢索，再生成。\n- 檢索\n總結"
+
+
+def test_drop_unknown_citations_keeps_known_numbers_and_their_format():
+    session = ResearchSession(["問題"])
+    session.record_tool_output("search_knowledge_base", kb_output((1, "a.pdf"), (2, "b.pdf")))
+
+    answer = "甲 [1]。乙 [1, 2]。丙 [2][7]。丁 [1、9]。戊 [8]。"
+
+    assert session.drop_unknown_citations(answer) == "甲 [1]。乙 [1, 2]。丙 [2]。丁 [1]。戊。"
+
+
+def test_drop_unknown_citations_keeps_code():
+    session = ResearchSession(["問題"])
+
+    answer = "取第一筆用 `items[0]` [1]\n```python\nprint(items[1])\n```\n結果 [2]"
+
+    assert session.drop_unknown_citations(answer) == "取第一筆用 `items[0]`\n```python\nprint(items[1])\n```\n結果"
+
+
 def fetch_allowed(session, url):
     arguments = {"url": url}
     return session.refuse_tool_call("web_fetch", arguments) is None, arguments["url"]

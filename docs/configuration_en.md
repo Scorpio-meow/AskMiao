@@ -2,7 +2,7 @@
 
 [繁體中文](configuration.md) | [English](configuration_en.md)
 
-> Every setting in the backend `backend/.env` and the frontend `frontend/.env`, with its default and what it actually does, as of **7.0.0** (to upgrade from 6.0.0, see the [upgrade guide](upgrading_en.md#upgrading-from-600-to-700)). The source of truth is `Settings` in `backend/app/core/config.py`; the template is [`backend/.env.example`](../backend/.env.example).
+> Every setting in the backend `backend/.env` and the frontend `frontend/.env`, with its default and what it actually does, as of **8.0.0** (to upgrade from 7.0.0, see the [upgrade guide](upgrading_en.md#upgrading-from-700-to-800)). The source of truth is `Settings` in `backend/app/core/config.py`; the template is [`backend/.env.example`](../backend/.env.example).
 
 - [How settings are read](#how-settings-are-read)
 - [Required settings](#required-settings)
@@ -29,14 +29,14 @@
 
 - **Source**: the backend reads `backend/.env` regardless of the startup directory, and process environment variables take precedence over `.env`. Unknown keys are ignored, so removed settings left in `.env` cause no errors.
 - **Required settings have no defaults**: if any is missing, the backend stops at startup with a `Field required` error that names the missing fields.
-- **Value ranges and formats**: `CONVERSATION_HISTORY_MESSAGES ≥ 0`, `RRF_K ≥ 1`, `0 ≤ RERANK_RELEVANCE_THRESHOLD ≤ 1`, and `ANTHROPIC_MAX_TOKENS ≥ 1`; `LOGIN_MAX_FAILURES_PER_ACCOUNT`, `LOGIN_MAX_FAILURES_PER_ADDRESS`, `LOGIN_FAILURE_WINDOW_SECONDS`, and `LOGIN_LOCKOUT_SECONDS` must all be ≥ 1, and `TOOL_SECRETS_KEY` must be a valid Fernet key; out-of-range or malformed values also stop startup.
+- **Value ranges and formats**: `CONVERSATION_HISTORY_MESSAGES ≥ 0`, `RRF_K ≥ 1`, and `0 ≤ RERANK_RELEVANCE_THRESHOLD ≤ 1`; `LOGIN_MAX_FAILURES_PER_ACCOUNT`, `LOGIN_MAX_FAILURES_PER_ADDRESS`, `LOGIN_FAILURE_WINDOW_SECONDS`, and `LOGIN_LOCKOUT_SECONDS` must all be ≥ 1, and `TOOL_SECRETS_KEY` must be a valid Fernet key; out-of-range or malformed values also stop startup.
 - **Booleans**: `true` / `false`, `1` / `0`, and `yes` / `no` all work.
-- **Relative paths**: relative values of `DATA_DIR`, `UPLOAD_DIR`, `FAISS_INDEX_PATH`, `BM25_INDEX_DIR`, `METADATA_PATH`, `HF_HOME`, `HF_HUB_CACHE`, `SENTENCE_TRANSFORMERS_HOME`, `DOMAIN_PROFILE_PATH`, `JIEBA_DICTIONARY`, and `SKILLS_DIR` always resolve against `backend/`. `DATABASE_URL` is not one of them: a relative SQLite path depends on the startup directory.
+- **Relative paths**: relative values of `DATA_DIR`, `UPLOAD_DIR`, `FAISS_INDEX_PATH`, `BM25_INDEX_DIR`, `METADATA_PATH`, `HF_HOME`, `HF_HUB_CACHE`, `SENTENCE_TRANSFORMERS_HOME`, `DOMAIN_PROFILE_PATH`, `JIEBA_DICTIONARY`, `SKILLS_DIR`, and `LOG_DIR` always resolve against `backend/`. `DATABASE_URL` is not one of them: a relative SQLite path depends on the startup directory.
 - **Code default versus template value**: in the tables below, "Code default" applies when `.env` does not set the key, and "Template" is the value suggested by `backend/.env.example`; your `.env` wins whenever they differ.
 
 ## Required settings
 
-These 21 settings have no default; the backend does not start if any is missing.
+These 22 settings have no default; the backend does not start if any is missing.
 
 | Variable | Template | Description |
 |---|---|---|
@@ -51,12 +51,13 @@ These 21 settings have no default; the backend does not start if any is missing.
 | `HOST` | `127.0.0.1` | Bind address of `python main.py`; see [Server and runtime](#server-and-runtime) |
 | `RELOAD` | `false` | Reload on code changes; set `true` only for development |
 | `ENABLE_API_DOCS` | `false` | Serve the interactive documentation at `/docs`, `/redoc`, and `/openapi.json` |
+| `LOG_DIR` | `logs` | Directory of `app.log` and `security.log`; see [Server and runtime](#server-and-runtime) |
 | `ENABLE_WEB_SEARCH` | `true` | Offer the web tools |
 | `CONVERSATION_HISTORY_MESSAGES` | `6` | Prior messages loaded as context |
 | `WEB_FETCH_ALLOWED_DOMAINS` | `*` | `web_fetch` domain allowlist |
 | `BLOCK_WEB_TOOLS_AFTER_KB` | `true` | Disable web tools after knowledge-base content was read |
 | `RRF_K` | `60` | RRF fusion constant |
-| `RERANK_RELEVANCE_THRESHOLD` | `0.2` | Reranker probability threshold |
+| `RERANK_RELEVANCE_THRESHOLD` | `0.02` | Reranker probability threshold |
 | `DOMAIN_PROFILE_PATH` | `config/domain_profile.json` | Domain profile path |
 | `SKILLS_DIR` | `data/skills` | Agent Skills file directory; see [Storage paths and uploads](#storage-paths-and-uploads) |
 
@@ -66,54 +67,17 @@ Generate a `TOOL_SECRETS_KEY` for each deployment, for example in an environment
 python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
 ```
 
-Claude models also require `ANTHROPIC_MAX_TOKENS` (without it Claude calls fail, but startup is unaffected).
-
 ## LLM providers and models
 
-Chat only uses the [API connections](#api-connections) an account may use, never the settings in this section. The `.env` settings here are the "system models", used only for AI summaries of uploaded documents and `GET /api/tags`; OCR of scanned PDF pages also uses `OPENAI_VISION_MODEL`, `GEMINI_VISION_MODEL`, and the matching keys.
+Chat only uses the [API connections](#api-connections) available to the account, and document summaries and OCR of scanned PDFs use the [system models](#system-models) chosen by an admin. `.env` holds no provider address or key, only these settings that apply to every LLM call:
 
 | Variable | Code default | Template | Description |
 |---|---|---|---|
-| `LLM_API_BASE` | `http://localhost:5000` | `http://localhost:11434` | Ollama base URL, used to call Ollama models (`/api/chat`) and to query remote model lists (`/api/tags`) |
-| `LLM_TIMEOUT` | `120` | `120` | LLM call timeout in seconds, also used for the vision model calls of PDF OCR; waiting for a connection pool slot has its own fixed 15-second limit (see [Resource limits](#resource-limits)) |
-| `MODEL_NAME` | empty | — | Default model; when unset, the "default model" rule below applies |
-| `AVAILABLE_MODELS` | empty | commented example | Models offered to the frontend (comma-separated); when set, it fully replaces the generated list |
-| `OLLAMA_TEMPERATURE` | empty | `0.3` | Ollama `temperature`; model default when unset |
-| `OLLAMA_NUM_PREDICT` | empty | `2048` | Ollama `num_predict`; model default when unset |
-| `OLLAMA_NUM_CTX` | empty | commented example | Ollama `num_ctx` (context length); model default when unset; the default may be too small for long retrieved context |
-| `FOUNDRY_API_KEY` | empty | commented example | Microsoft Foundry is enabled only when this and `FOUNDRY_ENDPOINT` are both set |
-| `FOUNDRY_ENDPOINT` | empty | commented example | For example `https://<resource>.openai.azure.com` (Azure OpenAI resource) or `https://<resource>.services.ai.azure.com` (Foundry resource); calls `/openai/v1/responses`; deploying Claude requires the latter; the old `AZURE_OPENAI_*` names are still read |
-| `FOUNDRY_DEPLOYMENT` | empty | commented example | Deployment names, comma-separated, the first being the default; with Foundry enabled but no deployment, the list shows `gpt-6-sol` |
-| `OPENAI_API_KEY` | empty | commented example | OpenAI key |
-| `OPENAI_API_BASE` | `https://api.openai.com/v1` | commented example | Base URL of OpenAI or a compatible service |
-| `OPENAI_VISION_MODEL` | `gpt-6-sol` | — | OpenAI model for OCR of scanned PDF pages; also used as the Foundry deployment name when no deployment is set |
-| `ANTHROPIC_API_KEY` | empty | commented example | Anthropic key |
-| `ANTHROPIC_API_BASE` | `https://api.anthropic.com` | commented example | Anthropic API URL |
-| `ANTHROPIC_MAX_TOKENS` | empty | commented example `16000` | Output token cap per Claude response (required for Claude); a truncated tool call is reported as an error, so raise it if that happens |
-| `GEMINI_API_KEY` | empty | commented example | Google Gemini key |
-| `GEMINI_API_BASE` | `https://generativelanguage.googleapis.com` | commented example | Calls the OpenAI-compatible endpoint `/v1beta/openai/chat/completions` |
-| `GEMINI_VISION_MODEL` | `gemini-3.8-flash` | — | Gemini model for OCR of scanned PDF pages |
-| `EXTERNAL_TAGS_URL` | empty | — | URL of a remote model list, queried when no cloud model is configured; defaults to `{LLM_API_BASE}/api/tags` |
-| `LLM_TAGS_TIMEOUT` | `10` | — | Timeout in seconds for the remote model list |
-| `ADD_NGROK_HEADER` | `false` | — | Adds the `ngrok-skip-browser-warning` header to remote model list requests (added automatically for `ngrok-free.app` URLs) |
-
-### Model list
-
-The system model list (`GET /api/tags`, and the default model used for document summaries) is built in this order:
-
-1. `AVAILABLE_MODELS` is set: use it as is.
-2. Otherwise merge, in order: the Foundry deployments (`gpt-6-sol` when none is set), the built-in OpenAI list if `OPENAI_API_KEY` is set, the built-in Claude list if `ANTHROPIC_API_KEY` is set, and the built-in Gemini list if `GEMINI_API_KEY` is set.
-3. Still empty: query the remote list at `EXTERNAL_TAGS_URL` (or `{LLM_API_BASE}/api/tags`), such as the models pulled into a local Ollama. The remote query runs in a worker thread, its result (failures included) is cached for 30 seconds, and only one query runs at a time.
-
-The default model is `MODEL_NAME`, then the first Foundry deployment, then the default the remote list reports; if it is not in the list, the first model in the list is used.
-
-| Provider | Built-in list (7.0.0) |
-|---|---|
-| OpenAI | `gpt-6.1-sol`, `gpt-6-sol`, `gpt-6-luna`, `gpt-6-astra`, `gpt-5.6-sol`, `gpt-5.6-luna`, `gpt-5.6-terra`, `gpt-5.4`, `gpt-5.4-mini` |
-| Anthropic | `claude-opus-5-5`, `claude-fable-5-1`, `claude-sonnet-5-5`, `claude-haiku-5-5`, `claude-sonnet-5`, `claude-opus-5`, `claude-fable-5`, `claude-opus-4-8`, `claude-haiku-4-5` |
-| Gemini | `gemini-4-argon`, `gemini-3.8-flash`, `gemini-3.6-flash`, `gemini-3.5-flash-lite`, `gemini-3.1-flash-lite` |
-
-**Default model**: `MODEL_NAME` → the first Foundry deployment → the first model in the list; a choice that is not in the list falls back to the first model in the list.
+| `LLM_TIMEOUT` | `120` | `120` | LLM call timeout in seconds, for chat, connection tests, document summaries, and PDF OCR; waiting for a connection-pool slot has a separate fixed 15-second limit (see [resource limits](#resource-limits)) |
+| `LLM_TAGS_TIMEOUT` | `10` | — | Timeout in seconds for "Fetch models from API" |
+| `OLLAMA_TEMPERATURE` | empty | `0.3` | `temperature` for every Ollama connection; the model default when unset |
+| `OLLAMA_NUM_PREDICT` | empty | `2048` | `num_predict` for every Ollama connection; the model default when unset |
+| `OLLAMA_NUM_CTX` | empty | commented example | `num_ctx` (context length) for every Ollama connection; the model default when unset, which may be too short for long retrieved context |
 
 ### API connections
 
@@ -124,28 +88,52 @@ Each account can only chat through two kinds of connection, and the model menu g
 
 | Field | Description |
 |---|---|
-| Provider | `openai` (OpenAI or a compatible API), `anthropic`, `gemini`, `foundry`, `ollama`; calls work like the provider of the same name in `.env`: `gpt-6*` uses the Responses API, and Foundry deployments whose names start with `claude-` use `{API address}/anthropic` |
+| Provider | `openai` (OpenAI or a compatible API), `anthropic`, `gemini`, `foundry`, `ollama`; see [provider routing](#provider-routing) for how each is called |
 | API address | For example `https://api.openai.com/v1`, `https://api.anthropic.com`, `https://<resource>.services.ai.azure.com`, `https://ollama.com` |
 | API key | Required for Anthropic, Gemini, and Foundry, optional for OpenAI-compatible services and Ollama; encrypted with `TOOL_SECRETS_KEY` and never read back through the API; leave it blank when editing to keep the stored key, except that changing the provider or API address drops it and it must be entered again |
 | Models | The model names offered by this connection (deployment names for Foundry), up to 50 |
 | Output token limit | Required for Claude (`anthropic`, or Claude deployments on Foundry); the smaller of it and the model's own output limit is used |
 
+When a new connection is created, the form fills in the provider's official API address and the models below, which can be edited:
+
+| Provider | Prefilled models (8.0.0) |
+|---|---|
+| OpenAI | `gpt-6.1-sol`, `gpt-6-sol`, `gpt-6-luna`, `gpt-6-astra`, `gpt-5.6-sol`, `gpt-5.6-luna`, `gpt-5.6-terra`, `gpt-5.4`, `gpt-5.4-mini` |
+| Anthropic | `claude-opus-5-5`, `claude-fable-5-1`, `claude-sonnet-5-5`, `claude-haiku-5-5`, `claude-sonnet-5`, `claude-opus-5`, `claude-fable-5`, `claude-opus-4-8`, `claude-haiku-4-5` |
+| Gemini | `gemini-4-argon`, `gemini-3.8-flash`, `gemini-3.6-flash`, `gemini-3.5-flash-lite`, `gemini-3.1-flash-lite` |
+
 Members' personal connections may only point at addresses that resolve to the public internet: this is checked when the connection is saved, and every call goes through the SSRF check and is pinned to the approved IP (the same as custom API tools; see [ADR-0002](adr/0002-external-tools-and-outbound-safety_en.md)). Services on the internal network (such as a local Ollama) should be set up by an admin as shared connections. Admins' personal connections and shared connections are not restricted.
 
 Deleting an account deletes its personal connections and removes it from shared connection lists.
 
+### System models
+
+Under "Admin → System models", an admin picks one shared connection, one of its models, and a reasoning effort for each of two purposes. The choice is stored in the `system_models` database table:
+
+| Purpose | When it is called | When nothing is chosen |
+|---|---|---|
+| Document summary | On upload, on "regenerate summary", and when rebuilding the index for documents that have no summary yet | A rule-based summary is used and no model is called |
+| Scanned PDF recognition (OCR) | PDF pages with no text layer, or whose text is judged garbled, in knowledge-base uploads, index rebuilds, and chat attachments; the model must accept image input | Scanned pages are marked as having no extractable text; a PDF with no text at all is rejected |
+
+- Only shared connections can be chosen, and the cost goes to that connection. Chat attachments use the same OCR model, with at most `MAX_PDF_OCR_PAGES` pages per attachment (see [resource limits](#resource-limits)).
+- The reasoning effort is required and has the same choices as chat (`none`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`); it is mapped per provider before it is sent, and the UI disables levels the model does not support. Higher levels are slower: thinking models on Ollama (such as qwen3.5 or gemma4) can exceed `LLM_TIMEOUT` on a single summary when thinking stays on, so `none` is recommended for small local models (Ollama then gets `think: false`). Choices made before this column existed become `none` on upgrade.
+- When the shared connection is deleted, or edited so that it no longer offers the chosen model, that purpose is cleared automatically. If the connection's key cannot be decrypted (for example after `TOOL_SECRETS_KEY` changed), the purpose is treated as unset and a warning is logged.
+- See [API reference: system models](api_en.md#86-system-models) for the endpoints.
+
 ### Provider routing
 
-The `.env` system models pick a provider from the model name (API connections use the provider set on the connection); the first matching rule wins:
+Each API connection is called according to its provider and the model name:
 
-| Condition | Provider | Endpoint |
+| Provider | Model name | Endpoint |
 |---|---|---|
-| Foundry is enabled and the model is one of `FOUNDRY_DEPLOYMENT` starting with `claude-` | Anthropic (Claude on Foundry) | `{FOUNDRY_ENDPOINT}/anthropic/v1/messages`, authenticated with `x-api-key`; `FOUNDRY_ENDPOINT` must be `*.services.ai.azure.com` and the deployment name must start with `claude-` |
-| Foundry is enabled and the model is another one of `FOUNDRY_DEPLOYMENT` | Microsoft Foundry | Names starting with `gpt-`, `o1`, `o3`, or `o4` (except `gpt-oss`) use `{FOUNDRY_ENDPOINT}/openai/v1/responses`; the rest (chat-completion models such as Kimi, Mistral, Grok, DeepSeek, Llama) use `{FOUNDRY_ENDPOINT}/openai/v1/chat/completions` and get no `reasoning_effort` |
-| The name starts with `claude-` and `ANTHROPIC_API_KEY` is set | Anthropic | Official `anthropic` SDK (Messages API) |
-| The name starts with `gemini-` and `GEMINI_API_KEY` is set | Google Gemini | `{GEMINI_API_BASE}/v1beta/openai/chat/completions` |
-| The name starts with `gpt-`, `o1`, `o3`, or `o4` | OpenAI when `OPENAI_API_KEY` is set; otherwise Foundry when enabled | `{OPENAI_API_BASE}/chat/completions`; `gpt-6*` uses `{OPENAI_API_BASE}/responses` |
-| None of the above | Ollama | `{LLM_API_BASE}/api/chat` |
+| `foundry` | Starts with `claude-` | `{API address}/anthropic/v1/messages`, authenticated with `x-api-key`; the API address must be `*.services.ai.azure.com` |
+| `foundry` | Starts with `gpt-`, `o3`, or `o4` (except `gpt-oss` and `o3-mini`) | `{API address}/openai/v1/responses` |
+| `foundry` | Anything else (chat-completion models such as Kimi, Mistral, Grok, DeepSeek, Llama) | `{API address}/openai/v1/chat/completions`, with no `reasoning_effort` |
+| `anthropic` | Any | Official `anthropic` SDK (Messages API) |
+| `gemini` | Any | `{API address}/v1beta/openai/chat/completions` |
+| `openai` | Starts with `gpt-6` | `{API address}/responses` |
+| `openai` | Anything else | `{API address}/chat/completions` |
+| `ollama` | Any | `{API address}/api/chat` |
 
 > [!NOTE]
 > `reasoning_effort` is mapped per provider before it is sent (see the [API reference](api_en.md) for the rules); `gpt-5.x` models on Chat Completions (names containing `gpt-5.`) always get `none` when tools are attached, to respect the compatibility limits between reasoning and tool calling; the original `gpt-5`, `gpt-5-mini`, and `gpt-5-nano` do not accept `none`, `xhigh`, or `max`: `none` becomes `minimal` and `xhigh` and `max` become `high`, and otherwise the user's choice is sent.
@@ -158,7 +146,7 @@ The `.env` system models pick a provider from the model name (API connections us
 | `CONVERSATION_HISTORY_MESSAGES` | — (required, ≥ 0) | `6` | Prior messages loaded from the database as context (user and assistant messages combined; history always starts with a user message); `0` disables history |
 | `WEB_FETCH_ALLOWED_DOMAINS` | — (required) | `*` | Domains `web_fetch` may read, including subdomains, comma-separated; only an explicit `*` means unrestricted |
 | `BLOCK_WEB_TOOLS_AFTER_KB` | — (required) | `true` | Within one question, refuse `web_search` and `web_fetch` once a knowledge-base tool has returned content |
-| `OLLAMA_API_KEY` | empty | commented example | Key for the Ollama Web Search / Web Fetch APIs. When set, the web tools try the Ollama APIs first and fall back to DuckDuckGo or a direct fetch; when `LLM_API_BASE` points at `ollama.com` (Ollama Cloud) it is also sent as `Authorization: Bearer` for model calls and the model list |
+| `OLLAMA_API_KEY` | empty | commented example | Key for the Ollama Web Search / Web Fetch APIs. When set, the web tools try the Ollama APIs first and fall back to DuckDuckGo or a direct fetch; it is not used for model calls, so put an Ollama Cloud key on the API connection |
 | `OLLAMA_SEARCH_ENDPOINT` | `https://ollama.com/api/web_search` | — | Ollama Web Search endpoint |
 | `OLLAMA_FETCH_ENDPOINT` | `https://ollama.com/api/web_fetch` | — | Ollama Web Fetch endpoint |
 | `DUCKDUCKGO_SEARCH_ENDPOINT` | `https://html.duckduckgo.com/html/` | — | Fallback search endpoint for `web_search` |
@@ -177,12 +165,12 @@ Each search runs: `TOP_K` candidates from vector search and from BM25 → RRF fu
 | Variable | Code default | Template | Description |
 |---|---|---|---|
 | `EMBEDDING_MODEL` | `BAAI/bge-small-zh-v1.5` | same | Embedding model; when a new model changes the vector dimension, the old index is renamed to `*.mismatch.bak` and vectors are recomputed from the database chunks |
-| `RERANKER_MODEL` | `BAAI/bge-reranker-base` | same | Cross-Encoder reranker, a required component: the backend refuses to start if it cannot load |
+| `RERANKER_MODEL` | `BAAI/bge-reranker-base` | same | Cross-Encoder reranker, a required component: the backend refuses to start if it cannot load; document-centric deployments can evaluate `BAAI/bge-reranker-v2-m3` (far better negative rejection, but about 3 times slower reranking and weaker ranking of short posts, threshold around 0.01); see the comparison in [ADR-0007](adr/0007-han-ngram-bm25-and-passage-level-evaluation_en.md#5-reranker-comparison-keep-bge-reranker-base) |
 | `TOP_K` | `30` | `30` | Candidates fetched by vector search and by BM25 each |
 | `RRF_K` | — (required, ≥ 1) | `60` | RRF score = Σ 1 / (`RRF_K` + rank), ranks starting at 1 |
 | `RERANK_TOP_K` | `50` | `20` | Fused candidates sent to the reranker; on CPU each pair costs about 0.2 s (300 characters) to 0.4 s (800 characters) |
 | `RERANK_WEIGHT` | `0.85` | `0.85` | Sort score = `RERANK_WEIGHT` × reranker probability + (1 − `RERANK_WEIGHT`) × candidate base score; it does not affect the threshold |
-| `RERANK_RELEVANCE_THRESHOLD` | — (required, 0 to 1) | `0.2` | Chunks whose reranker probability falls below this are irrelevant; exact URL, post ID, and date matches are exempt; when everything is filtered out the tool reports that the knowledge base has nothing relevant |
+| `RERANK_RELEVANCE_THRESHOLD` | — (required, 0 to 1) | `0.02` | Chunks whose reranker probability falls below this are irrelevant; exact URL, post ID, and date matches are exempt; when everything is filtered out the tool reports that the knowledge base has nothing relevant |
 | `FINAL_K` | `8` | `8` | Maximum chunks kept after the threshold |
 | `SIMILARITY_THRESHOLD` | `0.30` | `0.30` | Used only by standalone vector search (`vector_search`); the main RRF hybrid path does not apply it |
 | `CHUNK_SIZE` | `800` | `300` | Chunk length in characters; rebuild the index to apply a change to existing documents |
@@ -199,8 +187,8 @@ Each search runs: `TOP_K` candidates from vector search and from BM25 → RRF fu
 |---|---|---|---|
 | `FORCE_CPU` | `true` | `true` | Use the CPU even when CUDA is available; in CPU mode PyTorch uses min(16, CPU cores) threads |
 | `USE_FP16_QUANTIZATION` | `false` | `false` | CUDA only: run the embedding and reranker models in FP16 |
-| `RERANKER_OPENVINO_DEVICE` | empty | commented example | Device for running the reranker through OpenVINO (`GPU`, `CPU`; use `GPU` for Intel integrated graphics); empty uses PyTorch. The model is compiled with the fixed shape `RERANK_TOP_K` × `RERANKER_OPENVINO_MAX_LENGTH`; the first start converts it in about a minute and caches the result in `DATA_DIR/openvino_cache` |
-| `RERANKER_OPENVINO_MAX_LENGTH` | empty | commented example | Required when `RERANKER_OPENVINO_DEVICE` is set: fixed token length of each query + chunk pair; longer pairs are truncated |
+| `RERANKER_OPENVINO_DEVICE` | empty | commented example | Device for running the reranker through OpenVINO (`GPU`, `CPU`; use `GPU` for Intel integrated graphics); empty uses PyTorch. `NPU` is not supported: compilation fails and the server does not start. When set, only the reranker's tokenizer is loaded, not the PyTorch model. The first start converts the model to an OpenVINO IR in `DATA_DIR/openvino_cache`, which takes about 10–30 seconds, or several minutes on a busy machine. The IR file name includes a fingerprint of the model files, so an updated model is converted again automatically. Each call sends 1–`RERANK_TOP_K` pairs, depending on the actual number of candidates. The GPU runs in FP16; probabilities are within 0.01 of PyTorch and the ranking is the same. Measured on an Intel Core Ultra 7 155U, 50 pairs take about 1.5–2.8 s on the GPU (depending on temperature and load), 7.6 s on the CPU, and about 13 s with PyTorch on the CPU. The first time the GPU sees a new number of candidates it spends about 0.3 s more compiling; the compiled kernels are cached in the same folder, so later starts are faster |
+| `RERANKER_OPENVINO_MAX_LENGTH` | empty | commented example | Required when `RERANKER_OPENVINO_DEVICE` is set: token length of each query + chunk pair; shorter pairs are padded and longer pairs truncated. It must not exceed the reranker's limit (512 for `bge-reranker-base`), or startup fails |
 | `GPU_BATCH_SIZE` | `128` | `128` | Embedding batch size on GPU |
 | `CPU_BATCH_SIZE` | `64` | `32` | Embedding batch size on CPU |
 | `USE_FAISS_GPU` | `false` | `false` | Run FAISS on GPU (requires `faiss-gpu`; falls back to CPU if initialization fails) |
@@ -357,7 +345,7 @@ python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().d
 >
 > Set `FORWARDED_ALLOW_IPS` to the proxy's address only when the reverse proxy in front of the backend *overwrites* `X-Forwarded-For` (for example nginx with `proxy_set_header X-Forwarded-For $remote_addr;`); rate limiting and login throttling then count real client IPs. The Vite dev proxy forwards client-supplied headers unchanged, so **never** set it for Vite, or anyone could forge their source IP to evade rate limiting and per-address login throttling. The setting only takes effect when the backend is started with `python main.py`.
 
-Rate limiting counts in each backend process's memory, and the number of tracked addresses is capped (see [Resource limits](#resource-limits)). Exceeding the rate limit always returns `429` and writes a warning to the log, never a `403` that blocks the address (the IP blocklist of earlier versions, which was never populated, has been removed).
+Rate limiting counts in each backend process's memory, and the number of tracked addresses is capped (see [Resource limits](#resource-limits)). Exceeding the rate limit always returns `429`, never a `403` that blocks the address (the IP blocklist of earlier versions, which was never populated, has been removed). Within one window (60 seconds), a client IP gets a single warning (with the path) when it is first blocked, and another when the window ends with the number of blocked requests and the count per path; every blocked request still appears in the access log (`status=429`).
 
 ## Server and runtime
 
@@ -368,7 +356,8 @@ Rate limiting counts in each backend process's memory, and the number of tracked
 | `PORT` | `8001` | `8001` | Default port (override with `--port`) |
 | `RELOAD` | — (required) | `false` | Reload on code changes; set `true` only for development (override with `--reload` or `--no-reload`) |
 | `ENABLE_API_DOCS` | — (required) | `false` | Serve the interactive documentation at `/docs`, `/redoc`, and `/openapi.json`. These pages list every endpoint and parameter, so keep `false` for public deployments; with `false`, none of the three paths is served |
-| `LOG_LEVEL` | `INFO` | `INFO` | Log level; application logs go to `backend/logs/app.log` and security events only to `backend/logs/security.log` (both rotate by size). `httpx` and `httpcore` are pinned to `WARNING`, so full request URLs (which may carry query-string API keys) are not logged |
+| `LOG_LEVEL` | `INFO` | `INFO` | Log level: `DEBUG`, `INFO`, `WARNING`, `ERROR`, or `CRITICAL` (case-insensitive); any other value stops the backend from starting. The level applies to the console and `app.log` output, so third-party packages that set their own logger to `DEBUG` (such as jieba) are limited too. `INFO` records an access entry for every `/api` request plus every model and tool call; `WARNING` keeps only warnings such as failures, timeouts, and rate limiting. Application logs go to `LOG_DIR/app.log` and security events only to `LOG_DIR/security.log` (same format, both rotate by size). `httpx` and `httpcore` are pinned to `WARNING`, so full request URLs (which may carry query-string API keys) are not logged. See [Architecture: logging and request tracing](architecture_en.md#logging-and-request-tracing) for the format and fields |
+| `LOG_DIR` | — (required) | `logs` | Log directory; a relative path resolves against `backend/` and the directory is created if missing; `app.log` and `security.log` are each opened when their first entry is written. Security events from the backend tests (pytest) always go to that test run's temporary directory, never here. Windows cannot rename a file another process has open, so give each backend running at the same time (such as a separate test backend) its own `LOG_DIR`; otherwise rotation fails once the size limit is reached and entries are lost |
 
 `HOST`, `PORT`, `RELOAD`, and `FORWARDED_ALLOW_IPS` apply only when the backend is started with `python main.py`; started any other way (for example by running `uvicorn main:app` directly), they are not applied, although `HOST` and `RELOAD` are still required. The uvicorn server started by `python main.py` processes proxy headers (`proxy_headers`) only when `FORWARDED_ALLOW_IPS` is set; see [Network access control](#network-access-control).
 
@@ -416,7 +405,6 @@ The limits below protect a single backend process and the operator's paid usage.
 | `APPROVAL_TIMEOUT_SECONDS` (`rag/tool_approval.py`) | 300 seconds | How long a tool call waits for the user's approval; a timeout counts as a denial |
 | `DNS_RESOLVE_TIMEOUT_SECONDS`, `DNS_RESOLVER_MAX_WORKERS` (`core/ssrf_protection.py`) | 5 seconds; 8 and 4 threads | SSRF validation resolves DNS in two dedicated thread pools: 8 threads for user-supplied URLs from `web_fetch` (`DnsPool.USER_URL`) and 4 for custom API tools, HTTP MCP, and OpenAPI spec URLs (`DnsPool.CONFIGURED_ENDPOINT`), so slow domains that fill the first pool do not affect the second; a timeout counts as unresolvable |
 | `LLM_POOL_ACQUIRE_TIMEOUT_SECONDS` (`core/llm_client.py`) | 15 seconds | Limit for waiting on an LLM connection pool slot, separate from `LLM_TIMEOUT`, so a saturated pool fails fast |
-| `REMOTE_MODELS_CACHE_SECONDS` (`api/tags.py`) | 30 seconds | Cache lifetime of the remote model list (failures included) |
 
 **Document parsing**
 
@@ -466,9 +454,10 @@ The OOXML checks run before parsing and use the sizes the ZIP members declare. p
 | `MAX_CONCURRENT_PASSWORD_HASHES` | 4 | Argon2 hashes and verifications running at once, in worker threads |
 | `MAX_TRACKED_LOGIN_ACCOUNTS` | 10,000 | Login identifiers that [login throttling](#login-throttling) tracks at once; the one with the oldest last failure is evicted first |
 | `MAX_REVOKED_TOKENS` | 100,000 | Entries in the in-process token revocation list; when full, the entries expiring soonest are evicted first |
-| `MAX_LOG_FIELD_CHARS` | 200 characters | Length limit of one string field in the security log (such as the account name or User-Agent) |
+| `MAX_LOG_FIELD_CHARS` | 200 characters | Length limit of one string field in the security log (such as the account name or User-Agent), and of one field in the access, model, tool, and rate-limit log lines (such as a path or error message) |
 | `LOG_FILE_MAX_BYTES`, `LOG_FILE_BACKUP_COUNT` | 10 MiB, 5 files | Rotation size and retained backups of `app.log` and `security.log` |
 | `MAX_TRACKED_ADDRESSES` | 10,000 | Addresses tracked at once by each of rate limiting and login throttling; the least recently active are evicted first |
+| `MAX_RATE_LIMIT_LOGGED_PATHS` | 10 | Paths counted separately per client IP in the warning written when a rate-limit window ends; other paths only add to the total |
 
 ## Removed settings
 
@@ -476,9 +465,10 @@ Ignored if left in `.env`; safe to delete:
 
 | Variable | Removed in | Replacement |
 |---|---|---|
-| `ADMIN_API_KEY` | Unreleased | No route ever used it; admin endpoints rely on the account's `is_admin` flag in the database |
-| `ENABLE_BATCH_ACCUMULATION`, `BATCH_ACCUMULATOR_SIZE` | Unreleased | The embedding batch accumulator was never wired into the upload flow and has been deleted |
-| `BASE_URL` | Unreleased | Used only by the deleted `healthcheck.py`; for health checks, request `GET /health` directly |
+| `LLM_API_BASE`, `MODEL_NAME`, `AVAILABLE_MODELS`, `FOUNDRY_API_KEY`, `FOUNDRY_ENDPOINT`, `FOUNDRY_DEPLOYMENT` (and the old `AZURE_OPENAI_*` names), `OPENAI_API_KEY`, `OPENAI_API_BASE`, `OPENAI_VISION_MODEL`, `ANTHROPIC_API_KEY`, `ANTHROPIC_API_BASE`, `ANTHROPIC_MAX_TOKENS`, `GEMINI_API_KEY`, `GEMINI_API_BASE`, `GEMINI_VISION_MODEL`, `EXTERNAL_TAGS_URL`, `ADD_NGROK_HEADER` | 8.0.0 | Document summaries and OCR of scanned PDFs use the shared connections an admin chooses under "Admin → System models"; see [system models](#system-models). `GET /api/tags` is removed as well |
+| `ADMIN_API_KEY` | 6.0.0 | No route ever used it; admin endpoints rely on the account's `is_admin` flag in the database |
+| `ENABLE_BATCH_ACCUMULATION`, `BATCH_ACCUMULATOR_SIZE` | 6.0.0 | The embedding batch accumulator was never wired into the upload flow and has been deleted |
+| `BASE_URL` | 6.0.0 | Used only by the deleted `healthcheck.py`; for health checks, request `GET /health` directly |
 | `JWT_SECRET_KEY`, `JWT_ALGORITHM` | 4.0.0 | Tokens are always signed RS256 with the RSA keys in `backend/keys/`; the HS256 fallback is gone |
 | `HYBRID_ALPHA`, `NORMALIZATION` | 3.0.0 | Standard RRF fusion with `RRF_K` |
 | `FINAL_THRESHOLD` | 3.0.0 | `RERANK_RELEVANCE_THRESHOLD` |
@@ -517,7 +507,7 @@ The JSON file at `DOMAIN_PROFILE_PATH` (default `backend/config/domain_profile.j
 
 ## Calibrating the relevance threshold
 
-`RERANK_RELEVANCE_THRESHOLD=0.2` is a provisional value from a small Traditional Chinese corpus: full-question positives usually score above 0.9, but single-keyword queries and in-domain negatives overlap between 0.3 and 0.42 (see [ADR-0003](adr/0003-rrf-relevance-citations-and-tool-trust_en.md)). Once your real documents are uploaded, calibrate with your own golden set:
+The template's `RERANK_RELEVANCE_THRESHOLD=0.02` was calibrated on short social posts, and the best threshold varies widely between datasets: on the built-in enterprise benchmark the positives' top rerank probabilities have a median of about 0.87, yet half of the near-domain negatives also score above 0.12, up to 0.74; on short social posts the positives' median is only 0.37 and a tenth fall below 0.12 (see [ADR-0007](adr/0007-han-ngram-bm25-and-passage-level-evaluation_en.md)). Once your real documents are uploaded, calibrate with your own golden set:
 
 1. **Prepare a golden set**: JSONL with one question per line; `relevant_sources` lists the file names that should be found, and questions the knowledge base cannot answer use an empty list as negatives. See [`backend/eval/retrieval_golden.example.jsonl`](../backend/eval/retrieval_golden.example.jsonl) for the format.
 
@@ -526,16 +516,28 @@ The JSON file at `DOMAIN_PROFILE_PATH` (default `backend/config/domain_profile.j
    {"query": "公司附近有推薦的午餐餐廳嗎？", "relevant_sources": []}
    ```
 
+   To see chunk-level ranking quality, add the optional `relevant_passages`: short verbatim snippets that identify the answer (a distinctive 10 to 25 characters from one sentence, not spanning lines); any knowledge base chunk containing one of them counts as relevant:
+
+   ```json
+   {"query": "年資兩年半可以休幾天特休？", "relevant_sources": ["員工手冊.pdf"], "relevant_passages": ["滿 2 年未滿 3 年：10 日"]}
+   ```
+
 2. **Compare thresholds**: run the command below in `backend/`. The evaluation runs read-only on a copy of the index and can run alongside the backend; it refuses to run when the index disagrees with the database or the tokenizer signature differs, so start the backend once to reconcile first.
 
    ```bash
    python scripts/evaluate_retrieval.py --golden eval/retrieval_golden.jsonl --k 1 3 5 --relevance-thresholds 0.1 0.2 0.3 0.4
    ```
 
-3. **Read the report**: it lists MRR, hit@k, recall@k, and the negative rejection rate for the current threshold, then compares every candidate threshold over the same rerank pass. Higher thresholds reject more negatives but may miss positives; pick the value that balances the two.
+3. **Read the report**: it lists MRR, hit@k, recall@k, and the negative rejection rate for the current threshold, then compares every candidate threshold over the same rerank pass; with labelled snippets it also lists chunk-level precision@k, nDCG@k, recall@k, MRR, and candidate recall. Higher thresholds reject more negatives but may miss positives; pick the value that balances the two. Low candidate recall means the answer never reached the reranker (check BM25 tokenization or raise `TOP_K`); high candidate recall with poor ranks is a reranker judgement problem.
 4. **Apply it**: set the chosen value as `RERANK_RELEVANCE_THRESHOLD` in `.env` and restart the backend.
 
-Other options: `--min-mrr 0.6` exits with code 1 when MRR falls short, which suits CI; `--output report.json` writes the full results.
+Other options: `--min-mrr 0.6` or `--min-passage-ndcg 0.8` exits with code 1 when the metric falls short, which suits CI; `--output report.json` writes the full results.
+
+**Comparing retrieval settings or models**: `--corpus` builds a knowledge base from the files in a directory the same way uploads do, on a temporary SQLite database and temporary indexes that are deleted afterwards, without connecting to the production database; retrieval parameters and models come from `.env`, and environment variables set before the command override them for comparison. The built-in benchmark has 12 fictional company documents and Taiwan's Mass Rapid Transit Act, with 103 positive and 15 negative cases:
+
+```bash
+python scripts/evaluate_retrieval.py --corpus eval/corpus --golden eval/corpus_golden.jsonl --k 1 3 5
+```
 
 ## Frontend environment variables
 

@@ -6,6 +6,7 @@
 
 | 版本 | 發行日期 | 重點 |
 |---|---|---|
+| [8.0.0](#800---2026-11-02) | 2026-11-02 | 管理員指定的系統模型取代 `.env` 的模型商設定、OpenAPI 3.2 與 Arazzo 工作流程與 Overlay、BM25 漢字單字與雙字欄位與片段層級檢索基準、OpenVINO 重排依實際候選數送出、請求 ID 與詳細日誌、AI 工具與聊天頁重新設計、聯網搜尋與網頁閱讀修正 |
 | [7.0.0](#700---2026-10-31) | 2026-10-31 | 各帳號自行設定的 API 連線與管理員開放的共用連線、使用者管理、停用帳號撤銷權杖、工具轉址與聯網白名單逐跳檢查、VM 用的 Docker Compose 部署、FAQ 與 PDF 擷取修正、重建索引不再清空知識庫 |
 | [6.0.0](#600---2026-10-26) | 2026-10-26 | Agent Skills、MCP Streamable HTTP 與 OAuth、結構化資料重新解析、Responses API、Microsoft Foundry（含 Claude）、推理強度對應五家供應商、Ollama 與 Gemini 串接修正 |
 | [5.0.0](#500---2026-10-10) | 2026-10-10 | 第二輪安全稽核修正：登入失敗節流、變更密碼撤銷權杖、可關閉自行註冊、工具憑證加密、改用 PyJWT、相依套件雜湊鎖定、PostgreSQL 非超級使用者 |
@@ -19,6 +20,9 @@
 | [1.0.0](#100---2026-08-01) | 2026-08-01 | 混合 RAG 與安全基礎 |
 
 > [!TIP]
+> 從 7.0.0 升級到 8.0.0 前，請先閱讀 [升級指南](docs/upgrading.md#從-700-升級到-800)：`.env` 新增必填的 `LOG_DIR`（缺少時後端無法啟動）；`.env` 的模型商設定已移除，文件摘要與掃描 PDF 的 OCR 改用管理員在「管理後台 → 系統模型」指定的共用連線，升級後兩者都是「未指定」；`GET /api/tags` 改用 `GET /api/chat/models`。
+
+> [!TIP]
 > 從 6.0.0 升級到 7.0.0 前，請先閱讀 [升級指南](docs/upgrading.md#從-600-升級到-700)：聊天改用各帳號的 API 連線，每個帳號（含管理員）都要有個人連線或管理員開放的共用連線才能對話，`POST /api/chat/send` 必須帶 `connection_id` 與 `model_name`；`PUT /api/auth/me` 不再變更密碼，對話清單與單一對話不再附帶訊息。後端與前端的相依套件與 6.0.0 相同，不需要重新安裝。
 
 > [!TIP]
@@ -30,6 +34,61 @@
 ---
 
 ## [Unreleased]
+
+## [8.0.0] - 2026-11-02
+
+> [!IMPORTANT]
+> `.env` 不再設定任何模型商。文件摘要與掃描 PDF 的 OCR 改用管理員在「管理後台 → 系統模型」指定的共用連線；升級後兩者都是「未指定」，摘要改用規則產生，掃描頁不做 OCR。原本在 `.env` 設定 `FOUNDRY_*`、`OPENAI_*`、`ANTHROPIC_*`、`GEMINI_*` 或 `LLM_API_BASE` 的部署，請：
+>
+> 1. 在「管理後台 → 共用 API 連線」把同一個供應商建成共用連線（金鑰、位址與模型照抄；只給系統模型用時，可只開放給自己）。
+> 2. 到「管理後台 → 系統模型」替「文件摘要」與「掃描 PDF 辨識（OCR）」各選一個模型與思考程度；OCR 的模型須支援圖片輸入，小型本機模型建議思考程度選「無」，以免逾時。
+> 3. 從 `.env` 刪除已移除的設定（留著也只會被忽略）。
+>
+> 呼叫 `GET /api/tags` 的外部程式需改用 `GET /api/chat/models`（需登入，依帳號的 API 連線列出模型）。
+
+### 新增 (Added)
+
+- **系統模型**：管理後台新增「系統模型」卡片，替文件摘要與掃描 PDF 的 OCR 各指定一條共用連線、其中一個模型與思考程度（選項同聊天，介面停用模型不支援的檔位），存放在新的 `system_models` 資料表，啟動時自動建立。新增 `GET/PUT /api/admin/system-models`（只限管理員，變更以 `ADMIN_SYSTEM_MODELS_UPDATED` 寫入安全日誌）。共用連線被刪除，或編輯後不再提供所指定的模型時，該用途自動取消指定。
+- **檢索基準與片段層級指標**：標準問答集可用 `relevant_passages` 標註短原文片段，評估另計片段層級的 precision@k、nDCG@k、原文片段 recall@k、MRR 與候選召回（重排前的候選是否已包含正解）；片段在知識庫中找不到時評估直接報錯。`scripts/evaluate_retrieval.py` 新增 `--corpus`（以上傳流程在暫存 SQLite 與暫存索引上建立知識庫，不碰正式資料）與 `--min-passage-ndcg`。內建基準 `backend/eval/corpus/`（12 份虛構企業文件與《大眾捷運法》，119 個片段）與 `backend/eval/corpus_golden.jsonl`（103 個正例、15 個反例），詳見 [ADR-0007](docs/adr/0007-han-ngram-bm25-and-passage-level-evaluation.md)。
+- **OpenAPI 3.2、Arazzo 與 Overlay**：自訂 API 工具可匯入 OpenAPI 3.2（`query` 方法、`additionalOperations`、`in: querystring`、`components.mediaTypes`、`$self`）；Arazzo 1.0／1.1 的每個工作流程匯入成一個工具，依序呼叫步驟並以執行期運算式傳遞輸出，支援 simple、regex、JSONPath 成功條件與 end、goto、retry 動作（一次最多 50 步、300 秒）；Overlay 1.0～1.2 可在匯入前套用（新的 RFC 9535 JSONPath 實作），`POST /api/api-tools/parse-spec` 新增 `overlays` 欄位。詳見 [API 參考 4.1 與 4.10](docs/api.md#41-post-apiapi-toolsparse-spec)。
+- **外部 `$ref` 與 JSON Schema 2020-12**：以網址匯入時，外部參照文件經 SSRF 驗證下載（最多 20 份、合計 30 MB），`$id`、`$anchor`、`$defs` 與路徑項目的 `$ref` 都會解析；`allOf`、`oneOf`／`anyOf`（含 `discriminator`）、`type` 陣列、`const`、`prefixItems` 轉成各家模型都接受的參數 schema。解析結果新增 `warnings`，列出無法完整匯入的部分。
+- **請求 ID 與更完整的日誌**：每個請求有一個 ID（沿用格式正確的 `X-Request-ID`，否則自動產生），寫在回應的 `X-Request-ID` 標頭、該請求期間的每一行日誌、`security.log` 的 `request_id` 欄位，以及聊天串流 `error` 事件的 `request_id`，用一個 ID 就能找出同一個請求的所有紀錄。以下新增的紀錄不含密碼、金鑰、權杖、Cookie 與查詢參數的值，也不含提示與對話內容。
+  - 每個 `/api` 請求結束時記一行存取紀錄：方法、路徑、狀態碼、耗時、回應大小、來源 IP 與使用者 id。
+  - 模型呼叫記下耗時、成功或失敗、逾時秒數與例外類別，以及供應商回傳的 token 用量（Ollama 另有載入、讀入提示與產生的各段時間）；串流另記第一段文字抵達的時間。
+  - 工具呼叫記下名稱、種類、耗時、結果狀態與結果大小；被研究規則拒絕、使用者未核准或沒有人能核准而沒有執行的呼叫也各記一行。研究迴圈的 `調用工具` 紀錄改為只記參數名稱，不再記參數值；檢索器的 `Retrieval` 紀錄改為只記查詢字數（`query_chars`），不再記查詢原文。
+  - 速率限制不再每擋一個請求就寫一行：同一個 IP 在一個視窗內只在第一次被擋時寫一筆（含路徑），視窗結束時再寫被擋次數與各路徑次數。
+  - `LOG_LEVEL` 只接受 `DEBUG`、`INFO`、`WARNING`、`ERROR`、`CRITICAL`，並套用到所有輸出，jieba 等第三方套件的 `DEBUG` 訊息不再寫進 `app.log`；`security.log` 改用與 `app.log` 相同的格式。解析日誌的程式需留意：每行在層級之後多了 `[請求 ID]` 欄位。
+
+### 變更 (Changed)
+
+- **文件摘要使用指定的系統模型**：上傳、重新產生摘要與重建索引時以「文件摘要」系統模型與其思考程度產生摘要，逾時為 `LLM_TIMEOUT`；未指定時不呼叫模型，直接使用規則摘要，也不再於每次上傳時查詢 `LLM_API_BASE` 的模型清單。
+- **掃描 PDF 的 OCR 支援五家供應商**：知識庫上傳、重建索引與聊天附件中沒有文字層的 PDF 頁面，改送「掃描 PDF 辨識」系統模型，經與聊天相同的呼叫層送出，OpenAI、Anthropic、Gemini、Microsoft Foundry、Ollama 的視覺模型都可以使用（先前只支援 Foundry、OpenAI、Gemini 的 Chat Completions）。
+- **新增連線時預先帶入的官方 API 位址改為固定值**：不再讀取 `OPENAI_API_BASE`、`ANTHROPIC_API_BASE`、`GEMINI_API_BASE`。
+- **BM25 加入漢字單字與雙字欄位**：jieba 內建詞典偏簡體，繁體詞常被切錯（「大眾捷運系統」→「大眾捷／運系統」），查詢與文件切法不同時 BM25 整個漏掉。BM25 另建 `han_unigrams` 與 `han_bigrams` 欄位，查詢以 OR 組合三個欄位的詞項。內建基準的候選召回 0.971 → 1.000、nDCG@5 0.898 → 0.907，2,437 筆貼文語料 nDCG@5 0.893 → 0.901；BM25 索引約大七成，查詢中位數 1.0 → 2.6 毫秒。斷詞規則版本升為 3，首次啟動時自動依資料庫片段重建 BM25，向量不需重算；沒有新增設定。
+- **自訂 API 工具依 OpenAPI 的 style 送出參數**：匯入的工具記錄每個參數的 `style`、`explode`、`allowReserved` 與媒體型別（新的 `param_styles` 欄位，啟動時自動補上資料表欄位）。路徑支援 `label`、`matrix`，查詢字串支援 `deepObject`、`spaceDelimited`、`pipeDelimited` 與 Swagger 2.0 的 `collectionFormat`，Cookie 參數與 `in: cookie` 的 API Key 送進 `Cookie` 標頭（先前被當成查詢字串或本文送出）。物件型的查詢參數不再送出 Python 字串表示，布林值一律為 `true`／`false`；`application/x-www-form-urlencoded` 與 `multipart/form-data` 的陣列改送成同名的多個欄位（先前是 JSON 字串），符合 OpenAPI Encoding 的預設值。
+- **請求本文保留宣告的媒體型別**：`body_content_type` 接受任何媒體型別，`application/merge-patch+json` 等 JSON 家族、XML、純文字與其他型別依宣告送出（先前一律改用 `application/json`）。
+- **匯入規格更嚴格也更完整**：Swagger 1.x、OpenAPI 3.3 以上與未標示版本的文件改為拒絕（先前會猜成 3.0）；路徑與操作層級的 `servers`、相對的伺服器位址、Swagger 2.0 沒有 `host` 或 `schemes` 時都依文件網址補齊；參數以「名稱＋位置」合併，同名的不同位置參數不再互相覆蓋；同一份規格中重複的工具名稱自動加上編號。標頭參數不能設定 `Authorization`、`Content-Type`、`Cookie` 與管理員設定的標頭。需要使用者授權的 OAuth 流程與 OpenID Connect 改為 Bearer 並提醒自行填入權杖。
+- **「AI 工具」頁重新設計**：頁首只留前往對話、重新整理與「新增工具」選單；自訂 API 工具、MCP 伺服器、Agent Skills 與內建工具各成一個區塊，標題旁列出數量與啟用、連線情形，每個項目收成一列（名稱、識別碼、端點、狀態開關與常用動作），參數、觸發時機、MCP 工具清單與技能的腳本設定改為按「詳細資訊」展開。連線錯誤、憑證無法解密與找不到技能檔案的項目集中列在頁首；區塊載入時顯示佔位列，載入失敗時在區塊內說明並提供重試。匯入 API 規格對話框分成「提供規格」與「選擇端點並匯入」兩步，Overlay 收進可展開的選填區，端點清單改用可半選的全選核取方塊；新增與編輯表單分成基本資訊、請求、認證、參數等段落。手機寬度不再橫向捲動，深淺色主題沿用既有的設計 token。API 呼叫、欄位與送出的資料格式都沒有改變。
+- **「聊天」頁重新設計**：對話內容改成置中的閱讀欄，AI 回答不再包在卡片裡，使用者的訊息以淺色泡泡靠右；研究過程、思考過程、工具核准與參考來源統一成同一套樣式，參考來源標上與回答中 [n] 對應的編號，點開可看段落、相關度與摘錄。側欄的歷史對話依今天、昨天、過去 7 天與更早分組，載入時顯示佔位列；空白對話列出建議問題，載入對話時顯示訊息佔位。輸入框在桌面分成輸入與按鈕兩列，拖曳檔案時顯示放開提示，技能建議改為浮在輸入框上方，不再推動版面。串流時只重新渲染正在產生的那則回答，較早的訊息延後排版，長對話捲動更順；AI 要求核准外部工具時會由螢幕報讀器播報。手機寬度不再橫向捲動，深淺色主題沿用既有的設計 token。API 呼叫、送出的資料格式、輸入法組字時按 Enter 不送出等既有行為都沒有改變。
+- **OpenVINO 重排依實際候選數送出，不再載入 PyTorch 模型**：設定 `RERANKER_OPENVINO_DEVICE` 時，批次改為 1～`RERANK_TOP_K` 依候選數變動，不再補空白湊滿。Intel Core Ultra 7 155U 內顯在同一程序交錯實測：10 筆候選 2.83 → 0.51 秒；內建基準的 118 次重排（每次 30～50 筆）中位數 2.73 → 2.46 秒。每種新的候選數第一次出現時，要多花約 0.3 秒編譯。前 1 名與相關性門檻判定和 PyTorch 完全相同。
+  - 啟用時只載入 tokenizer，常駐記憶體少約 0.8 GB。
+  - IR 改存一份動態形狀檔，檔名含模型檔案指紋：模型更新後自動重轉，改 `RERANK_TOP_K` 或長度不必重轉。轉換先寫暫存檔再改名，中斷時不會留下損壞的 IR。
+  - `RERANKER_OPENVINO_MAX_LENGTH` 超過模型上限時，啟動即報錯。
+  - 升級後第一次啟動會重新轉換一次；`DATA_DIR/openvino_cache` 中舊的 `*_50x256.xml`、`*_50x256.bin` 可以刪除。
+- **日誌目錄改由必填的 `LOG_DIR` 決定，後端測試不再寫進正式日誌**：`app.log` 與 `security.log` 都寫到 `LOG_DIR`（相對路徑以 `backend/` 為基準；先前 `security.log` 寫在啟動目錄下的 `logs/`）。`security.log` 改在第一筆安全事件寫入時才開啟，pytest 整個測試階段改寫到暫存目錄，Starlette TestClient 產生的假事件（`client_ip` 為 `testclient`）不再混進稽核日誌。升級時請在 `.env` 加上 `LOG_DIR=logs`，日誌維持在 `backend/logs/`；缺少這個設定時後端無法啟動，見 [升級指南](docs/upgrading.md#從-700-升級到-800)。
+
+### 修正 (Fixed)
+
+- **聯網搜尋恢復運作**：沒有設定 `OLLAMA_API_KEY` 時改用的 DuckDuckGo 備援一直回傳 0 筆結果，也不報錯。原因是 DuckDuckGo 的結果連結現在把 `rel` 寫在 `class` 前面，舊的解析規則對不上。現在改成逐筆解析標題、網址與摘要，不再因為某筆缺摘要而錯位，也會略過廣告；結果頁解析不到任何結果時回傳錯誤，讓模型知道搜尋失敗、改用其他資料，而不是當成查無資料。
+- **網頁閱讀只取正文**：`web_fetch` 先前把導覽列、側欄、頁首、頁尾一起轉成文字，而內容只留前 3500 字，文件網站常常整段都是側欄目錄（例如 OpenVINO 文件的正文要到第 128,338 字才出現）。現在有 `<main>`、`role="main"` 或 `<article>` 時只取正文區塊，並略過其中的 `nav`、`aside` 與導覽、側欄角色；沒有正文區塊時略過整頁的 `nav`、`aside`、`header`、`footer` 與對應的 ARIA 角色。掃描維持線性時間。
+- **回答不再留下指不到來源的 `[n]`**：模型沒有查資料卻照格式寫出引用編號（例如小型本機模型關閉推理時），或用了本次工具結果裡沒有的編號時，這些標記會在送出與儲存前移除；對得到來源的編號保留，程式碼區塊與行內程式碼不受影響。先前這些編號只是不列進參考來源，內文仍顯示 [1]。已儲存的舊訊息不會改寫。
+- **Windows 上 `app.log` 到達輪替大小後不再停止寫入**：後端啟動時會載入 `main.py` 兩次，多出來的那份與 `RELOAD=true` 的監看行程都開著 `app.log`，到達 10 MiB 時無法改名輪替，之後的紀錄全部遺失。現在日誌檔在第一筆紀錄寫入時才開啟，監看行程也不再開著它。
+
+### 移除 (Removed)
+
+- **`.env` 的模型商設定**：`LLM_API_BASE`、`MODEL_NAME`、`AVAILABLE_MODELS`、`FOUNDRY_API_KEY`、`FOUNDRY_ENDPOINT`、`FOUNDRY_DEPLOYMENT`（含舊名稱 `AZURE_OPENAI_*`）、`OPENAI_API_KEY`、`OPENAI_API_BASE`、`OPENAI_VISION_MODEL`、`ANTHROPIC_API_KEY`、`ANTHROPIC_API_BASE`、`ANTHROPIC_MAX_TOKENS`、`GEMINI_API_KEY`、`GEMINI_API_BASE`、`GEMINI_VISION_MODEL`、`EXTERNAL_TAGS_URL`、`ADD_NGROK_HEADER`。`LLM_TIMEOUT`、`LLM_TAGS_TIMEOUT` 與 `OLLAMA_TEMPERATURE`、`OLLAMA_NUM_PREDICT`、`OLLAMA_NUM_CTX` 保留，套用到所有連線。
+- **`GET /api/tags`**：它只回傳 `.env` 設定的系統模型清單，前端也沒有使用。
+- **`scripts/test_llm_clients.py`**：只檢查 `.env` 的模型清單與供應商路由，已沒有對象。
 
 ---
 

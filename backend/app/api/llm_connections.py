@@ -12,6 +12,7 @@ from app.core.llm_client import LlmEndpoint, call_llm, list_models
 from app.core.security_logging import log_security_event
 from app.core.tool_secrets import decrypt_json
 from app.models import (
+    SYSTEM_MODEL_PURPOSES,
     LlmConnection,
     LlmConnectionCreate,
     LlmConnectionTestRequest,
@@ -19,6 +20,7 @@ from app.models import (
     LlmModelDiscoveryRequest,
     SharedLlmConnectionCreate,
     SharedLlmConnectionUpdate,
+    SystemModelsUpdate,
 )
 from app.models.database import get_db
 from app.services.llm_connections import (
@@ -35,10 +37,12 @@ from app.services.llm_connections import (
     validate_connection,
     validated_user_ids,
 )
+from app.services.system_models import release_system_models, set_system_models, system_models_response
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/llm-connections", tags=["llm_connections"])
 admin_router = APIRouter(prefix="/api/admin/llm-connections", tags=["admin"])
+system_models_router = APIRouter(prefix="/api/admin/system-models", tags=["admin"])
 
 
 def _get_personal(db: Session, connection_id: int, user_id: int) -> LlmConnection:
@@ -278,6 +282,7 @@ async def update_shared_connection(
     except HTTPException:
         db.rollback()
         raise
+    release_system_models(db, connection, deleted=False)
     db.commit()
     db.refresh(connection)
     log_security_event("ADMIN_LLM_CONNECTION_UPDATED", request=request, user_id=current_user["user_id"], details={
@@ -295,9 +300,34 @@ def delete_shared_connection(
     current_user: dict = Depends(get_current_admin_user),
 ):
     connection = _get_shared(db, connection_id)
+    release_system_models(db, connection, deleted=True)
+    db.flush()
     db.delete(connection)
     db.commit()
     log_security_event("ADMIN_LLM_CONNECTION_DELETED", request=request, user_id=current_user["user_id"], details={
         "connection_id": connection_id
     })
     return {"message": "已刪除共用 API 連線"}
+
+
+@system_models_router.get("")
+def get_system_models(db: Session = Depends(get_db), current_user: dict = Depends(get_current_admin_user)):
+    return system_models_response(db)
+
+
+@system_models_router.put("")
+def update_system_models(
+    data: SystemModelsUpdate,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_admin_user),
+):
+    try:
+        set_system_models(db, {purpose: getattr(data, purpose) for purpose in SYSTEM_MODEL_PURPOSES})
+    except SafeClientError as e:
+        db.rollback()
+        raise HTTPException(status_code=400, detail=str(e))
+    db.commit()
+    assigned = system_models_response(db)
+    log_security_event("ADMIN_SYSTEM_MODELS_UPDATED", request=request, user_id=current_user["user_id"], details=assigned)
+    return assigned

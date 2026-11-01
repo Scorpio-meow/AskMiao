@@ -53,7 +53,7 @@ def served_rag(rag, monkeypatch):
 
 @pytest.fixture
 def offline_summary(monkeypatch):
-    async def fake_summary(filename, content, file_type="", extraction=None):
+    async def fake_summary(filename, content, file_type, extraction, model):
         return f"summary of {filename}"
 
     monkeypatch.setattr(documents_api.DocumentProcessor, "generate_document_summary_async", fake_summary)
@@ -284,15 +284,16 @@ async def test_failed_commit_does_not_break_the_rest_of_the_batch(
     assert_indices_match_database(served_rag, session_factory)
 
 
+def failing_ocr(png):
+    raise RuntimeError("vision model unavailable")
+
+
 @pytest.mark.asyncio
-@pytest.mark.parametrize("vision_available", [False, True], ids=["ocr-not-configured", "ocr-failed"])
+@pytest.mark.parametrize("ocr", [None, failing_ocr], ids=["ocr-not-configured", "ocr-failed"])
 async def test_scanned_pdfs_without_any_text_are_rejected_instead_of_indexed(
-    vision_available, served_rag, session_factory, upload_dir, offline_summary, monkeypatch
+    ocr, served_rag, session_factory, upload_dir, offline_summary, monkeypatch
 ):
-    monkeypatch.setattr(PDFService, "_is_vision_available", classmethod(lambda cls: vision_available))
-    monkeypatch.setattr(
-        PDFService, "_ocr_page_sync", classmethod(lambda cls, img, page_num: f"[第 {page_num} 頁為掃描圖片或複雜版面，已記錄]")
-    )
+    monkeypatch.setattr(documents_api, "page_ocr", lambda target: ocr)
 
     results = await upload(
         session_factory,

@@ -571,7 +571,7 @@ function Documents() {
                           <span className={styles.docDescriptionIcon}>
                             <Icon name="sparkles" size={14} />
                           </span>
-                          <span>AI 智能大綱與摘要</span>
+                          <span>AI 智慧大綱與摘要</span>
                           {editingDocId !== doc.id && (
                             <span className={styles.summaryActions}>
                               <button

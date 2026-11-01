@@ -1,30 +1,21 @@
-import React, { useRef, useEffect, useLayoutEffect, useState, useCallback } from 'react';
+import React, { useRef, useEffect, useLayoutEffect, useState, useCallback, useId } from 'react';
 import { ChatInputAreaProps, ChatAttachment } from './types';
 import { Tooltip, Icon } from '../../components/ui';
 import { skillService, EnabledSkill } from '../../services/api';
+import { AttachmentKind, describeAttachmentType, formatFileSize, isImageAttachment, isImeComposition, skillSuggestionsFor } from './chatFormat';
 import styles from './ChatInputArea.module.css';
-const formatFileSize = (bytes?: number): string => {
-  if (!bytes) return '';
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-};
-const getBadgeClass = (filename: string): { className: string; label: string } => {
-  const ext = filename.split('.').pop()?.toLowerCase() || '';
-  if (ext === 'pdf') return { className: styles.badgePdf, label: 'PDF' };
-  if (['doc', 'docx'].includes(ext)) return { className: styles.badgeDocx, label: 'DOC' };
-  if (['xls', 'xlsx', 'csv'].includes(ext)) return { className: styles.badgeXlsx, label: ext.toUpperCase() };
-  if (['ppt', 'pptx'].includes(ext)) return { className: styles.badgePptx, label: 'PPT' };
-  if (['js', 'ts', 'jsx', 'tsx', 'py', 'json', 'html', 'css', 'sql'].includes(ext)) {
-    return { className: styles.badgeCode, label: ext.toUpperCase() };
-  }
-  return { className: '', label: ext ? ext.toUpperCase() : 'FILE' };
+const ATTACHMENT_KIND_CLASS: Record<AttachmentKind, string> = {
+  pdf: styles.badgePdf,
+  doc: styles.badgeDoc,
+  sheet: styles.badgeSheet,
+  slide: styles.badgeSlide,
+  code: styles.badgeCode,
+  other: '',
 };
 // 觸控裝置聚焦輸入框會彈出螢幕鍵盤，只在有滑鼠等精確指標的裝置自動聚焦
 const canAutoFocus = () => window.matchMedia('(pointer: fine)').matches;
 // 支援 field-sizing 的瀏覽器由 CSS 自動長高，其餘才用 JS 計算高度
 const supportsFieldSizing = typeof CSS !== 'undefined' && CSS.supports('field-sizing', 'content');
-const SKILL_COMMAND_PATTERN = /^\/([a-z0-9-]*)$/;
 const MAX_SKILL_SUGGESTIONS = 8;
 const MAX_ATTACHMENT_BYTES = 15 * 1024 * 1024;
 export const ChatInputArea: React.FC<ChatInputAreaProps> = ({
@@ -40,6 +31,8 @@ export const ChatInputArea: React.FC<ChatInputAreaProps> = ({
   onRemoveAttachment,
   onRejectAttachments,
 }) => {
+  const suggestionsId = useId();
+  const hintId = useId();
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [isDragging, setIsDragging] = useState(false);
@@ -57,12 +50,10 @@ export const ChatInputArea: React.FC<ChatInputAreaProps> = ({
       cancelled = true;
     };
   }, []);
-  const commandMatch = SKILL_COMMAND_PATTERN.exec(value);
-  const skillSuggestions = commandMatch && dismissedCommand !== value
-    ? skills.filter((s) => s.name.startsWith(commandMatch[1])).slice(0, MAX_SKILL_SUGGESTIONS)
-    : [];
+  const skillSuggestions = skillSuggestionsFor(value, skills, dismissedCommand, MAX_SKILL_SUGGESTIONS);
   const suggestionsOpen = skillSuggestions.length > 0 && !disabled;
   const highlightedSkill = suggestionsOpen ? Math.min(activeSkillIndex, skillSuggestions.length - 1) : -1;
+  const optionId = (name: string) => `${suggestionsId}-${name}`;
   const chooseSkill = (name: string) => {
     onChange(`/${name} `);
     setActiveSkillIndex(0);
@@ -100,7 +91,7 @@ export const ChatInputArea: React.FC<ChatInputAreaProps> = ({
   const canSend = hasContent && !sending && !disabled;
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     // 注音、倉頡等輸入法組字時按 Enter 是在選字，不能當成送出
-    if (e.nativeEvent.isComposing || e.keyCode === 229) return;
+    if (isImeComposition({ isComposing: e.nativeEvent.isComposing, keyCode: e.keyCode })) return;
     if (suggestionsOpen) {
       if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
         e.preventDefault();
@@ -196,61 +187,13 @@ export const ChatInputArea: React.FC<ChatInputAreaProps> = ({
       : null;
   return (
     <div className={styles.container}>
-      <div
-        className={`${styles.inputCard} ${isDragging ? styles.dropActive : ''}`}
-        onDragOver={handleDragOver}
-        onDragLeave={handleDragLeave}
-        onDrop={handleDrop}
-      >
-        {/* 附件預覽列 */}
-        {attachments.length > 0 && (
-          <ul className={styles.attachmentPreviewBar} role="list" aria-label="待傳送的附件">
-            {attachments.map((att, idx) => {
-              const isImg = att.file_type.startsWith('image/') || Boolean(att.data_url?.startsWith('data:image/'));
-              const badge = getBadgeClass(att.filename);
-              if (isImg && att.data_url) {
-                return (
-                  <li key={att.id || idx} className={styles.imagePreviewCard}>
-                    <img src={att.data_url} alt={att.filename} className={styles.imagePreviewThumb} />
-                    <button
-                      type="button"
-                      className={styles.removeAttachmentBtn}
-                      onClick={() => onRemoveAttachment && onRemoveAttachment(idx)}
-                      aria-label={`移除圖片 ${att.filename}`}
-                    >
-                      <Icon name="close" size={12} />
-                    </button>
-                  </li>
-                );
-              }
-              return (
-                <li key={att.id || idx} className={styles.filePreviewCard}>
-                  <span className={`${styles.fileFormatBadge} ${badge.className}`}>
-                    {badge.label}
-                  </span>
-                  <div className={styles.fileInfo}>
-                    <span className={styles.fileName} title={att.filename}>{att.filename}</span>
-                    {att.file_size && <span className={styles.fileSize}>{formatFileSize(att.file_size)}</span>}
-                  </div>
-                  <button
-                    type="button"
-                    className={styles.removeFileBtn}
-                    onClick={() => onRemoveAttachment && onRemoveAttachment(idx)}
-                    aria-label={`移除檔案 ${att.filename}`}
-                  >
-                    <Icon name="close" size={14} />
-                  </button>
-                </li>
-              );
-            })}
-          </ul>
-        )}
+      <div className={styles.composerArea}>
         {suggestionsOpen && (
-          <ul id="skill-suggestions" className={styles.skillSuggestions} role="listbox" aria-label="可使用的技能">
+          <ul id={suggestionsId} className={styles.skillSuggestions} role="listbox" aria-label="可使用的技能">
             {skillSuggestions.map((skill, idx) => (
               <li
                 key={skill.name}
-                id={`skill-option-${skill.name}`}
+                id={optionId(skill.name)}
                 role="option"
                 aria-selected={idx === highlightedSkill}
                 className={`${styles.skillOption} ${idx === highlightedSkill ? styles.skillOptionActive : ''}`}
@@ -266,8 +209,72 @@ export const ChatInputArea: React.FC<ChatInputAreaProps> = ({
             ))}
           </ul>
         )}
-        <div className={styles.inputRow}>
-          {/* 上傳檔案/圖片按鈕 */}
+        <div
+          className={`${styles.composer} ${isDragging ? styles.dropActive : ''} ${disabled ? styles.composerDisabled : ''}`}
+          onDragOver={handleDragOver}
+          onDragLeave={handleDragLeave}
+          onDrop={handleDrop}
+        >
+          {attachments.length > 0 && (
+            <ul className={styles.attachmentList} role="list" aria-label="待傳送的附件">
+              {attachments.map((att, idx) => {
+                if (isImageAttachment(att) && att.data_url) {
+                  return (
+                    <li key={att.id || idx} className={styles.imagePreview}>
+                      <img src={att.data_url} alt={att.filename} className={styles.imagePreviewThumb} />
+                      <button
+                        type="button"
+                        className={styles.removeImageButton}
+                        onClick={() => onRemoveAttachment && onRemoveAttachment(idx)}
+                        aria-label={`移除圖片 ${att.filename}`}
+                      >
+                        <Icon name="close" size={12} />
+                      </button>
+                    </li>
+                  );
+                }
+                const badge = describeAttachmentType(att.filename);
+                return (
+                  <li key={att.id || idx} className={styles.filePreview}>
+                    <span className={`${styles.fileBadge} ${ATTACHMENT_KIND_CLASS[badge.kind]}`}>
+                      {badge.label}
+                    </span>
+                    <span className={styles.fileInfo}>
+                      <span className={styles.fileName} title={att.filename}>{att.filename}</span>
+                      {att.file_size && <span className={styles.fileSize}>{formatFileSize(att.file_size)}</span>}
+                    </span>
+                    <button
+                      type="button"
+                      className={styles.removeFileButton}
+                      onClick={() => onRemoveAttachment && onRemoveAttachment(idx)}
+                      aria-label={`移除檔案 ${att.filename}`}
+                    >
+                      <Icon name="close" size={14} />
+                    </button>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+          <textarea
+            ref={textareaRef}
+            rows={1}
+            className={styles.textarea}
+            placeholder="輸入您的問題..."
+            aria-label="輸入訊息"
+            aria-describedby={hint ? hintId : undefined}
+            value={value}
+            onChange={(e) => {
+              onChange(e.target.value);
+              setActiveSkillIndex(0);
+            }}
+            onKeyDown={handleKeyDown}
+            aria-autocomplete={skills.length > 0 ? 'list' : undefined}
+            aria-controls={suggestionsOpen ? suggestionsId : undefined}
+            aria-activedescendant={suggestionsOpen ? optionId(skillSuggestions[highlightedSkill].name) : undefined}
+            onPaste={handlePaste}
+            disabled={disabled}
+          />
           <input
             type="file"
             ref={fileInputRef}
@@ -276,7 +283,7 @@ export const ChatInputArea: React.FC<ChatInputAreaProps> = ({
             accept=".png,.jpg,.jpeg,.webp,.gif,.pdf,.doc,.docx,.ppt,.pptx,.xls,.xlsx,.csv,.txt,.md,.json,.js,.ts,.py,.html,.css"
             onChange={handleFileInputChange}
           />
-          <Tooltip title="上傳檔案或圖片（也可以貼上截圖或拖曳檔案）">
+          <Tooltip title="上傳檔案或圖片（也可以貼上截圖或拖曳檔案）" className={styles.attachSlot}>
             <button
               type="button"
               className={styles.attachButton}
@@ -287,26 +294,8 @@ export const ChatInputArea: React.FC<ChatInputAreaProps> = ({
               <Icon name="upload" size={18} />
             </button>
           </Tooltip>
-          <textarea
-            ref={textareaRef}
-            rows={1}
-            className={styles.textarea}
-            placeholder="輸入您的問題..."
-            aria-label="輸入訊息"
-            value={value}
-            onChange={(e) => {
-              onChange(e.target.value);
-              setActiveSkillIndex(0);
-            }}
-            onKeyDown={handleKeyDown}
-            aria-autocomplete={skills.length > 0 ? 'list' : undefined}
-            aria-controls={suggestionsOpen ? 'skill-suggestions' : undefined}
-            aria-activedescendant={suggestionsOpen ? `skill-option-${skillSuggestions[highlightedSkill].name}` : undefined}
-            onPaste={handlePaste}
-            disabled={disabled}
-          />
           {streamingHere ? (
-            <Tooltip title="停止產生回答">
+            <Tooltip title="停止產生回答" className={styles.sendSlot}>
               <button
                 type="button"
                 className={`${styles.sendButton} ${styles.stopButton}`}
@@ -317,7 +306,7 @@ export const ChatInputArea: React.FC<ChatInputAreaProps> = ({
               </button>
             </Tooltip>
           ) : (
-            <Tooltip title="發送訊息 (Enter)">
+            <Tooltip title="發送訊息 (Enter)" className={styles.sendSlot}>
               <button
                 type="button"
                 className={`${styles.sendButton} ${canSend ? styles.sendButtonActive : ''}`}
@@ -329,17 +318,23 @@ export const ChatInputArea: React.FC<ChatInputAreaProps> = ({
               </button>
             </Tooltip>
           )}
+          {isDragging && (
+            <div className={styles.dropOverlay} aria-hidden="true">
+              <Icon name="upload" size={18} />
+              <span>放開以附加檔案</span>
+            </div>
+          )}
         </div>
-      </div>
-      <div className={styles.hintRow}>
-        {hint ? (
-          <span className={styles.hint}>{hint}</span>
-        ) : (
-          <span className={styles.dragHint}>
-            <Icon name="image" size={13} /> 可貼上截圖或拖曳檔案{skills.length > 0 && '，輸入 / 指定技能'}
-          </span>
-        )}
-        <span className={`${styles.hint} ${styles.keyboardHint}`}>按 Enter 發送，Shift + Enter 換行</span>
+        <div className={styles.hintRow}>
+          {hint ? (
+            <span className={`${styles.hint} ${styles.hintActive}`} id={hintId}>{hint}</span>
+          ) : (
+            <span className={styles.hint}>
+              可貼上截圖或拖曳檔案{skills.length > 0 && '，輸入 / 指定技能'}
+            </span>
+          )}
+          <span className={`${styles.hint} ${styles.keyboardHint}`}>按 Enter 發送，Shift + Enter 換行</span>
+        </div>
       </div>
     </div>
   );

@@ -82,3 +82,9 @@
 - **升級**：在 `.env` 加入 `RRF_K`、`RERANK_RELEVANCE_THRESHOLD`、`WEB_FETCH_ALLOWED_DOMAINS`、`BLOCK_WEB_TOOLS_AFTER_KB`、`DOMAIN_PROFILE_PATH` 後再啟動。舊的 `HYBRID_ALPHA`、`NORMALIZATION`、`FINAL_THRESHOLD` 會被忽略。首次啟動時既有 BM25 索引沒有斷詞簽章，會自動依資料庫片段重建 BM25，向量不需重算。
 - **回退**：退回舊版程式前先刪除 `BM25_INDEX_DIR` 目錄，舊版啟動時會依資料庫重建 BM25。若不刪除，舊版會用未轉小寫的查詢比對已轉小寫的索引，含大寫字母的詞項（如 `MES`）將對不到。
 - **從 2.2.x 升級**：上述步驟針對已採用 chunk_id 索引的版本。3.0.0 同時包含 [ADR-0005](./0005-chunk-id-index-and-database-source-of-truth.md) 的索引格式變更，從 2.2.x 升級必須重建一次完整索引，步驟見 [升級指南](../upgrading.md)。
+
+---
+
+## 後續修訂 (Amendments)
+
+- **2026-11-01｜BM25 加入漢字單字與雙字欄位**：BM25 除 jieba 詞外另建 `han_unigrams` 與 `han_bigrams` 欄位，查詢以 OR 組合三個欄位的詞項，`TOKENIZER_RULES_VERSION` 升為 3（首次啟動自動重建 BM25）。評估工具新增以 `relevant_passages` 標註的片段層級指標與 `--corpus` 暫存知識庫模式，並以內建基準重新量測了本 ADR 的 RRF 與門檻決策，詳見 [ADR-0007](./0007-han-ngram-bm25-and-passage-level-evaluation.md)。

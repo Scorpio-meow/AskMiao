@@ -2,7 +2,7 @@ import os
 import re
 from pathlib import Path
 from typing import List, Optional
-from pydantic import AliasChoices, Field, field_validator
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 BACKEND_DIR = Path(__file__).resolve().parents[2]
 ENV_PATH = BACKEND_DIR / ".env"
@@ -19,8 +19,10 @@ PATH_SETTING_KEYS = (
     "DOMAIN_PROFILE_PATH",
     "JIEBA_DICTIONARY",
     "SKILLS_DIR",
+    "LOG_DIR",
 )
 DOMAIN_NAME_PATTERN = re.compile(r"[a-z0-9-]+(\.[a-z0-9-]+)*")
+LOG_LEVEL_NAMES = ("DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL")
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_file=ENV_PATH,
@@ -28,9 +30,7 @@ class Settings(BaseSettings):
         extra="ignore",
         validate_default=True
     )
-    LLM_API_BASE: str = "http://localhost:5000"
     LLM_TIMEOUT: float = 120.0
-    MODEL_NAME: Optional[str] = None
     OLLAMA_API_KEY: Optional[str] = None
     OLLAMA_TEMPERATURE: Optional[float] = None
     OLLAMA_NUM_PREDICT: Optional[int] = None
@@ -41,19 +41,6 @@ class Settings(BaseSettings):
     # 同一次提問中知識庫工具回傳過內容後，是否拒絕 web_search 與 web_fetch
     BLOCK_WEB_TOOLS_AFTER_KB: bool
     CONVERSATION_HISTORY_MESSAGES: int = Field(ge=0)
-    FOUNDRY_API_KEY: Optional[str] = Field(default=None, validation_alias=AliasChoices("FOUNDRY_API_KEY", "AZURE_OPENAI_API_KEY"))
-    FOUNDRY_ENDPOINT: Optional[str] = Field(default=None, validation_alias=AliasChoices("FOUNDRY_ENDPOINT", "AZURE_OPENAI_ENDPOINT"))
-    FOUNDRY_DEPLOYMENT: Optional[str] = Field(default=None, validation_alias=AliasChoices("FOUNDRY_DEPLOYMENT", "AZURE_OPENAI_DEPLOYMENT"))
-    AVAILABLE_MODELS: Optional[str] = None
-    OPENAI_API_KEY: Optional[str] = None
-    OPENAI_API_BASE: str = "https://api.openai.com/v1"
-    OPENAI_VISION_MODEL: str = "gpt-6-sol"
-    ANTHROPIC_API_KEY: Optional[str] = None
-    ANTHROPIC_API_BASE: str = "https://api.anthropic.com"
-    ANTHROPIC_MAX_TOKENS: Optional[int] = Field(default=None, ge=1)
-    GEMINI_API_KEY: Optional[str] = None
-    GEMINI_API_BASE: str = "https://generativelanguage.googleapis.com"
-    GEMINI_VISION_MODEL: str = "gemini-3.8-flash"
     OLLAMA_SEARCH_ENDPOINT: str = "https://ollama.com/api/web_search"
     OLLAMA_FETCH_ENDPOINT: str = "https://ollama.com/api/web_fetch"
     DUCKDUCKGO_SEARCH_ENDPOINT: str = "https://html.duckduckgo.com/html/"
@@ -61,9 +48,7 @@ class Settings(BaseSettings):
     # 重新整理權杖 Cookie 是否帶 Secure（只經 HTTPS 傳送）；以 HTTPS 提供服務時必須為 true
     COOKIE_SECURE: bool
     COOKIE_SAMESITE: str = "lax"
-    EXTERNAL_TAGS_URL: str = ""
     LLM_TAGS_TIMEOUT: float = 10.0
-    ADD_NGROK_HEADER: bool = False
     # 是否開放自行註冊：所有帳號共用整個知識庫與已啟用的工具，關閉時改由管理員以 scripts/create_user.py 建立帳號
     ALLOW_REGISTRATION: bool
     # 加密自訂 API 工具與 MCP 伺服器憑證（headers、auth_config、env_vars）的 Fernet 金鑰；更換後既有憑證需重新輸入
@@ -84,6 +69,7 @@ class Settings(BaseSettings):
     # 是否提供 /docs、/redoc 與 /openapi.json（完整列出所有端點與參數）
     ENABLE_API_DOCS: bool
     LOG_LEVEL: str = "INFO"
+    LOG_DIR: str
     DATABASE_URL: str
     DB_POOL_SIZE: int = 20
     DB_MAX_OVERFLOW: int = 40
@@ -142,6 +128,13 @@ class Settings(BaseSettings):
             return None
         path = Path(value).expanduser()
         return str(path if path.is_absolute() else (BACKEND_DIR / path).resolve())
+    @field_validator("LOG_LEVEL")
+    @classmethod
+    def _validate_log_level(cls, value: str) -> str:
+        level = value.strip().upper()
+        if level not in LOG_LEVEL_NAMES:
+            raise ValueError(f"LOG_LEVEL 必須是 {', '.join(LOG_LEVEL_NAMES)} 其中之一")
+        return level
     @field_validator("TOOL_SECRETS_KEY")
     @classmethod
     def _validate_tool_secrets_key(cls, value: str) -> str:

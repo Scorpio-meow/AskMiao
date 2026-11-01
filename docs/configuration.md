@@ -2,7 +2,7 @@
 
 [繁體中文](configuration.md) | [English](configuration_en.md)
 
-> 本文件逐一說明後端 `backend/.env` 與前端 `frontend/.env` 的每個設定、預設值與實際作用，適用於 **7.0.0**（從 6.0.0 升級見 [升級指南](upgrading.md#從-600-升級到-700)）。設定以 `backend/app/core/config.py` 的 `Settings` 為準，範本見 [`backend/.env.example`](../backend/.env.example)。
+> 本文件逐一說明後端 `backend/.env` 與前端 `frontend/.env` 的每個設定、預設值與實際作用，適用於 **8.0.0**（從 7.0.0 升級見 [升級指南](upgrading.md#從-700-升級到-800)）。設定以 `backend/app/core/config.py` 的 `Settings` 為準，範本見 [`backend/.env.example`](../backend/.env.example)。
 
 - [讀取規則](#讀取規則)
 - [必填設定](#必填設定)
@@ -29,14 +29,14 @@
 
 - **來源**：後端從 `backend/.env` 讀取設定（與啟動目錄無關），行程環境變數優先於 `.env`。不認得的鍵會被忽略，所以已移除的舊設定留在 `.env` 中不會出錯。
 - **必填設定沒有預設值**：缺少任一項時，後端在啟動時就以 `Field required` 錯誤結束，並列出缺少的欄位。
-- **數值範圍與格式**：`CONVERSATION_HISTORY_MESSAGES ≥ 0`、`RRF_K ≥ 1`、`0 ≤ RERANK_RELEVANCE_THRESHOLD ≤ 1`、`ANTHROPIC_MAX_TOKENS ≥ 1`，`LOGIN_MAX_FAILURES_PER_ACCOUNT`、`LOGIN_MAX_FAILURES_PER_ADDRESS`、`LOGIN_FAILURE_WINDOW_SECONDS`、`LOGIN_LOCKOUT_SECONDS` 皆須 ≥ 1，`TOOL_SECRETS_KEY` 必須是有效的 Fernet 金鑰；超出範圍或格式不符同樣無法啟動。
+- **數值範圍與格式**：`CONVERSATION_HISTORY_MESSAGES ≥ 0`、`RRF_K ≥ 1`、`0 ≤ RERANK_RELEVANCE_THRESHOLD ≤ 1`，`LOGIN_MAX_FAILURES_PER_ACCOUNT`、`LOGIN_MAX_FAILURES_PER_ADDRESS`、`LOGIN_FAILURE_WINDOW_SECONDS`、`LOGIN_LOCKOUT_SECONDS` 皆須 ≥ 1，`TOOL_SECRETS_KEY` 必須是有效的 Fernet 金鑰；超出範圍或格式不符同樣無法啟動。
 - **布林值**：`true` / `false`、`1` / `0`、`yes` / `no` 皆可。
-- **相對路徑**：`DATA_DIR`、`UPLOAD_DIR`、`FAISS_INDEX_PATH`、`BM25_INDEX_DIR`、`METADATA_PATH`、`HF_HOME`、`HF_HUB_CACHE`、`SENTENCE_TRANSFORMERS_HOME`、`DOMAIN_PROFILE_PATH`、`JIEBA_DICTIONARY`、`SKILLS_DIR` 的相對路徑一律以 `backend/` 為基準。`DATABASE_URL` 不在此列，SQLite 的相對路徑依啟動目錄而定。
+- **相對路徑**：`DATA_DIR`、`UPLOAD_DIR`、`FAISS_INDEX_PATH`、`BM25_INDEX_DIR`、`METADATA_PATH`、`HF_HOME`、`HF_HUB_CACHE`、`SENTENCE_TRANSFORMERS_HOME`、`DOMAIN_PROFILE_PATH`、`JIEBA_DICTIONARY`、`SKILLS_DIR`、`LOG_DIR` 的相對路徑一律以 `backend/` 為基準。`DATABASE_URL` 不在此列，SQLite 的相對路徑依啟動目錄而定。
 - **程式預設值與範本值**：下表的「程式預設值」是 `.env` 未設定時的值；「範本值」是 `backend/.env.example` 建議的值，兩者不同時以你的 `.env` 為準。
 
 ## 必填設定
 
-下列 21 個設定沒有預設值，缺少任一項後端就無法啟動。
+下列 22 個設定沒有預設值，缺少任一項後端就無法啟動。
 
 | 變數 | 範本值 | 說明 |
 |---|---|---|
@@ -51,12 +51,13 @@
 | `HOST` | `127.0.0.1` | `python main.py` 的監聽位址，詳見 [伺服器與執行環境](#伺服器與執行環境) |
 | `RELOAD` | `false` | 程式碼變更時自動重新載入，只在開發時設為 `true` |
 | `ENABLE_API_DOCS` | `false` | 是否提供 `/docs`、`/redoc` 與 `/openapi.json` 互動式文件 |
+| `LOG_DIR` | `logs` | `app.log` 與 `security.log` 的目錄，見 [伺服器與執行環境](#伺服器與執行環境) |
 | `ENABLE_WEB_SEARCH` | `true` | 是否提供聯網工具 |
 | `CONVERSATION_HISTORY_MESSAGES` | `6` | 帶入的前文訊息數 |
 | `WEB_FETCH_ALLOWED_DOMAINS` | `*` | `web_fetch` 網域白名單 |
 | `BLOCK_WEB_TOOLS_AFTER_KB` | `true` | 讀過知識庫後停用聯網工具 |
 | `RRF_K` | `60` | RRF 融合常數 |
-| `RERANK_RELEVANCE_THRESHOLD` | `0.2` | 重排機率門檻 |
+| `RERANK_RELEVANCE_THRESHOLD` | `0.02` | 重排機率門檻 |
 | `DOMAIN_PROFILE_PATH` | `config/domain_profile.json` | 領域設定檔路徑 |
 | `SKILLS_DIR` | `data/skills` | Agent Skills 的技能檔案目錄，見 [儲存路徑與上傳](#儲存路徑與上傳) |
 
@@ -66,54 +67,17 @@
 python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
 ```
 
-使用 Claude 模型時，`ANTHROPIC_MAX_TOKENS` 也是必填（未設定時呼叫 Claude 會失敗，但不影響啟動）。
-
 ## LLM 供應商與模型
 
-聊天只使用帳號可用的 [API 連線](#api-連線)，不會使用本節的設定。本節的 `.env` 設定是「系統模型」，只用於上傳文件時產生 AI 摘要與 `GET /api/tags`；PDF 掃描頁 OCR 另外使用 `OPENAI_VISION_MODEL`、`GEMINI_VISION_MODEL` 與對應的金鑰。
+聊天只使用帳號可用的 [API 連線](#api-連線)，文件摘要與掃描 PDF 的 OCR 使用管理員指定的 [系統模型](#系統模型)。`.env` 不放任何模型商的位址或金鑰，只有下列套用到所有 LLM 呼叫的設定：
 
 | 變數 | 程式預設值 | 範本值 | 說明 |
 |---|---|---|---|
-| `LLM_API_BASE` | `http://localhost:5000` | `http://localhost:11434` | Ollama 服務位址：呼叫 Ollama 模型（`/api/chat`）與查詢遠端模型清單（`/api/tags`）時使用 |
-| `LLM_TIMEOUT` | `120` | `120` | LLM 呼叫逾時秒數，也用於 PDF OCR 的視覺模型呼叫；等待連線池名額另有固定的 15 秒上限（見 [資源上限](#資源上限)） |
-| `MODEL_NAME` | 空 | — | 預設模型；未設定時依下方「預設模型」規則決定 |
-| `AVAILABLE_MODELS` | 空 | 註解範例 | 前端可選的模型清單（逗號分隔）；設定後完全取代自動產生的清單 |
-| `OLLAMA_TEMPERATURE` | 空 | `0.3` | Ollama 的 `temperature`，未設定時使用模型預設值 |
-| `OLLAMA_NUM_PREDICT` | 空 | `2048` | Ollama 的 `num_predict`，未設定時使用模型預設值 |
-| `OLLAMA_NUM_CTX` | 空 | 註解範例 | Ollama 的 `num_ctx`（上下文長度），未設定時使用模型預設值；檢索內容較長時預設值可能不夠 |
-| `FOUNDRY_API_KEY` | 空 | 註解範例 | 與 `FOUNDRY_ENDPOINT` 同時設定才啟用 Microsoft Foundry |
-| `FOUNDRY_ENDPOINT` | 空 | 註解範例 | 例如 `https://<資源名稱>.openai.azure.com`（Azure OpenAI 資源）或 `https://<資源名稱>.services.ai.azure.com`（Foundry 資源），呼叫 `/openai/v1/responses`；部署 Claude 時必須是後者；舊名稱 `AZURE_OPENAI_*` 仍可讀取 |
-| `FOUNDRY_DEPLOYMENT` | 空 | 註解範例 | 部署名稱，逗號分隔可列多個，第一個為預設；啟用 Foundry 但未設定時，清單列出 `gpt-6-sol` |
-| `OPENAI_API_KEY` | 空 | 註解範例 | OpenAI 金鑰 |
-| `OPENAI_API_BASE` | `https://api.openai.com/v1` | 註解範例 | OpenAI 或相容服務的基底位址 |
-| `OPENAI_VISION_MODEL` | `gpt-6-sol` | — | PDF 掃描頁 OCR 使用的 OpenAI 模型；Foundry 未設定部署時也當作部署名稱 |
-| `ANTHROPIC_API_KEY` | 空 | 註解範例 | Anthropic 金鑰 |
-| `ANTHROPIC_API_BASE` | `https://api.anthropic.com` | 註解範例 | Anthropic API 位址 |
-| `ANTHROPIC_MAX_TOKENS` | 空 | 註解範例 `16000` | Claude 單次回應的輸出 token 上限（使用 Claude 時必填）；工具呼叫參數被截斷時會回報錯誤，請調高 |
-| `GEMINI_API_KEY` | 空 | 註解範例 | Google Gemini 金鑰 |
-| `GEMINI_API_BASE` | `https://generativelanguage.googleapis.com` | 註解範例 | 呼叫 OpenAI 相容端點 `/v1beta/openai/chat/completions` |
-| `GEMINI_VISION_MODEL` | `gemini-3.8-flash` | — | PDF 掃描頁 OCR 使用的 Gemini 模型 |
-| `EXTERNAL_TAGS_URL` | 空 | — | 沒有任何雲端模型時，查詢遠端模型清單的網址；未設定時使用 `{LLM_API_BASE}/api/tags` |
-| `LLM_TAGS_TIMEOUT` | `10` | — | 查詢遠端模型清單的逾時秒數 |
-| `ADD_NGROK_HEADER` | `false` | — | 查詢遠端模型清單時加上 `ngrok-skip-browser-warning` 標頭（網址含 `ngrok-free.app` 時自動加上） |
-
-### 模型清單
-
-系統模型的清單（`GET /api/tags`，以及文件摘要選用的預設模型）依下列順序產生：
-
-1. 設定了 `AVAILABLE_MODELS`：直接使用這份清單。
-2. 否則依序合併：Foundry 部署（未設定部署時為 `gpt-6-sol`）、有 `OPENAI_API_KEY` 時的 OpenAI 內建清單、有 `ANTHROPIC_API_KEY` 時的 Claude 內建清單、有 `GEMINI_API_KEY` 時的 Gemini 內建清單。
-3. 以上皆為空：向 `EXTERNAL_TAGS_URL`（或 `{LLM_API_BASE}/api/tags`）查詢遠端清單，例如本機 Ollama 已下載的模型。遠端查詢在執行緒中進行，結果（含失敗）快取 30 秒，同一時間只有一個查詢在進行。
-
-預設模型依序取 `MODEL_NAME`、第一個 Foundry 部署、遠端清單回報的預設模型，不在清單內時改用清單第一個。
-
-| 供應商 | 內建清單（7.0.0） |
-|---|---|
-| OpenAI | `gpt-6.1-sol`、`gpt-6-sol`、`gpt-6-luna`、`gpt-6-astra`、`gpt-5.6-sol`、`gpt-5.6-luna`、`gpt-5.6-terra`、`gpt-5.4`、`gpt-5.4-mini` |
-| Anthropic | `claude-opus-5-5`、`claude-fable-5-1`、`claude-sonnet-5-5`、`claude-haiku-5-5`、`claude-sonnet-5`、`claude-opus-5`、`claude-fable-5`、`claude-opus-4-8`、`claude-haiku-4-5` |
-| Gemini | `gemini-4-argon`、`gemini-3.8-flash`、`gemini-3.6-flash`、`gemini-3.5-flash-lite`、`gemini-3.1-flash-lite` |
-
-**預設模型**：`MODEL_NAME` → 第一個 Foundry 部署 → 清單第一個；選出的模型不在清單內時改用清單第一個。
+| `LLM_TIMEOUT` | `120` | `120` | LLM 呼叫逾時秒數，套用到聊天、連線測試、文件摘要與 PDF OCR；等待連線池名額另有固定的 15 秒上限（見 [資源上限](#資源上限)） |
+| `LLM_TAGS_TIMEOUT` | `10` | — | 「從 API 取得模型」查詢模型清單的逾時秒數 |
+| `OLLAMA_TEMPERATURE` | 空 | `0.3` | 所有 Ollama 連線的 `temperature`，未設定時使用模型預設值 |
+| `OLLAMA_NUM_PREDICT` | 空 | `2048` | 所有 Ollama 連線的 `num_predict`，未設定時使用模型預設值 |
+| `OLLAMA_NUM_CTX` | 空 | 註解範例 | 所有 Ollama 連線的 `num_ctx`（上下文長度），未設定時使用模型預設值；檢索內容較長時預設值可能不夠 |
 
 ### API 連線
 
@@ -124,28 +88,52 @@ python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().d
 
 | 欄位 | 說明 |
 |---|---|
-| 供應商 | `openai`（OpenAI 或相容的 API）、`anthropic`、`gemini`、`foundry`、`ollama`；呼叫方式與 `.env` 的同名供應商相同，`gpt-6*` 走 Responses API，Foundry 上以 `claude-` 開頭的部署走 `{API 位址}/anthropic` |
+| 供應商 | `openai`（OpenAI 或相容的 API）、`anthropic`、`gemini`、`foundry`、`ollama`；呼叫方式見 [供應商路由](#供應商路由) |
 | API 位址 | 例如 `https://api.openai.com/v1`、`https://api.anthropic.com`、`https://<資源名稱>.services.ai.azure.com`、`https://ollama.com` |
 | API 金鑰 | Anthropic、Gemini、Foundry 必填，OpenAI 相容服務與 Ollama 選填；以 `TOOL_SECRETS_KEY` 加密存放，儲存後不會再從 API 讀出；編輯時留空即沿用原值，但變更供應商或 API 位址時不會沿用，需要重新輸入 |
 | 模型 | 這個連線可選的模型名稱（Foundry 為部署名稱），最多 50 個 |
 | 輸出 token 上限 | Claude（`anthropic`，或 Foundry 上的 Claude 部署）必填，與模型的輸出上限取較小值 |
 
+新增連線時，表單依供應商預先帶入官方 API 位址與下列模型清單，可以再增刪：
+
+| 供應商 | 預先帶入的模型（8.0.0） |
+|---|---|
+| OpenAI | `gpt-6.1-sol`、`gpt-6-sol`、`gpt-6-luna`、`gpt-6-astra`、`gpt-5.6-sol`、`gpt-5.6-luna`、`gpt-5.6-terra`、`gpt-5.4`、`gpt-5.4-mini` |
+| Anthropic | `claude-opus-5-5`、`claude-fable-5-1`、`claude-sonnet-5-5`、`claude-haiku-5-5`、`claude-sonnet-5`、`claude-opus-5`、`claude-fable-5`、`claude-opus-4-8`、`claude-haiku-4-5` |
+| Gemini | `gemini-4-argon`、`gemini-3.8-flash`、`gemini-3.6-flash`、`gemini-3.5-flash-lite`、`gemini-3.1-flash-lite` |
+
 一般帳號的個人連線只能指向可從網際網路解析的公開位址：建立與修改時檢查，每次呼叫也經 SSRF 檢查並固定到核可的 IP（與自訂 API 工具相同，見 [ADR-0002](adr/0002-external-tools-and-outbound-safety.md)），內部網路的服務（例如本機 Ollama）請由管理員設為共用連線。管理員的個人連線與共用連線不受此限制。
 
 刪除帳號時，該帳號的個人連線一併刪除，並從共用連線的名單移除。
 
+### 系統模型
+
+管理員在「管理後台 → 系統模型」替兩個用途各指定一條共用連線、其中一個模型與思考程度，存放在資料庫的 `system_models` 資料表：
+
+| 用途 | 何時呼叫 | 未指定時 |
+|---|---|---|
+| 文件摘要 | 上傳文件、重新產生摘要，以及重建索引時替還沒有摘要的文件產生摘要 | 改用規則產生摘要，不呼叫模型 |
+| 掃描 PDF 辨識（OCR） | 知識庫上傳、重建索引與聊天附件中，沒有文字層或文字判定為亂碼的 PDF 頁面；模型須支援圖片輸入 | 掃描頁標示為無可提取的文字；整份 PDF 都沒有文字時拒絕上傳 |
+
+- 只能指定共用連線，費用算在該連線上。聊天附件的 OCR 也用這裡的模型，每份附件最多送 `MAX_PDF_OCR_PAGES` 頁（見 [資源上限](#資源上限)）。
+- 思考程度必填，選項與聊天相同（`none`、`minimal`、`low`、`medium`、`high`、`xhigh`、`max`），依供應商對應後傳給模型，介面上停用該模型不支援的檔位。程度越高越慢：Ollama 上的思考模型（例如 qwen3.5、gemma4）不關閉思考時，產生一份摘要可能超過 `LLM_TIMEOUT`，小型本機模型建議選 `none`（Ollama 會送 `think: false`）。資料表在加入這個欄位前已有的指定，升級後為 `none`。
+- 共用連線被刪除，或編輯後不再提供所指定的模型時，該用途自動取消指定；連線的金鑰無法解密（例如更換了 `TOOL_SECRETS_KEY`）時視同未指定，並記錄警告。
+- 端點見 [API 參考：系統模型](api.md#86-系統模型)。
+
 ### 供應商路由
 
-`.env` 的系統模型依模型名稱決定供應商（API 連線則依連線設定的供應商），規則由上而下取第一個符合者：
+每條 API 連線依連線設定的供應商與模型名稱決定呼叫方式：
 
-| 條件 | 供應商 | 端點 |
+| 供應商 | 模型名稱 | 端點 |
 |---|---|---|
-| 已啟用 Foundry，且模型名稱是 `FOUNDRY_DEPLOYMENT` 中以 `claude-` 開頭的一個 | Anthropic（Foundry 上的 Claude） | `{FOUNDRY_ENDPOINT}/anthropic/v1/messages`，以 `x-api-key` 驗證；`FOUNDRY_ENDPOINT` 必須是 `*.services.ai.azure.com`，部署名稱需以 `claude-` 開頭 |
-| 已啟用 Foundry，且模型名稱是 `FOUNDRY_DEPLOYMENT` 中的其他一個 | Microsoft Foundry | 名稱以 `gpt-`、`o1`、`o3`、`o4` 開頭（`gpt-oss` 除外）走 `{FOUNDRY_ENDPOINT}/openai/v1/responses`；其餘（Kimi、Mistral、Grok、DeepSeek、Llama 等 chat-completion 模型）走 `{FOUNDRY_ENDPOINT}/openai/v1/chat/completions`，且不送 `reasoning_effort` |
-| 名稱以 `claude-` 開頭且有 `ANTHROPIC_API_KEY` | Anthropic | 官方 `anthropic` SDK（Messages API） |
-| 名稱以 `gemini-` 開頭且有 `GEMINI_API_KEY` | Google Gemini | `{GEMINI_API_BASE}/v1beta/openai/chat/completions` |
-| 名稱以 `gpt-`、`o1`、`o3`、`o4` 開頭 | 有 `OPENAI_API_KEY` 時為 OpenAI；否則在已啟用 Foundry 時改走 Foundry | `{OPENAI_API_BASE}/chat/completions`；`gpt-6*` 改用 `{OPENAI_API_BASE}/responses` |
-| 以上皆不符合 | Ollama | `{LLM_API_BASE}/api/chat` |
+| `foundry` | 以 `claude-` 開頭 | `{API 位址}/anthropic/v1/messages`，以 `x-api-key` 驗證；API 位址必須是 `*.services.ai.azure.com` |
+| `foundry` | 以 `gpt-`、`o3`、`o4` 開頭（`gpt-oss`、`o3-mini` 除外） | `{API 位址}/openai/v1/responses` |
+| `foundry` | 其他（Kimi、Mistral、Grok、DeepSeek、Llama 等 chat-completion 模型） | `{API 位址}/openai/v1/chat/completions`，不送 `reasoning_effort` |
+| `anthropic` | 任何 | 官方 `anthropic` SDK（Messages API） |
+| `gemini` | 任何 | `{API 位址}/v1beta/openai/chat/completions` |
+| `openai` | 以 `gpt-6` 開頭 | `{API 位址}/responses` |
+| `openai` | 其他 | `{API 位址}/chat/completions` |
+| `ollama` | 任何 | `{API 位址}/api/chat` |
 
 > [!NOTE]
 > `reasoning_effort` 會依供應商對應後傳給模型（規則見 [API 參考](api.md)）；走 Chat Completions 的 `gpt-5.x` 模型（名稱含 `gpt-5.`）在帶工具呼叫時一律改送 `none`，以符合推理模型與工具呼叫的相容性限制；原始的 `gpt-5`、`gpt-5-mini`、`gpt-5-nano` 不接受 `none`、`xhigh`、`max`，選 `none` 時改送 `minimal`，選 `xhigh`、`max` 時改送 `high`，其他情況送使用者選擇的程度。
@@ -158,7 +146,7 @@ python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().d
 | `CONVERSATION_HISTORY_MESSAGES` | —（必填，≥ 0） | `6` | 提問時從資料庫帶入的前文訊息數（使用者與助理訊息合計，前文一律從使用者訊息開始）；`0` 表示不帶前文 |
 | `WEB_FETCH_ALLOWED_DOMAINS` | —（必填） | `*` | `web_fetch` 可讀取的網域，含子網域，逗號分隔；明確寫 `*` 才表示不限制 |
 | `BLOCK_WEB_TOOLS_AFTER_KB` | —（必填） | `true` | 同一次提問中，知識庫工具回傳過內容後，拒絕之後的 `web_search` 與 `web_fetch` |
-| `OLLAMA_API_KEY` | 空 | 註解範例 | Ollama 官方 Web Search / Web Fetch API 的金鑰。設定後聯網工具優先使用 Ollama API，失敗時改用 DuckDuckGo 或直接抓取；當 `LLM_API_BASE` 指向 `ollama.com`（Ollama Cloud）時，也以 `Authorization: Bearer` 用於模型呼叫與模型清單查詢 |
+| `OLLAMA_API_KEY` | 空 | 註解範例 | Ollama 官方 Web Search / Web Fetch API 的金鑰。設定後聯網工具優先使用 Ollama API，失敗時改用 DuckDuckGo 或直接抓取；不用於模型呼叫，Ollama Cloud 的金鑰請填在 API 連線 |
 | `OLLAMA_SEARCH_ENDPOINT` | `https://ollama.com/api/web_search` | — | Ollama Web Search 端點 |
 | `OLLAMA_FETCH_ENDPOINT` | `https://ollama.com/api/web_fetch` | — | Ollama Web Fetch 端點 |
 | `DUCKDUCKGO_SEARCH_ENDPOINT` | `https://html.duckduckgo.com/html/` | — | `web_search` 的備援搜尋端點 |
@@ -177,12 +165,12 @@ python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().d
 | 變數 | 程式預設值 | 範本值 | 說明 |
 |---|---|---|---|
 | `EMBEDDING_MODEL` | `BAAI/bge-small-zh-v1.5` | 同左 | 嵌入模型；更換後向量維度不同時，舊索引改名為 `*.mismatch.bak` 並依資料庫片段重新計算 |
-| `RERANKER_MODEL` | `BAAI/bge-reranker-base` | 同左 | Cross-Encoder 重排模型，必要元件，載入失敗時後端無法啟動 |
+| `RERANKER_MODEL` | `BAAI/bge-reranker-base` | 同左 | Cross-Encoder 重排模型，必要元件，載入失敗時後端無法啟動；以文件為主的部署可評估 `BAAI/bge-reranker-v2-m3`（反例拒絕好得多，但重排慢約 3 倍、短貼文排序較差，門檻約 0.01），比較見 [ADR-0007](adr/0007-han-ngram-bm25-and-passage-level-evaluation.md#5-重排模型比較維持-bge-reranker-base) |
 | `TOP_K` | `30` | `30` | 向量與 BM25 各自取回的候選數 |
 | `RRF_K` | —（必填，≥ 1） | `60` | RRF 分數 = Σ 1 / (`RRF_K` + 名次)，名次從 1 起算 |
 | `RERANK_TOP_K` | `50` | `20` | 融合後送進重排的候選數；CPU 上每對約 0.2（300 字）至 0.4 秒（800 字） |
 | `RERANK_WEIGHT` | `0.85` | `0.85` | 排序用混合分數 = `RERANK_WEIGHT` × 重排機率 + (1 − `RERANK_WEIGHT`) × 候選原分數；不影響門檻判斷 |
-| `RERANK_RELEVANCE_THRESHOLD` | —（必填，0~1） | `0.2` | 重排機率低於此值的片段視為無關；精確比對到網址、貼文 ID、日期者不受限制；全部被濾掉時回報「知識庫中查無相關資料」 |
+| `RERANK_RELEVANCE_THRESHOLD` | —（必填，0~1） | `0.02` | 重排機率低於此值的片段視為無關；精確比對到網址、貼文 ID、日期者不受限制；全部被濾掉時回報「知識庫中查無相關資料」 |
 | `FINAL_K` | `8` | `8` | 通過門檻後最多保留的片段數 |
 | `SIMILARITY_THRESHOLD` | `0.30` | `0.30` | 只用於單獨的向量搜尋（`vector_search`）；RRF 混合檢索的主流程不套用 |
 | `CHUNK_SIZE` | `800` | `300` | 切塊長度（字元）；修改後需重建索引才會套用到既有文件 |
@@ -199,8 +187,8 @@ python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().d
 |---|---|---|---|
 | `FORCE_CPU` | `true` | `true` | 即使有 CUDA 也使用 CPU；CPU 模式的 PyTorch 執行緒數為 min(16, CPU 核心數) |
 | `USE_FP16_QUANTIZATION` | `false` | `false` | 只在 CUDA 上生效：嵌入與重排模型改用 FP16 |
-| `RERANKER_OPENVINO_DEVICE` | 空 | 註解範例 | 重排改用 OpenVINO 執行的裝置（`GPU`、`CPU`，Intel 內顯填 `GPU`）；留空使用 PyTorch。模型以固定形狀 `RERANK_TOP_K` × `RERANKER_OPENVINO_MAX_LENGTH` 編譯，首次啟動轉換約 1 分鐘，結果快取在 `DATA_DIR/openvino_cache` |
-| `RERANKER_OPENVINO_MAX_LENGTH` | 空 | 註解範例 | 設定 `RERANKER_OPENVINO_DEVICE` 時必填：每組「查詢 + 片段」的固定 token 長度，超過會截斷 |
+| `RERANKER_OPENVINO_DEVICE` | 空 | 註解範例 | 重排改用 OpenVINO 執行的裝置（`GPU`、`CPU`，Intel 內顯填 `GPU`）；留空使用 PyTorch。不支援 `NPU`（編譯失敗、無法啟動）。啟用後只載入重排模型的 tokenizer，不載入 PyTorch 模型。首次啟動會把模型轉成 OpenVINO IR，存在 `DATA_DIR/openvino_cache`，約需 10～30 秒，機器忙碌時可能要數分鐘。IR 檔名含模型檔案的指紋，模型更新後會自動重新轉換。每次依實際候選數送出 1～`RERANK_TOP_K` 組。GPU 以 FP16 推論，機率與 PyTorch 相差 0.01 以內、排名相同。Intel Core Ultra 7 155U 實測每 50 組：GPU 約 1.5～2.8 秒（視機器溫度與負載），CPU 約 7.6 秒，PyTorch CPU 約 13 秒。GPU 每遇到一種新的候選數，第一次要多花約 0.3 秒編譯；編譯結果會快取在同一個資料夾，重新啟動後會比較快 |
+| `RERANKER_OPENVINO_MAX_LENGTH` | 空 | 註解範例 | 設定 `RERANKER_OPENVINO_DEVICE` 時必填：每組「查詢 + 片段」的 token 長度，不足補齊、超過截斷；不得大於重排模型的上限（`bge-reranker-base` 為 512），否則啟動失敗 |
 | `GPU_BATCH_SIZE` | `128` | `128` | GPU 嵌入批次大小 |
 | `CPU_BATCH_SIZE` | `64` | `32` | CPU 嵌入批次大小 |
 | `USE_FAISS_GPU` | `false` | `false` | FAISS 使用 GPU（需安裝 `faiss-gpu`，初始化失敗時退回 CPU） |
@@ -357,7 +345,7 @@ python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().d
 >
 > 只有在後端前方的反向代理會「覆寫」`X-Forwarded-For`（例如 nginx 的 `proxy_set_header X-Forwarded-For $remote_addr;`）時，才把該代理的位址設為 `FORWARDED_ALLOW_IPS`，速率限制與登入失敗節流才會以真實用戶端 IP 計算。Vite 開發代理會原樣轉送用戶端自帶的標頭，**不可**為它設定此值，否則任何人都能偽造來源 IP 繞過速率限制與依位址的登入失敗節流。此設定只在以 `python main.py` 啟動時生效。
 
-速率限制在每個後端行程的記憶體中計數，追蹤的位址數有上限（見 [資源上限](#資源上限)）。速率限制超過時一律回傳 `429` 並寫入警告日誌，不會以 `403` 拒絕位址（舊版從未被填入的 IP 封鎖名單已移除）。
+速率限制在每個後端行程的記憶體中計數，追蹤的位址數有上限（見 [資源上限](#資源上限)）。速率限制超過時一律回傳 `429`，不會以 `403` 拒絕位址（舊版從未被填入的 IP 封鎖名單已移除）。同一個來源 IP 在一個視窗（60 秒）內只在第一次被擋時寫一筆警告（含路徑），視窗結束時再寫一筆被擋次數與各路徑的次數；每個被擋的請求仍會出現在存取日誌（`status=429`）。
 
 ## 伺服器與執行環境
 
@@ -368,7 +356,8 @@ python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().d
 | `PORT` | `8001` | `8001` | 預設埠號（可用 `--port` 覆寫） |
 | `RELOAD` | —（必填） | `false` | 程式碼變更時自動重新載入，只在開發時設為 `true`（可用 `--reload` 或 `--no-reload` 覆寫） |
 | `ENABLE_API_DOCS` | —（必填） | `false` | 是否提供 `/docs`、`/redoc` 與 `/openapi.json` 互動式文件；這些頁面列出所有端點與參數，對外服務時請保持 `false`，此時三個路徑都不提供 |
-| `LOG_LEVEL` | `INFO` | `INFO` | 日誌層級；應用程式日誌寫入 `backend/logs/app.log`，安全事件只寫入 `backend/logs/security.log`（兩者都依大小輪替）。`httpx` 與 `httpcore` 固定為 `WARNING`，完整請求網址（可能含查詢字串型 API 金鑰）不會寫進日誌 |
+| `LOG_LEVEL` | `INFO` | `INFO` | 日誌層級，可填 `DEBUG`、`INFO`、`WARNING`、`ERROR`、`CRITICAL`（不分大小寫），其他值會讓後端拒絕啟動。這個層級套用在主控台與 `app.log` 的輸出上，自行把層級設成 `DEBUG` 的第三方套件（例如 jieba）也一樣受限。`INFO` 會記錄每個 `/api` 請求的存取紀錄、模型呼叫與工具呼叫，設為 `WARNING` 時只剩失敗、逾時與速率限制等警告。應用程式日誌寫入 `LOG_DIR/app.log`，安全事件只寫入 `LOG_DIR/security.log`（兩者格式相同、都依大小輪替）。`httpx` 與 `httpcore` 固定為 `WARNING`，完整請求網址（可能含查詢字串型 API 金鑰）不會寫進日誌。格式與欄位見 [架構說明：日誌與請求追蹤](architecture.md#日誌與請求追蹤) |
+| `LOG_DIR` | —（必填） | `logs` | 日誌目錄，相對路徑以 `backend/` 為基準，不存在時自動建立；`app.log` 與 `security.log` 都在第一筆紀錄寫入時才開啟。後端測試（pytest）的安全事件一律寫到該次測試的暫存目錄，不會寫進這裡。Windows 上正在開啟的檔案無法改名，同時執行多個後端（例如另一組測試用的後端）時請各自設定不同的 `LOG_DIR`，否則到達輪替大小時無法輪替，紀錄會遺失 |
 
 `HOST`、`PORT`、`RELOAD` 與 `FORWARDED_ALLOW_IPS` 只在以 `python main.py` 啟動時套用；以其他方式啟動（例如直接執行 `uvicorn main:app`）時不會套用，但 `HOST` 與 `RELOAD` 仍是必填。`python main.py` 啟動的 uvicorn 只在設定 `FORWARDED_ALLOW_IPS` 時處理代理標頭（`proxy_headers`），見 [網路存取控制](#網路存取控制)。
 
@@ -416,7 +405,6 @@ python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().d
 | `APPROVAL_TIMEOUT_SECONDS`（`rag/tool_approval.py`） | 300 秒 | 等待使用者核准工具呼叫的時間，逾時視為拒絕 |
 | `DNS_RESOLVE_TIMEOUT_SECONDS`、`DNS_RESOLVER_MAX_WORKERS`（`core/ssrf_protection.py`） | 5 秒；8 條與 4 條執行緒 | SSRF 驗證的 DNS 查詢在兩個專用執行緒池中進行：`web_fetch` 的使用者網址用 8 條（`DnsPool.USER_URL`），自訂 API 工具、HTTP MCP 與 OpenAPI 規格網址用 4 條（`DnsPool.CONFIGURED_ENDPOINT`），慢速網域占滿前者時不影響後者；逾時視為無法解析 |
 | `LLM_POOL_ACQUIRE_TIMEOUT_SECONDS`（`core/llm_client.py`） | 15 秒 | 等待 LLM 連線池名額的上限，與 `LLM_TIMEOUT` 分開，池被占滿時很快失敗 |
-| `REMOTE_MODELS_CACHE_SECONDS`（`api/tags.py`） | 30 秒 | 遠端模型清單的快取時間（含失敗結果） |
 
 **文件解析**
 
@@ -466,9 +454,10 @@ OOXML 的檢查在解析前進行，依 ZIP 成員宣告的大小計算。python
 | `MAX_CONCURRENT_PASSWORD_HASHES` | 4 | 同時進行的 Argon2 雜湊與驗證數，在執行緒中執行 |
 | `MAX_TRACKED_LOGIN_ACCOUNTS` | 10,000 | [登入失敗節流](#登入失敗節流) 同時追蹤的登入識別數，最久沒有新失敗的先淘汰 |
 | `MAX_REVOKED_TOKENS` | 100,000 | 行程內權杖撤銷名單的條目上限，滿了以後先淘汰最早到期的條目 |
-| `MAX_LOG_FIELD_CHARS` | 200 字元 | 安全日誌中單一字串欄位（例如帳號名稱、User-Agent）的長度上限 |
+| `MAX_LOG_FIELD_CHARS` | 200 字元 | 安全日誌中單一字串欄位（例如帳號名稱、User-Agent），以及存取、模型、工具與速率限制日誌中單一欄位（例如路徑、錯誤訊息）的長度上限 |
 | `LOG_FILE_MAX_BYTES`、`LOG_FILE_BACKUP_COUNT` | 10 MiB、5 份 | `app.log` 與 `security.log` 的輪替大小與保留份數 |
 | `MAX_TRACKED_ADDRESSES` | 10,000 | 速率限制與登入失敗節流各自同時追蹤的位址數，最久未活動的先淘汰 |
+| `MAX_RATE_LIMIT_LOGGED_PATHS` | 10 | 速率限制視窗結束的警告中，每個來源 IP 分別計數的路徑數；其餘路徑只計入總次數 |
 
 ## 已移除的設定
 
@@ -476,9 +465,10 @@ OOXML 的檢查在解析前進行，依 ZIP 成員宣告的大小計算。python
 
 | 變數 | 移除版本 | 替代方式 |
 |---|---|---|
-| `ADMIN_API_KEY` | 未發行 | 沒有任何路由使用；管理端點一律依資料庫中該帳號的 `is_admin` 判斷 |
-| `ENABLE_BATCH_ACCUMULATION`、`BATCH_ACCUMULATOR_SIZE` | 未發行 | 嵌入批次累積器從未接上上傳流程，已刪除 |
-| `BASE_URL` | 未發行 | 只有已刪除的 `healthcheck.py` 使用；健康檢查請直接請求 `GET /health` |
+| `LLM_API_BASE`、`MODEL_NAME`、`AVAILABLE_MODELS`、`FOUNDRY_API_KEY`、`FOUNDRY_ENDPOINT`、`FOUNDRY_DEPLOYMENT`（含舊名稱 `AZURE_OPENAI_*`）、`OPENAI_API_KEY`、`OPENAI_API_BASE`、`OPENAI_VISION_MODEL`、`ANTHROPIC_API_KEY`、`ANTHROPIC_API_BASE`、`ANTHROPIC_MAX_TOKENS`、`GEMINI_API_KEY`、`GEMINI_API_BASE`、`GEMINI_VISION_MODEL`、`EXTERNAL_TAGS_URL`、`ADD_NGROK_HEADER` | 8.0.0 | 文件摘要與掃描 PDF 的 OCR 改用管理員在「管理後台 → 系統模型」指定的共用連線，見 [系統模型](#系統模型)；`GET /api/tags` 一併移除 |
+| `ADMIN_API_KEY` | 6.0.0 | 沒有任何路由使用；管理端點一律依資料庫中該帳號的 `is_admin` 判斷 |
+| `ENABLE_BATCH_ACCUMULATION`、`BATCH_ACCUMULATOR_SIZE` | 6.0.0 | 嵌入批次累積器從未接上上傳流程，已刪除 |
+| `BASE_URL` | 6.0.0 | 只有已刪除的 `healthcheck.py` 使用；健康檢查請直接請求 `GET /health` |
 | `JWT_SECRET_KEY`、`JWT_ALGORITHM` | 4.0.0 | 權杖一律以 `backend/keys/` 的 RSA 金鑰簽署 RS256，不再有 HS256 退路 |
 | `HYBRID_ALPHA`、`NORMALIZATION` | 3.0.0 | 改用 `RRF_K` 的標準 RRF 融合 |
 | `FINAL_THRESHOLD` | 3.0.0 | 改用 `RERANK_RELEVANCE_THRESHOLD` |
@@ -517,7 +507,7 @@ OOXML 的檢查在解析前進行，依 ZIP 成員宣告的大小計算。python
 
 ## 校準相關性門檻
 
-`RERANK_RELEVANCE_THRESHOLD=0.2` 是以小型繁體中文語料得到的暫定值：完整問句的正例通常高於 0.9，但單一關鍵字查詢與同領域的反例會在 0.3 至 0.42 之間重疊（詳見 [ADR-0003](adr/0003-rrf-relevance-citations-and-tool-trust.md)）。上傳實際文件後，請用自己的問答集校準：
+範本的 `RERANK_RELEVANCE_THRESHOLD=0.02` 是依短貼文資料校準的值，不同資料的最佳門檻差距很大：內建企業文件基準的正例最高重排機率中位數約 0.87，但領域相近的反例也有一半高於 0.12、最高到 0.74；社群短貼文的正例中位數只有 0.37，十分之一低於 0.12（詳見 [ADR-0007](adr/0007-han-ngram-bm25-and-passage-level-evaluation.md)）。上傳實際文件後，請用自己的問答集校準：
 
 1. **準備問答集**：JSONL 格式，每行一題，`relevant_sources` 填應該命中的文件檔名；知識庫本來就沒有答案的題目填空陣列當作反例。格式見 [`backend/eval/retrieval_golden.example.jsonl`](../backend/eval/retrieval_golden.example.jsonl)。
 
@@ -526,16 +516,28 @@ OOXML 的檢查在解析前進行，依 ZIP 成員宣告的大小計算。python
    {"query": "公司附近有推薦的午餐餐廳嗎？", "relevant_sources": []}
    ```
 
+   想看片段層級的排序品質時，再加上選填的 `relevant_passages`，列出能代表正解的短原文片段（取一句中有辨識度的 10 到 25 字，不要跨行），內容包含任一片段的知識庫片段即視為相關：
+
+   ```json
+   {"query": "年資兩年半可以休幾天特休？", "relevant_sources": ["員工手冊.pdf"], "relevant_passages": ["滿 2 年未滿 3 年：10 日"]}
+   ```
+
 2. **比較多個門檻**：在 `backend/` 執行下列指令。評估在索引副本上唯讀執行，可以與後端同時運作；索引與資料庫不一致或斷詞簽章不符時會拒絕執行，請先啟動一次後端完成校正。
 
    ```bash
    python scripts/evaluate_retrieval.py --golden eval/retrieval_golden.jsonl --k 1 3 5 --relevance-thresholds 0.1 0.2 0.3 0.4
    ```
 
-3. **判讀結果**：報表列出目前門檻的 MRR、hit@k、recall@k 與反例拒絕率，並以同一次重排結果比較每個候選門檻。門檻越高，反例拒絕率越高，但正例命中率可能下降；選擇在兩者間取得平衡的值。
+3. **判讀結果**：報表列出目前門檻的 MRR、hit@k、recall@k 與反例拒絕率，並以同一次重排結果比較每個候選門檻；有標註原文片段時另列片段層級的 precision@k、nDCG@k、recall@k、MRR 與候選召回。門檻越高，反例拒絕率越高，但正例命中率可能下降；選擇在兩者間取得平衡的值。候選召回低代表正解沒有進入重排（檢查 BM25 斷詞或調高 `TOP_K`），候選召回高但排名差則是重排模型的判斷問題。
 4. **套用**：把選定的值寫進 `.env` 的 `RERANK_RELEVANCE_THRESHOLD`，重新啟動後端。
 
-其他選項：`--min-mrr 0.6` 在 MRR 未達標時以結束碼 1 結束，適合放進 CI；`--output report.json` 輸出完整結果。
+其他選項：`--min-mrr 0.6` 或 `--min-passage-ndcg 0.8` 在指標未達標時以結束碼 1 結束，適合放進 CI；`--output report.json` 輸出完整結果。
+
+**比較檢索設定或模型**：`--corpus` 以指定目錄的文件、依上傳時相同的流程在暫存 SQLite 與暫存索引上建立知識庫，不連線正式資料庫，結束後刪除；檢索參數與模型沿用 `.env`，可在命令前以環境變數覆寫來比較。內建基準有 12 份虛構企業文件與《大眾捷運法》，共 103 個正例、15 個反例：
+
+```bash
+python scripts/evaluate_retrieval.py --corpus eval/corpus --golden eval/corpus_golden.jsonl --k 1 3 5
+```
 
 ## 前端環境變數
 

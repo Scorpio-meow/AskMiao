@@ -10,12 +10,13 @@ from app.core.limits import ADMIN_UPLOAD_EXTRACTION_LIMITS, MAX_FILENAME_BYTES, 
 from app.rag.tools import invalidate_knowledge_base_description
 from app.services.document_processor import DocumentProcessor, DocumentRejected
 from app.services.structured_data import ExtractionResult, record_chunks
+from app.services.system_models import page_ocr, system_model_target
 from pydantic import BaseModel
 import re
 import asyncio
 from langchain_core.documents import Document as LangChainDocument
 import os
-from typing import List, Tuple
+from typing import Callable, List, Optional, Tuple
 import logging
 from datetime import datetime
 from app.core.config import settings
@@ -113,14 +114,16 @@ def process_document_for_rag(
         metadata=metadata
     )]
     return langchain_docs, 0, 0
-async def reextract_or_stored(doc, missing_source_files: List[str]) -> ExtractionResult:
+async def reextract_or_stored(
+    doc, missing_source_files: List[str], ocr: Optional[Callable[[bytes], str]]
+) -> ExtractionResult:
     file_path = os.path.join(UPLOAD_DIR, doc.filename)
     if not os.path.exists(file_path):
         missing_source_files.append(doc.filename)
         return DocumentProcessor.stored_text_extraction(doc.filename, doc.content)
     try:
         extraction = await asyncio.to_thread(
-            DocumentProcessor.extract_document, file_path, doc.file_type or "text/plain", ADMIN_UPLOAD_EXTRACTION_LIMITS
+            DocumentProcessor.extract_document, file_path, doc.file_type or "text/plain", ADMIN_UPLOAD_EXTRACTION_LIMITS, ocr
         )
     except Exception as e:
         logger.warning(f"重新提取檔案 {doc.filename} 失敗，使用資料庫快取: {e}")
@@ -138,10 +141,11 @@ async def index_unprocessed_documents(db: Session) -> None:
     if not documents:
         return
     rag_system = get_rag_system()
+    ocr = page_ocr(system_model_target(db, "pdf_ocr"))
     missing_source_files = []
     for doc in documents:
         try:
-            extraction = await reextract_or_stored(doc, missing_source_files)
+            extraction = await reextract_or_stored(doc, missing_source_files, ocr)
             base_metadata = {
                 "source": doc.filename,
                 "document_id": doc.id,
@@ -180,6 +184,8 @@ async def upload_document(
         )
     upload_dir = UPLOAD_DIR
     os.makedirs(upload_dir, exist_ok=True)
+    ocr = page_ocr(system_model_target(db, "pdf_ocr"))
+    summary_model = system_model_target(db, "document_summary")
     results = []
     for up in file:
         file_path = None
@@ -239,7 +245,7 @@ async def upload_document(
             logger.info(f"Uploaded file hash: {file_hash}")
             try:
                 extraction = await asyncio.to_thread(
-                    DocumentProcessor.extract_document, file_path, up.content_type, ADMIN_UPLOAD_EXTRACTION_LIMITS
+                    DocumentProcessor.extract_document, file_path, up.content_type, ADMIN_UPLOAD_EXTRACTION_LIMITS, ocr
                 )
                 content = extraction.text
             except ValueError as ve:
@@ -294,7 +300,7 @@ async def upload_document(
                 })
                 continue
             doc_desc = await DocumentProcessor.generate_document_summary_async(
-                safe_filename, content, up.content_type or "", extraction=extraction
+                safe_filename, content, up.content_type or "", extraction, summary_model
             )
             document = DBDocument(
                 filename=safe_filename,
@@ -382,12 +388,13 @@ async def regenerate_document_summary(
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_admin_user)
 ):
-    """手動或一鍵重新生成該文件的 AI 智能大綱與摘要"""
+    """手動或一鍵重新生成該文件的 AI 智慧大綱與摘要"""
     document = db.query(DBDocument).filter(DBDocument.id == document_id).first()
     if not document:
         raise HTTPException(status_code=404, detail="文件不存在")
     new_desc = await DocumentProcessor.generate_document_summary_async(
-        document.filename, document.content, document.file_type or "text/plain"
+        document.filename, document.content, document.file_type or "text/plain", None,
+        system_model_target(db, "document_summary")
     )
     document.description = new_desc
     db.add(document)
@@ -466,13 +473,15 @@ async def _rebuild_all_documents(db: Session, current_user: dict):
         total_records = 0
         missing_source_files = []
         failed_documents = []
+        ocr = page_ocr(system_model_target(db, "pdf_ocr"))
+        summary_model = system_model_target(db, "document_summary")
         for doc in documents_from_db:
             try:
-                extraction = await reextract_or_stored(doc, missing_source_files)
+                extraction = await reextract_or_stored(doc, missing_source_files, ocr)
                 # 只替沒有摘要的文件產生摘要：管理員手動修訂過的摘要不能被覆蓋
                 if not (doc.description or "").strip():
                     doc.description = await DocumentProcessor.generate_document_summary_async(
-                        doc.filename, extraction.text, doc.file_type or "text/plain", extraction=extraction
+                        doc.filename, extraction.text, doc.file_type or "text/plain", extraction, summary_model
                     )
                 db.add(doc)
                 db.commit()
@@ -514,7 +523,7 @@ async def _rebuild_all_documents(db: Session, current_user: dict):
             "message": (
                 f"索引重建完成，但有 {len(failed_documents)} 份文件處理失敗"
                 if failed_documents
-                else "索引重建成功（已用新配置重新分塊，並替缺少摘要的文件生成 AI 智能大綱）"
+                else "索引重建成功（已用新配置重新分塊，並替缺少摘要的文件生成 AI 智慧大綱）"
             ),
             "document_count": doc_count,
             "chunk_count": vector_count,

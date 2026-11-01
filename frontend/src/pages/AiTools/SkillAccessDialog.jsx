@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { adminService, skillService } from '../../services/api';
 import { Alert, Button, Dialog, DialogActions, DialogContent, DialogTitle, Icon, Spinner } from '../../components/ui';
+import { CheckOption } from './FormParts';
 import { getRequestErrorMessage } from './shared';
 import styles from './AiTools.module.css';
 export default function SkillAccessDialog({ skill, onClose, onSaved }) {
@@ -46,35 +47,45 @@ export default function SkillAccessDialog({ skill, onClose, onSaved }) {
   };
   return (
     <Dialog open onClose={saving ? undefined : onClose} maxWidth="md">
-      <DialogTitle onClose={onClose} closeDisabled={saving}>可使用「{skill.name}」的使用者</DialogTitle>
+      <DialogTitle onClose={onClose} closeDisabled={saving} subtitle="限定後，其他使用者的 AI 看不到這個技能">
+        可使用「{skill.name}」的使用者
+      </DialogTitle>
       <DialogContent className={styles.dialogBody}>
         {error && <Alert severity="error">{error}</Alert>}
-        <fieldset className={styles.formFieldset}>
-          <legend className={styles.formLabel}>使用者範圍</legend>
-          <label className={styles.approvalOption}>
-            <input type="radio" name="skill-access" checked={!restricted} onChange={() => setRestricted(false)} />
-            <span>所有使用者</span>
-          </label>
-          <label className={styles.approvalOption}>
-            <input type="radio" name="skill-access" checked={restricted} onChange={() => setRestricted(true)} />
-            <span>
-              只限下列使用者
-              <span className={styles.approvalHint}>其他使用者的 AI 看不到這個技能，也無法用 /{skill.name} 指定</span>
-            </span>
-          </label>
+        <fieldset className={styles.formSection}>
+          <legend className={styles.formSectionTitle}>使用者範圍</legend>
+          <div className={styles.optionGroup}>
+            <CheckOption
+              type="radio"
+              name="skill-access"
+              checked={!restricted}
+              onChange={() => setRestricted(false)}
+              label="所有使用者"
+            />
+            <CheckOption
+              type="radio"
+              name="skill-access"
+              checked={restricted}
+              onChange={() => setRestricted(true)}
+              label="只限下列使用者"
+              hint={`其他使用者的 AI 看不到這個技能，也無法用 /${skill.name} 指定`}
+            />
+          </div>
         </fieldset>
         {restricted && (
-          users === null && !error ? <Spinner /> : (
-            <ul className={styles.mcpToolList} role="list" aria-label="使用者">
+          users === null && !error ? (
+            <div className={styles.loadingRow}><Spinner size="sm" /><span>正在載入使用者清單…</span></div>
+          ) : (
+            <ul className={styles.choiceList} role="list" aria-label="使用者">
               {(users || []).map((user) => (
-                <li key={user.id} className={styles.mcpToolItem}>
-                  <label className={styles.approvalOption}>
-                    <input type="checkbox" checked={selected.has(user.id)} onChange={() => toggle(user.id)} />
-                    <span>
-                      {user.username}
-                      <span className={styles.approvalHint}>{user.email}</span>
-                    </span>
-                  </label>
+                <li key={user.id}>
+                  <CheckOption
+                    type="checkbox"
+                    checked={selected.has(user.id)}
+                    onChange={() => toggle(user.id)}
+                    label={user.username}
+                    hint={user.email}
+                  />
                 </li>
               ))}
             </ul>

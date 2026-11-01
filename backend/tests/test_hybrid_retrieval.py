@@ -1,5 +1,8 @@
+import os
 import threading
+from types import SimpleNamespace
 
+import numpy as np
 import pytest
 import torch
 
@@ -199,35 +202,92 @@ def test_exact_match_candidates_are_capped_and_reranked_outside_the_index_lock(m
     assert encoder.lock_free is True
 
 
-def test_openvino_reranker_pads_fixed_batches_and_applies_sigmoid(monkeypatch):
-    import numpy as np
+class FakeTokenizer:
+    model_max_length = 16
 
+    def __call__(self, queries, documents, padding, truncation, max_length, return_tensors):
+        assert (padding, truncation) == ("max_length", True)
+        ids = np.array([[ord(d[0]) if d else 0] * max_length for d in documents])
+        return {"input_ids": ids, "attention_mask": np.ones_like(ids)}
+
+
+def make_openvino_retriever(monkeypatch, documents, compiled, *, rerank_top_k, openvino_max_length):
+    def pytorch_reranker(model_name, device=None):
+        raise AssertionError("OpenVINO 模式不應載入 PyTorch 重排模型")
+
+    monkeypatch.setattr(hybrid_module, "CrossEncoder", pytorch_reranker)
+    monkeypatch.setattr(hybrid_module, "AutoTokenizer", SimpleNamespace(from_pretrained=lambda model_name: FakeTokenizer()))
+    monkeypatch.setattr(HybridRetriever, "_compile_openvino_reranker", lambda self, model, device: compiled)
+    return HybridRetriever(
+        vector_store=RankedVectorStore(documents, documents), bm25_store=RankedBM25([]), reranker_model="fake-reranker",
+        top_k=30, rrf_k=60, rerank_top_k=rerank_top_k, final_k=8, rerank_weight=0.85, relevance_threshold=0.5,
+        use_fp16=False, openvino_device="GPU", openvino_max_length=openvino_max_length,
+    )
+
+
+def test_openvino_reranker_sends_only_real_pairs_and_applies_sigmoid(monkeypatch):
     texts = {"a": 2.0, "b": -2.0, "c": 0.0}
     seen_shapes = []
 
-    class FakeTokenizer:
-        def __call__(self, queries, documents, padding, truncation, max_length, return_tensors):
-            assert (padding, truncation, return_tensors) == ("max_length", True, "np")
-            ids = np.array([[ord(d[0]) if d else 0] * max_length for d in documents])
-            return {"input_ids": ids, "attention_mask": np.ones_like(ids)}
-
     def fake_compiled(feed):
         seen_shapes.append(feed["input_ids"].shape)
-        return [np.array([[texts.get(chr(row[0]), 99.0)] for row in feed["input_ids"]])]
+        return [np.array([[texts[chr(row[0])]] for row in feed["input_ids"]])]
 
-    encoder = FakeCrossEncoder({}, 0.0)
-    encoder.tokenizer = FakeTokenizer()
-    monkeypatch.setattr(HybridRetriever, "_compile_openvino_reranker", lambda self, model, device: fake_compiled)
     docs = [chunk(1, "a"), chunk(2, "b"), chunk(3, "c")]
-    retriever = make_retriever(monkeypatch, docs, docs, [], encoder, rerank_top_k=2, openvino_device="GPU", openvino_max_length=8)
+    retriever = make_openvino_retriever(monkeypatch, docs, fake_compiled, rerank_top_k=2, openvino_max_length=8)
 
     scores = retriever._relevance("q", docs)
 
-    assert seen_shapes == [(2, 8), (2, 8)]
+    assert seen_shapes == [(2, 8), (1, 8)]
     assert scores == pytest.approx([1 / (1 + np.exp(-2.0)), 1 / (1 + np.exp(2.0)), 0.5])
-    assert encoder.predicted_pairs == 0
+    assert retriever.cross_encoder is None
 
 
 def test_openvino_reranker_requires_max_length(monkeypatch):
     with pytest.raises(RuntimeError, match="RERANKER_OPENVINO_MAX_LENGTH"):
         make_retriever(monkeypatch, [], [], [], FakeCrossEncoder({}, 0.0), openvino_device="GPU", openvino_max_length=None)
+
+
+def test_openvino_max_length_cannot_exceed_model_limit(monkeypatch):
+    with pytest.raises(RuntimeError, match="RERANKER_OPENVINO_MAX_LENGTH \\(17\\)"):
+        make_openvino_retriever(monkeypatch, [], None, rerank_top_k=2, openvino_max_length=FakeTokenizer.model_max_length + 1)
+
+
+def test_openvino_ir_name_follows_model_files(tmp_path):
+    (tmp_path / "config.json").write_text("{}", encoding="utf-8")
+    weights = tmp_path / "model.safetensors"
+    weights.write_bytes(b"v1")
+    before = HybridRetriever._reranker_fingerprint(str(tmp_path))
+
+    weights.write_bytes(b"v2 weights")
+
+    assert HybridRetriever._reranker_fingerprint(str(tmp_path)) != before
+
+
+def test_interrupted_openvino_conversion_leaves_no_ir(monkeypatch, tmp_path):
+    import openvino
+    import transformers
+
+    retriever = make_openvino_retriever(monkeypatch, [], None, rerank_top_k=2, openvino_max_length=8)
+    monkeypatch.setattr(transformers.AutoModelForSequenceClassification, "from_pretrained", lambda model_name: object())
+    monkeypatch.setattr(openvino, "convert_model", lambda model, example_input: "converted")
+    model_path = tmp_path / "reranker.xml"
+
+    def interrupted_save(model, path):
+        (tmp_path / os.path.basename(path)).write_text("<partial", encoding="utf-8")
+        raise OSError("disk full")
+
+    monkeypatch.setattr(openvino, "save_model", interrupted_save)
+    with pytest.raises(OSError, match="disk full"):
+        retriever._convert_openvino_reranker("fake-reranker", str(model_path))
+    assert not model_path.exists()
+
+    def complete_save(model, path):
+        stem = os.path.splitext(path)[0]
+        open(f"{stem}.xml", "w", encoding="utf-8").write("<net/>")
+        open(f"{stem}.bin", "wb").write(b"weights")
+
+    monkeypatch.setattr(openvino, "save_model", complete_save)
+    retriever._convert_openvino_reranker("fake-reranker", str(model_path))
+    assert model_path.read_text(encoding="utf-8") == "<net/>"
+    assert (tmp_path / "reranker.bin").read_bytes() == b"weights"

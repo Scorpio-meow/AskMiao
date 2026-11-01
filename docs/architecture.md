@@ -37,6 +37,7 @@ flowchart TB
     end
 
     subgraph Gateway ["中介軟體"]
+        AccessLog["AccessLogMiddleware<br/>請求 ID 與存取日誌"]
         BodyLimit["RequestBodyLimitMiddleware<br/>請求本文上限"]
         SecHeaders["SecurityHeadersMiddleware<br/>安全回應標頭"]
         RateLimit["RateLimitMiddleware<br/>依 IP 速率限制"]
@@ -66,7 +67,7 @@ flowchart TB
         Mem[("行程記憶體<br/>撤銷名單、速率與登入失敗計數、待核准項目、快取")]
     end
 
-    Client --> BodyLimit --> SecHeaders --> RateLimit --> CORS
+    Client --> AccessLog --> BodyLimit --> SecHeaders --> RateLimit --> CORS
     CORS --> AuthAPI & ChatAPI & DocAPI & ToolAPI & AdminAPI
     ChatAPI --> Agent --> Registry
     Agent --> Approval
@@ -229,7 +230,7 @@ erDiagram
 - **`requires_approval`**：自訂 API 工具與 MCP 伺服器的呼叫前核准旗標，見第 9 節。
 - **`users.tokens_valid_after`**：簽發時間早於此時刻的存取與重新整理權杖一律無效。建立帳號時等於 `created_at`（帳號刪除後 id 被重用時，舊權杖不會對應到新帳號），變更密碼時更新為當下，見第 10 節。
 - **工具憑證欄位**：`custom_api_tools` 的 `headers`、`auth_config` 與 `mcp_servers` 的 `env_vars`、`headers`、`oauth_config`、`oauth_tokens` 以 `TOOL_SECRETS_KEY`（Fernet）加密後存放，內容以 `fernet:` 開頭，見第 9 節。
-- **資料庫以外的檔案**：`backend/data/`（`faiss_index.bin`、`index_metadata.json`、`bm25_index/`、`uploads/`、`jieba_cache/`）、`backend/keys/`（JWT 金鑰對）、`backend/mcp_filesystem_sandbox/`（檔案系統 MCP 範本的根目錄）與 `backend/logs/`（日誌）。
+- **資料庫以外的檔案**：`backend/data/`（`faiss_index.bin`、`index_metadata.json`、`bm25_index/`、`uploads/`、`jieba_cache/`）、`backend/keys/`（JWT 金鑰對）、`backend/mcp_filesystem_sandbox/`（檔案系統 MCP 範本的根目錄）與 `backend/logs/`（日誌，位置由 `LOG_DIR` 決定）。
 
 資料表在後端啟動時以 SQLAlchemy `create_all` 建立，接著由 `upgrade_schema()` 為既有資料表補上後來新增的欄位並回填（目前為兩個 `requires_approval`：API 工具依方法回填，`GET`、`HEAD`、`OPTIONS` 以外為 `true`；MCP 伺服器一律為 `true`；`custom_api_tools.body_content_type`，以 `application/json` 回填；`mcp_servers` 的 `discovered_resources`、`discovered_prompts`、`oauth_config`、`oauth_tokens` 與 `agent_skills` 的 `allow_scripts`、`allowed_user_ids`；以及 `users.tokens_valid_after`，以 `created_at` 回填；此欄位為空的帳號，例如回退到舊版期間建立的，每次啟動都會補值），再把仍以明文存放的工具憑證改為加密（無法解析為 JSON 的值會清空並記下警告）。新建立的 SQLite 資料庫中，`users`、`documents` 與 `rag_chunks` 使用 `AUTOINCREMENT`，刪除後的 id 不會被新資料重用。`backend/init.sql` 是 PostgreSQL 容器的初始化結構，`backend/init-app-role.sh` 接著建立後端連線用的非超級使用者並把資料表交給它擁有（見第 13 節）。
 
@@ -244,7 +245,7 @@ flowchart TB
     Size --> Ext["擷取文字與結構化記錄<br/>依副檔名分派，只解析一次"]
     Ext --> Dup{"內容與既有文件相同？"}
     Dup -->|是| Skip["回報 duplicate"]
-    Dup -->|否| Sum["AI 摘要<br/>LLM 失敗時改用規則摘要"]
+    Dup -->|否| Sum["AI 摘要<br/>未指定系統模型或呼叫失敗時改用規則摘要"]
     Sum --> Save["寫入 documents"]
     Save --> Split{"切塊策略"}
     Split -->|解析出結構化記錄| Rec["每筆記錄一個片段<br/>過長時切成多段並重複標頭"]
@@ -257,7 +258,7 @@ flowchart TB
 
 | 格式 | 擷取方式 |
 |---|---|
-| PDF | PyMuPDF 擷取文字，擷取前先替內嵌 TrueType 字型中 ToUnicode 沒有對應（或對到 U+FFFD）的替代字形補上對應：依字型 GSUB 的單一替換反查原本的字元，例如 Illustrator 輸出的 Noto Sans TC 數字，否則會被擷取成「俸」這類字；空白或判定為亂碼的頁面，以 150 DPI 轉成圖片交給視覺模型 OCR（依序使用 Microsoft Foundry、OpenAI 或 Gemini）。點陣化在文件執行緒上逐頁進行、每頁最多 25 MP（超過時降低解析度），只有視覺模型呼叫最多 4 頁平行；聊天附件最多 OCR 20 頁，管理員上傳不限。沒有任何一頁擷取到文字（例如 OCR 未設定或辨識失敗）或有密碼保護時拒絕。PyMuPDF 無法讀取時以 pypdf 備援 |
+| PDF | PyMuPDF 擷取文字，擷取前先替內嵌 TrueType 字型中 ToUnicode 沒有對應（或對到 U+FFFD）的替代字形補上對應：依字型 GSUB 的單一替換反查原本的字元，例如 Illustrator 輸出的 Noto Sans TC 數字，否則會被擷取成「俸」這類字；空白或判定為亂碼的頁面，以 150 DPI 轉成圖片交給管理員指定的 PDF OCR 系統模型辨識（見 [設定參考：系統模型](configuration.md#系統模型)），未指定時不做 OCR。點陣化在文件執行緒上逐頁進行、每頁最多 25 MP（超過時降低解析度），只有模型呼叫最多 4 頁平行，並交回主事件迴圈經共用的 LLM 用戶端送出；聊天附件最多 OCR 20 頁，管理員上傳不限。沒有任何一頁擷取到文字（例如 OCR 未設定或辨識失敗）或有密碼保護時拒絕。PyMuPDF 無法讀取時以 pypdf 備援 |
 | DOCX | 依文件中的順序輸出段落與表格（每列以 `\|` 串接），表格留在所屬標題之下 |
 | PPTX | 逐頁投影片文字（含群組內的圖形與表格），以及每頁的備忘稿 |
 | XLSX | 以唯讀模式逐工作表讀取，每個工作表的第一個非空列為表頭，其後每列成為一筆結構化記錄；沒有資料列時逐列以 `\|` 串接 |
@@ -283,7 +284,7 @@ JSON、JSONL、YAML、JS 宣告、CSV 與 XLSX 由 `app/services/structured_data
 
 ### AI 摘要
 
-上傳、重新生成摘要，以及重建索引遇到沒有摘要的文件時，以預設模型生成 70 到 150 字的繁體中文「文件主題與大綱摘要」（逾時 18 秒）。長文件取開頭、中段與結尾各一段作為樣本；結構化資料另附上記錄數、格式與欄位名稱。LLM 失敗時改用規則摘要，並依領域設定檔的 `summary_fallback` 過濾雜訊；結構化資料的規則摘要直接使用記錄數與欄位名稱（最多 `MAX_SUMMARY_FIELD_NAMES` 個），只有資料庫內容可用時（重新生成摘要、知識庫目錄）改為計數記錄標頭。摘要也會組成 `search_knowledge_base` 工具說明中的知識庫目錄，幫助 Agent 判斷該查哪份文件；目錄每次呼叫模型都會送出，長度以 `MAX_KB_CATALOG_CHARS`（4,000 字）為上限，超過時只列出前面的文件並告知其餘份數。組目錄時遇到沒有摘要的文件只用規則摘要，不呼叫模型。
+上傳、重新生成摘要，以及重建索引遇到沒有摘要的文件時，以管理員指定的文件摘要系統模型與思考程度生成 70 到 150 字的繁體中文「文件主題與大綱摘要」（逾時為 `LLM_TIMEOUT`）。長文件取開頭、中段與結尾各一段作為樣本；結構化資料另附上記錄數、格式與欄位名稱。未指定系統模型時不呼叫模型，直接使用規則摘要；模型呼叫失敗時同樣改用規則摘要，並依領域設定檔的 `summary_fallback` 過濾雜訊；結構化資料的規則摘要直接使用記錄數與欄位名稱（最多 `MAX_SUMMARY_FIELD_NAMES` 個），只有資料庫內容可用時（重新生成摘要、知識庫目錄）改為計數記錄標頭。摘要也會組成 `search_knowledge_base` 工具說明中的知識庫目錄，幫助 Agent 判斷該查哪份文件；目錄每次呼叫模型都會送出，長度以 `MAX_KB_CATALOG_CHARS`（4,000 字）為上限，超過時只列出前面的文件並告知其餘份數。組目錄時遇到沒有摘要的文件只用規則摘要，不呼叫模型。
 
 ### 切塊策略
 
@@ -338,7 +339,7 @@ JSON、JSONL、YAML、JS 宣告、CSV 與 XLSX 由 `app/services/structured_data
 ```mermaid
 flowchart LR
     Query["查詢"] --> FAISS["FAISS 向量搜尋<br/>TOP_K 筆"]
-    Query --> BM25["BM25<br/>jieba 斷詞，詞項以 OR 組合，TOP_K 筆"]
+    Query --> BM25["BM25<br/>jieba 詞＋漢字單字＋漢字雙字，以 OR 組合，TOP_K 筆"]
     Query --> Exact["精確比對<br/>網址／貼文 ID／日期／@帳號"]
     FAISS --> RRF["RRF 融合：Σ 1 / (RRF_K + 名次)<br/>取前 RERANK_TOP_K 筆"]
     BM25 --> RRF
@@ -349,7 +350,7 @@ flowchart LR
     Gate -->|全部未通過| None["回報「知識庫中查無相關資料」"]
 ```
 
-1. **兩軌檢索**：向量（`BAAI/bge-small-zh-v1.5`，內積索引、向量經 L2 正規化）與 BM25（Whoosh BM25F）每次必跑，各取 `TOP_K` 筆。BM25 以斷詞器產生詞項後以 OR 組合；斷詞結果一律轉小寫（查 `mes` 對得到 `MES`），主詞典可用 `JIEBA_DICTIONARY` 替換，領域詞來自領域設定檔。
+1. **兩軌檢索**：向量（`BAAI/bge-small-zh-v1.5`，內積索引、向量經 L2 正規化）與 BM25（Whoosh BM25F）每次必跑，各取 `TOP_K` 筆。BM25 索引有三個欄位：jieba 詞、漢字單字與相鄰兩個漢字（只取漢字連續區段，不跨標點與英數字），查詢在三個欄位產生的詞項以 OR 組合、BM25F 合併計分；jieba 切錯詞（例如繁體的「大眾捷運系統」被切成「大眾捷／運系統」）時仍可由單字與雙字對上，雙字欄位讓字序相連的片段排在字散落的片段前面。詞欄位一律轉小寫（查 `mes` 對得到 `MES`），主詞典可用 `JIEBA_DICTIONARY` 替換，領域詞來自領域設定檔。依據與量測見 [ADR-0007](adr/0007-han-ngram-bm25-and-passage-level-evaluation.md)。
 2. **RRF 融合**：分數 = Σ 1 / (`RRF_K` + 名次)，名次從 1 起算，不加權，以 chunk_id 辨識同一片段，取前 `RERANK_TOP_K` 筆。只有單一軌道找到的片段也能進入候選。
 3. **精確比對**：查詢含網址、`/post/<ID>`、日期（`2025-10-22`、`2025年10月22日`）或 `@帳號` 時，另外掃描所有片段。網址、貼文 ID、日期的比對結果標記為 `pinned`：排在最前面，且不受相關性門檻限制；`@帳號` 的比對結果只加入候選，仍依分數排序並受門檻限制。
 4. **重排**：Cross-Encoder 為每個候選輸出相關機率（模型本身沒有 sigmoid 輸出層時才補上 sigmoid）。排序用的混合分數 = `RERANK_WEIGHT` × 重排機率 + (1 − `RERANK_WEIGHT`) × 候選原分數，其中融合結果的原分數是 RRF 分數除以最高分，精確比對的原分數是比對分數。
@@ -357,7 +358,7 @@ flowchart LR
 6. **限定文件**：指定 `target_document` 時，在重排之前就篩選候選：精確比對只掃描該文件，兩軌融合結果只保留檔名包含該字串（不分大小寫）的片段。篩選發生在兩軌各取 `TOP_K` 筆之後，查不到時回報「指定文件中查無相關資料」，不會改用全庫結果。
 7. **失敗處理**：重排失敗時直接拋出例外，工具回傳錯誤代碼，不會把未過濾的片段交給模型。
 
-**檢索評估**：`evaluator.py` 以與線上相同的流程（重排後套用門檻）計算文件層級的 hit@k、recall@k 與 MRR，反例（`"relevant_sources": []`）計算拒絕率。`scripts/evaluate_retrieval.py` 在索引副本上以唯讀模式執行，索引與資料庫不一致或斷詞簽章不符時拒絕執行；`--relevance-thresholds` 對同一次重排結果比較多個門檻。操作步驟見 [設定參考：校準相關性門檻](configuration.md#校準相關性門檻)。
+**檢索評估**：`evaluator.py` 以與線上相同的流程（重排後套用門檻）計算文件層級的 hit@k、recall@k 與 MRR，反例（`"relevant_sources": []`）計算拒絕率；題目標註 `relevant_passages`（短原文片段）時，另計片段層級的 precision@k、nDCG@k、原文片段 recall@k、MRR 與候選召回（重排前的候選是否已包含正解，用來分辨召回與排序問題）。`scripts/evaluate_retrieval.py` 預設在索引副本上以唯讀模式執行，索引與資料庫不一致或斷詞簽章不符時拒絕執行；`--corpus` 改以指定目錄的文件在暫存 SQLite 與暫存索引上建立知識庫，不碰正式資料；`--relevance-thresholds` 對同一次重排結果比較多個門檻。內建基準為 `backend/eval/corpus/` 與 `backend/eval/corpus_golden.jsonl`。操作步驟見 [設定參考：校準相關性門檻](configuration.md#校準相關性門檻)。
 
 ---
 
@@ -387,8 +388,8 @@ flowchart TB
 |---|---|
 | `search_knowledge_base` | 依第 6 節檢索，回傳 `chunk_id`、`source`、`chunk_index`、`score` 與片段全文；精確比對的片段全部回傳，其餘依 `top_k`（預設 3） |
 | `filter_and_count_records` | 在執行緒中掃描所有片段，同一筆結構化記錄的分段依 `(document_id, record_index)` 合併後再篩選，每筆記錄只計一次；依日期（優先比對領域設定檔的日期欄位）、作者、關鍵字與文件精確篩選，回傳總數與前 `limit` 筆（預設 50，也是上限），每筆附 `label` 與 `links`；`date_range` 最多 200 字元、展開後最多 93 天 |
-| `web_search` | 有 `OLLAMA_API_KEY` 時先用 Ollama Web Search，失敗或未設定時改用 DuckDuckGo |
-| `web_fetch` | 先檢查網域白名單與 SSRF；有 `OLLAMA_API_KEY` 時先用 Ollama Web Fetch，否則以安全抓取讀取 HTML，並在執行緒中以線性掃描轉成純文字（前 3500 字） |
+| `web_search` | 有 `OLLAMA_API_KEY` 時先用 Ollama Web Search，失敗或未設定時改用 DuckDuckGo；DuckDuckGo 結果頁逐筆解析標題、網址與摘要並略過廣告，解析不到任何結果時回傳錯誤，不回空清單 |
+| `web_fetch` | 先檢查網域白名單與 SSRF；有 `OLLAMA_API_KEY` 時先用 Ollama Web Fetch，否則以安全抓取讀取 HTML，並在執行緒中以線性掃描轉成純文字（前 3500 字）。有 `<main>`、`role="main"` 或 `<article>` 時只取正文區塊並略過其中的 `nav`、`aside` 與導覽、側欄角色；沒有正文區塊時略過整頁的 `nav`、`aside`、`header`、`footer` 與對應的 ARIA 角色 |
 | 自訂 API 工具 | 依工具設定組裝 HTTP 請求，見第 9 節；`requires_approval` 為 `true` 時先經使用者核准 |
 | `mcp_<伺服器>_<工具>` | 透過 `tools/call` 呼叫 MCP 伺服器；伺服器的 `requires_approval` 為 `true` 時先經使用者核准 |
 | `activate_skill` | 只在有啟用的 Agent Skills 時提供；工具說明列出技能名稱與描述（最多 8,000 字元），呼叫後重新讀取 `SKILL.md`，回傳去掉 frontmatter 的內文（包在 `<skill_content>`）與技能內的檔案清單，不讀取那些檔案；同一次提問重複啟用時只回覆已載入 |
@@ -416,7 +417,7 @@ flowchart TB
 | 網址來源限制 | `web_fetch` 只能讀取「使用者訊息（含附件文字，以及前文中先前的使用者訊息與其附件文字）」或「本次內建工具結果的資料欄位」中以完整網址出現過的網址：來源文字先切出完整的網址記號，兩邊都正規化成 httpx 的形式後逐字比對，實際送出的是比對到的正規化網址；工具回聲的查詢參數不算來源 |
 | 讀過知識庫後停用聯網 | `BLOCK_WEB_TOOLS_AFTER_KB=true` 時，知識庫工具回傳過內容後拒絕 `web_search` 與 `web_fetch` |
 | 不可信資料包裝 | 每個工具結果包在 `<untrusted_tool_result id="...">` 內，id 每次提問隨機產生，資料無法預先偽造結束標記 |
-| 解析引用 | 答案完成後解析 `[1]`、`[1,2]`、`[1、2]` 與 `[1][2]`，只列出引用表中存在的編號，依第一次引用的順序去重 |
+| 解析引用 | 答案完成後解析 `[1]`、`[1,2]`、`[1、2]` 與 `[1][2]`，只列出引用表中存在的編號，依第一次引用的順序去重；引用表沒有的編號在送出與儲存前從內文移除（程式碼區塊與行內程式碼不動） |
 
 自訂 API 與 MCP 工具的結果同樣包上不可信標記，但不列入網址來源與引用編號。
 
@@ -447,18 +448,19 @@ flowchart TB
 
 | 供應商 | 端點 | 轉換重點 |
 |---|---|---|
-| Microsoft Foundry | `{FOUNDRY_ENDPOINT}/openai/v1/responses`（`gpt-` / `o` 系列）或 `/openai/v1/chat/completions`（其他模型） | 同時帶 `api-key` 與 `Authorization` 標頭；模型名稱即部署名稱 |
-| OpenAI | `{OPENAI_API_BASE}/chat/completions` | 原生格式 |
-| Google Gemini | `{GEMINI_API_BASE}/v1beta/openai/chat/completions` | 使用 OpenAI 相容端點 |
-| Anthropic Claude | 官方 `anthropic` SDK | system 訊息抽出；連續的工具結果併成一則 `tool_result`；工具呼叫回合原樣送回 `response.content`（含 thinking 區塊）；需要 `ANTHROPIC_MAX_TOKENS`；拒答（`refusal`）與工具參數被截斷時回報錯誤 |
-| Ollama | `{LLM_API_BASE}/api/chat` | 圖片轉為 `images` 欄位；工具呼叫參數轉為物件；可設定 `OLLAMA_TEMPERATURE`、`OLLAMA_NUM_PREDICT` |
+| Microsoft Foundry | `{API 位址}/openai/v1/responses`（`gpt-` / `o` 系列）或 `/openai/v1/chat/completions`（其他模型）；`claude-` 開頭的部署走 `{API 位址}/anthropic` | 同時帶 `api-key` 與 `Authorization` 標頭；模型名稱即部署名稱 |
+| OpenAI | `{API 位址}/chat/completions`；`gpt-6*` 走 `{API 位址}/responses` | 原生格式 |
+| Google Gemini | `{API 位址}/v1beta/openai/chat/completions` | 使用 OpenAI 相容端點 |
+| Anthropic Claude | 官方 `anthropic` SDK | system 訊息抽出；連續的工具結果併成一則 `tool_result`；工具呼叫回合原樣送回 `response.content`（含 thinking 區塊）；需要連線設定的輸出 token 上限；拒答（`refusal`）與工具參數被截斷時回報錯誤 |
+| Ollama | `{API 位址}/api/chat` | 圖片轉為 `images` 欄位；工具呼叫參數轉為物件；可設定 `OLLAMA_TEMPERATURE`、`OLLAMA_NUM_PREDICT`、`OLLAMA_NUM_CTX`（套用到所有 Ollama 連線） |
 
-- **路由**：依模型名稱決定供應商（Foundry 部署 → `claude-` → `gemini-` → `gpt-` / `o1` / `o3` / `o4` → Ollama），完整規則見 [設定參考：供應商路由](configuration.md#供應商路由)。
+- **路由**：每次呼叫都使用一條 API 連線：聊天是使用者選的個人或共用連線，文件摘要與 PDF OCR 是管理員指定的系統模型。端點依連線的供應商與模型名稱決定，完整規則見 [設定參考：供應商路由](configuration.md#供應商路由)；`.env` 不設定任何模型商。
 - **推理程度**：`reasoning_effort` 依供應商對應後傳給模型（對應規則見 [API 參考](api.md)）；走 Chat Completions 的 `gpt-5.x` 模型（名稱含 `gpt-5.`）帶工具時一律送 `none`，原始的 `gpt-5`、`gpt-5-mini`、`gpt-5-nano` 不接受 `none`、`xhigh`、`max`，選 `none` 時改送 `minimal`，選 `xhigh`、`max` 時改送 `high`，其他情況送使用者選擇的程度；`gpt-6*` 與 Foundry 上的 GPT 改走 Responses API 以同時支援工具與推理。
 - **兩種呼叫**：`chat_completion` 用於研究迴圈的每一輪（非串流，回傳 `content` 與 `tool_calls`）；`stream_completion` 只在需要重新生成最終答案時使用，Claude 串流時以 `tool_choice: none` 避免再觸發工具。
-- **逾時**：共用的 httpx 用戶端以 `LLM_TIMEOUT` 為逾時，等待連線池名額另以 15 秒為上限（池被占滿時很快失敗），每次請求自帶的逾時也保留這個上限；文件摘要另以 18 秒為上限。
+- **逾時**：共用的 httpx 用戶端以 `LLM_TIMEOUT` 為逾時，等待連線池名額另以 15 秒為上限（池被占滿時很快失敗），每次請求自帶的逾時也保留這個上限。
+- **日誌**：每次呼叫在開始與結束時各寫一行，結束的那一行記下耗時、成功或失敗與供應商回傳的 token 用量；逾時時記下例外類別（`ConnectTimeout`、`ReadTimeout`、`PoolTimeout` 分別代表連線、等待回應、等待連線池名額）與當次的逾時秒數，串流另記第一段文字抵達的時間。欄位見 [日誌與請求追蹤](#日誌與請求追蹤)。
 - **影像輸入**：只接受內嵌的 `data:` URL，遠端圖片網址一律拒絕，避免模型供應商代為擷取使用者指定的任意位址。聊天附件只有 PNG、JPEG、GIF、WebP 以圖片交給模型；SVG 以文字讀取；其他圖片格式（例如 BMP、TIFF）不讀取，改告知模型請使用者改用 PNG、JPEG、GIF 或 WebP。
-- **模型清單**：遠端模型清單在執行緒中查詢並快取 30 秒（含失敗結果）；送出訊息時指定的模型必須在可用清單內或等於 `MODEL_NAME`。
+- **模型清單**：建立連線時可「從 API 取得模型」，依供應商查詢模型清單，逾時為 `LLM_TAGS_TIMEOUT`；送出訊息時指定的模型必須在該連線的模型清單內。
 
 ---
 
@@ -473,7 +475,8 @@ flowchart TB
     end
 
     subgraph ImportFlow ["建立自訂 API 工具"]
-        Spec["OpenAPI / Swagger 規格（內容或網址）"] --> Parser["OpenApiParser（OAS 2.0 / 3.0 / 3.1）"]
+        Spec["Swagger 2.0、OpenAPI 3.0～3.2、Arazzo（內容或網址）"] --> Overlay["套用 Overlay（RFC 9535 JSONPath）"]
+        Overlay --> Parser["OpenApiParser／parse_arazzo<br/>外部 $ref、schema 正規化"]
         Parser --> Select["前端勾選端點"]
         Select --> Import["POST /api/api-tools/import"]
         Manual["手動表單"] --> DB[(custom_api_tools)]
@@ -494,19 +497,22 @@ flowchart TB
     Ask -->|核准| Exec
     Exec -->|內建| Internal["內部實作"]
     Exec -->|mcp_ 前綴| McpCall["McpManager.execute_mcp_tool（tools/call）"]
-    Exec -->|其他名稱| Http["execute_http_api_tool（httpx + SSRFSafeTransport）"]
+    Exec -->|其他名稱| Dispatch{"execute_api_tool"}
+    Dispatch -->|一般工具| Http["execute_http_api_tool（httpx + SSRFSafeTransport）"]
+    Dispatch -->|workflow_definition| Workflow["run_workflow（Arazzo 步驟依序呼叫 execute_http_request）"]
 ```
 
 1. **動態載入**：每次組裝工具定義時查詢資料庫，工具異動即時生效。MCP 工具使用探索時寫入的快取，不必每次連線。
 2. **命名**：自訂 API 工具以 `name` 註冊（取自 `operationId` 或方法與路徑，只含英數與底線）；MCP 工具為 `mcp_<伺服器>_<工具>`，名稱中的非英數字元換成底線並轉小寫，`execute_tool` 依此前綴路由。
-3. **HTTP 執行器**：呼叫端（模型）只能使用 `parameters_schema` 宣告的參數，`request_body` 有宣告欄位的 `request_body_schema` 且 `additionalProperties` 不是 `true` 時一併檢查其中的欄位，未宣告的參數不送出，直接回傳 `400`。接著以百分比編碼替換路徑參數（拒絕 `.`、`..`，代入後的 scheme、主機與埠號必須與設定相同）、組裝查詢字串與標頭、注入認證（Bearer、API Key、Basic，或以 OAuth2 client credentials 向 `token_url` 取得並快取的 Bearer 權杖，API 回傳 `401` 時重新取得並重試一次），依 `body_content_type` 把主體序列化為 JSON、表單或 `multipart/form-data` 欄位。工具網址中的查詢參數由管理員固定，呼叫端提供同名參數時回傳 `400`；查詢字串一律自行組好，不依賴 httpx 對既有查詢字串的處理。請求經 `SSRFSafeTransport` 在第一個請求與每次轉址前重新做 SSRF 驗證、把連線固定在驗證過的 IP；轉址由 `send_following_redirects` 手動跟隨（最多 5 次），轉址回應的本文不讀取；`GET`、`HEAD`、`OPTIONS` 可跟隨跨來源轉址，此時移除管理員設定的標頭與認證標頭，其他會改變狀態的方法只接受同一來源的轉址，轉址到其他來源時中止，請求主體不會送往其他網域。整個呼叫（含轉址與逐段讀取）以工具的 `timeout` 為總時限，逾時回傳 `504`；回應本文上限 1 MiB。結果與網址中出現的憑證值換成 `[已遮蔽]`，工具網址中固定的查詢參數值（可能是寫在網址裡的金鑰）也不出現在回傳的網址中。
+3. **HTTP 執行器**：呼叫端（模型）只能使用 `parameters_schema` 宣告的參數，`request_body` 有宣告欄位的 `request_body_schema` 且 `additionalProperties` 不是 `true` 時一併檢查其中的欄位，未宣告的參數不送出，直接回傳 `400`。接著依 `param_styles`（`app/services/api_tool_request.py`）以 OpenAPI 的 `style`／`explode` 序列化路徑（`simple`、`label`、`matrix`，百分比編碼並拒絕 `.`、`..`，代入後的 scheme、主機與埠號必須與設定相同）、查詢字串（`form`、`spaceDelimited`、`pipeDelimited`、`deepObject`、3.2 的整段 `querystring`）、標頭與 Cookie，注入認證（Bearer、API Key 標頭／查詢／Cookie、Basic，或以 OAuth2 client credentials 向 `token_url` 取得並快取的 Bearer 權杖，API 回傳 `401` 時重新取得並重試一次）；參數不能設定認證、`Content-Type`、`Cookie` 等標頭。主體依 `body_content_type` 編碼為 JSON 家族、表單、`multipart/form-data`、XML 或文字，並保留宣告的媒體型別。工具網址中的查詢參數由管理員固定，呼叫端提供同名參數時回傳 `400`；查詢字串一律自行組好，不依賴 httpx 對既有查詢字串的處理。請求經 `SSRFSafeTransport` 在第一個請求與每次轉址前重新做 SSRF 驗證、把連線固定在驗證過的 IP；轉址由 `send_following_redirects` 手動跟隨（最多 5 次），轉址回應的本文不讀取；`GET`、`HEAD`、`OPTIONS` 可跟隨跨來源轉址，此時移除管理員設定的標頭與認證標頭，其他會改變狀態的方法只接受同一來源的轉址，轉址到其他來源時中止，請求主體不會送往其他網域。整個呼叫（含轉址與逐段讀取）以工具的 `timeout` 為總時限，逾時回傳 `504`；回應本文上限 1 MiB。結果與網址中出現的憑證值換成 `[已遮蔽]`，工具網址中固定的查詢參數值（可能是寫在網址裡的金鑰）也不出現在回傳的網址中。
 4. **MCP 傳輸**：`McpStdioClient` 以子行程的標準輸入輸出交換 JSON-RPC，單行訊息上限 4 MiB；`McpHttpClient` 以 Streamable HTTP 的 POST 交換 JSON-RPC（`http` 與 `sse` 兩種設定都先走這條路徑；帶工作階段的請求收到 `404` 時重新交握一次，關閉時以 `DELETE` 結束工作階段），`initialize` 收到 `400`、`404`、`405` 時改用 `McpLegacySseClient` 的舊版 HTTP+SSE（GET 開啟串流、等待同一來源的 `endpoint` 事件後 POST，串流最多 4 MiB）。兩者同樣經 `SSRFSafeTransport` 逐跳驗證並固定 IP，單次回應上限 4 MiB。HTTP 轉址由 `send_following_redirects` 手動跟隨，只接受同一來源（最多 5 次），管理員設定的標頭與 JSON-RPC 本文不會送往其他網域；每次請求以伺服器的逾時設定為總時限。每次呼叫都會重新建立連線並完成 `initialize` 交握。探索時只保留名稱符合 `[A-Za-z0-9_.-]{1,128}` 的工具；工具失敗只回傳錯誤代碼（stderr、JSON-RPC 錯誤與 SSRF 拒絕原因只寫入日誌），啟動失敗的訊息只含指令名稱、不含參數。
 5. **子行程隔離**：`build_stdio_env()` 只繼承 MCP 官方 SDK 預設清單中的系統變數，略過以 `()` 開頭的 shell 函式定義，再加上伺服器的 `env_vars`；後端的資料庫連線與模型金鑰不會傳給第三方 MCP 伺服器。子行程的工作目錄是每次新建的空暫存目錄，後端目錄下的 `.env` 與 `keys/` 不在其相對路徑範圍內（子行程仍以後端的系統帳號執行，能讀取該帳號可讀的檔案）。每個子行程自成一個程序群組，關閉時連同 `npx`、`uvx` 啟動的孫行程整棵終止；同時最多 4 個子行程，等待空位的時間不超過該伺服器的逾時設定。stderr 持續讀出以免管線寫滿卡住，只保留最後 2 KiB 供日誌診斷。
 6. **內建範本**：只提供 `mcp_time` 與 `mcp_filesystem`。檔案系統範本釘選 `@modelcontextprotocol/server-filesystem@2026.8.31`，根目錄是專屬的 `backend/mcp_filesystem_sandbox`（絕對路徑，與 `DATA_DIR` 分開，因為其中的 BM25 索引由 Whoosh 以 pickle 載入）。網頁擷取類範本已移除，因為 `stdio` 子行程的出站連線不受 `web_fetch` 的 SSRF、網域白名單與網址來源限制約束。
 7. **呼叫前核准**：自訂 API 工具與 MCP 伺服器各有 `requires_approval` 旗標；Agent 呼叫這類工具前須由發問的使用者核准，見第 7 節「工具呼叫核准」與 [ADR-0006](adr/0006-tool-call-approval.md)。
 8. **管理權限**：工具由所有使用者的 Agent 共用，`stdio` 模式還會在主機上執行指令，因此 `/api/api-tools` 與 `/api/mcp` 的所有端點（含查詢）只開放管理員。一般使用者只能在對話中讓 Agent 使用已啟用的工具。詳見 [ADR-0002](adr/0002-external-tools-and-outbound-safety.md) 與 [ADR-0004](adr/0004-tool-admin-permissions-and-subprocess-isolation.md)。
 9. **憑證加密與遮蔽**：`app/core/tool_secrets.py` 在寫入資料庫前以 `TOOL_SECRETS_KEY`（Fernet）加密自訂 API 工具的 `headers`、`auth_config` 與 MCP 伺服器的 `env_vars`、`headers`，執行工具時才解密。管理 API 的回應以 `••••••••` 取代秘密值：`accept`、`accept-encoding`、`accept-language`、`cache-control`、`content-type`、`user-agent` 以外的標頭，`auth_config` 的 `token`、`key_value`、`password`、`client_secret`，以及 MCP 的所有環境變數與 OAuth `client_secret`；`key_name`、`username` 等設定照常顯示，MCP 的 OAuth 權杖不出現在回應中。更新時仍為遮蔽字樣的欄位沿用已儲存的值，沒有已儲存的值時回傳 `400`。無法以目前的金鑰解密時（例如更換了 `TOOL_SECRETS_KEY`），回應帶 `credentials_unreadable: true`，由管理員重新輸入。
-10. **規格解析**：`OpenApiParser` 拒絕含 YAML 別名的規格（別名在後續處理時會被逐一展開；先以事件串流檢查，沒有別名才以 `yaml.safe_load` 載入），`POST /api/api-tools/parse-spec` 的回應不含原始規格；規格網址同樣經 SSRF 驗證。端點的 `security` 與 `securitySchemes` / `securityDefinitions` 轉成 `auth_type` 與不含憑證的 `auth_config`，請求主體格式轉成 `body_content_type`（Swagger 2.0 取自端點的 `consumes`，沒有時用規格頂層的 `consumes`）。請求主體是有 `properties` 的物件時展開成各個 `body` 參數；其他型別（陣列、字串、數字、沒有 `properties` 的物件）成為保留完整 schema（例如 `items`）的 `request_body` 參數；Swagger 2.0 的 `in: formData` 參數成為主體欄位。`$ref` 在每個分支各自展開成完整結構，同一條參照路徑上的循環參照，以及每個參數或主體 schema 中超過 200 個（`MAX_OPENAPI_SCHEMA_REFS`）的參照，改以只含說明的物件 schema 取代。
+10. **規格解析**：`openapi_documents.py` 載入文件（拒絕 YAML 別名：先以事件串流檢查，沒有別名才以 `yaml.safe_load` 載入）並經 SSRF 驗證下載外部 `$ref` 文件（最多 20 份、合計 30 MB），建立 `$id`／`$anchor` 索引；`openapi_overlay.py` 以 `jsonpath.py`（RFC 9535）套用 Overlay；`openapi_parser.py` 判斷版本（Swagger 2.0、OpenAPI 3.0～3.2，其他版本拒絕）、合併路徑與操作層級的伺服器與參數、展開路徑項目 `$ref`、3.2 的 `query` 與 `additionalOperations`，並把 `security` 轉成 `auth_type` 與不含憑證的 `auth_config`；`openapi_schema.py` 把 `allOf`、`oneOf`／`anyOf`（含 `discriminator`）、JSON Schema 2020-12 的 `type` 陣列、`const`、`prefixItems`、`$defs` 正規化成各家模型都接受的參數 schema，循環參照、超過 200 個參照（`MAX_OPENAPI_SCHEMA_REFS`）或 32 層的結構改以只含說明的物件取代。無法完整匯入的部分列在回應的 `warnings`。`POST /api/api-tools/parse-spec` 的回應不含原始規格。
+13. **Arazzo 工作流程**（`app/services/arazzo.py`）：匯入時下載 `sourceDescriptions` 的 OpenAPI 來源，把每個步驟的 `operationId`／`operationPath` 解析成操作，連同工作流程存入 `workflow_definition`。執行時依序呼叫步驟，以執行期運算式代入參數與主體，依 `successCriteria`（simple、regex、JSONPath）與 `onSuccess`／`onFailure`（end、goto、retry）決定下一步；每一步都走 `execute_http_request`，與一般工具同樣經 SSRF 驗證與憑證遮蔽。一次最多 50 個步驟、300 秒，避免 `goto` 或 `retry` 形成迴圈。
 11. **MCP resources 與 prompts**：探索時依伺服器宣告的 capability 讀取 `resources/list`、`prompts/list`（失敗只寫入日誌），各最多 200 項存入 `discovered_resources`、`discovered_prompts`。Agent 的 `read_mcp_resource`、`get_mcp_prompt` 說明列出這些項目（`MAX_MCP_CATALOG_CHARS`），執行前先比對清單，不在清單中的 uri 或 prompt 不會送到伺服器。
 12. **MCP 遠端 OAuth**（`app/services/mcp_oauth.py`）：依 MCP 授權規格 `2025-06-18`，從 `WWW-Authenticate` 或 `/.well-known/oauth-protected-resource` 找到授權伺服器，使用管理員填入的 client 或動態註冊，以授權碼 + PKCE（S256）與 `resource` 取得權杖。一次性的 `state` 存在行程記憶體中 10 分鐘，回呼 `GET /api/mcp/oauth/callback` 不需登入、只靠 `state` 對應管理員與伺服器。權杖加密存入 `oauth_tokens`，HTTP 請求帶 Bearer，快到期或連線收到 `401` 時以 refresh token 換新。OAuth 端點的請求共用 `app/services/oauth_client.py`（SSRF 驗證、只跟隨同一來源的轉址、15 秒、256 KiB），自訂 API 工具的 client credentials 也使用它。
 
@@ -574,7 +580,7 @@ sequenceDiagram
 `app/core/error_response.py`：
 
 - `log_and_get_error_id()`：把完整例外與堆疊寫入伺服器日誌，回傳 12 碼隨機代碼。
-- `format_client_error()` / `build_error_payload()`：組出不含內部細節的訊息與 `error_id`。
+- `format_client_error()` / `build_error_payload()`：組出不含內部細節的訊息與 `error_id`；`build_error_payload()` 另附當下請求的 `request_id`，日誌中同一行也帶著這個 ID（見 [日誌與請求追蹤](#日誌與請求追蹤)）。
 - `SafeClientError`：標記「訊息只描述使用者輸入本身」的驗證錯誤，可原樣回傳，讓使用者知道如何修正。
 
 - `format_ssrf_rejection()`：SSRF 拒絕原因可能含伺服器端解析出的內網 IP 或轉址目標，對外只說明遭拒並附錯誤代碼（`parse-spec`、自訂 API 工具與 `web_fetch` 皆適用）。
@@ -625,8 +631,8 @@ Agent Skills 的內容例外：技能由管理員上傳，`activate_skill` 與 `
 | 機制 | 內容 |
 |---|---|
 | 安全回應標頭 | `X-Content-Type-Options: nosniff`、`X-Frame-Options: DENY`、`X-XSS-Protection: 1; mode=block`、`Referrer-Policy: strict-origin-when-cross-origin`、`Permissions-Policy: geolocation=(), microphone=(), camera=()`，並移除 `Server` 標頭 |
-| 請求本文上限 | `RequestBodyLimitMiddleware`（純 ASGI，位於最外層）在 FastAPI 讀取本文前檢查：一般請求 1 MiB；聊天送出只有帶著簽章有效、未撤銷的存取權杖時才放寬，文件上傳另要求權杖帶有 `is_admin` 聲明（只用來決定本文上限，路由本身仍以資料庫判定是否為管理員）；`Content-Length` 超過即回 `413`，分塊傳輸邊讀邊計數 |
-| 速率限制 | 每個來源 IP 在 60 秒滑動視窗內最多 `RATE_LIMIT_PER_MINUTE` 次，超過回傳 `429` 與 `Retry-After`；追蹤的位址最多 10,000 個，最久未活動者先淘汰。來源 IP 預設是實際連線對端（uvicorn 的 `proxy_headers` 只在設定 `FORWARDED_ALLOW_IPS` 時開啟），用戶端自帶的 `X-Forwarded-For` 不會被採信 |
+| 請求本文上限 | `RequestBodyLimitMiddleware`（純 ASGI，只在不讀本文的存取日誌之內）在 FastAPI 讀取本文前檢查：一般請求 1 MiB；聊天送出只有帶著簽章有效、未撤銷的存取權杖時才放寬，文件上傳另要求權杖帶有 `is_admin` 聲明（只用來決定本文上限，路由本身仍以資料庫判定是否為管理員）；`Content-Length` 超過即回 `413`，分塊傳輸邊讀邊計數 |
+| 速率限制 | 每個來源 IP 在 60 秒滑動視窗內最多 `RATE_LIMIT_PER_MINUTE` 次，超過回傳 `429` 與 `Retry-After`；追蹤的位址最多 10,000 個，最久未活動者先淘汰。來源 IP 預設是實際連線對端（uvicorn 的 `proxy_headers` 只在設定 `FORWARDED_ALLOW_IPS` 時開啟），用戶端自帶的 `X-Forwarded-For` 不會被採信。同一個 IP 在一個視窗內只在第一次被擋時寫一筆警告，視窗結束時再彙總被擋次數與路徑 |
 | 部署設定 | `HOST`、`RELOAD`、`COOKIE_SECURE`、`ENABLE_API_DOCS` 都是必填設定，沒有預設值；列出所有端點與參數的互動式文件（`/docs`、`/redoc`、`/openapi.json`）只在 `ENABLE_API_DOCS=true` 時提供 |
 | 資料庫帳號 | compose 的 PostgreSQL 由 `backend/init-app-role.sh` 建立後端連線用的 `POSTGRES_APP_USER`（`NOSUPERUSER`、`NOCREATEDB`、`NOCREATEROLE`），只授予資料庫的 `CONNECT` 與 `public` schema 的 `USAGE`、`CREATE`，並把資料表交給它擁有；SQL 注入無法以 `COPY ... TO PROGRAM` 執行系統指令或讀取伺服器檔案 |
 | 相依套件 | `backend/requirements.txt` 由 `requirements.in` 以 `uv pip compile --universal --generate-hashes` 產生，安裝時驗證雜湊；`frontend/bun.lock` 隨版本庫提交，`frontend/bunfig.toml` 設定 `frozenLockfile = true` |
@@ -670,9 +676,36 @@ Agent Skills 的內容例外：技能由管理員上傳，`activate_skill` 與 `
 - **PostgreSQL 容器**：`backend/docker-compose.yml` 需要 `POSTGRES_PASSWORD`（超級使用者，只供管理用途）與 `POSTGRES_APP_USER`、`POSTGRES_APP_PASSWORD`（後端連線用的非超級使用者，`DATABASE_URL` 使用這組帳號），且只綁定 `127.0.0.1:7690`。資料卷第一次初始化時依序執行 `10-init.sql`（`backend/init.sql`）與 `20-app-role.sh`（`backend/init-app-role.sh`）；以舊版初始化的資料卷要執行一次 `docker compose exec postgres bash /docker-entrypoint-initdb.d/20-app-role.sh`（可重複執行）。
 - **資料與備份**：需要備份的是資料庫與 `backend/data/`（索引、上傳檔、模型快取）；索引可由資料庫重建，上傳原檔則用於重新擷取文字。`backend/keys/` 遺失時會產生新金鑰，所有既有權杖隨之失效；目錄無法寫入或金鑰損毀時後端無法啟動。`TOOL_SECRETS_KEY` 遺失或更換時，資料庫中已加密的工具憑證無法解密，需要重新輸入。
 - **相依套件**：後端依 `requirements.txt` 的雜湊安裝；新增或升級套件時修改 `requirements.in`，再於 `backend/` 執行 `uv pip compile requirements.in --universal --python-version 3.12 --generate-hashes -o requirements.txt` 重新產生。前端 `bun install` 依凍結的 `bun.lock` 安裝，與 `package.json` 不一致時失敗。
-- **日誌**：應用程式日誌寫入 `backend/logs/app.log`；安全事件只寫入啟動目錄下的 `logs/security.log`（在 `backend/` 啟動即為 `backend/logs/`），兩者都以 10 MiB × 5 份輪替。錯誤代碼可在日誌中搜尋對應的完整例外。
+- **日誌**：應用程式日誌寫入 `LOG_DIR/app.log`，安全事件只寫入 `LOG_DIR/security.log`（範本值 `logs` 以 `backend/` 為基準，即 `backend/logs/`），兩者都以 10 MiB × 5 份輪替。後端測試的安全事件寫到 pytest 的暫存目錄。錯誤代碼可在日誌中搜尋對應的完整例外，格式與請求 ID 見下一節。
 - **介紹頁**：`.github/workflows/deploy-pages.yml` 在 `New` 分支的 `site/` 有變更時，把整個目錄部署到 GitHub Pages。
 - **版本號**：後端以 `backend/app/__init__.py` 的 `__version__` 為準（OpenAPI 文件與 MCP 交握皆引用），前端為 `frontend/package.json` 的 `version`，發行時與 `CHANGELOG.md` 一併更新。
+
+### 日誌與請求追蹤
+
+主控台、`app.log` 與 `security.log` 使用同一個格式，一筆一行；訊息中的換行會換成 `\n`，無法偽造出另一行。層級由 `LOG_LEVEL` 決定，輪替見 [設定參考：資源上限](configuration.md#資源上限)。
+
+```text
+2026-11-02 03:10:12 - app.access - INFO - [4f9c2a7e1b3d5f60] method=POST path=/api/chat/send status=200 duration_ms=8123 bytes=5120 ip=127.0.0.1 user=1
+```
+
+方括號中是請求 ID。`AccessLogMiddleware`（純 ASGI，位於最外層）替每個 HTTP 請求產生 16 碼的 ID；請求帶有格式正確的 `X-Request-ID`（英數字開頭，只含英數字與 `.`、`_`、`-`，8 到 64 字）時沿用，方便與反向代理的紀錄對照。對外服務時請讓反向代理覆寫這個標頭（例如 nginx 的 `proxy_set_header X-Request-ID $request_id;`），避免用戶端自帶的值混進來。這個 ID 會出現在：
+
+- 回應的 `X-Request-ID` 標頭（CORS 也允許前端讀取）；
+- 該請求期間的每一行日誌，包括交給執行緒處理的部分（例如文件解析與建立索引）；請求以外的日誌（啟動、定期掃描）顯示 `[-]`；
+- `security.log` 中 JSON 的 `request_id` 欄位；
+- `build_error_payload()` 回傳的錯誤內容（例如聊天串流的 `error` 事件）。
+
+| 日誌 | 記錄器 | 層級 | 欄位 |
+|---|---|---|---|
+| 存取紀錄 | `app.access` | `INFO`；`5xx` 或例外為 `WARNING` | 每個 `/api` 請求結束時一行：`method`、`path`、`query_keys`（只有參數名稱）、`status`、`duration_ms`（串流回應算到最後一個位元組）、`bytes`、`ip`、`user`（權杖對應或剛登入的帳號 id，匿名為 `-`）、`error`（例外類別） |
+| 模型呼叫 | `app.core.llm_client` | 開始、完成、中止為 `INFO`，失敗為 `WARNING` | 開始：`mode`（`chat`／`stream`）、`provider`、`model`、`host`、`messages`、`prompt_chars`、`images`、`tools`、`reasoning`、`timeout_s`。完成：`duration_ms`、`output_chars`、`tool_calls`、`stop_reason`，以及供應商有回傳的用量 `input_tokens`、`output_tokens`、`cached_tokens`、`reasoning_tokens`（Claude 為 `cache_read_tokens`、`cache_creation_tokens`，伺服器端改用其他模型時另記 `served_model`；Ollama 另記 `load_ms`、`prompt_eval_ms`、`eval_ms`、`total_ms`）。串流另記 `first_chunk_ms`、`chunks`。失敗：`error`（例外類別）、`detail`、`timeout_s` |
+| 工具呼叫 | `app.rag.tools` | 成功為 `INFO`，結果含 `error` 或拋出例外為 `WARNING` | `tool`、`kind`（`builtin`、`skill_script`、`mcp`、`api`）、`status`（`ok`、`error`、`exception`、`cancelled`）、`duration_ms`、`arg_keys`（只有參數名稱）、`result_chars`、`error` |
+| 未執行的工具呼叫 | `app.rag.agent` | `INFO` | 研究迴圈擋下或沒有執行的呼叫：`tool`、`status`（`refused` 為研究規則拒絕、`not_approved` 為使用者未核准或逾時、`approval_unavailable` 為沒有可核准的使用者）、`duration_ms`（含等待核准的時間） |
+| 速率限制 | `app.core.security` | `WARNING` | 每個來源 IP 在一個視窗內兩行：第一次被擋時（`ip`、`path`、`limit`、`period_s`）與視窗結束時（`blocked`、各路徑次數，最多 `MAX_RATE_LIMIT_LOGGED_PATHS` 條） |
+
+模型逾時的例外類別可以看出卡在哪一段：`ConnectTimeout` 是連不上，`PoolTimeout` 是等不到連線池名額，`ReadTimeout` 是請求已送出但在 `timeout_s` 內沒收到回應（非串流）或兩段文字之間等太久（串流，看 `first_chunk_ms` 是否已有值）。Ollama 成功時的 `load_ms`、`prompt_eval_ms`、`eval_ms` 分別是載入模型、讀入提示與產生回答的時間。
+
+以上日誌不記錄密碼、API 金鑰、JWT、Cookie、`Authorization` 標頭與查詢參數的值，也不記錄提示、對話或文件內容，只記參數名稱、字數與用量；研究迴圈的 `[Agent Step n] 調用工具` 同樣只記參數名稱，檢索器的 `Retrieval` 一行只記查詢字數（`query_chars`）與各階段的片段數。查問題時先以錯誤代碼或時間找到一行，再以方括號中的請求 ID 搜尋同一個請求的所有紀錄。
 
 ---
 

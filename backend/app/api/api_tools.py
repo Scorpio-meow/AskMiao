@@ -23,6 +23,17 @@ from app.core.limits import MAX_TOOL_NAME_CHARS
 from app.core.ssrf_protection import DnsPool, SSRFProtectionError, SSRFSafeTransport, same_origin, send_following_redirects
 from app.services.oauth_client import OAuthError, client_credentials_token, invalidate_client_credentials_token
 from app.services.openapi_parser import OpenApiParser
+from app.services.api_tool_request import (
+    RequestParts,
+    build_query,
+    encode_body,
+    scalar_text,
+    serialize_cookie,
+    serialize_header,
+    serialize_path,
+    serialize_query,
+    serialize_querystring,
+)
 from app.rag.tool_approval import SAFE_HTTP_METHODS, default_requires_approval
 from app.core.error_response import SafeClientError, log_and_get_error_id, format_client_error, format_ssrf_rejection
 from app.core.tool_secrets import (
@@ -70,6 +81,18 @@ def _tool_fields(tool: CustomApiTool, headers: Optional[Dict[str, Any]], auth_co
             param_locations = json.loads(tool.param_locations)
         except Exception:
             param_locations = {}
+    param_styles = None
+    if tool.param_styles:
+        try:
+            param_styles = json.loads(tool.param_styles)
+        except Exception:
+            param_styles = None
+    workflow_definition = None
+    if tool.workflow_definition:
+        try:
+            workflow_definition = json.loads(tool.workflow_definition)
+        except Exception:
+            workflow_definition = None
     return {
         "id": tool.id,
         "name": tool.name,
@@ -86,6 +109,8 @@ def _tool_fields(tool: CustomApiTool, headers: Optional[Dict[str, Any]], auth_co
         "parameters_schema": parameters_schema,
         "request_body_schema": request_body_schema,
         "param_locations": param_locations,
+        "param_styles": param_styles,
+        "workflow_definition": workflow_definition,
         "body_content_type": tool.body_content_type or JSON_CONTENT_TYPE,
         "response_mapping": tool.response_mapping,
         "is_enabled": bool(tool.is_enabled),
@@ -102,20 +127,12 @@ MAX_API_TOOL_REDIRECTS = 5
 REDACTED = "[已遮蔽]"
 MIN_SECRET_LENGTH = 4
 JSON_CONTENT_TYPE = "application/json"
-FORM_CONTENT_TYPE = "application/x-www-form-urlencoded"
-MULTIPART_CONTENT_TYPE = "multipart/form-data"
+BODYLESS_METHODS = ("GET", "HEAD", "OPTIONS", "TRACE")
+RESERVED_HEADER_NAMES = ("authorization", "content-type", "accept", "cookie", "host", "content-length")
 
 
 class ApiToolResponseTooLarge(ValueError):
     pass
-
-
-def _encode_path_value(value: Any) -> str:
-    """路徑參數逐段百分比編碼；/、?、#、%、.. 都不能改變請求目標"""
-    text = str(value)
-    if text in (".", ".."):
-        raise ValueError("路徑參數不可為 . 或 ..")
-    return quote(text, safe="")
 
 
 def _collect_secrets(headers: Dict[str, str], auth_type: str, auth_config: Dict[str, Any]) -> Set[str]:
@@ -136,24 +153,6 @@ def _collect_secrets(headers: Dict[str, str], auth_type: str, auth_config: Dict[
     elif auth_type == OAUTH2_CLIENT_CREDENTIALS and auth_config.get("client_secret"):
         secrets.add(str(auth_config["client_secret"]))
     return {s for s in secrets if len(s) >= MIN_SECRET_LENGTH}
-
-
-def _form_value(value: Any) -> str:
-    if isinstance(value, (dict, list)):
-        return json.dumps(value, ensure_ascii=False)
-    if isinstance(value, bool):
-        return "true" if value else "false"
-    return str(value)
-
-
-def _body_kwargs(content_type: str, body: Any) -> Dict[str, Any]:
-    if content_type in (FORM_CONTENT_TYPE, MULTIPART_CONTENT_TYPE) and not isinstance(body, dict):
-        raise SafeClientError(f"工具參數無效：{content_type} 的請求主體必須是物件")
-    if content_type == FORM_CONTENT_TYPE:
-        return {"data": {name: _form_value(value) for name, value in body.items()}}
-    if content_type == MULTIPART_CONTENT_TYPE:
-        return {"files": {name: (None, _form_value(value)) for name, value in body.items()}}
-    return {"json": body}
 
 
 def _redact(value: Any, secrets: Set[str]) -> Any:
@@ -196,25 +195,29 @@ def _undeclared_arguments(tool_dict: Dict[str, Any], arguments: Dict[str, Any]) 
     return undeclared
 
 
-def _query_items(params: Dict[str, Any]) -> List[tuple]:
-    items = []
-    for name, value in params.items():
-        if isinstance(value, (list, tuple)):
-            items.extend((name, item) for item in value)
-        else:
-            items.append((name, value))
-    return items
+async def execute_api_tool(tool_dict: Dict[str, Any], arguments: Dict[str, Any], tool_name: str) -> Dict[str, Any]:
+    if tool_dict.get("workflow_definition"):
+        from app.services.arazzo import run_workflow
+        return await run_workflow(tool_dict, arguments, tool_name)
+    return await execute_http_api_tool(tool_dict, arguments, tool_name)
 
 
 async def execute_http_api_tool(tool_dict: Dict[str, Any], arguments: Dict[str, Any], tool_name: str) -> Dict[str, Any]:
+    return await execute_http_request(tool_dict, arguments, tool_name, keep_exchange=False)
+
+
+async def execute_http_request(
+    tool_dict: Dict[str, Any], arguments: Dict[str, Any], tool_name: str, keep_exchange: bool
+) -> Dict[str, Any]:
     """
     通用 HTTP API 工具非同步執行器
     支援：
-    - Path 變數替換（如 /pets/{petId}），參數值經百分比編碼，不能改變請求的主機或路徑層級
-    - Query 參數組裝
-    - Header 參數與 Auth 注入；跨來源轉址時不轉送憑證
-    - JSON Body 或 FormData 序列化
+    - Path 參數依 style（simple、label、matrix）百分比編碼，不能改變請求的主機或路徑層級
+    - Query、整段查詢字串、Header 與 Cookie 參數依 OpenAPI 的 style／explode 序列化
+    - Auth 注入；跨來源轉址時不轉送憑證
+    - 請求本文依宣告的媒體型別編碼（JSON 家族、表單、multipart、XML、文字）
     - 隔離超時、回應大小上限、憑證遮蔽與錯誤保護
+    keep_exchange：回傳中附上請求與回應標頭（供 Arazzo 工作流程的執行期運算式取值）
     """
     start_time = time.time()
     arguments = dict(arguments or {})
@@ -242,6 +245,7 @@ async def execute_http_api_tool(tool_dict: Dict[str, Any], arguments: Dict[str, 
     auth_type = tool_dict.get("auth_type", "none")
     auth_config = tool_dict.get("auth_config") or {}
     credential_query_key: Optional[str] = None
+    auth_cookie: Optional[str] = None
     credential_header_names: Set[str] = {name.lower() for name in configured_headers}
     if auth_type == "bearer" and auth_config.get("token"):
         headers["Authorization"] = f"Bearer {auth_config['token']}"
@@ -256,6 +260,9 @@ async def execute_http_api_tool(tool_dict: Dict[str, Any], arguments: Dict[str, 
         elif key_in == "query" and key_name and key_value:
             arguments[key_name] = key_value
             credential_query_key = key_name
+        elif key_in == "cookie" and key_name and key_value:
+            auth_cookie = f"{key_name}={key_value}"
+            credential_header_names.add("cookie")
     elif auth_type == "basic" and auth_config.get("username"):
         u = auth_config.get("username", "")
         p = auth_config.get("password", "")
@@ -279,27 +286,45 @@ async def execute_http_api_tool(tool_dict: Dict[str, Any], arguments: Dict[str, 
     secrets = _collect_secrets(headers, auth_type, auth_config)
     if auth_type == OAUTH2_CLIENT_CREDENTIALS:
         secrets.add(headers["Authorization"].split(" ", 1)[1])
-    query_params: Dict[str, Any] = {}
-    body_data: Any = {}
+    styles = tool_dict.get("param_styles") or {}
+    parts = RequestParts()
+    query_names: Set[str] = set()
     path_replaced_url = url
+    whole_body: Any = None
+    has_whole_body = False
     try:
         for k, v in arguments.items():
-            loc = param_locations.get(k)
+            spec = styles.get(k) if isinstance(styles.get(k), dict) else {}
+            loc = spec.get("in") or param_locations.get(k)
+            name = spec.get("name") or k
             if k == credential_query_key:
-                query_params[k] = v
-            elif f"{{{k}}}" in path_replaced_url or loc == "path":
-                path_replaced_url = path_replaced_url.replace(f"{{{k}}}", _encode_path_value(v))
+                parts.query.append((quote(k, safe=""), quote(scalar_text(v), safe="")))
+            elif loc == "path" or (loc is None and f"{{{name}}}" in path_replaced_url):
+                path_replaced_url = path_replaced_url.replace(
+                    f"{{{name}}}", serialize_path(name, v, spec.get("style", "simple"), spec.get("explode", False))
+                )
             elif loc == "header":
-                headers[k] = str(v)
-            elif loc == "body":
-                body_data[k] = v
+                if name.lower() in credential_header_names or name.lower() in RESERVED_HEADER_NAMES:
+                    raise ValueError(f"不可由參數設定標頭 {name}")
+                headers[name] = serialize_header(v, spec)
+            elif loc == "cookie":
+                parts.cookies.extend(serialize_cookie(name, v, spec))
+            elif loc == "querystring":
+                parts.querystring = serialize_querystring(v, spec)
             elif loc == "query":
-                query_params[k] = v
-            else:
-                if method in ["POST", "PUT", "PATCH"]:
-                    body_data[k] = v
+                query_names.add(name)
+                parts.query.extend(serialize_query(name, v, spec))
+            elif loc == "body":
+                if spec.get("whole") or (k == "request_body" and not spec):
+                    whole_body, has_whole_body = v, True
                 else:
-                    query_params[k] = v
+                    parts.body[name] = v
+                    parts.body_specs[name] = spec
+            elif method in ("POST", "PUT", "PATCH"):
+                parts.body[k] = v
+            else:
+                query_names.add(k)
+                parts.query.extend(serialize_query(k, v, {}))
     except ValueError as e:
         return {
             "status_code": 400,
@@ -308,8 +333,19 @@ async def execute_http_api_tool(tool_dict: Dict[str, Any], arguments: Dict[str, 
             "url": _without_query(url),
             "error": f"工具參數無效：{e}",
         }
-    if "request_body" in arguments and (param_locations.get("request_body") == "body" or isinstance(arguments["request_body"], dict)):
+    body_data: Any = parts.body
+    if has_whole_body:
+        body_data = whole_body
+    elif "request_body" in arguments and isinstance(arguments["request_body"], dict) and "request_body" not in styles:
         body_data = arguments["request_body"]
+    cookie_items = [value for header_name, value in list(headers.items()) if header_name.lower() == "cookie" and value]
+    for header_name in [n for n in headers if n.lower() == "cookie"]:
+        del headers[header_name]
+    if auth_cookie:
+        cookie_items.append(auth_cookie)
+    cookie_items.extend(parts.cookies)
+    if cookie_items:
+        headers["Cookie"] = "; ".join(cookie_items)
 
     # 工具網址中固定的查詢參數（可能是寫在網址裡的金鑰）與憑證查詢參數，回傳時一律遮蔽其值
     hidden_query_names: Set[str] = {credential_query_key} if credential_query_key else set()
@@ -328,11 +364,12 @@ async def execute_http_api_tool(tool_dict: Dict[str, Any], arguments: Dict[str, 
         # 不依賴 httpx 對既有查詢字串是合併還是取代（不同版本行為不同）
         fixed_params = original_url.params
         hidden_query_names.update(fixed_params.keys())
-        overridden = sorted(name for name in query_params if name in fixed_params and name != credential_query_key)
+        overridden = sorted(name for name in query_names if name in fixed_params and name != credential_query_key)
         if overridden:
             raise SafeClientError(f"工具參數無效：不可覆寫工具網址中固定的查詢參數 {', '.join(overridden)}")
-        request_params = [(name, value) for name, value in fixed_params.multi_items() if name != credential_query_key]
-        request_params += _query_items(query_params)
+        if parts.querystring and fixed_params:
+            raise SafeClientError("工具參數無效：工具網址已有固定的查詢參數，不能再送整段查詢字串")
+        raw_query = build_query([(name, value) for name, value in fixed_params.multi_items() if name != credential_query_key], parts)
 
         async def strip_credentials_cross_origin(request: httpx.Request) -> None:
             # 轉址到其他來源時不轉送管理員設定的憑證標頭
@@ -345,12 +382,19 @@ async def execute_http_api_tool(tool_dict: Dict[str, Any], arguments: Dict[str, 
         # 轉址由 send_following_redirects 手動跟隨，轉址回應的本文不讀取，最終回應才套用大小上限
         req_kwargs: Dict[str, Any] = {
             "method": method,
-            "url": original_url.copy_with(query=None),
+            "url": original_url.copy_with(query=raw_query.encode("ascii") if raw_query else None),
             "headers": headers,
-            "params": request_params,
         }
-        if method in ["POST", "PUT", "PATCH", "DELETE"] and body_data != {}:
-            req_kwargs.update(_body_kwargs(tool_dict.get("body_content_type") or JSON_CONTENT_TYPE, body_data))
+        if method not in BODYLESS_METHODS and (has_whole_body or body_data != {}):
+            try:
+                encoded = encode_body(
+                    tool_dict.get("body_content_type") or JSON_CONTENT_TYPE, body_data, parts.body_specs,
+                    (styles.get("$body") or {}).get("xml_root"),
+                )
+            except ValueError as e:
+                raise SafeClientError(f"工具參數無效：{e}") from e
+            req_kwargs["headers"] = {**headers, **encoded.pop("headers", {})}
+            req_kwargs.update(encoded)
 
         async def perform() -> Dict[str, Any]:
             async with httpx.AsyncClient(
@@ -395,13 +439,26 @@ async def execute_http_api_tool(tool_dict: Dict[str, Any], arguments: Dict[str, 
                         res_body = text[:MAX_API_TOOL_TEXT_CHARS]
                 else:
                     res_body = text[:MAX_API_TOOL_TEXT_CHARS]
-                return {
+                result = {
                     "status_code": response.status_code,
                     "is_success": response.is_success,
                     "duration_seconds": round(time.time() - start_time, 3),
                     "url": display_url(response.url),
                     "data": _redact(res_body, secrets)
                 }
+                if keep_exchange:
+                    result["exchange"] = {
+                        "method": method,
+                        "response_headers": {k.lower(): _redact(v, secrets) for k, v in response.headers.items()},
+                        "request_headers": {k.lower(): _redact(v, secrets) for k, v in req_kwargs["headers"].items()},
+                        "request_query": {k: _redact(v, secrets) for k, v in httpx.URL(str(req_kwargs["url"])).params.items()},
+                        "request_path": {
+                            (styles.get(k) or {}).get("name", k): v for k, v in arguments.items()
+                            if (styles.get(k) or {}).get("in", param_locations.get(k)) == "path"
+                        },
+                        "request_body": body_data if (has_whole_body or body_data != {}) else None,
+                    }
+                return result
 
         # httpx 的逾時是逐次讀寫計算；整個呼叫（含轉址與慢速逐段回應）另以工具的逾時設定為總時限
         result = await asyncio.wait_for(perform(), timeout=float(timeout))
@@ -467,11 +524,12 @@ async def parse_openapi_spec(
     request_data: OpenApiParseRequest,
     current_user: dict = Depends(get_current_admin_user)
 ):
-    """解析 OpenAPI / Swagger 規格 (支援 OAS 2.0, 3.0, 3.1)"""
+    """解析 Swagger 2.0、OpenAPI 3.0～3.2 規格（可先套用 Overlay）或 Arazzo 工作流程文件"""
     try:
         parsed_result = await OpenApiParser.parse(
             spec_content_or_url=request_data.spec_content_or_url,
-            default_base_url=request_data.default_base_url
+            default_base_url=request_data.default_base_url,
+            overlays=request_data.overlays,
         )
         return {
             "status": "success",
@@ -499,6 +557,12 @@ def _reimport_auth(existing: CustomApiTool, auth_type: str, auth_config: Dict[st
     if existing.auth_type in (None, "none") or any(is_secret_auth_key(key) for key in provided):
         return auth_type, auth_config
     return existing.auth_type, stored
+
+
+def _import_requires_approval(item) -> bool:
+    if item.workflow_definition and item.requires_approval is not None:
+        return item.requires_approval
+    return default_requires_approval(item.method)
 
 
 @router.post("/import")
@@ -541,10 +605,12 @@ async def import_openapi_tools(
             existing.parameters_schema = json.dumps(item.parameters_schema, ensure_ascii=False) if item.parameters_schema else None
             existing.request_body_schema = json.dumps(item.request_body_schema, ensure_ascii=False) if item.request_body_schema else None
             existing.param_locations = json.dumps(item.param_locations, ensure_ascii=False) if item.param_locations else None
+            existing.param_styles = json.dumps(item.param_styles, ensure_ascii=False) if item.param_styles else None
+            existing.workflow_definition = json.dumps(item.workflow_definition, ensure_ascii=False) if item.workflow_definition else None
             existing.body_content_type = item.body_content_type
             existing.spec_version = item.spec_version
             # 重新匯入不會自動放寬既有的核准設定
-            existing.requires_approval = bool(existing.requires_approval) or default_requires_approval(item.method)
+            existing.requires_approval = bool(existing.requires_approval) or _import_requires_approval(item)
             updated_count += 1
         else:
             new_tool = CustomApiTool(
@@ -561,10 +627,12 @@ async def import_openapi_tools(
                 parameters_schema=json.dumps(item.parameters_schema, ensure_ascii=False) if item.parameters_schema else None,
                 request_body_schema=json.dumps(item.request_body_schema, ensure_ascii=False) if item.request_body_schema else None,
                 param_locations=json.dumps(item.param_locations, ensure_ascii=False) if item.param_locations else None,
+                param_styles=json.dumps(item.param_styles, ensure_ascii=False) if item.param_styles else None,
+                workflow_definition=json.dumps(item.workflow_definition, ensure_ascii=False) if item.workflow_definition else None,
                 body_content_type=item.body_content_type,
                 spec_version=item.spec_version,
                 is_enabled=True,
-                requires_approval=default_requires_approval(item.method),
+                requires_approval=_import_requires_approval(item),
                 created_by=current_user["user_id"]
             )
             db.add(new_tool)
@@ -632,6 +700,7 @@ async def create_api_tool(
         parameters_schema=json.dumps(tool_data.parameters_schema, ensure_ascii=False) if tool_data.parameters_schema else None,
         request_body_schema=json.dumps(tool_data.request_body_schema, ensure_ascii=False) if tool_data.request_body_schema else None,
         param_locations=json.dumps(tool_data.param_locations, ensure_ascii=False) if tool_data.param_locations else None,
+        param_styles=json.dumps(tool_data.param_styles, ensure_ascii=False) if tool_data.param_styles else None,
         body_content_type=tool_data.body_content_type,
         response_mapping=tool_data.response_mapping,
         is_enabled=tool_data.is_enabled if tool_data.is_enabled is not None else True,
@@ -706,6 +775,8 @@ async def update_api_tool(
         tool.request_body_schema = json.dumps(tool_data.request_body_schema, ensure_ascii=False) if tool_data.request_body_schema else None
     if tool_data.param_locations is not None:
         tool.param_locations = json.dumps(tool_data.param_locations, ensure_ascii=False) if tool_data.param_locations else None
+    if tool_data.param_styles is not None:
+        tool.param_styles = json.dumps(tool_data.param_styles, ensure_ascii=False) if tool_data.param_styles else None
     if tool_data.body_content_type is not None:
         tool.body_content_type = tool_data.body_content_type
     if tool_data.is_enabled is not None:
@@ -773,7 +844,7 @@ async def test_api_tool(
         tool_dict = _serialize_tool_model(tool)
     except SafeClientError as e:
         raise HTTPException(status_code=400, detail=str(e))
-    result = await execute_http_api_tool(tool_dict, test_data.arguments or {}, tool.name)
+    result = await execute_api_tool(tool_dict, test_data.arguments or {}, tool.name)
     return {
         "status": "success",
         "tool_name": tool.name,

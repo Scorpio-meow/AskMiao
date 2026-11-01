@@ -16,6 +16,7 @@ This directory records the major architectural decisions made while building Ask
 | [ADR-0004](./0004-tool-admin-permissions-and-subprocess-isolation_en.md) | Tool Management Permissions, MCP Subprocess Isolation & Per-Hop SSRF Validation | Accepted | 2026-09-25 | 3.0.0 | MCP servers and custom API tools are managed by admins only, stdio subprocesses no longer inherit backend secrets, and every redirect of an outbound request is SSRF-validated again; extends ADR-0002 |
 | [ADR-0005](./0005-chunk-id-index-and-database-source-of-truth_en.md) | Chunk Index Keyed by Database chunk_id | Accepted | 2026-09-24 | 3.0.0 | Chunks live in the `rag_chunks` table, FAISS (`IndexIDMap2`) and BM25 are keyed by chunk_id and reconciled against the database at startup, replacing list-position alignment and daily rebuilds; extends ADR-0001 |
 | [ADR-0006](./0006-tool-call-approval_en.md) | In-Chat Approval for Tools with Side Effects | Accepted | 2026-09-27 | 4.0.0 | Custom API tools and MCP servers gain a `requires_approval` flag; the agent pauses before calling them until the asking user approves in the chat, and nothing runs on a timeout or without an approver; extends ADR-0003 and ADR-0004 |
+| [ADR-0007](./0007-han-ngram-bm25-and-passage-level-evaluation_en.md) | Han Unigram and Bigram Fields in BM25, Evaluated with a Chunk-Level Benchmark | Accepted | 2026-11-01 | 8.0.0 | BM25 indexes single Han characters and Han bigrams alongside jieba words, so chunks are still retrieved when jieba mis-segments; evaluation gains chunk-level metrics labelled with verbatim snippets and a built-in benchmark corpus, and records the tweaks that were tried and rejected; extends ADR-0003 |
 
 ```mermaid
 flowchart LR
@@ -25,6 +26,7 @@ flowchart LR
     A2["ADR-0002<br/>External tools and outbound safety"] -->|permissions and isolation extended| A4["ADR-0004<br/>Tool permissions, subprocess isolation"]
     A4 -->|call time extended| A6["ADR-0006<br/>Tool call approval"]
     A3 -->|known risk mitigated| A6
+    A3 -->|BM25 tokenization and evaluation extended| A7["ADR-0007<br/>Han n-gram BM25 and chunk-level evaluation"]
 ```
 
 ---

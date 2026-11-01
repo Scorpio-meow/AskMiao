@@ -10,7 +10,7 @@ AskMiao answers with hybrid retrieval (FAISS + BM25 + Cross-Encoder) and agentic
 
 [繁體中文](README.md) | [English](README_en.md)
 
-[![Version](https://img.shields.io/badge/version-7.0.0-2563eb?style=flat)](CHANGELOG_en.md)
+[![Version](https://img.shields.io/badge/version-8.0.0-2563eb?style=flat)](CHANGELOG_en.md)
 [![Python](https://img.shields.io/badge/Python-3.12+-3776AB?style=flat&logo=python&logoColor=white)](https://www.python.org/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-005571?style=flat&logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
 [![React](https://img.shields.io/badge/React-19.2-61DAFB?style=flat&logo=react&logoColor=black)](https://react.dev/)
@@ -128,7 +128,7 @@ See the [4.0.0 changelog](CHANGELOG_en.md#400---2026-09-27) for everything that 
 ```mermaid
 flowchart LR
     Q["Question"] --> V["FAISS vector search<br/>TOP_K"]
-    Q --> B["BM25 keyword search<br/>jieba tokens, TOP_K"]
+    Q --> B["BM25 keyword search<br/>jieba words + Han unigrams and bigrams, TOP_K"]
     Q --> E["Exact matches<br/>URL / post ID / date / @account"]
     V --> F["RRF fusion<br/>Σ 1 / (RRF_K + rank)"]
     B --> F
@@ -142,24 +142,25 @@ flowchart LR
 - **Both tracks always run**: chunks found by only one track still reach the reranker, so proper nouns and codes are no longer drowned out.
 - **The threshold reads the reranker probability**: exact URL, post ID, and date matches are exempt and ranked first.
 - **The database is the source of truth**: chunks live in the `rag_chunks` table, and FAISS (`IndexIDMap2`) and BM25 are keyed by chunk_id; startup reconciles both indexes automatically, and deleting a document removes only its vectors.
-- **Measurable**: `scripts/evaluate_retrieval.py` computes hit@k, recall@k, MRR, and the negative rejection rate from a golden set and compares several thresholds at once.
+- **Measurable**: `scripts/evaluate_retrieval.py` computes hit@k, recall@k, MRR, and the negative rejection rate from a golden set, adds chunk-level precision@k, nDCG@k, and candidate recall when verbatim snippets are labelled, and compares several thresholds at once; `--corpus` compares retrieval settings on the built-in benchmark corpus in a temporary environment.
 
 ### Multi-provider LLM
 
-- One calling layer supports **Ollama, OpenAI, Microsoft Foundry, Anthropic Claude (official SDK), and Google Gemini**, routed by model name, all with tool calling and streaming.
+- One calling layer supports **Ollama, OpenAI, Microsoft Foundry, Anthropic Claude (official SDK), and Google Gemini**, routed by the connection's provider and the model name, all with tool calling and streaming.
 - The frontend switches models and six reasoning levels: `None`, `Low`, `Medium`, `High`, `X-High`, and `Max`; the level is mapped to what each provider supports and passed to the model (OpenAI, Microsoft Foundry, Claude, Gemini, Ollama), and levels a model does not support are disabled in the UI.
-- Each account sets up its own API connections (address, key, models) in its profile, and admins can create shared connections and choose which accounts may use them; chat never uses the keys in `.env`. See [configuration reference: API connections](docs/configuration_en.md#api-connections).
+- Each account sets up its own API connections (address, key, models) in its profile, and admins can create shared connections and choose which accounts may use them; `.env` configures no provider. See [configuration reference: API connections](docs/configuration_en.md#api-connections).
+- Document summaries and OCR of scanned PDFs each use a shared connection, model, and reasoning effort an admin picks under "Admin → System models"; see [configuration reference: system models](docs/configuration_en.md#system-models).
 
 ### Knowledge base and document processing
 
 - 28 file extensions: `.txt`, `.md`, `.markdown`, `.pdf`, `.docx`, `.pptx`, `.xlsx`, `.csv`, `.json`, `.jsonl`, `.yaml`, `.yml`, `.xml`, `.html`, `.htm`, `.log`, `.py`, `.js`, `.ts`, `.tsx`, `.jsx`, `.java`, `.cpp`, `.c`, `.sql`, `.sh`, `.ini`, `.env`.
-- **Robust PDF extraction**: PyMuPDF extracts text; before that, alternate glyphs in embedded TrueType fonts that the ToUnicode map leaves unmapped (or maps to U+FFFD) get a mapping found by reversing the font's GSUB single substitutions, such as the Noto Sans TC digits Illustrator exports, which would otherwise come out as characters like 俸; blank or garbled pages go through vision-model OCR (Microsoft Foundry, OpenAI, or Gemini), with pypdf as the last fallback.
+- **Robust PDF extraction**: PyMuPDF extracts text; before that, alternate glyphs in embedded TrueType fonts that the ToUnicode map leaves unmapped (or maps to U+FFFD) get a mapping found by reversing the font's GSUB single substitutions, such as the Noto Sans TC digits Illustrator exports, which would otherwise come out as characters like 俸; blank or garbled pages go to the OCR system model an admin chose (no OCR when none is chosen), with pypdf as the last fallback.
 - **Smart chunking**: JSON, JSONL, YAML, CSV, and XLSX are parsed into structured records that become one chunk each (nested fields kept, long records split into parts that repeat the header), Q&A documents that start with a "Q:" line become one chunk per question-answer pair (pairs longer than the chunk size are split), and everything else is split recursively on Chinese punctuation.
-- **AI outlines and summaries**: uploads get an AI summary that can be regenerated or edited; rule-based summaries take over when the LLM fails. The summaries also form the knowledge-base catalog the agent uses to decide which document to search.
+- **AI outlines and summaries**: uploads get a summary from the document summary system model an admin chose, which can be regenerated or edited; rule-based summaries take over when no system model is chosen or the call fails. The summaries also form the knowledge-base catalog the agent uses to decide which document to search.
 
 ### External tools and MCP
 
-- **Custom API tools**: create them with a form or bulk-import from an OpenAPI / Swagger spec (OAS 2.0, 3.0, 3.1), with Bearer, API key (header / query), and Basic auth, plus a live test. Calls accept only the parameters declared in `parameters_schema`, and query parameters fixed in the tool URL cannot be overridden.
+- **Custom API tools**: create them with a form, or import Swagger 2.0 and OpenAPI 3.0–3.2 specs in bulk (optionally applying Overlay 1.0–1.2, with external `$ref`s loaded too); Arazzo 1.0/1.1 workflows become tools that chain several API calls. Parameters are serialized by OpenAPI `style`/`explode` and request bodies are sent with their declared media type, with Bearer, API key (header / query / cookie), Basic, and OAuth2 client credentials, plus a live test. Calls accept only the parameters declared in `parameters_schema`, and fixed query parameters in the tool URL cannot be overridden.
 - **MCP client**: `stdio` and HTTP transports, automatic tool discovery, and tools added to the agent as `mcp_<server>_<tool>`; presets for time and filesystem servers are built in (the filesystem preset exposes only the dedicated sandbox directory `backend/mcp_filesystem_sandbox`).
 - **Loaded dynamically**: enabled tools are read from the database whenever tool definitions are assembled, so changes need no restart.
 - **Approval before calls**: tools with side effects run only after the asking user approves them in the chat; see [tool call approval](#tool-call-approval) below.
@@ -412,7 +413,7 @@ Edit `backend/.env` before starting:
    ```
 
    JWTs are always signed with the RSA keys in `backend/keys/`, so no separate signing secret is needed.
-3. **Models**: for a local Ollama keep `LLM_API_BASE=http://localhost:11434`; for cloud models fill in the matching API key, and add `ANTHROPIC_MAX_TOKENS` for Claude.
+3. **Models**: `.env` needs no provider settings. Model addresses and keys are set up as API connections in the UI after the backend starts; see step 5.
 
 The template provides the other required settings, and their template values suit local development: `HOST=127.0.0.1` accepts local connections only, `RELOAD=false`, `COOKIE_SECURE=false` (must be `true` when serving over HTTPS), `ENABLE_API_DOCS=false`, `ALLOW_REGISTRATION=false` (see step 4 for the first admin), and the four login failure throttling thresholds; see [Configuration](#configuration) for each. Then run the backend:
 
@@ -467,8 +468,9 @@ python -c "from sqlalchemy import text; from app.models.database import engine; 
 
 ### 5. Upload documents and ask
 
-1. As an admin, open the knowledge base page and upload documents (up to 10 files per upload, each within `MAX_FILE_SIZE_MB`). AskMiao extracts the text, writes an AI summary, and indexes it.
-2. Back in chat, pick a model and a reasoning level, then ask. Each `[n]` in the answer maps to a source badge below it.
+1. As an admin, open "Admin → Shared API connections", create a connection, and choose which accounts may use it (each account can also create its own under "Profile → My API connections"). To have uploads summarized by a model and scanned PDFs recognized, pick a model for each under "Admin → System models".
+2. Open the knowledge base page and upload documents (up to 10 files per upload, each within `MAX_FILE_SIZE_MB`). AskMiao extracts the text, writes a summary, and indexes it.
+3. Back in chat, pick a connection's model and a reasoning level, then ask. Each `[n]` in the answer maps to a source badge below it.
 
 ### Using PostgreSQL (optional)
 
@@ -514,17 +516,14 @@ Backend settings live in `backend/.env`. These 20 have no defaults, and the back
 | `WEB_FETCH_ALLOWED_DOMAINS` | `*` | Domains `web_fetch` may read; only an explicit `*` means unrestricted |
 | `BLOCK_WEB_TOOLS_AFTER_KB` | `true` | Disable web tools once knowledge-base content has been read |
 | `RRF_K` | `60` | RRF fusion constant |
-| `RERANK_RELEVANCE_THRESHOLD` | `0.2` | Reranker probability threshold (provisional; calibrate with a golden set) |
+| `RERANK_RELEVANCE_THRESHOLD` | `0.02` | Reranker probability threshold (calibrated on short posts; recalibrate with a golden set for other data) |
 | `DOMAIN_PROFILE_PATH` | `config/domain_profile.json` | Domain profile (domain words, date fields, summary fallback rules) |
 
 Common optional settings:
 
 | Variable | Description |
 |---|---|
-| `LLM_API_BASE` | Ollama base URL (template `http://localhost:11434`) |
-| `OPENAI_API_KEY`, `FOUNDRY_*`, `ANTHROPIC_API_KEY`, `GEMINI_API_KEY` | Cloud model keys; their models join the list automatically |
-| `ANTHROPIC_MAX_TOKENS` | Output cap per Claude response (required for Claude) |
-| `MODEL_NAME`, `AVAILABLE_MODELS` | Default model and a custom model list |
+| `LLM_TIMEOUT`, `OLLAMA_TEMPERATURE`, `OLLAMA_NUM_PREDICT`, `OLLAMA_NUM_CTX` | LLM call timeout, and generation settings applied to every Ollama connection |
 | `CHUNK_SIZE`, `CHUNK_OVERLAP` | Chunk length and overlap (template 300 / 100) |
 | `HF_HOME`, `HF_HUB_OFFLINE` | Model cache location and offline mode |
 | `ALLOWED_ORIGINS` | CORS origins (needed when the frontend calls the backend directly) |
@@ -569,7 +568,7 @@ AskMiao/
 │   │   ├── services/                 # Chat, document processing (with PDF OCR), OpenAPI parsing, MCP client
 │   │   └── tasks/uploads_watcher.py  # Missing-upload watcher (warnings only)
 │   ├── config/domain_profile.json    # Domain profile
-│   ├── eval/                         # Retrieval evaluation golden sets
+│   ├── eval/                         # Retrieval evaluation golden sets and the built-in benchmark corpus (corpus/)
 │   ├── scripts/                      # Maintenance scripts (including create_user.py for accounts)
 │   ├── tests/                        # pytest suite
 │   ├── docker-compose.yml            # Optional PostgreSQL 17 (local 127.0.0.1:7690, needs POSTGRES_PASSWORD and POSTGRES_APP_*)
@@ -647,10 +646,9 @@ Run them from `backend/` with `python scripts/<script>`:
 | Script | Purpose |
 |---|---|
 | `create_user.py` | Create an account (including the first admin): `--username` and `--email` are required, `--admin` creates an admin, and the password is entered interactively; see [Create the first admin](#4-create-the-first-admin) |
-| `evaluate_retrieval.py` | Evaluate retrieval quality with a golden set and compare relevance thresholds (read-only, safe to run alongside the backend); see [calibrating the relevance threshold](docs/configuration_en.md#calibrating-the-relevance-threshold) |
+| `evaluate_retrieval.py` | Evaluate retrieval quality with a golden set and compare relevance thresholds (read-only, safe to run alongside the backend; `--corpus` builds a knowledge base from given files in a temporary environment instead); see [calibrating the relevance threshold](docs/configuration_en.md#calibrating-the-relevance-threshold) |
 | `reprocess_existing_docs.py` | Runs the same rebuild as Rebuild index, offline: re-extract text, generate summaries for documents without one (existing summaries are kept), re-chunk, and re-index. Stop the backend first |
 | `reset_faiss.py` | Delete the index files that `FAISS_INDEX_PATH`, `METADATA_PATH`, and `BM25_INDEX_DIR` point to, then recompute them from `rag_chunks` (asks for confirmation first) |
-| `test_llm_clients.py` | Check the model list and each provider's request format with mocked responses, without calling any API |
 | `docx_to_txt.py` | Convert `.docx` files in the upload directory to `.txt` |
 
 ## Troubleshooting
@@ -766,7 +764,7 @@ Once one login identifier (user name or email, case-insensitive) fails `LOGIN_MA
 | [API Reference](docs/api_en.md) | Every endpoint's permission, request and response format, the SSE event contract, and error codes |
 | [Architecture & Design](docs/architecture_en.md) | Layers, data model, retrieval pipeline, agent loop, authentication, and security design |
 | [Configuration Reference](docs/configuration_en.md) | Defaults and effects of every environment variable, provider routing, threshold calibration, frontend settings |
-| [Upgrade Guide](docs/upgrading_en.md) | Steps from 2.x to 3.0.0 and every release since (up to 6.0.0 to 7.0.0), rollback, and troubleshooting |
+| [Upgrade Guide](docs/upgrading_en.md) | Steps from 2.x to 3.0.0 and every release since (up to 7.0.0 to 8.0.0), rollback, and troubleshooting |
 | [Architecture Decision Records](docs/adr/README_en.md) | Context, trade-offs, and amendments of major design decisions |
 | [llms_en.txt](llms_en.txt) | File map, system constraints, and verification steps for AI agents |
 | [Changelog](CHANGELOG_en.md) | What was added, changed, removed, and fixed in each release |
@@ -774,7 +772,7 @@ Once one login identifier (user name or email, case-insensitive) fails `LOGIN_MA
 
 ## Versioning
 
-- **Current version**: 7.0.0 (2026-10-31); see the [changelog](CHANGELOG_en.md).
+- **Current version**: 8.0.0 (2026-11-02); see the [changelog](CHANGELOG_en.md).
 - **Policy**: [Semantic Versioning](https://semver.org/). Incompatible changes, such as new required settings or changes to API permissions or the index format, bump the major version.
 - **Where the version lives**: `__version__` in `backend/app/__init__.py` (used by the OpenAPI document and the MCP handshake) and `frontend/package.json`, updated together with `CHANGELOG.md` for each release.
 

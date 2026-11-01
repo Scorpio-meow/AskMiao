@@ -2,7 +2,7 @@
 
 [繁體中文](api.md) | [English](api_en.md)
 
-> 本文件說明 AskMiao 後端 **7.0.0** 的 REST 與 SSE 串流端點，內容依 `backend/app/api/` 的實際路由撰寫。設定 `ENABLE_API_DOCS=true` 時，後端另外在 `http://localhost:8001/docs`（Swagger UI）與 `http://localhost:8001/redoc` 提供互動測試，OpenAPI 規格位於 `/openapi.json`；這三個路徑不需要登入且會列出所有端點與參數，對外服務時請保持 `ENABLE_API_DOCS=false`（範本值），此時三者一律回傳 `404`。
+> 本文件說明 AskMiao 後端 **8.0.0** 的 REST 與 SSE 串流端點，內容依 `backend/app/api/` 的實際路由撰寫。設定 `ENABLE_API_DOCS=true` 時，後端另外在 `http://localhost:8001/docs`（Swagger UI）與 `http://localhost:8001/redoc` 提供互動測試，OpenAPI 規格位於 `/openapi.json`；這三個路徑不需要登入且會列出所有端點與參數，對外服務時請保持 `ENABLE_API_DOCS=false`（範本值），此時三者一律回傳 `404`。
 
 ## 目錄
 
@@ -13,7 +13,7 @@
 - [4. 自訂 API 工具 `/api/api-tools`](#4-自訂-api-工具-apiapi-tools)
 - [5. MCP 伺服器 `/api/mcp`](#5-mcp-伺服器-apimcp)
 - [6. Agent Skills `/api/skills`](#6-agent-skills-apiskills)
-- [7. 模型清單 `/api/tags`](#7-模型清單-apitags)
+- [7. 模型清單（已移除）](#7-模型清單已移除)
 - [8. 管理後台 `/api/admin`](#8-管理後台-apiadmin)
 - [9. 健康檢查](#9-健康檢查)
 - [10. 錯誤處理](#10-錯誤處理)
@@ -78,7 +78,7 @@
 | PUT | `/api/documents/{document_id}/summary` | 管理員 | 手動修訂摘要 |
 | DELETE | `/api/documents/{document_id}` | 管理員 | 刪除文件 |
 | POST | `/api/documents/rebuild-index` | 管理員 | 從資料庫完整重建索引 |
-| POST | `/api/api-tools/parse-spec` | 管理員 | 解析 OpenAPI 規格 |
+| POST | `/api/api-tools/parse-spec` | 管理員 | 解析 Swagger 2.0、OpenAPI 3.0～3.2、Arazzo 文件（可先套用 Overlay） |
 | POST | `/api/api-tools/import` | 管理員 | 批次匯入工具 |
 | GET | `/api/api-tools` | 管理員 | 工具清單 |
 | POST | `/api/api-tools` | 管理員 | 手動建立工具 |
@@ -106,7 +106,6 @@
 | PATCH | `/api/skills/{skill_id}/toggle` | 管理員 | 切換啟用狀態 |
 | PATCH | `/api/skills/{skill_id}/settings` | 管理員 | 設定腳本執行與可使用的帳號 |
 | DELETE | `/api/skills/{skill_id}` | 管理員 | 刪除技能與技能檔案 |
-| GET | `/api/tags` | 公開 | 相容 Ollama 格式的模型清單 |
 | GET | `/api/admin/users` | 管理員 | 使用者清單 |
 | PUT | `/api/admin/users/{user_id}` | 管理員 | 更新使用者 |
 | POST | `/api/admin/users` | 管理員 | 新增使用者 |
@@ -118,6 +117,8 @@
 | POST | `/api/admin/llm-connections` | 管理員 | 新增共用連線 |
 | PUT | `/api/admin/llm-connections/{connection_id}` | 管理員 | 更新共用連線或可使用的帳號 |
 | DELETE | `/api/admin/llm-connections/{connection_id}` | 管理員 | 刪除共用連線 |
+| GET | `/api/admin/system-models` | 管理員 | 文件摘要與 PDF OCR 指定的連線與模型 |
+| PUT | `/api/admin/system-models` | 管理員 | 指定或取消文件摘要與 PDF OCR 的連線與模型 |
 | GET | `/api/admin/statistics` | 管理員 | 系統統計（快取 180 秒） |
 | GET | `/api/admin/conversations` | 管理員 | 最近 50 段對話 |
 | GET | `/api/admin/conversations/{conversation_id}/messages` | 管理員 | 任一對話的訊息 |
@@ -133,7 +134,7 @@
 | GET | `/health` | 公開 | 健康檢查 |
 
 > [!NOTE]
-> 不需登入的 `GET /api/external-tags` 與示範用的 WebSocket `/api/chat/ws/{user_id}` 已移除（前端都沒有使用）：模型清單請改用 `GET /api/chat/models` 或 `GET /api/tags`，對話一律使用 [2.1 的 SSE 端點](#21-post-apichatsend)。
+> 不需登入的 `GET /api/external-tags` 與示範用的 WebSocket `/api/chat/ws/{user_id}` 已移除（前端都沒有使用）：模型清單請改用 `GET /api/chat/models`，對話一律使用 [2.1 的 SSE 端點](#21-post-apichatsend)。
 
 ---
 
@@ -303,7 +304,7 @@
 | `content` | string | 是 | — | 使用者的問題，最多 20,000 字元；以 `/技能名稱` 開頭且該技能已啟用時，先載入該技能並去掉前綴，研究過程記錄一個 `activate_skill` 步驟 |
 | `conversation_id` | integer | 否 | `null` | 對話 ID；留空、不存在或不屬於自己時會建立新對話 |
 | `connection_id` | integer | 是 | — | 要使用的 API 連線，必須是自己的個人連線或開放給自己的共用連線（見 [2.2](#22-get-apichatmodels)），否則回傳 `400` `找不到這個 API 連線，或你沒有使用權限` |
-| `model_name` | string | 是 | — | 要使用的模型，必須在該連線的模型清單內，否則回傳 `400` `這個 API 連線沒有提供此模型`；不會落回 `MODEL_NAME` 或 `.env` 的金鑰 |
+| `model_name` | string | 是 | — | 要使用的模型，必須在該連線的模型清單內，否則回傳 `400` `這個 API 連線沒有提供此模型`；不會改用其他連線或系統模型 |
 | `reasoning_effort` | string | 否 | `medium` | 推理程度，依供應商對應後傳給模型，見下方說明 |
 | `attachments` | array | 否 | `[]` | 附件，最多 5 個，見下表 |
 
@@ -342,7 +343,7 @@
 | `token` | 答案文字 | `content` |
 | `sources` | 答案完成後 | `sources`（來源名稱，去重）、`sources_detail`（見下表） |
 | `done` | 助理訊息已存入資料庫；串流期間對話已被刪除時不儲存 | `message_id`（未儲存時為 `null`）、`conversation_id`、`answer`、`sources`、`sources_detail`、`research_trace`（所有 `step_end` 的內容） |
-| `error` | API 層發生未預期例外 | `detail`（含錯誤代碼的訊息）、`error_id` |
+| `error` | API 層發生未預期例外 | `detail`（含錯誤代碼的訊息）、`error_id`、`request_id` |
 
 `sources_detail` 只列答案以 `[n]` 實際引用的條目，依第一次引用的順序排列；沒有任何引用時 `sources` 與 `sources_detail` 皆為空陣列。每筆的欄位依來源而定：
 
@@ -644,7 +645,7 @@ data: {"message_id": 108, "conversation_id": 42, "answer": "特休假需先在�
 
 ```json
 {
-  "message": "索引重建成功（已用新配置重新分塊，並替缺少摘要的文件生成 AI 智能大綱）",
+  "message": "索引重建成功（已用新配置重新分塊，並替缺少摘要的文件生成 AI 智慧大綱）",
   "document_count": 6,
   "chunk_count": 214,
   "qa_pairs_detected": 0,
@@ -676,28 +677,30 @@ data: {"message_id": 108, "conversation_id": 42, "answer": "特休假需先在�
 | `display_name` | string | 顯示名稱 |
 | `description` | string | 用途描述，會影響模型是否呼叫 |
 | `category` | string | 分類，預設 `custom_api` |
-| `method` | string | HTTP 方法 |
+| `method` | string | HTTP 方法，可為任何 HTTP token（例如 OpenAPI 3.2 的 `QUERY` 或 `additionalOperations` 的 `PURGE`）；Arazzo 工作流程工具為 `WORKFLOW` |
 | `url` | string | 完整請求網址，路徑參數以 `{名稱}` 表示 |
 | `base_url` / `path` | string | 基底位址與路徑；`url` 為空時以兩者組合 |
 | `headers` | object | 固定的請求標頭；回應中除了 `Accept`、`Accept-Encoding`、`Accept-Language`、`Cache-Control`、`Content-Type`、`User-Agent` 以外，每個標頭的值都以 `••••••••` 遮蔽 |
 | `auth_type` | string | `none`、`bearer`、`api_key`、`basic`、`oauth2_client_credentials`；其他值回傳 `422` |
 | `auth_config` | object | 認證設定，見下表；`token`、`key_value`、`password`、`client_secret` 在回應中以 `••••••••` 遮蔽 |
-| `body_content_type` | string | 請求主體的格式：`application/json`（預設）、`application/x-www-form-urlencoded` 或 `multipart/form-data`；其他值回傳 `422` |
+| `body_content_type` | string | 請求主體的媒體型別，例如 `application/json`（預設）、`application/merge-patch+json`、`application/x-www-form-urlencoded`、`multipart/form-data`、`application/xml`、`text/plain`；不是 `type/subtype` 格式時回傳 `422` |
 | `parameters_schema` | object | 參數的 JSON Schema，直接作為模型看到的 `parameters`；呼叫時只接受其中 `properties` 宣告的參數 |
 | `request_body_schema` | object | 請求主體結構；有 `properties` 時也用來檢查 `request_body` 的欄位 |
-| `param_locations` | object | 每個參數的位置：`path`、`query`、`header`、`body` |
+| `param_locations` | object | 每個參數的位置：`path`、`query`、`querystring`、`header`、`cookie`、`body` |
+| `param_styles` | object | 每個參數的序列化方式（匯入時依規格產生）：`name`（實際送出的名稱，與參數名不同時用於避開同名衝突）、`in`、`style`、`explode`、`allow_reserved`、`content_type`（以媒體型別序列化的參數或本文欄位）、`whole`（整個取代請求主體的 `request_body`）；`$body` 鍵可帶 XML 根元素名稱 `xml_root`。沒有設定時依位置採 OpenAPI 預設值 |
+| `workflow_definition` | object | 只出現在 Arazzo 工作流程工具：匯入時解析好的工作流程、步驟與對應的操作，見 [4.10](#410-arazzo-工作流程工具) |
 | `response_mapping` | string | 保留欄位，目前未使用 |
 | `is_enabled` | boolean | 是否啟用 |
 | `requires_approval` | boolean | Agent 呼叫前是否需要發問的使用者在對話中核准（見 [2.9](#29-post-apichatapprovalsapproval_id)）。建立或匯入時未指定則依方法決定：`GET`、`HEAD`、`OPTIONS` 為 `false`，其他方法為 `true` |
 | `timeout` | integer | 逾時秒數，預設 15 |
-| `spec_version` | string | 來源規格版本，手動建立為 `manual` |
+| `spec_version` | string | 來源規格版本：`swagger_2.0`、`openapi_3.0`、`openapi_3.1`、`openapi_3.2`、`arazzo_1.0`、`arazzo_1.1`，手動建立為 `manual` |
 | `created_at` / `updated_at` | string | 時間戳記 |
 | `credentials_unreadable` | boolean | 只出現在回應中：`headers` 或 `auth_config` 無法以目前的 `TOOL_SECRETS_KEY` 解密時為 `true`，無法解密的欄位回傳 `null`，需要重新輸入 |
 
 | `auth_type` | `auth_config` 欄位 |
 |---|---|
 | `bearer` | `token` |
-| `api_key` | `key_name`（預設 `X-API-Key`）、`key_value`、`key_in`（`header` 或 `query`） |
+| `api_key` | `key_name`（預設 `X-API-Key`）、`key_value`、`key_in`（`header`、`query` 或 `cookie`） |
 | `basic` | `username`、`password` |
 | `oauth2_client_credentials` | `token_url`、`client_id`、`client_secret`、`scope`、`client_auth`（`basic` 以 HTTP Basic 送出 client 憑證，`post` 放在表單本文） |
 
@@ -705,7 +708,20 @@ data: {"message_id": 108, "conversation_id": 42, "answer": "特休假需先在�
 
 **憑證的加密與遮蔽**：`headers` 與 `auth_config` 以 `TOOL_SECRETS_KEY`（Fernet）加密後才寫入資料庫，後端啟動時也會把舊版以明文存放的資料改為加密。管理 API 的回應以 `••••••••` 取代秘密值（空值不遮蔽），憑證寫入後無法再從 API 讀出。更新時送出的 `headers` 或 `auth_config` 整個取代原值，其中值仍為 `••••••••` 的鍵沿用已儲存的值；該鍵沒有已儲存的值（包括已儲存的憑證無法解密）時回傳 `400` `欄位 <名稱> 沒有已儲存的值，請輸入實際內容`。更換 `TOOL_SECRETS_KEY` 後，已儲存的憑證都無法解密（`credentials_unreadable` 為 `true`），重新輸入之前該工具無法執行：Agent 呼叫時回傳附錯誤代碼的錯誤，[測試端點](#49-post-apiapi-toolstool_idtest) 回傳 `400` `無法以目前的 TOOL_SECRETS_KEY 解密工具憑證，請重新輸入`；金鑰與加密範圍見 [設定參考：工具憑證加密](configuration.md#工具憑證加密)。
 
-**參數組裝規則**：出現在網址 `{名稱}` 中或位置為 `path` 的參數會替換進網址；`header` 放進標頭；`query` 放進查詢字串；`body` 放進主體。主體依 `body_content_type` 以 JSON、表單（`application/x-www-form-urlencoded`）或 `multipart/form-data` 欄位（不含檔案）送出；兩種表單格式中，物件與陣列值轉成 JSON 字串，布林值轉成 `true` / `false`。未指定位置的參數，`POST`、`PUT`、`PATCH` 放進主體，其他方法放進查詢字串。`request_body` 的位置為 `body` 時（例如匯入時請求主體不是有 `properties` 的物件），模型傳入的 `request_body` 不論是物件、陣列、字串或數字都整個取代主體；位置不是 `body` 時只有物件會取代主體。
+**參數組裝規則**：每個參數依 `param_styles`（沒有時依 `param_locations`）放到對應位置，並依 OpenAPI 的 `style`／`explode` 序列化：
+
+| 位置 | 預設 style | 支援的 style 與結果（以 `color` 為例） |
+|---|---|---|
+| `path` | `simple` | `simple`：`blue,black`、物件 `R,100,G,200`（`explode` 時 `R=100,G=200`）；`label`：`.blue`；`matrix`：`;color=blue`。每個值都百分比編碼（`/`、`?`、`#`、`%` 都會被編碼），`.` 或 `..` 一律拒絕 |
+| `query` | `form`，`explode: true` | `form`：陣列 `color=blue&color=black`（不展開時 `color=blue,black`）、物件 `R=100&G=200`；`spaceDelimited`（`%20`）、`pipeDelimited`（`%7C`）、`deepObject`（`color[R]=100`）；`allow_reserved` 時保留 `:/?@!$'()*,;[]` 不編碼；Swagger 2.0 的 `collectionFormat` 對應為 `csv`→`form` 不展開、`ssv`→`spaceDelimited`、`pipes`→`pipeDelimited`、`tsv`→以 tab 分隔、`multi`→`form` 展開 |
+| `querystring` | —（OpenAPI 3.2） | 參數值是整段查詢字串：`application/x-www-form-urlencoded` 時物件逐欄展開，其他媒體型別整段編碼；不能與工具網址中的固定查詢參數並用 |
+| `header` | `simple` | 陣列 `a,b`、物件 `k,v`（`explode` 時 `k=v`）；`Authorization`、`Content-Type`、`Accept`、`Cookie`、`Host`、`Content-Length` 與管理員設定的標頭不能由參數設定，否則回傳 `400` |
+| `cookie` | `form`，`explode: true` | 與管理員設定的 `Cookie` 標頭、`key_in: cookie` 的 API Key 合併成一個 `Cookie` 標頭（`name=value; …`）；3.2 的 `style: cookie` 不做百分比編碼 |
+| `body` | — | 依 `body_content_type` 編碼 |
+
+以 `content` 描述的參數（`content_type` 為 JSON 家族時）先轉成精簡 JSON 再編碼。布林值一律送 `true` / `false`，`null` 的查詢參數不送出。
+
+請求主體依 `body_content_type` 編碼：JSON 家族（`application/json`、`*/*+json` 等）送精簡 JSON 並保留宣告的媒體型別；`application/x-www-form-urlencoded` 依 OpenAPI Encoding 預設值（`form`、`explode: true`）展開陣列與物件，欄位的 `content_type` 為 JSON 時改送該欄位的 JSON 字串；`multipart/form-data` 的陣列送成同名的多個部分、物件送成 `application/json` 部分；`application/xml` 等 XML 媒體型別的物件轉成以 `xml_root` 為根的 XML，字串原樣送出；`text/*` 與其他媒體型別送出文字內容。`GET`、`HEAD`、`OPTIONS`、`TRACE` 不送主體，其他方法（含 `QUERY` 與自訂方法）有主體時才送出。未指定位置的參數，`POST`、`PUT`、`PATCH` 放進主體，其他方法放進查詢字串。`request_body` 標為 `whole`（或位置為 `body` 且沒有 `param_styles`）時，模型傳入的 `request_body` 不論是物件、陣列、字串或數字都整個取代主體。
 
 **只接受宣告的參數**：呼叫端（Agent 或 [4.9](#49-post-apiapi-toolstool_idtest) 的測試）傳入的每個參數都必須列在 `parameters_schema.properties` 中，否則不送出請求，結果的 `status_code` 為 `400`（`工具參數無效：未宣告的參數 …`）；沒有宣告任何參數的工具不接受任何參數。`request_body` 同樣必須宣告；`request_body_schema` 有 `properties` 且 `additionalProperties` 不是 `true` 時，`request_body` 物件中的欄位也必須列在其中，未宣告的欄位以 `request_body.<欄位>` 列出。
 
@@ -715,26 +731,41 @@ data: {"message_id": 108, "conversation_id": 42, "answer": "特休假需先在�
 
 ### 4.1 POST /api/api-tools/parse-spec
 
-解析 OpenAPI / Swagger 規格（OAS 2.0、3.0、3.1），可傳入 JSON / YAML 全文或規格網址。
+解析 API 描述文件，可傳入 JSON / YAML 全文或文件網址。支援的格式：
+
+| 格式 | 版本 | 匯入結果 |
+|---|---|---|
+| Swagger / OpenAPI | 2.0 | 每個操作一個工具 |
+| OpenAPI | 3.0.0～3.0.4、3.1.0～3.1.2、3.2.0～3.2.1 | 每個操作一個工具（含 3.0 起的 `trace` 與 3.2 的 `query`、`additionalOperations`） |
+| Overlay | 1.0、1.1、1.2 | 匯入前先套用到規格（見下方 `overlays`） |
+| Arazzo | 1.0、1.1 | 每個工作流程一個工具，見 [4.10](#410-arazzo-工作流程工具) |
+
+Swagger 1.x、未標示版本、OpenAPI 3.3 以上或 4.x 的文件回傳 `400` 並說明支援的版本。
 
 | 欄位 | 型態 | 必填 | 說明 |
 |---|---|---|---|
-| `spec_content_or_url` | string | 是 | 規格全文，或以 `http://`、`https://` 開頭的規格網址 |
-| `default_base_url` | string | 否 | 覆寫規格中的伺服器位址 |
+| `spec_content_or_url` | string | 是 | 文件全文，或以 `http://`、`https://` 開頭的網址。內容是有 `extends` 的 Overlay 時，先取得 `extends` 指向的規格再套用 |
+| `default_base_url` | string | 否 | 取代規格頂層的伺服器位址；路徑與操作層級的 `servers` 仍優先 |
+| `overlays` | array | 否 | Overlay 文件全文或網址（最多 10 份），依序套用到規格後再解析；內容不是 Overlay 時回傳 `400` |
 
-規格網址會先經 SSRF 驗證（每一跳都把連線固定在驗證過的 IP），下載上限 10 MB、逾時 15 秒、最多 5 次轉址。YAML 規格不可使用別名（`*alias`），否則回傳 `400`：別名會在後續處理時逐一展開，幾 KB 的規格就可能產生上百 MB 的資料。
+**取得與參照**：文件網址與外部參照文件都先經 SSRF 驗證（每一跳都把連線固定在驗證過的 IP），每份下載上限 10 MB、合計 30 MB、逾時 15 秒、最多 5 次轉址。以網址匯入時，外部 `$ref`（例如 `schemas/pet.yaml#/Pet`、路徑項目的 `$ref`）依文件位置（3.2 為 `$self`）解析並下載，最多 20 份；貼上全文時無法解析相對參照，會列在 `warnings`。3.1 起的 JSON Schema `$id`、`$anchor` 與 `$defs` 內部參照都會解析。YAML 文件不可使用別名（`*alias`），否則回傳 `400`：別名會在後續處理時逐一展開，幾 KB 的規格就可能產生上百 MB 的資料。
 
-**回應**：`200 OK`，只含解析出的端點，不含原始規格（舊版回應中的 `raw_spec` 已移除）
+**伺服器位址**：依序取操作層級、路徑層級、頂層的 `servers` 第一個項目（以變數的 `default` 代入）；相對位址依文件網址補成完整網址。Swagger 2.0 沒有 `host` 時取文件網址的主機，沒有 `schemes` 時取文件網址的 scheme（有 `https` 時優先）。仍是相對位址時列在 `warnings`。
+
+**回應**：`200 OK`，只含解析出的端點，不含原始規格
 
 ```json
 {
   "status": "success",
   "data": {
-    "version": "openapi_3.0",
+    "kind": "openapi",
+    "version": "openapi_3.2",
+    "spec_version": "3.2.0",
     "title": "Pet Store",
     "description": "",
     "base_url": "https://api.example.com",
     "endpoints_count": 4,
+    "warnings": ["webhooks（1 個）是 API 主動呼叫外部的回呼，不會匯入成工具"],
     "endpoints": [
       {
         "name": "get_pet_by_id",
@@ -749,35 +780,50 @@ data: {"message_id": 108, "conversation_id": 42, "answer": "特休假需先在�
         "body_content_type": "application/json",
         "auth_type": "api_key",
         "auth_config": {"key_name": "X-API-Key", "key_in": "header", "key_value": ""},
+        "headers": {},
         "param_locations": {"petId": "path"},
+        "param_styles": {"petId": {"name": "petId", "in": "path", "style": "simple", "explode": false, "allow_reserved": false}},
         "parameters_schema": {"type": "object", "properties": {"petId": {"type": "integer"}}, "required": ["petId"]},
         "function_definition": {"type": "function", "function": {"name": "get_pet_by_id", "...": "..."}},
+        "operation_id": "getPetById",
         "tags": ["pets"],
-        "spec_version": "openapi_3.0"
+        "deprecated": false,
+        "spec_version": "openapi_3.2",
+        "warnings": []
       }
     ]
   }
 }
 ```
 
-工具名稱取自 `operationId`（轉為小寫並把非英數字元換成底線）；沒有 `operationId` 時由方法與路徑組成，例如 `get_pets_petid`。
+工具名稱取自 `operationId`（轉為小寫並把非英數字元換成底線）；沒有 `operationId` 時由方法與路徑組成，例如 `get_pets_petid`；同一份規格中重複的名稱依序加上 `_2`、`_3`。
 
-請求主體是有 `properties` 的物件時，每個欄位成為位置為 `body` 的參數；其他型別（陣列、字串、數字、沒有 `properties` 的物件）成為一個位置為 `body` 的 `request_body` 參數，保留完整的 schema（例如陣列的 `items`）。Swagger 2.0 的 `in: formData` 參數同樣成為位置為 `body` 的參數。`$ref` 在每個用到的地方都展開成完整結構；同一條參照路徑上的循環參照，以及每個參數或主體 schema 中超過 200 個（`MAX_OPENAPI_SCHEMA_REFS`）的參照，改以只含說明的物件 schema 取代。以 `$ref` 引用的參數（`components/parameters`、Swagger 2.0 的 `parameters`）、請求主體（`components/requestBodies`）與認證方式（`securitySchemes`／`securityDefinitions`）會先沿參照找到原本的物件（可連續參照），再照一般規則處理。
+**參數**：路徑層級與操作層級的參數以「名稱＋位置」合併，操作層級覆寫路徑層級（包括 `required`）。不同位置的同名參數各自保留，後出現的改名為 `<名稱>_<位置>`，`param_styles` 的 `name` 記錄實際送出的名稱。名為 `Accept`、`Content-Type`、`Authorization` 的標頭參數依規格忽略。以 `content` 描述的參數取第一個媒體型別的 schema，並記錄 `content_type`。已棄用的參數與端點在說明中標示「已棄用」。
 
-`body_content_type` 依規格的請求主體格式（Swagger 2.0 為端點的 `consumes`，沒有時用規格頂層的 `consumes`）依序選擇 `application/json`、`application/x-www-form-urlencoded`、`multipart/form-data`，其他格式（例如 XML）改用 JSON。`auth_type` 與 `auth_config` 取自端點的 `security`（沒有時用規格頂層的 `security`）與 `securitySchemes`（3.x 的 `components`）或 `securityDefinitions`（2.0），只填入設定欄位，憑證留空：
+**請求主體**：依序挑選 JSON 家族（含 `*/*`、`application/*`）、`application/x-www-form-urlencoded`、`multipart/form-data`、`text/*`、XML、其他媒體型別，`body_content_type` 保留實際的媒體型別（例如 `application/merge-patch+json`）。主體是有 `properties` 的物件時，每個欄位成為位置為 `body` 的參數（與其他參數同名時改名為 `<欄位>_body`），Encoding Object 的 `contentType`、`style`、`explode` 記錄在 `param_styles`；其他型別成為一個 `request_body` 參數。3.2 的 `components.mediaTypes` 參照與串流媒體型別的 `itemSchema` 都會解析。Swagger 2.0 的 `in: body` 依 `consumes` 決定媒體型別，`in: formData` 有 `type: file` 時用 `multipart/form-data`，否則依 `consumes`。
 
-| 規格中的認證 | `auth_type` | 填入的 `auth_config` |
+**Schema 正規化**：轉成各家模型都接受的參數 schema：`allOf` 合併欄位與必填；`oneOf`／`anyOf` 由物件組成時合併所有欄位，只保留每個選項都必填的欄位，說明中列出選項，有 `discriminator` 時該欄位改為列舉並設為必填；`type` 陣列取第一個非 `null` 型別；`const` 轉為單一值的 `enum`；`prefixItems` 依元素型別轉為 `items`；保留 `format`、數值與長度限制、`default`、`enum`、`additionalProperties`；請求中排除 `readOnly` 欄位；3.1 起的 `$ref` 可帶相鄰的關鍵字（一併合併），3.0 與 2.0 只沿用相鄰的 `description`。同一條參照路徑上的循環參照、超過 200 個參照（`MAX_OPENAPI_SCHEMA_REFS`）或超過 32 層的結構，改以只含說明的物件取代。
+
+**認證**：取自端點的 `security`（沒有時用頂層的 `security`）與 `securitySchemes`（2.0 為 `securityDefinitions`），只填入設定欄位，憑證留空。有多個可選的需求時，優先採用不需人工處理的方案；`{}`（可不驗證）在沒有其他可用方案時採用。
+
+| 規格中的認證 | `auth_type` | 說明 |
 |---|---|---|
-| `apiKey`（`in` 為 `header` 或 `query`） | `api_key` | `key_name`、`key_in` |
+| `apiKey`（`in` 為 `header`、`query` 或 `cookie`） | `api_key` | `key_name`、`key_in` |
 | `http` 的 `basic`、2.0 的 `basic` | `basic` | — |
 | `http` 的 `bearer` | `bearer` | — |
-| `oauth2` 的 `clientCredentials` flow、2.0 的 `application` flow | `oauth2_client_credentials` | `token_url`（`tokenUrl`）、`scope`（需求列出的 scopes，以空白分隔）、`client_auth` 為 `basic` |
-| `in: cookie` 的 `apiKey`、其他 OAuth flow、需同時滿足多個方案的需求 | `none` | — |
+| `oauth2` 的 `clientCredentials` flow、2.0 的 `application` flow | `oauth2_client_credentials` | `token_url`、`scope`（需求列出的 scopes）、`client_auth` 為 `basic` |
+| `oauth2` 的 `authorizationCode`、`implicit`、`password`、`deviceAuthorization`（2.0 的 `accessCode`）、`openIdConnect` | `bearer` | 需要使用者授權，AskMiao 不代為執行；`warnings` 提醒自行取得存取權杖後填入 |
+| 同一需求同時要求多個方案 | 第一個方案 | 其他 API Key 標頭或 Cookie 放進 `headers`（值留空，匯入後填入）；其他類型無法同時套用，列在 `warnings` |
+| `mutualTLS`、其他 `http` scheme（例如 `digest`） | `none` | 不支援，列在 `warnings` |
+
+`warnings`（文件層級與每個端點）列出無法完整匯入的部分，例如無法解析的參照、相對的伺服器位址、只能以文字送出的二進位主體、`webhooks` 與上述認證。
 
 | 狀態碼 | 情況 |
 |---|---|
-| `400` | 規格格式不合法（含使用 YAML 別名）、無法辨識版本或網址無法取得（訊息可直接顯示給使用者）；網址被 SSRF 防護拒絕時只說明遭拒並附錯誤代碼，完整原因只寫入伺服器日誌 |
+| `400` | 文件格式不合法（含使用 YAML 別名）、不支援的版本、Overlay 動作無效或網址無法取得（訊息可直接顯示給使用者）；網址被 SSRF 防護拒絕時只說明遭拒並附錯誤代碼，完整原因只寫入伺服器日誌 |
 | `500` | 其他未預期例外，只回傳錯誤代碼 |
+
+**Overlay**：依序執行 `actions`，`target` 為 RFC 9535 JSONPath（含篩選式與 `length`、`count`、`match`、`search`、`value` 函式）。`update` 合併到物件（同名欄位遞迴合併、陣列串接、純量取代）、附加到陣列或取代純量；`remove: true` 刪除選到的節點且優先於 `update`；1.1 起的 `copy` 把唯一選到的來源節點合併到目標；`components.actions` 可以 `$ref` 重用。選不到節點時視為成功；型別不符、選到的節點型別不一致或移除整份文件時回傳 `400`。
 
 ### 4.2 POST /api/api-tools/import
 
@@ -785,7 +831,7 @@ data: {"message_id": 108, "conversation_id": 42, "answer": "特休假需先在�
 
 | 欄位 | 型態 | 必填 | 說明 |
 |---|---|---|---|
-| `tools` | array | 是 | 端點清單，欄位同解析結果：`name`、`display_name`、`description`、`method`、`path`、`full_url`（必填），以及選填的 `base_url`、`headers`、`auth_type`、`auth_config`、`body_content_type`、`parameters_schema`、`request_body_schema`、`param_locations`、`spec_version` |
+| `tools` | array | 是 | 端點清單，欄位同解析結果：`name`、`display_name`、`description`、`method`、`path`、`full_url`（必填），以及選填的 `base_url`、`headers`、`auth_type`、`auth_config`、`body_content_type`、`parameters_schema`、`request_body_schema`、`param_locations`、`param_styles`、`workflow_definition`、`requires_approval`（只用於工作流程）、`spec_version` |
 | `global_base_url` | string | 否 | 端點沒有 `base_url` 時使用 |
 | `global_headers` | object | 否 | 共用標頭，端點的同名標頭優先 |
 | `global_auth_type` | string | 否 | 端點的 `auth_type` 為空或 `none` 時使用 |
@@ -793,7 +839,7 @@ data: {"message_id": 108, "conversation_id": 42, "answer": "特休假需先在�
 
 端點宣告的認證優先：前端匯入對話框的 Bearer Token 只會填進沒有宣告認證或宣告 Bearer 的端點，其他認證方式的憑證請在匯入後以 4.6 編輯工具填入。`auth_type` 或 `body_content_type` 不在允許的值中時回傳 `422`。
 
-新匯入的工具依方法決定 `requires_approval`（`GET`、`HEAD`、`OPTIONS` 以外為 `true`）。覆寫既有工具時，原本需要核准的仍維持需要核准；`headers` 保留已儲存的標頭，只以這次匯入帶有值的標頭新增或覆寫（含 `global_headers`）；`auth_config` 在認證方式相同時只以這次帶有值的欄位覆寫，認證方式不同時，只有原本未設定認證或這次帶了金鑰等憑證才會改用新的設定，否則保留原本的認證。空白的金鑰不會蓋掉已儲存的憑證。匯入後可以 4.6 修改。
+新匯入的工具依方法決定 `requires_approval`（`GET`、`HEAD`、`OPTIONS` 以外為 `true`）；Arazzo 工作流程依解析結果的 `requires_approval`（任一步驟的方法不是 `GET`、`HEAD`、`OPTIONS` 時為 `true`）。覆寫既有工具時，原本需要核准的仍維持需要核准；`headers` 保留已儲存的標頭，只以這次匯入帶有值的標頭新增或覆寫（含 `global_headers`）；`auth_config` 在認證方式相同時只以這次帶有值的欄位覆寫，認證方式不同時，只有原本未設定認證或這次帶了金鑰等憑證才會改用新的設定，否則保留原本的認證。空白的金鑰不會蓋掉已儲存的憑證。匯入後可以 4.6 修改。
 
 ```json
 {
@@ -865,6 +911,23 @@ data: {"message_id": 108, "conversation_id": 42, "answer": "特休假需先在�
 - 其他失敗時 `status_code` 為 `500`，只回傳 `error`（含錯誤代碼）與 `error_id`。
 - 自訂 API 工具、MCP HTTP 傳輸與 `web_fetch` 的直接抓取不使用 `HTTP_PROXY`、`HTTPS_PROXY` 環境變數，一律直接連線。
 - Agent 呼叫工具時套用相同的執行邏輯；`requires_approval` 為 `true` 時先經使用者核准，本端點（管理員測試）則不需要核准。
+- Arazzo 工作流程工具的 `result` 改為 `{"status_code": 200 或 502, "is_success", "duration_seconds", "workflow", "outputs", "steps": [{"workflow", "step", "status_code", "success", "url", "error"}], "error"}`，見 4.10。
+
+### 4.10 Arazzo 工作流程工具
+
+匯入 Arazzo 1.0／1.1 文件時，每個工作流程成為一個工具（名稱為 `workflow_<workflowId>`），參數是工作流程的 `inputs`（JSON Schema 2020-12）。`sourceDescriptions` 中 `type: openapi` 的來源會以 4.1 的規則下載並解析（相對位址依 Arazzo 文件網址解析）；`asyncapi`、`arazzo` 類型的來源與 AsyncAPI 訊息步驟不支援，列在 `warnings`，引用它們的步驟執行時失敗。
+
+執行時依序呼叫步驟，每一步都經過與一般工具相同的 SSRF 驗證、轉址規則、回應上限與憑證遮蔽，並使用工具設定的 `headers`、`auth_type`、`auth_config`（取自第一個步驟的操作；步驟使用不同認證時列在 `warnings`）：
+
+- **步驟目標**：`operationId`（可加 `$sourceDescriptions.<來源>.` 前綴）、`operationPath`（`{$sourceDescriptions.<來源>.url}#/paths/~1…/<方法>`），或同一份文件中的 `workflowId`（子工作流程，最多 5 層）。
+- **參數與主體**：工作流程與步驟的 `parameters` 合併（步驟優先，`$components.parameters` 可重用並覆寫 `value`），依名稱與位置對應到操作的參數並套用其 style；`requestBody.payload` 中的執行期運算式與 `{$…}` 嵌入會先代入，再套用 `replacements`（JSON Pointer 或 JSONPath），整份送出。
+- **執行期運算式**：`$url`、`$method`、`$statusCode`、`$self`、`$request.header|query|path|body`、`$response.header|body`（可加 `#/JSON Pointer`）、`$inputs`、`$outputs`、`$steps.<id>.outputs`、`$workflows.<id>.inputs|outputs`、`$sourceDescriptions.<來源>.url`、`$components.<類別>.<名稱>`；Selector Object 支援 `jsonpath` 與 `jsonpointer`。
+- **成功條件**：`successCriteria` 全部成立才算成功；沒有條件時以 2xx 判定。`simple` 條件支援 `== != < <= > >= ! && || ()` 與 `[n]`、`.欄位`，字串比較不分大小寫；`regex` 比對上下文的前 20,000 字；`jsonpath` 以 RFC 9535 查詢上下文，結果非空即成立；`xpath` 不支援，一律不成立。
+- **後續動作**：`onSuccess`／`onFailure`（找不到時用工作流程的 `successActions`／`failureActions`）依序取第一個條件成立的動作：`end` 結束、`goto` 跳到步驟或執行另一個工作流程、`retry` 等待 `retryAfter` 秒（回應有數字的 `Retry-After` 時優先，最多 30 秒）後重試，最多 `retryLimit` 次（預設 1），用完後改看下一個動作。失敗且沒有可用動作時工作流程失敗。
+- **上限**：一次執行最多 50 個步驟（含重試與 `goto`，避免迴圈）、總時長 300 秒；步驟的 `timeout`（毫秒）取代工具的逾時。
+- **輸出**：成功時回傳工作流程的 `outputs`；`steps` 依序列出每一次步驟呼叫的結果，`dependsOn` 的工作流程會先執行。
+
+核准卡片的目標會列出所有步驟的方法與主機，例如 `Arazzo 工作流程：GET api.example.com、POST api.example.com`。
 
 ---
 
@@ -1094,17 +1157,9 @@ Agent 以漸進揭露使用技能：有啟用且檔案存在的技能時，[`GET
 
 ---
 
-## 7. 模型清單 `/api/tags`
+## 7. 模型清單（已移除）
 
-相容 Ollama `tags` 格式的模型清單，不需要登入。原本的 `GET /api/external-tags` 已移除。
-
-### 7.1 GET /api/tags
-
-回傳 `.env` 設定的系統模型清單與預設模型（見 [設定參考：模型清單](configuration.md#模型清單)），欄位名稱為 `tags`；聊天不使用這份清單，帳號可用的模型見 [2.2](#22-get-apichatmodels)。沒有設定任何模型來源（`AVAILABLE_MODELS` 或雲端金鑰）時，向 `EXTERNAL_TAGS_URL`（或 `{LLM_API_BASE}/api/tags`）查詢遠端清單；查詢失敗時回傳空清單。遠端查詢在執行緒中進行，結果（含失敗）快取 30 秒，同一時間只有一個查詢在進行，匿名請求不會每次都觸發對外連線。
-
-```json
-{"tags": ["gpt-6-sol", "gpt-6-luna"], "default": "gpt-6-sol"}
-```
+`GET /api/tags` 已移除：它只回傳 `.env` 設定的系統模型清單，而 `.env` 不再設定任何模型商。帳號可用的模型見 [2.2](#22-get-apichatmodels)，文件摘要與 PDF OCR 使用的模型見 [8.6](#86-系統模型)。
 
 ---
 
@@ -1213,7 +1268,18 @@ Agent 以漸進揭露使用技能：有啟用且檔案存在的技能時，[`GET
 - `PUT /api/admin/llm-connections/{connection_id}`：只更新有帶的欄位，`allowed_user_ids` 的規則同上。
 - `DELETE /api/admin/llm-connections/{connection_id}`：刪除連線，所有帳號都無法再使用。
 
-共用連線的 API 位址不受公開位址的限制，可以指向內部網路（例如本機 Ollama）。新增、更新與刪除會以 `ADMIN_LLM_CONNECTION_*` 寫入安全日誌。
+共用連線的 API 位址不受公開位址的限制，可以指向內部網路（例如本機 Ollama）。新增、更新與刪除會以 `ADMIN_LLM_CONNECTION_*` 寫入安全日誌。更新後不再提供某個系統模型所用的模型，或刪除連線時，該用途的指定會一併取消（見 8.6）。
+
+### 8.6 系統模型
+
+文件摘要與掃描 PDF 的 OCR 由系統代為呼叫模型，各自指定一條共用連線與其中一個模型（見 [設定參考：系統模型](configuration.md#系統模型)）。
+
+- `GET /api/admin/system-models`：`{"document_summary": 指定, "pdf_ocr": 指定}`，指定為 `{"connection_id": 1, "model_name": "gemma3:12b", "reasoning_effort": "none"}` 或 `null`（未指定）。
+- `PUT /api/admin/system-models`：主體同回應格式，兩個鍵都必須帶（缺少時回傳 `422`），`null` 表示取消指定。指定的三個欄位都必填，`reasoning_effort` 為 `none`、`minimal`、`low`、`medium`、`high`、`xhigh`、`max` 之一，其他值回傳 `422`。連線不存在、不是共用連線，或模型不在該連線的模型清單內時回傳 `400`，兩個用途都不會變更。成功後回傳新的指定，並以 `ADMIN_SYSTEM_MODELS_UPDATED` 寫入安全日誌。
+
+```json
+{"document_summary": {"connection_id": 3, "model_name": "qwen3:8b", "reasoning_effort": "none"}, "pdf_ocr": null}
+```
 
 ---
 
@@ -1255,6 +1321,8 @@ Agent 以漸進揭露使用技能：有啟用且檔案存在的技能時，[`GET
 }
 ```
 
+每個回應都帶 `X-Request-ID` 標頭，聊天串流的 `error` 事件與工具清單的 `partial` 回應另附同一個 `request_id`。依錯誤代碼找到日誌行後，再以該行方括號中的請求 ID 搜尋，就能看到同一個請求的存取紀錄、模型與工具呼叫（見 [架構說明：日誌](architecture.md#日誌與請求追蹤)）。
+
 只描述使用者輸入本身的驗證錯誤（例如 OpenAPI 規格格式不合法）則直接回傳可據以修正的訊息。SSRF 防護的拒絕原因可能含伺服器端解析出的內網 IP 或轉址目標，因此 `parse-spec`、自訂 API 工具與 `web_fetch` 遭拒時只說明「SSRF 防護拒絕連線」並附錯誤代碼，完整原因只寫入伺服器日誌。
 
 ### 常見狀態碼
@@ -1282,7 +1350,6 @@ Agent 以漸進揭露使用技能：有啟用且檔案存在的技能時，[`GET
 
 以下是目前的現況，整合時請留意：
 
-- `GET /api/tags` 不需要登入（`GET /api/chat/models` 與 `GET /api/chat/tools` 已改為需要登入）。部署在公開網路時，請在反向代理層限制存取。
 - 存取權杖回應的 `expires_in` 固定為 `1800`，不隨 `ACCESS_TOKEN_EXPIRE_MINUTES` 變動。
 - 權杖撤銷名單、速率限制計數、登入失敗節流的計數與暫停狀態、每位使用者的同時串流數與待核准的工具呼叫都存在單一後端行程的記憶體中；多行程或多台部署時彼此不共享，後端重啟後清空（暫停中的登入隨即解除）。速率限制追蹤的來源 IP 最多 10,000 個，最久未活動的先淘汰；登入節流追蹤的登入識別與來源 IP 也各最多 10,000 個，最久沒有新失敗的先淘汰。
 - 速率限制與登入節流都依來源 IP 計算：未設定 `FORWARDED_ALLOW_IPS` 時，經由 Vite 開發代理或反向代理連線的所有使用者共用同一個來源 IP，除了共用速率限制的額度，依位址的登入失敗次數也一起累計，達到門檻時經由該代理的所有登入都會暫停。

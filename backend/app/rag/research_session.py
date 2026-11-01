@@ -10,9 +10,12 @@ from app.core.limits import MAX_TOOL_RESULT_CHARS
 from app.rag.tools import SKILL_SCRIPT_TOOL_NAME, SKILL_TOOL_NAMES, WEB_TOOL_NAMES
 
 # 答案中的引用標記：[1]、[1,2]、[1，2]、[1、2]；[1][2] 會被視為兩個標記
-CITATION_PATTERN = re.compile(r"\[(\d+(?:\s*[,，、]\s*\d+)*)\]")
+CITATION_NUMBERS = r"\d+(?:\s*[,，、]\s*\d+)*"
+CITATION_PATTERN = re.compile(rf"\[({CITATION_NUMBERS})\]")
 CITATION_SEPARATOR = re.compile(r"\s*[,，、]\s*")
-CODE_OR_CITATION_PATTERN = re.compile(r"(?P<code>```[\s\S]*?(?:```|\Z)|~~~[\s\S]*?(?:~~~|\Z)|`[^`\n]+`)|" + CITATION_PATTERN.pattern)
+CODE_SPAN = r"(?P<code>```[\s\S]*?(?:```|\Z)|~~~[\s\S]*?(?:~~~|\Z)|`[^`\n]+`)"
+CODE_OR_CITATION_PATTERN = re.compile(CODE_SPAN + "|" + CITATION_PATTERN.pattern)
+CODE_OR_SPACED_CITATION_PATTERN = re.compile(CODE_SPAN + rf"|(?P<space>[ \t]*)\[(?P<numbers>{CITATION_NUMBERS})\]")
 SNIPPET_LENGTH = 200
 # 從來源文字抽出完整網址記號；網址結尾常接的標點與全形文字不屬於網址
 URL_TOKEN_PATTERN = re.compile(r"https?://[^\s<>\"'`]+", re.IGNORECASE)
@@ -240,3 +243,14 @@ class ResearchSession:
                 if number in self._citation_details and number not in ordered:
                     ordered.append(number)
         return [self._citation_details[number] for number in ordered]
+
+    def drop_unknown_citations(self, answer: str) -> str:
+        def replace(match: "re.Match[str]") -> str:
+            if match.group("code"):
+                return match.group("code")
+            numbers = [int(part) for part in CITATION_SEPARATOR.split(match.group("numbers"))]
+            known = [number for number in numbers if number in self._citation_details]
+            if len(known) == len(numbers):
+                return match.group(0)
+            return match.group("space") + "".join(f"[{number}]" for number in known) if known else ""
+        return CODE_OR_SPACED_CITATION_PATTERN.sub(replace, answer)

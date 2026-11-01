@@ -83,6 +83,9 @@ class FakeSession:
     def query(self, model):
         return FakeQuery(self.result)
 
+    def get(self, model, key):
+        return None
+
     def add(self, obj):
         pass
 
@@ -206,7 +209,7 @@ async def test_rebuild_index_endpoint_regenerates_chunks(rag, session_factory, m
                         file_type="text/plain", description=None, uploaded_by=1),
     ]
 
-    async def fake_summary(filename, content, file_type="", extraction=None):
+    async def fake_summary(filename, content, file_type, extraction, model):
         return f"summary of {filename}"
 
     for doc in db_documents:
@@ -235,7 +238,7 @@ async def test_rebuild_index_reports_failed_documents_and_keeps_the_others_searc
                         file_type="text/plain", description=None, uploaded_by=1),
     ]
 
-    async def summary_failing_for_leave(filename, content, file_type="", extraction=None):
+    async def summary_failing_for_leave(filename, content, file_type, extraction, model):
         if filename == "rag_test_missing_leave.txt":
             raise RuntimeError("summary model crashed")
         return f"summary of {filename}"
@@ -266,7 +269,7 @@ async def test_rebuild_index_reextracts_structured_files_into_record_chunks(rag,
     ]
     summaries = []
 
-    async def fake_summary(filename, content, file_type="", extraction=None):
+    async def fake_summary(filename, content, file_type, extraction, model):
         summaries.append(extraction)
         return f"summary of {filename}"
 
@@ -297,7 +300,7 @@ async def test_rebuild_index_keeps_existing_summaries(rag, session_factory, monk
                         file_type="text/plain", description="  ", uploaded_by=1),
     ]
 
-    async def fake_summary(filename, content, file_type="", extraction=None):
+    async def fake_summary(filename, content, file_type, extraction, model):
         return f"summary of {filename}"
 
     for doc in db_documents:
@@ -625,6 +628,56 @@ def test_evaluate_retrieval_cli_compares_relevance_thresholds(make_rag, session_
     assert exit_code == 0
     assert "門檻 0.5：MRR 1.000　hit@1 1.000　反例拒絕率 0.000" in out
     assert "門檻 0.95：MRR 0.000　hit@1 0.000　反例拒絕率 1.000" in out
+
+
+def test_evaluate_retrieval_cli_builds_corpus_without_touching_live_indices(index_dir, monkeypatch, capsys, tmp_path):
+    corpus = tmp_path / "corpus"
+    corpus.mkdir()
+    (corpus / "leave.md").write_text(LEAVE, encoding="utf-8")
+    (corpus / "overtime.md").write_text(OVERTIME, encoding="utf-8")
+    golden = tmp_path / "golden.jsonl"
+    golden.write_text(
+        json.dumps({"query": "seniority", "relevant_sources": ["leave.md"], "relevant_passages": ["depends on seniority"]}) + "\n",
+        encoding="utf-8",
+    )
+    live_paths = (settings.FAISS_INDEX_PATH, settings.BM25_INDEX_DIR)
+    cli = load_evaluate_cli()
+
+    def unavailable_database():
+        raise AssertionError("--corpus 不應連線正式資料庫")
+
+    monkeypatch.setattr(cli, "SessionLocal", unavailable_database)
+    monkeypatch.setattr(sys, "argv", [
+        "evaluate_retrieval.py", "--corpus", str(corpus), "--golden", str(golden), "--k", "1", "--min-passage-ndcg", "1.0",
+    ])
+
+    exit_code = cli.main()
+
+    out = capsys.readouterr().out
+    assert exit_code == 0
+    assert "precision@1：1.000　nDCG@1：1.000　recall@1：1.000" in out
+    assert not any(os.path.exists(path) for path in live_paths)
+
+
+def test_evaluate_retrieval_cli_fails_when_passage_ndcg_is_below_minimum(index_dir, monkeypatch, capsys, tmp_path):
+    corpus = tmp_path / "corpus"
+    corpus.mkdir()
+    (corpus / "leave.md").write_text(LEAVE, encoding="utf-8")
+    golden = tmp_path / "golden.jsonl"
+    golden.write_text(
+        json.dumps({"query": "seniority", "relevant_sources": ["leave.md"], "relevant_passages": ["depends on seniority"]}) + "\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(settings, "RERANK_RELEVANCE_THRESHOLD", 0.95)
+    cli = load_evaluate_cli()
+    monkeypatch.setattr(sys, "argv", [
+        "evaluate_retrieval.py", "--corpus", str(corpus), "--golden", str(golden), "--k", "1", "--min-passage-ndcg", "0.5",
+    ])
+
+    exit_code = cli.main()
+
+    assert exit_code == 1
+    assert "片段層級 nDCG@1 0.000 低於門檻 0.5" in capsys.readouterr().out
 
 
 @pytest.mark.asyncio

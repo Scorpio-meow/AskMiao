@@ -5,7 +5,7 @@ import logging
 import hashlib
 import re
 import zipfile
-from typing import Optional
+from typing import Callable, Optional
 from lxml import etree
 from docx import Document as DocxDocument
 from docx.table import Table as DocxTable
@@ -16,6 +16,7 @@ from app.core.config import settings
 from app.core.domain_profile import domain_profile
 from app.core.html_text import extract_text_and_title
 from app.core.limits import MAX_OOXML_COMPRESSION_RATIO, MAX_SUMMARY_FIELD_NAMES, OOXML_RATIO_CHECK_MIN_BYTES, ExtractionLimits
+from app.services.system_models import SystemModelTarget
 from app.services.structured_data import (
     KIND_LABELS,
     TREE_TEXT_EXTENSIONS,
@@ -151,16 +152,20 @@ class DocumentProcessor:
         return sha256_hash.hexdigest()
     
     @staticmethod
-    def extract_text_from_file(file_path: str, content_type: str, limits: ExtractionLimits) -> Optional[str]:
-        """limits：本次抽取的資源預算，管理員上傳與聊天附件各用 app.core.limits 中的一組"""
-        return DocumentProcessor.extract_document(file_path, content_type, limits).text
+    def extract_text_from_file(
+        file_path: str, content_type: str, limits: ExtractionLimits, ocr: Optional[Callable[[bytes], str]]
+    ) -> Optional[str]:
+        """limits：本次抽取的資源預算，管理員上傳與聊天附件各用 app.core.limits 中的一組；ocr：PDF 掃描頁的 OCR，None 表示不做"""
+        return DocumentProcessor.extract_document(file_path, content_type, limits, ocr).text
 
     @staticmethod
     def stored_text_extraction(filename: str, content: str) -> ExtractionResult:
         return plain_result(content, is_data_format(filename), None)
 
     @staticmethod
-    def extract_document(file_path: str, content_type: str, limits: ExtractionLimits) -> ExtractionResult:
+    def extract_document(
+        file_path: str, content_type: str, limits: ExtractionLimits, ocr: Optional[Callable[[bytes], str]]
+    ) -> ExtractionResult:
         try:
             ext = os.path.splitext(file_path)[1].lower()
             
@@ -186,7 +191,7 @@ class DocumentProcessor:
             if file_size > max_size:
                 raise DocumentRejected(f"檔案大小 ({file_size} bytes) 超過限制")
             if ext == ".pdf" or content_type == "application/pdf":
-                return plain_result(DocumentProcessor._extract_from_pdf(file_path, limits.max_ocr_pages), False, None)
+                return plain_result(DocumentProcessor._extract_from_pdf(file_path, limits.max_ocr_pages, ocr), False, None)
             elif ext == ".docx" or content_type == "application/vnd.openxmlformats-officedocument.wordprocessingml.document":
                 DocumentProcessor._check_ooxml_archive(file_path, limits, builds_dom=True)
                 return plain_result(DocumentProcessor._extract_from_docx(file_path), False, None)
@@ -293,9 +298,9 @@ class DocumentProcessor:
         return extracted or raw_text
     
     @staticmethod
-    def _extract_from_pdf(file_path: str, max_ocr_pages: Optional[int]) -> str:
+    def _extract_from_pdf(file_path: str, max_ocr_pages: Optional[int], ocr: Optional[Callable[[bytes], str]]) -> str:
         from app.services.pdf_service import PDFService
-        return PDFService.extract_text_robust(file_path, max_ocr_pages=max_ocr_pages)
+        return PDFService.extract_text_robust(file_path, max_ocr_pages=max_ocr_pages, ocr=ocr)
     
     @staticmethod
     def _extract_from_docx(file_path: str) -> str:
@@ -397,14 +402,21 @@ class DocumentProcessor:
         return overview
     @classmethod
     async def generate_document_summary_async(
-        cls, filename: str, content: str, file_type: str = "", extraction: Optional[ExtractionResult] = None
+        cls,
+        filename: str,
+        content: str,
+        file_type: str,
+        extraction: Optional[ExtractionResult],
+        model: Optional[SystemModelTarget],
     ) -> str:
         """
-        使用 LLM 智能生成專業、結構化、流暢且具高資訊密度的繁體中文「文件主題與大綱摘要」。
-        若 LLM 呼叫超時或發生異常，自動降級調用高品質的啟發式規則分析器。
+        以管理員指定的文件摘要系統模型生成繁體中文「文件主題與大綱摘要」。
+        未指定系統模型，或模型呼叫超時、發生異常時，改用啟發式規則分析器。
         """
         if not content or not content.strip():
             return f"收錄內部文件《{filename}》。"
+        if model is None:
+            return cls._generate_fallback_summary(filename, content, file_type, extraction)
         overview = cls._records_overview(extraction)
         stripped = content.strip()
         if len(stripped) <= 2800:
@@ -429,14 +441,12 @@ class DocumentProcessor:
             + f"[內容摘錄]\n{sample_content}"
         )
         try:
-            from app.core.llm_client import call_llm, resolve_model_name, system_endpoint
-            from app.api.tags import models_and_default
-            _, default_model = await models_and_default()
-            model = resolve_model_name(default_model or None)
+            from app.core.llm_client import call_llm
             response = await call_llm(
                 messages=[{"role": "user", "content": prompt}],
-                endpoint=system_endpoint(model),
-                model_name=model
+                endpoint=model.endpoint,
+                model_name=model.model_name,
+                reasoning_effort=model.reasoning_effort
             )
             cleaned = response.strip()
             for prefix in ("好的，", "這是該文件的摘要：", "這是一份", "文件摘要：", "摘要：", "以下是"):
@@ -445,7 +455,7 @@ class DocumentProcessor:
             if cleaned and len(cleaned) >= 20:
                 return cleaned
         except Exception as e:
-            logger.warning(f"使用 LLM 生成文件大綱摘要失敗 ({e})，切換至規則解析器降級處理")
+            logger.warning(f"使用 LLM 生成文件大綱摘要失敗 ({type(e).__name__}: {e})，切換至規則解析器降級處理")
         return cls._generate_fallback_summary(filename, content, file_type, extraction)
     @classmethod
     def generate_document_summary(cls, filename: str, content: str, file_type: str = "") -> str:

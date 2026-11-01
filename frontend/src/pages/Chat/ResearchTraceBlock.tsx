@@ -10,20 +10,19 @@ export interface ResearchTraceBlockProps {
 interface ToolDisplayInfo {
   label: string;
   icon: IconName;
-  toneClass: string;
 }
 const getToolDisplayInfo = (toolName: string): ToolDisplayInfo => {
   switch (toolName) {
     case 'search_knowledge_base':
-      return { label: '檢索內部知識庫', icon: 'menu-book', toneClass: styles.toneKnowledge };
+      return { label: '檢索內部知識庫', icon: 'menu-book' };
     case 'filter_and_count_records':
-      return { label: '結構化統計與篩選', icon: 'analytics', toneClass: styles.toneRecords };
+      return { label: '結構化統計與篩選', icon: 'analytics' };
     case 'web_search':
-      return { label: '外部聯網搜尋', icon: 'language', toneClass: styles.toneSearch };
+      return { label: '外部聯網搜尋', icon: 'language' };
     case 'web_fetch':
-      return { label: '深度閱讀網頁', icon: 'article', toneClass: styles.toneFetch };
+      return { label: '深度閱讀網頁', icon: 'article' };
     default:
-      return { label: toolName, icon: 'code', toneClass: styles.toneDefault };
+      return { label: toolName, icon: 'code' };
   }
 };
 // 研究軌跡的參數由模型產生，可能是任何 JSON 型別；物件直接當成 React 子元素會讓整個對話頁面崩潰，
@@ -45,6 +44,38 @@ const formatStepQueryParam = (step: ResearchTraceStep): string => {
     if (parts.length > 0) return parts.join(' | ');
   }
   return toDisplayText(fields.query) || toDisplayText(fields.url);
+};
+const StepStatus: React.FC<{ status: ResearchTraceStep['status'] }> = ({ status }) => {
+  if (status === 'running') {
+    return (
+      <span className={`${styles.stepStatus} ${styles.statusRunning}`}>
+        <Spinner size={14} color="var(--color-primary)" aria-hidden="true" />
+        <span className="sr-only">進行中</span>
+      </span>
+    );
+  }
+  if (status === 'error') {
+    return (
+      <span className={`${styles.stepStatus} ${styles.statusError}`}>
+        <Icon name="error" size={16} />
+        <span className="sr-only">失敗</span>
+      </span>
+    );
+  }
+  if (status === 'interrupted') {
+    return (
+      <span className={`${styles.stepStatus} ${styles.statusUnknown}`}>
+        <Icon name="help" size={16} />
+        <span className="sr-only">結果不明</span>
+      </span>
+    );
+  }
+  return (
+    <span className={`${styles.stepStatus} ${styles.statusSuccess}`}>
+      <Icon name="check-circle" size={16} />
+      <span className="sr-only">完成</span>
+    </span>
+  );
 };
 export const ResearchTraceBlock: React.FC<ResearchTraceBlockProps> = ({
   trace,
@@ -73,6 +104,7 @@ export const ResearchTraceBlock: React.FC<ResearchTraceBlockProps> = ({
   };
   const activeStep = trace.find(s => s.status === 'running') || trace[trace.length - 1];
   const activeToolInfo = activeStep ? getToolDisplayInfo(activeStep.tool) : null;
+  const failedCount = trace.filter(s => s.status === 'error').length;
   return (
     <div className={`${styles.container} ${hasRunningStep ? styles.containerActive : ''}`}>
       <button
@@ -82,98 +114,65 @@ export const ResearchTraceBlock: React.FC<ResearchTraceBlockProps> = ({
         aria-expanded={isOpen}
         aria-controls={stepListId}
       >
-        <span className={styles.titleArea}>
+        <span className={styles.headerIcon} aria-hidden="true">
           {hasRunningStep ? (
-            <Spinner size={16} color="var(--color-primary)" aria-hidden="true" />
+            <Spinner size={14} color="var(--color-primary)" />
           ) : (
-            <Icon name="search" size={18} color="var(--color-primary)" />
+            <Icon name="search" size={16} />
           )}
-          <span className={styles.titleText}>
-            {hasRunningStep
-              ? `AI 自主研究中：${activeToolInfo?.label || '執行中'} (步驟 ${activeStep.step})`
-              : `AI 自主研究歷程 (${trace.length} 個步驟)`}
-          </span>
         </span>
-        <span className={styles.metaArea}>
-          <span className={styles.stepsChipRow} aria-hidden="true">
-            {trace.map((step, idx) => {
-              const info = getToolDisplayInfo(step.tool);
-              const isStepRunning = step.status === 'running';
-              return (
-                <span
-                  key={idx}
-                  className={`${styles.stepChip} ${info.toneClass} ${isStepRunning ? styles.stepChipRunning : ''} ${step.status === 'error' ? styles.stepChipError : ''}`}
-                >
-                  S{step.step}
-                </span>
-              );
-            })}
-          </span>
-          <span className={`${styles.chevron} ${isOpen ? styles.chevronOpen : ''}`} aria-hidden="true">
-            <Icon name="expand-more" size={16} />
-          </span>
+        <span className={styles.titleText}>
+          {hasRunningStep
+            ? `研究中：${activeToolInfo?.label || '執行中'}（步驟 ${activeStep.step}）`
+            : `研究過程（${trace.length} 個步驟）`}
+        </span>
+        {!hasRunningStep && failedCount > 0 && (
+          <span className={styles.failedCount}>{failedCount} 個失敗</span>
+        )}
+        <span className={styles.stepDots} aria-hidden="true">
+          {trace.map((step, idx) => (
+            <span
+              key={idx}
+              className={`${styles.stepDot} ${step.status === 'running' ? styles.stepDotRunning : ''} ${step.status === 'error' ? styles.stepDotError : ''}`}
+            />
+          ))}
+        </span>
+        <span className={`${styles.chevron} ${isOpen ? styles.chevronOpen : ''}`} aria-hidden="true">
+          <Icon name="expand-more" size={16} />
         </span>
       </button>
       <Collapse in={isOpen} id={stepListId}>
-        <div className={styles.divider} />
         <ol className={styles.stepList} role="list">
           {trace.map((step: ResearchTraceStep, index: number) => {
             const toolInfo = getToolDisplayInfo(step.tool);
             const queryParam = formatStepQueryParam(step);
             const outputPreview = toDisplayText(step.output_preview);
             const isStepRunning = step.status === 'running';
-            const isStepError = step.status === 'error';
             return (
-              <li
-                key={index}
-                className={`${styles.stepItem} ${isStepRunning ? styles.stepItemRunning : ''}`}
-              >
-                <div className={styles.stepHeader}>
-                  <div className={styles.stepTitle}>
-                    <span className={`${styles.toolIcon} ${toolInfo.toneClass}`}>
-                      <Icon name={toolInfo.icon} size={16} />
+              <li key={index} className={styles.stepItem}>
+                <StepStatus status={step.status} />
+                <div className={styles.stepBody}>
+                  <div className={styles.stepHeader}>
+                    <span className={styles.stepTitle}>
+                      <Icon name={toolInfo.icon} size={14} className={styles.toolIcon} />
+                      <span>步驟 {step.step}：{toolInfo.label}</span>
                     </span>
-                    <span>
-                      步驟 {step.step}：{toolInfo.label}
-                      {isStepRunning && <span className={styles.runningBadge}>進行中</span>}
-                    </span>
-                  </div>
-                  <div className={styles.stepMeta}>
                     {step.duration_seconds !== undefined && !isStepRunning && (
                       <span className={styles.duration}>{step.duration_seconds}s</span>
                     )}
-                    {isStepRunning ? (
-                      <Spinner size={14} color="var(--color-primary)" aria-hidden="true" />
-                    ) : isStepError ? (
-                      <span className={styles.statusError}>
-                        <Icon name="error" size={14} />
-                        <span className="sr-only">失敗</span>
-                      </span>
-                    ) : step.status === 'interrupted' ? (
-                      <span className={styles.statusUnknown}>
-                        <Icon name="help" size={14} />
-                        <span className="sr-only">結果不明</span>
-                      </span>
-                    ) : (
-                      <span className={styles.statusSuccess}>
-                        <Icon name="check-circle" size={14} />
-                        <span className="sr-only">完成</span>
-                      </span>
-                    )}
                   </div>
+                  {queryParam && (
+                    <p className={styles.queryText}>
+                      <span className={styles.queryLabel}>關鍵字/目標：</span>
+                      {queryParam}
+                    </p>
+                  )}
+                  {outputPreview && (
+                    <pre className={styles.outputPreview} tabIndex={0}>
+                      {outputPreview}
+                    </pre>
+                  )}
                 </div>
-                {queryParam && (
-                  <div className={styles.queryBox}>
-                    <span className={styles.queryText}>
-                      關鍵字/目標: {queryParam}
-                    </span>
-                  </div>
-                )}
-                {outputPreview && (
-                  <pre className={styles.outputPreview}>
-                    {outputPreview}
-                  </pre>
-                )}
               </li>
             );
           })}

@@ -4,6 +4,8 @@
 
 > How to upgrade an existing deployment to a new release, with rollback steps and troubleshooting. See the [CHANGELOG](../CHANGELOG_en.md) for the full list of changes in each version.
 
+- [Upgrading from 7.0.0 to 8.0.0](#upgrading-from-700-to-800)
+  - [New required `.env` settings](#new-required-env-settings)
 - [Upgrading from 6.0.0 to 7.0.0](#upgrading-from-600-to-700)
   - [7.0.0 changes and required actions](#700-changes-and-required-actions)
   - [Upgrade steps for 7.0.0](#upgrade-steps-for-700)
@@ -34,6 +36,20 @@
   - [Step 5: verify the upgrade](#step-5-verify-the-upgrade)
   - [Rolling back to 2.2.x](#rolling-back-to-22x)
   - [Troubleshooting](#troubleshooting)
+
+---
+
+## Upgrading from 7.0.0 to 8.0.0
+
+For upgrading from 7.0.0 to 8.0.0 (2026-11-02); see the [CHANGELOG](../CHANGELOG_en.md#800---2026-11-02) for the full list of changes, including the migration steps now that `.env` no longer configures model providers. This section lists the new required `.env` settings.
+
+### New required `.env` settings
+
+| Setting | 7.0.0 | 8.0.0 | Action |
+|---|---|---|---|
+| `LOG_DIR` | None; `app.log` goes to `backend/logs/` and `security.log` to `logs/` under the startup directory | Required; the directory of `app.log` and `security.log`, with a relative path resolving against `backend/` | Add `LOG_DIR=logs` to `.env`, or the backend will not start |
+
+For Docker deployments, add the same line to `deploy/.env`: inside the container it points to `/app/logs`, the same place as the `backend_logs` volume in `deploy/docker-compose.yml`.
 
 ---
 

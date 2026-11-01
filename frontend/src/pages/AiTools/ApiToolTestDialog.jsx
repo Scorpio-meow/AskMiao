@@ -1,10 +1,11 @@
 import { useState } from 'react';
 import { apiToolService } from '../../services/api';
 import { Button, Dialog, DialogActions, DialogContent, DialogTitle, Icon } from '../../components/ui';
+import { MethodBadge } from './CatalogParts';
 import { emptyTestArgs } from './forms';
-import { getMethodClass, getRequestErrorMessage } from './shared';
+import { getRequestErrorMessage } from './shared';
+import { TestArgsFields, TestResult } from './ToolTestParts';
 import styles from './AiTools.module.css';
-/** 以輸入的參數實際送出一次自訂 API 工具的請求 */
 export default function ApiToolTestDialog({ tool, onClose }) {
   const [args, setArgs] = useState(() => emptyTestArgs(tool.parameters_schema));
   const [testing, setTesting] = useState(false);
@@ -26,62 +27,36 @@ export default function ApiToolTestDialog({ tool, onClose }) {
   };
   return (
     <Dialog open onClose={onClose} maxWidth="lg">
-      <DialogTitle onClose={onClose}>
-        即時線上測試：{tool.display_name} ({tool.name})
+      <DialogTitle onClose={onClose} subtitle={tool.name}>
+        即時線上測試：{tool.display_name}
       </DialogTitle>
       <DialogContent className={styles.dialogBody}>
-        <div className={styles.specBlock}>
-          <div className={styles.specLabel}>
-            <span className={`${styles.methodBadge} ${getMethodClass(tool.method)}`}>
-              {tool.method}
-            </span>
-            <span className={styles.monoText}>{tool.url}</span>
-          </div>
+        <div className={styles.requestLine}>
+          <MethodBadge method={tool.method}>{tool.method}</MethodBadge>
+          <span className={styles.requestTarget}>{tool.url}</span>
         </div>
-        <fieldset className={styles.formFieldset}>
-          <legend className={styles.formLabel}>測試輸入參數 (Arguments)</legend>
-          {Object.keys(tool.parameters_schema?.properties || {}).length === 0 ? (
-            <p className={styles.mutedNote}>此 API 無須輸入額外參數</p>
-          ) : (
-            Object.entries(tool.parameters_schema?.properties || {}).map(([pName, pObj]) => {
-              const inputId = `tool-arg-${pName}`;
-              const isRequired = tool.parameters_schema?.required?.includes(pName);
-              return (
-                <div key={pName} className={styles.argField}>
-                  <label className={styles.argLabel} htmlFor={inputId}>
-                    {pName}{isRequired && <span className={styles.paramRequired} aria-hidden="true">*</span>}
-                    <span className={styles.argHint}>({pObj.description || pObj.type})</span>
-                  </label>
-                  <input
-                    id={inputId}
-                    type="text"
-                    className={styles.formInput}
-                    value={args[pName] || ''}
-                    onChange={(e) => setArgs({ ...args, [pName]: e.target.value })}
-                    required={isRequired}
-                    autoComplete="off"
-                  />
-                </div>
-              );
-            })
-          )}
-        </fieldset>
-        {result && (
-          <div className={styles.formGroup} aria-live="polite">
-            <div className={styles.resultHeader}>
-              <span className={styles.formLabel}>API 回應結果 (Response)</span>
-              <span className={result.is_success ? styles.resultSuccess : styles.resultError}>
-                {result.is_success ? '成功' : '失敗'}｜狀態碼 {result.status_code}
-                {result.duration_seconds !== undefined && `｜耗時 ${result.duration_seconds}s`}
-              </span>
-            </div>
-            <pre className={styles.jsonViewer}>
-              {typeof result.data === 'object'
+        <TestArgsFields
+          idPrefix="tool-arg"
+          schema={tool.parameters_schema}
+          args={args}
+          onChange={setArgs}
+          emptyText="此 API 無須輸入額外參數"
+        />
+        <div aria-live="polite">
+          {result && (
+            <TestResult
+              title="API 回應結果"
+              success={result.is_success}
+              facts={[
+                `狀態碼 ${result.status_code}`,
+                ...(result.duration_seconds !== undefined ? [`耗時 ${result.duration_seconds}s`] : []),
+              ]}
+              body={typeof result.data === 'object'
                 ? JSON.stringify(result.data, null, 2)
                 : String(result.data || result.error || '')}
-            </pre>
-          </div>
-        )}
+            />
+          )}
+        </div>
       </DialogContent>
       <DialogActions>
         <Button variant="secondary" onClick={onClose}>

@@ -1,22 +1,29 @@
 """
-檢索品質評估：以線上實際使用的檢索流程（重排後套用相關性門檻），對標準問答集計算文件層級的 hit@k、recall@k 與 MRR。
+檢索品質評估：以線上實際使用的檢索流程（重排後套用相關性門檻），對標準問答集計算文件層級的 hit@k、recall@k 與 MRR，
+有標註原文片段的題目另計片段層級的 precision@k、nDCG@k、recall@k、MRR 與候選召回。
 
 標準問答集為 JSONL，每行一個案例：
-    {"query": "特休假怎麼計算？", "relevant_sources": ["員工手冊.pdf"]}
+    {"query": "特休假怎麼計算？", "relevant_sources": ["員工手冊.pdf"], "relevant_passages": ["滿 1 年未滿 2 年：7 日"]}
 relevant_sources 填知識庫中文件的檔名（與上傳後的 source 相同），同一題可列多份相關文件。
+relevant_passages 可省略；填寫時列出能代表正解的短原文片段，內容包含任一片段的知識庫片段即視為相關。
 應該查無資料的題目填 "relevant_sources": []（反例），用來計算反例拒絕率。
 格式範例見 backend/eval/retrieval_golden.example.jsonl。
 
-評估在索引檔的暫存副本上以唯讀模式執行，不會修改資料庫或正式索引，可與後端同時執行。
+兩種模式：
+- 預設：在正式索引檔的暫存副本上以唯讀模式執行，不會修改資料庫或正式索引，可與後端同時執行。
+- --corpus 目錄：把目錄中的文件以上傳時相同的流程切塊、建索引（暫存 SQLite 與暫存索引目錄，結束後刪除），
+  不連線正式資料庫，用於比較不同檢索設定。內建基準：--corpus eval/corpus --golden eval/corpus_golden.jsonl
 
 用法（在 backend/ 目錄執行）：
     ../.venv/Scripts/python.exe scripts/evaluate_retrieval.py --golden eval/retrieval_golden.jsonl --k 1 3 5
-加上 --min-mrr 0.6 可在 MRR 未達標時以結束碼 1 結束（適合放進 CI）；--output report.json 會輸出完整結果。
+    ../.venv/Scripts/python.exe scripts/evaluate_retrieval.py --corpus eval/corpus --golden eval/corpus_golden.jsonl --k 1 3 5
+加上 --min-mrr 0.6 或 --min-passage-ndcg 0.7 可在指標未達標時以結束碼 1 結束（適合放進 CI）；--output report.json 會輸出完整結果。
 加上 --relevance-thresholds 0.1 0.2 0.3 可校準 RERANK_RELEVANCE_THRESHOLD：每題只重排一次，
 對同一份結果套用各個門檻，列出正例的 hit@k、MRR 與反例的拒絕率。
 """
 import argparse
 import json
+import mimetypes
 import shutil
 import sys
 import tempfile
@@ -25,8 +32,13 @@ from pathlib import Path
 backend_dir = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(backend_dir))
 
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
+
 from app.core.config import settings
-from app.models.database import SessionLocal
+from app.core.limits import ADMIN_UPLOAD_EXTRACTION_LIMITS
+from app.models import Document as DBDocument
+from app.models.database import Base, SessionLocal
 from app.rag.contextual_rag import HybridContextualRAG
 from app.rag.evaluator import load_golden_set
 
@@ -48,6 +60,35 @@ def snapshot_index_files(snapshot_dir: Path) -> None:
     settings.DATA_DIR = str(snapshot_dir)
 
 
+def build_corpus_knowledge_base(corpus_dir: Path, work_dir: Path) -> HybridContextualRAG:
+    from app.api.documents import process_document_for_rag
+    from app.services.document_processor import DocumentProcessor
+
+    files = sorted(path for path in corpus_dir.iterdir() if path.is_file())
+    if not files:
+        raise ValueError(f"{corpus_dir} 中沒有任何文件")
+    settings.FAISS_INDEX_PATH = str(work_dir / "faiss_index.bin")
+    settings.METADATA_PATH = str(work_dir / "index_metadata.json")
+    settings.BM25_INDEX_DIR = str(work_dir / "bm25_index")
+    engine = create_engine(f"sqlite:///{(work_dir / 'corpus.db').as_posix()}")
+    Base.metadata.create_all(bind=engine)
+    session_factory = sessionmaker(bind=engine)
+    rag = HybridContextualRAG(session_factory=session_factory)
+    for path in files:
+        content_type = mimetypes.guess_type(path.name)[0] or ""
+        extraction = DocumentProcessor.extract_document(str(path), content_type, ADMIN_UPLOAD_EXTRACTION_LIMITS, None)
+        with session_factory() as db:
+            document = DBDocument(filename=path.name, content=extraction.text, file_type=content_type, is_processed=True)
+            db.add(document)
+            db.commit()
+            document_id = document.id
+        metadata = {"source": path.name, "document_id": document_id, "content_type": content_type, "original_filename": path.name}
+        documents, _, _ = process_document_for_rag(extraction, metadata, rag)
+        rag.add_documents(documents)
+    engine.dispose()
+    return rag
+
+
 def format_metric(value) -> str:
     return "—" if value is None else f"{value:.3f}"
 
@@ -59,6 +100,14 @@ def print_report(report: dict, k_values: list) -> None:
         print(f"MRR：{report['mrr']:.3f}")
         for k in k_values:
             print(f"hit@{k}：{report['hit_rate'][k]:.3f}　recall@{k}：{report['recall'][k]:.3f}")
+    passage = report["passage"]
+    if passage is not None:
+        print(f"\n片段層級（{passage['num_cases']} 題有標註原文片段）：MRR {passage['mrr']:.3f}　候選召回 {passage['candidate_recall']:.3f}")
+        for k in k_values:
+            print(
+                f"precision@{k}：{passage['precision'][k]:.3f}　nDCG@{k}：{passage['ndcg'][k]:.3f}"
+                f"　recall@{k}：{passage['recall'][k]:.3f}"
+            )
     if report["negative_rejection_rate"] is not None:
         print(f"反例拒絕率：{report['negative_rejection_rate']:.3f}")
 
@@ -69,6 +118,15 @@ def print_report(report: dict, k_values: list) -> None:
         for q in misses:
             retrieved = "、".join(q["retrieved_sources"][:max(k_values)]) or "（無結果）"
             print(f"- {q['query']}\n  預期：{'、'.join(q['relevant_sources'])}\n  實際：{retrieved}")
+
+    passage_misses = [
+        q for q in positives
+        if "passage" in q and (q["passage"]["first_relevant_rank"] is None or q["passage"]["first_relevant_rank"] > max(k_values))
+    ]
+    if passage_misses:
+        print(f"\n前 {max(k_values)} 名內沒有包含正解原文片段的問題（{len(passage_misses)} 題）：")
+        for q in passage_misses:
+            print(f"- {q['query']}（候選召回 {q['passage']['candidate_recall']:.2f}）")
 
     accepted = [q for q in report["per_query"] if not q["relevant_sources"] and not q["rejected"]]
     if accepted:
@@ -83,8 +141,9 @@ def print_threshold_sweep(reports: list, k_values: list) -> None:
         hits = "　".join(
             f"hit@{k} {format_metric(report['hit_rate'][k] if report['hit_rate'] else None)}" for k in k_values
         )
+        ndcg = "".join(f"　nDCG@{k} {report['passage']['ndcg'][k]:.3f}" for k in k_values) if report["passage"] else ""
         print(
-            f"門檻 {report['relevance_threshold']}：MRR {format_metric(report['mrr'])}　{hits}"
+            f"門檻 {report['relevance_threshold']}：MRR {format_metric(report['mrr'])}　{hits}{ndcg}"
             f"　反例拒絕率 {format_metric(report['negative_rejection_rate'])}"
         )
 
@@ -93,7 +152,9 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="以標準問答集評估 RAG 檢索品質")
     parser.add_argument("--golden", required=True, help="JSONL 標準問答集路徑")
     parser.add_argument("--k", required=True, type=int, nargs="+", help="要計算的 k 值，例如 1 3 5")
+    parser.add_argument("--corpus", help="以此目錄中的文件在暫存環境建立知識庫後評估，不使用正式資料庫與索引")
     parser.add_argument("--min-mrr", type=float, help="MRR 低於此值時以結束碼 1 結束")
+    parser.add_argument("--min-passage-ndcg", type=float, help="片段層級 nDCG@（最大 k）低於此值時以結束碼 1 結束")
     parser.add_argument("--output", help="將完整評估結果寫成 JSON 檔")
     parser.add_argument(
         "--relevance-thresholds", type=float, nargs="+",
@@ -102,17 +163,20 @@ def main() -> int:
     args = parser.parse_args()
 
     cases = load_golden_set(args.golden)
-    snapshot_dir = Path(tempfile.mkdtemp(prefix="askmiao_eval_"))
+    work_dir = Path(tempfile.mkdtemp(prefix="askmiao_eval_"))
     rag = None
     try:
-        snapshot_index_files(snapshot_dir)
-        rag = HybridContextualRAG(session_factory=SessionLocal, read_only=True)
+        if args.corpus:
+            rag = build_corpus_knowledge_base(Path(args.corpus), work_dir)
+        else:
+            snapshot_index_files(work_dir)
+            rag = HybridContextualRAG(session_factory=SessionLocal, read_only=True)
         thresholds = [rag.relevance_threshold] + (args.relevance_thresholds or [])
         report, *sweep = rag.evaluator.sweep_relevance_thresholds(cases, args.k, thresholds)
     finally:
         if rag is not None and rag.bm25_store.bm25_searcher is not None:
             rag.bm25_store.bm25_searcher.close()
-        shutil.rmtree(snapshot_dir, ignore_errors=True)
+        shutil.rmtree(work_dir, ignore_errors=True)
 
     print_report(report, args.k)
     if sweep:
@@ -120,14 +184,22 @@ def main() -> int:
         report["threshold_sweep"] = sweep
     if args.output:
         Path(args.output).write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
+    failed = False
     if args.min_mrr is not None:
         if report["mrr"] is None:
             print("\n問答集沒有正例，無法檢查 MRR 門檻")
-            return 1
-        if report["mrr"] < args.min_mrr:
+            failed = True
+        elif report["mrr"] < args.min_mrr:
             print(f"\nMRR {report['mrr']:.3f} 低於門檻 {args.min_mrr}")
-            return 1
-    return 0
+            failed = True
+    if args.min_passage_ndcg is not None:
+        if report["passage"] is None:
+            print("\n問答集沒有標註原文片段，無法檢查 nDCG 門檻")
+            failed = True
+        elif report["passage"]["ndcg"][max(args.k)] < args.min_passage_ndcg:
+            print(f"\n片段層級 nDCG@{max(args.k)} {report['passage']['ndcg'][max(args.k)]:.3f} 低於門檻 {args.min_passage_ndcg}")
+            failed = True
+    return 1 if failed else 0
 
 
 if __name__ == "__main__":

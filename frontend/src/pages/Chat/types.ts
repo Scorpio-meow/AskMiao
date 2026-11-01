@@ -53,11 +53,13 @@ export interface ChatSidebarProps {
 }
 export interface ChatMessageItemProps {
   message: Message;
+  thinkId: number | string;
   isStreaming: boolean;
   isThinkingOpen: boolean;
-  onToggleThinking: () => void;
+  deferRendering: boolean;
+  onToggleThinking: (id: number | string) => void;
   onCopyMessage: (text: string) => void;
-  onRetry?: () => void;
+  onRetry?: (failedMessage: Message) => void;
 }
 export interface ChatMessageListProps {
   messages: Message[];
