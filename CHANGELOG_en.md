@@ -35,6 +35,10 @@ All notable changes to AskMiao are documented in this file. The format is based 
 
 ## [Unreleased]
 
+### Security
+
+- **pypdf upgraded to 6.21.4**: fixes possible infinite loops, long runtimes, and large memory use on malicious PDFs, covering the trailer search in xref tables, page tree and cross-reference stream parsing, dictionary cloning, page labels, and encrypted files and strict-mode exceptions (GHSA-5849-834g-hvw5, GHSA-cggf-277g-3q54, GHSA-mfr5-77xh-9j7h, GHSA-42gh-23hr-vphw, GHSA-4vqv-7265-gm2w, GHSA-62m5-6wh8-28x7, GHSA-x3rh-gjgm-fmqc). Uploaded PDFs fall back to pypdf when PyMuPDF cannot read them, so before this upgrade a malicious file could use that path to stall background processing.
+
 ## [8.0.0] - 2026-11-02
 
 > [!IMPORTANT]

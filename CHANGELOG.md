@@ -35,6 +35,10 @@
 
 ## [Unreleased]
 
+### 安全性 (Security)
+
+- **pypdf 升到 6.21.4**：修正處理惡意 PDF 時可能的無窮迴圈、長時間執行與大量記憶體用量，包括 xref 表的 trailer 搜尋、頁面樹與交互參照串流解析、字典複製、頁面標籤，以及加密檔與嚴格模式例外（GHSA-5849-834g-hvw5、GHSA-cggf-277g-3q54、GHSA-mfr5-77xh-9j7h、GHSA-42gh-23hr-vphw、GHSA-4vqv-7265-gm2w、GHSA-62m5-6wh8-28x7、GHSA-x3rh-gjgm-fmqc）。上傳的 PDF 在 PyMuPDF 讀取失敗時改由 pypdf 解析，升級前惡意檔案可能藉此拖住背景處理。
+
 ## [8.0.0] - 2026-11-02
 
 > [!IMPORTANT]
