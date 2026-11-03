@@ -6,6 +6,7 @@ import {
   deleteDescription,
   describeCustomTool,
   filterCatalog,
+  mcpToolHints,
   normalizeQuery,
   sectionSummaries,
   toolParameters,
@@ -178,5 +179,13 @@ describe('tool details', () => {
   it('explains what deleting removes', () => {
     expect(deleteDescription({ type: 'skill', item: skills[0] })).toBe('「release-notes」刪除後會一併移除技能檔案，AI 就無法再使用這個技能，此操作無法復原。');
     expect(deleteDescription({ type: 'server', item: servers[0] })).toBe('「時間服務」刪除後，AI 就無法再使用它提供的工具，此操作無法復原。');
+  });
+});
+
+describe('mcp tool hints', () => {
+  it('reads the four annotations with the spec defaults', () => {
+    expect(mcpToolHints({ annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false } })).toEqual(['唯讀']);
+    expect(mcpToolHints({ annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: true } })).toEqual(['會連到外部']);
+    expect(mcpToolHints({})).toEqual(['可能變更資料', '會連到外部']);
   });
 });

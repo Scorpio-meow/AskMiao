@@ -2,7 +2,7 @@ import pytest
 import json
 from app.models.database import Base, engine, SessionLocal
 from app.models import McpServer
-from app.services.mcp_service import McpManager
+from app.services.mcp_service import MCP_PROTOCOL_VERSION, McpManager
 from app.rag.tools import ResearchToolRegistry
 @pytest.mark.anyio
 async def test_mcp_stdio_lifecycle():
@@ -12,7 +12,8 @@ async def test_mcp_stdio_lifecycle():
     tools, init_info, _ = await McpManager.discover_server_tools(time_preset)
     assert len(tools) >= 1
     assert tools[0]["name"] == "get_current_time"
-    assert init_info.get("protocolVersion") == "2024-11-05"
+    assert tools[0]["annotations"] == {"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False}
+    assert init_info.get("protocolVersion") == MCP_PROTOCOL_VERSION
     call_res = await McpManager.execute_mcp_tool(
         time_preset,
         "get_current_time",

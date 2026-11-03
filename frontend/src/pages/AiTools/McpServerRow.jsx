@@ -1,5 +1,6 @@
 import { Button, Icon, Switch } from '../../components/ui';
 import { CatalogRow, DangerAction, DetailBlock, MetaText, RowNotice, StatusChip, Tag } from './CatalogParts';
+import { mcpToolHints } from './catalog';
 import { CREDENTIALS_UNREADABLE_NOTICE } from './shared';
 import styles from './AiTools.module.css';
 const connectionStatus = (server) => {
@@ -44,6 +45,7 @@ export default function McpServerRow({
           <MetaText mono truncate>
             {isStdio ? `${server.command || ''} ${(server.args || []).join(' ')}` : server.url}
           </MetaText>
+          {server.protocol_version && <MetaText mono>MCP {server.protocol_version}</MetaText>}
         </>
       )}
       description={server.description || 'MCP 協定外部工具伺服器。'}
@@ -100,7 +102,10 @@ export default function McpServerRow({
       onToggleDetails={onToggleDetails}
       details={(
         <>
-          <DetailBlock title={`MCP 工具（${tools.length} 項）`}>
+          <DetailBlock
+            title={`MCP 工具（${tools.length} 項）`}
+            aside={tools.length > 0 && <span className={styles.detailBlockHint}>標籤是伺服器自行宣告的工具性質，僅供參考</span>}
+          >
             {tools.length === 0 ? (
               <p className={styles.detailEmpty}>尚未探索到工具，請按「重新探索工具」連線並取得工具清單。</p>
             ) : (
@@ -108,8 +113,15 @@ export default function McpServerRow({
                 {tools.map((tool) => (
                   <li key={tool.name} className={styles.entryItem}>
                     <div className={styles.entryText}>
-                      <span className={styles.entryName}>{tool.name}</span>
+                      <span className={styles.entryName}>
+                        {tool.name}{tool.title && tool.title !== tool.name ? `（${tool.title}）` : ''}
+                      </span>
                       <span className={styles.entryDescription}>{tool.description || '無詳細說明'}</span>
+                      <span className={styles.entryTags}>
+                        {mcpToolHints(tool).map((hint) => (
+                          <Tag key={hint} tone={hint === '唯讀' ? undefined : 'warning'}>{hint}</Tag>
+                        ))}
+                      </span>
                     </div>
                     <Button
                       variant="secondary"

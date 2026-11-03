@@ -6,7 +6,7 @@ import httpx
 import pytest
 
 from app.services import mcp_service
-from app.services.mcp_service import MCP_HTTP_ACCEPT, McpHttpClient, McpManager
+from app.services.mcp_service import MCP_HTTP_ACCEPT, MCP_LEGACY_PROTOCOL_VERSION, McpHttpClient, McpManager
 
 PUBLIC_IP = ipaddress.ip_address("93.184.216.34")
 URL = "https://mcp.example.com/mcp"
@@ -73,14 +73,14 @@ async def test_streamable_http_handshake_session_and_paginated_sse(upstream):
     assert init["protocolVersion"] == "2025-06-18"
     assert upstream["sent"][-1].method == "DELETE"
     methods = [json.loads(r.content).get("method") for r in upstream["sent"][:-1]]
-    assert methods == ["initialize", "notifications/initialized", "tools/list", "tools/list", "tools/list"]
+    assert methods == ["server/discover", "initialize", "notifications/initialized", "tools/list", "tools/list", "tools/list"]
     assert all(r.headers["accept"] == MCP_HTTP_ACCEPT for r in upstream["sent"])
-    assert "mcp-session-id" not in upstream["sent"][0].headers
-    for request in upstream["sent"][1:]:
+    assert all("mcp-session-id" not in r.headers for r in upstream["sent"][:2])
+    for request in upstream["sent"][2:]:
         assert request.headers["mcp-session-id"] == "session-abc"
         assert request.headers["mcp-protocol-version"] == "2025-06-18"
-    assert json.loads(upstream["sent"][2].content)["params"] == {}
-    assert json.loads(upstream["sent"][3].content)["params"] == {"cursor": "1"}
+    assert json.loads(upstream["sent"][3].content)["params"] == {}
+    assert json.loads(upstream["sent"][4].content)["params"] == {"cursor": "1"}
 
 
 @pytest.mark.anyio
@@ -125,7 +125,7 @@ async def test_rejected_initialized_notification_fails(upstream):
 
     upstream["handler"] = handler
     with pytest.raises(RuntimeError, match="400"):
-        await McpHttpClient(url=URL).initialize()
+        await McpHttpClient(url=URL).initialize(MCP_LEGACY_PROTOCOL_VERSION)
 
 
 @pytest.mark.anyio
@@ -146,7 +146,7 @@ async def test_expired_session_is_reinitialized_once(upstream):
 
     upstream["handler"] = handler
     client = McpHttpClient(url=URL)
-    await client.initialize()
+    await client.initialize(MCP_LEGACY_PROTOCOL_VERSION)
     tools = await client.list_tools()
     assert [t["name"] for t in tools] == ["t"]
     assert state["sessions"] == 2

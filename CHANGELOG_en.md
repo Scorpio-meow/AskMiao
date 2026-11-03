@@ -6,6 +6,9 @@ All notable changes to AskMiao are documented in this file. The format is based 
 
 | Version | Release date | Highlights |
 |---|---|---|
+| [8.1.0](#810---2026-11-03) | 2026-11-03 | MCP 2026-07-28 (stateless requests, `server/discover`, standard and `x-mcp-header` headers) with legacy servers still supported, MCP OAuth hardened to the new authorization specification (`iss` checks, required PKCE, Client ID Metadata Documents, step-up authorization), and binary content in MCP tool results kept from the model |
+| [8.0.2](#802---2026-11-02) | 2026-11-02 | How tests strip HTML tags; no user-visible change |
+| [8.0.1](#801---2026-11-02) | 2026-11-02 | pypdf upgraded to 6.21.4, fixing infinite loops and heavy memory use from malicious PDFs |
 | [8.0.0](#800---2026-11-02) | 2026-11-02 | Admin-chosen system models replace the provider settings in `.env`, OpenAPI 3.2 with Arazzo workflows and Overlay, Han unigram and bigram BM25 fields with a chunk-level retrieval benchmark, OpenVINO reranking sized to the actual candidates, request IDs and detailed logs, redesigned AI tools and chat pages, web search and web reading fixes |
 | [7.0.0](#700---2026-10-31) | 2026-10-31 | Per-account API connections and admin-granted shared connections, user management, token revocation on deactivation, per-hop redirect checks for tools and the web allowlist, Docker Compose deployment for a VM, FAQ and PDF extraction fixes, and index rebuilds that no longer empty the knowledge base |
 | [6.0.0](#600---2026-10-26) | 2026-10-26 | Agent Skills, MCP Streamable HTTP and OAuth, re-parsed structured data, the Responses API, Microsoft Foundry (including Claude), reasoning effort mapped across five providers, and Ollama and Gemini integration fixes |
@@ -34,6 +37,30 @@ All notable changes to AskMiao are documented in this file. The format is based 
 ---
 
 ## [Unreleased]
+
+## [8.1.0] - 2026-11-03
+
+### Security
+
+- **Remote MCP OAuth hardened to the 2026-07-28 authorization specification**: the authorization callback checks `iss` per RFC 9207 against mix-up attacks between authorization servers; the authorization server metadata's `issuer` must be identical to the issuer used to fetch it; authorization servers that do not declare `code_challenge_methods_supported` with `S256` are refused (previously a missing field was allowed); authorization server endpoints must be HTTPS (loopback excepted), and so must the redirect address unless it is localhost; a dynamically registered client is bound to the authorization server that issued it, so a changed authorization server registers again and clears the tokens. Stored tokens keep working, and the rules apply the next time "OAuth authorization" is pressed; deployments serving AskMiao over plain HTTP on a non-localhost address need HTTPS to authorize.
+
+### Added
+
+- **MCP 2026-07-28**: the MCP client now speaks the latest stateless protocol first: every request carries the protocol version, `clientInfo`, and `clientCapabilities` in `_meta`, and `server/discover` returns the server's supported versions and capabilities; HTTP requests carry `MCP-Protocol-Version`, `Mcp-Method`, and `Mcp-Name`, mirror tool parameters marked `x-mcp-header` into `Mcp-Param-*` headers (encoded as `=?base64?…?=` when needed), and re-read the tool list and retry once on `HeaderMismatch`. Servers that only support the `initialize` handshake (`2025-11-25` through `2024-11-05`) keep working: stdio probes with `server/discover` and falls back to the handshake on an error or no reply within 5 seconds, HTTP decides from the body of a `400`/`404`/`405`, falling back further to the legacy HTTP+SSE transport when needed. The negotiated version is stored in the new `protocol_version` column (added automatically on startup), reused for tool calls, and renegotiated automatically when it stops working. A response asking for more input (`input_required`) is reported as a failure. See [API reference 5](docs/api_en.md#5-mcp-servers-apimcp).
+- **Client ID Metadata Documents and step-up authorization for MCP OAuth**: when the authorization server supports Client ID Metadata Documents and AskMiao is served over HTTPS, the public `GET /api/mcp/oauth/client-metadata.json` URL becomes the `client_id` and no dynamic registration is needed; dynamic registration sends `application_type`. Scopes listed in the `401` `WWW-Authenticate` header now come first; a `403 insufficient_scope` while connecting records the required scopes, the admin page asks for re-authorization, and the next authorization adds them to the previous scopes.
+
+### Changed
+
+- **The built-in time MCP preset answers both protocol eras and declares tool annotations**: `mcp_time` answers both `server/discover` (`2026-07-28`) and `initialize` (legacy), `get_current_time` is marked `readOnlyHint: true`, `destructiveHint: false`, `idempotentHint: true`, and `openWorldHint: false`, and unknown methods get `Method not found` (previously no reply, so the client could only wait for its timeout).
+- **MCP tool definitions and results**: a tool's `inputSchema` is normalized into a parameter schema every provider accepts before it reaches the model, resolving only `$ref`s inside the tool definition; a `$ref` to the network or another document (never downloaded) or, on the HTTP transport, an `x-mcp-header` that breaks the rules makes discovery skip the tool. Binary content in images, audio, and embedded resources in tool results no longer reaches the model (previously it was serialized as is and used up the 20,000-character result limit), `structuredContent` is passed along, and a JSON text block identical to it is dropped. The admin page shows each MCP server's negotiated protocol version, and the tool list shows `title` and the server-declared "read-only", "may change data", and "reaches outside" labels (annotations are untrusted per the specification and do not affect call approval).
+
+## [8.0.2] - 2026-11-02
+
+### Changed
+
+- **Tests strip HTML tags with a character scan**: `rows.test.jsx` and `chatComponents.test.tsx` no longer strip tags with a single `replace(/<[^>]+>/g, '')` (CodeQL `js/incomplete-multi-character-sanitization`). No user-visible change.
+
+## [8.0.1] - 2026-11-02
 
 ### Security
 

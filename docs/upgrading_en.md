@@ -4,6 +4,7 @@
 
 > How to upgrade an existing deployment to a new release, with rollback steps and troubleshooting. See the [CHANGELOG](../CHANGELOG_en.md) for the full list of changes in each version.
 
+- [Upgrading from 8.0.x to 8.1.0](#upgrading-from-80x-to-810)
 - [Upgrading from 7.0.0 to 8.0.0](#upgrading-from-700-to-800)
   - [New required `.env` settings](#new-required-env-settings)
 - [Upgrading from 6.0.0 to 7.0.0](#upgrading-from-600-to-700)
@@ -36,6 +37,21 @@
   - [Step 5: verify the upgrade](#step-5-verify-the-upgrade)
   - [Rolling back to 2.2.x](#rolling-back-to-22x)
   - [Troubleshooting](#troubleshooting)
+
+---
+
+## Upgrading from 8.0.x to 8.1.0
+
+For upgrading from 8.0.0, 8.0.1, or 8.0.2 to 8.1.0 (2026-11-03); see the [CHANGELOG](../CHANGELOG_en.md#810---2026-11-03) for the full list of changes. This release needs no `.env` changes; the `mcp_servers.protocol_version` column is added automatically when the backend starts.
+
+| Item | 8.0.x | 8.1.0 | Action |
+|---|---|---|---|
+| MCP protocol | `2025-06-18` handshake | `2026-07-28` first, with the handshake used automatically for servers that only support it | None; press "Rediscover tools" on the admin page to see the negotiated version |
+| MCP OAuth redirect address | Any address | Must be HTTPS or localhost | When AskMiao is served over plain HTTP on a non-localhost address, switch to HTTPS before pressing "OAuth authorization" |
+| MCP authorization server metadata | Allowed without `code_challenge_methods_supported`; `issuer` not compared | Must declare `S256`, `issuer` must match, and the callback checks `iss` | None; when an authorization server does not comply, "OAuth authorization" returns `400`, so check its metadata with that service |
+| Stored MCP OAuth tokens | — | Keep working | None |
+
+To roll back to 8.0.x, switch back to the older code; the extra `protocol_version` column does not affect it.
 
 ---
 

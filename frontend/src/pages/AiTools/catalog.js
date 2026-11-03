@@ -51,6 +51,14 @@ export const toolParameters = (tool) => (tool.isCustom
   }))
   : tool.parameters || []);
 export const countMcpTools = (servers) => servers.reduce((acc, s) => acc + (s.discovered_tools?.length || 0), 0);
+export const mcpToolHints = (tool) => {
+  const annotations = tool.annotations || {};
+  const hints = [];
+  if (annotations.readOnlyHint === true) hints.push('唯讀');
+  else if (annotations.destructiveHint !== false) hints.push('可能變更資料');
+  if (annotations.openWorldHint !== false) hints.push('會連到外部');
+  return hints;
+};
 const toolMatches = (query, tool) =>
   matchesQuery(query, tool.displayName, tool.display_name, tool.name, tool.summary, tool.description, tool.url);
 const serverMatches = (query, server) => matchesQuery(

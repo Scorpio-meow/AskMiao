@@ -450,4 +450,4 @@ async def test_user_urls_and_configured_endpoints_use_separate_dns_pools(monkeyp
 
 def test_mcp_tools_with_unsafe_names_are_dropped():
     tools = [{"name": "read_file"}, {"name": "../../documents/rebuild-index?"}, {"name": ""}, {"description": "no name"}, {"name": "a" * 129}]
-    assert [tool["name"] for tool in mcp_service._usable_tools(tools)] == ["read_file"]
+    assert [tool["name"] for tool in mcp_service._usable_tools(tools, "stdio")] == ["read_file"]

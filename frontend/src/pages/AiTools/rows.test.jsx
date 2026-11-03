@@ -79,7 +79,10 @@ describe('MCP server row', () => {
     status: 'error',
     last_error: '連線逾時',
     oauth_authorized: true,
-    discovered_tools: [{ name: 'search_docs', description: '搜尋文件' }],
+    protocol_version: '2026-07-28',
+    discovered_tools: [
+      { name: 'search_docs', title: '搜尋文件庫', description: '搜尋文件', annotations: { readOnlyHint: true, openWorldHint: false } },
+    ],
   };
   const html = renderToStaticMarkup(
     <ul>
@@ -109,6 +112,13 @@ describe('MCP server row', () => {
   it('lists the discovered tools with a test action when expanded', () => {
     expect(attribute(buttonNamed(html, '提供的工具（1）').attrs, 'aria-expanded')).toBe('true');
     expect(buttonNamed(html, '線上測試').text).toBe('線上測試 search_docs');
+  });
+
+  it('shows the negotiated protocol version and the declared tool hints', () => {
+    expect(textOf(html)).toContain('MCP 2026-07-28');
+    expect(textOf(html)).toContain('search_docs（搜尋文件庫）');
+    expect(textOf(html)).toContain('唯讀');
+    expect(textOf(html)).not.toContain('會連到外部');
   });
 });
 

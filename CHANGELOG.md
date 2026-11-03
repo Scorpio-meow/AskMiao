@@ -6,6 +6,9 @@
 
 | 版本 | 發行日期 | 重點 |
 |---|---|---|
+| [8.1.0](#810---2026-11-03) | 2026-11-03 | MCP 2026-07-28（無狀態請求、`server/discover`、標準與 `x-mcp-header` 標頭）並相容舊版伺服器、MCP OAuth 依新版授權規格加強（`iss` 比對、強制 PKCE、Client ID Metadata Document、追加授權）、MCP 工具結果不再把二進位內容交給模型 |
+| [8.0.2](#802---2026-11-02) | 2026-11-02 | 測試去除 HTML 標籤的寫法調整，沒有使用者可見的變更 |
+| [8.0.1](#801---2026-11-02) | 2026-11-02 | pypdf 升到 6.21.4，修正惡意 PDF 造成的無窮迴圈與大量記憶體用量 |
 | [8.0.0](#800---2026-11-02) | 2026-11-02 | 管理員指定的系統模型取代 `.env` 的模型商設定、OpenAPI 3.2 與 Arazzo 工作流程與 Overlay、BM25 漢字單字與雙字欄位與片段層級檢索基準、OpenVINO 重排依實際候選數送出、請求 ID 與詳細日誌、AI 工具與聊天頁重新設計、聯網搜尋與網頁閱讀修正 |
 | [7.0.0](#700---2026-10-31) | 2026-10-31 | 各帳號自行設定的 API 連線與管理員開放的共用連線、使用者管理、停用帳號撤銷權杖、工具轉址與聯網白名單逐跳檢查、VM 用的 Docker Compose 部署、FAQ 與 PDF 擷取修正、重建索引不再清空知識庫 |
 | [6.0.0](#600---2026-10-26) | 2026-10-26 | Agent Skills、MCP Streamable HTTP 與 OAuth、結構化資料重新解析、Responses API、Microsoft Foundry（含 Claude）、推理強度對應五家供應商、Ollama 與 Gemini 串接修正 |
@@ -34,6 +37,30 @@
 ---
 
 ## [Unreleased]
+
+## [8.1.0] - 2026-11-03
+
+### 安全性 (Security)
+
+- **MCP 遠端 OAuth 依 2026-07-28 授權規格加強**：授權回呼依 RFC 9207 比對 `iss`，防止混淆不同授權伺服器的 mix-up 攻擊；授權伺服器中繼資料的 `issuer` 必須與用來取得它的 issuer 完全相同；沒有宣告 `code_challenge_methods_supported`（含 `S256`）的授權伺服器改為拒絕（先前沒有這個欄位時照常進行）；授權伺服器端點必須是 HTTPS（loopback 除外），授權導回的網址也必須是 HTTPS 或 localhost；動態註冊取得的 client 綁定核發它的授權伺服器，授權伺服器變更時重新註冊並清除權杖。已保存的權杖不受影響，只有下次按「OAuth 授權」時套用；以純 HTTP、非 localhost 網址提供 AskMiao 的部署需要改用 HTTPS 才能授權。
+
+### 新增 (Added)
+
+- **MCP 2026-07-28**：MCP 用戶端改以最新的無狀態協定為主，每個請求的 `_meta` 帶協定版本、`clientInfo` 與 `clientCapabilities`，以 `server/discover` 取得伺服器支援的版本與 capabilities；HTTP 請求帶 `MCP-Protocol-Version`、`Mcp-Method`、`Mcp-Name`，並把工具標了 `x-mcp-header` 的參數以 `Mcp-Param-*` 標頭送出（需要時以 `=?base64?…?=` 編碼），收到 `HeaderMismatch` 時重新讀取工具清單再試一次。只支援 `initialize` 交握的舊版伺服器（`2025-11-25`～`2024-11-05`）自動相容：stdio 以 `server/discover` 探測、5 秒內沒有回應或回錯誤就改用交握，HTTP 依 `400`／`404`／`405` 的本文判斷，必要時再退回舊版 HTTP+SSE。協商到的版本存入新的 `protocol_version` 欄位（啟動時自動補上），呼叫工具時直接沿用，失效時自動重新協商。回應要求額外輸入（`input_required`）時回報失敗。詳見 [API 參考 5](docs/api.md#5-mcp-伺服器-apimcp)。
+- **MCP OAuth 的 Client ID Metadata Document 與追加授權**：授權伺服器支援 Client ID Metadata Document、且 AskMiao 以 HTTPS 提供時，改以公開的 `GET /api/mcp/oauth/client-metadata.json` 網址當作 `client_id`，不必動態註冊；動態註冊帶 `application_type`。scope 改為優先使用 `401` 的 `WWW-Authenticate` 所列的 scope；連線收到 `403 insufficient_scope` 時記下所需 scope，管理頁提示重新授權，下次授權時與先前的 scope 合併。
+
+### 變更 (Changed)
+
+- **內建的時間 MCP 範本支援兩個協定世代並宣告工具註記**：`mcp_time` 同時回應 `server/discover`（`2026-07-28`）與 `initialize`（舊版），`get_current_time` 標上 `readOnlyHint: true`、`destructiveHint: false`、`idempotentHint: true`、`openWorldHint: false`，未知的方法回傳 `Method not found`（先前不回應，用戶端只能等到逾時）。
+- **MCP 工具定義與結果**：工具的 `inputSchema` 先正規化成各家模型都接受的參數 schema 再交給模型，只解析工具定義內的 `$ref`；指向網路或其他文件的 `$ref`（不會下載）與 HTTP 傳輸下不合規則的 `x-mcp-header` 會讓該工具在探索時被略過。工具結果中的圖片、音訊與內嵌資源的二進位內容不再交給模型（先前原樣序列化，佔用 20,000 字元的結果上限），`structuredContent` 一併提供，與它相同的 JSON 文字區塊略過。管理頁的 MCP 伺服器顯示協商到的協定版本，工具清單顯示 `title` 與伺服器宣告的「唯讀」「可能變更資料」「會連到外部」標籤（註記依規格視為不可信，不影響呼叫前核准）。
+
+## [8.0.2] - 2026-11-02
+
+### 變更 (Changed)
+
+- **測試改以逐字元掃描去除 HTML 標籤**：`rows.test.jsx` 與 `chatComponents.test.tsx` 不再以單次 `replace(/<[^>]+>/g, '')` 去除標籤（CodeQL `js/incomplete-multi-character-sanitization`）。沒有使用者可見的變更。
+
+## [8.0.1] - 2026-11-02
 
 ### 安全性 (Security)
 

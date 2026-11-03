@@ -1,6 +1,7 @@
 import asyncio
 import base64
 import hashlib
+import ipaddress
 import re
 import secrets
 import time
@@ -10,18 +11,26 @@ from urllib.parse import urlencode
 import httpx
 
 from app.core.ssrf_protection import DnsPool, SSRFSafeTransport
+from app.services.mcp_service import MCP_HTTP_ACCEPT, MCP_PROTOCOL_VERSION, _modern_params
 from app.services.oauth_client import OAuthError, oauth_request, token_from_response
 
 AUTHORIZATION_STATE_TTL_SECONDS = 600
 MAX_PENDING_AUTHORIZATIONS = 1000
 TOKEN_REFRESH_MARGIN_SECONDS = 60
 PROBE_TIMEOUT_SECONDS = 15.0
-RESOURCE_METADATA_PATTERN = re.compile(r'resource_metadata="([^"]+)"')
+CHALLENGE_PARAM_PATTERN = re.compile(r'([A-Za-z_][A-Za-z0-9_-]*)\s*=\s*(?:"((?:[^"\\]|\\.)*)"|([^\s,"]+))')
+LOOPBACK_HOSTNAMES = ("localhost",)
+CLIENT_NAME = "AskMiao"
+CLIENT_GRANT_TYPES = ["authorization_code", "refresh_token"]
 
 _pending: Dict[str, Dict[str, Any]] = {}
 
 
 class OAuthClientRequired(OAuthError):
+    pass
+
+
+class OAuthIssuerChanged(OAuthError):
     pass
 _refresh_locks: Dict[int, asyncio.Lock] = {}
 
@@ -30,19 +39,37 @@ def _origin(url: httpx.URL) -> str:
     return f"{url.scheme}://{url.netloc.decode('ascii')}"
 
 
-def _require_web_url(value: Any, label: str) -> str:
+def is_loopback_host(host: str) -> bool:
+    if host.lower() in LOOPBACK_HOSTNAMES:
+        return True
+    try:
+        return ipaddress.ip_address(host.strip("[]")).is_loopback
+    except ValueError:
+        return False
+
+
+def _require_secure_url(value: Any, label: str) -> str:
     if not isinstance(value, str):
         raise OAuthError(f"OAuth 中繼資料缺少 {label}")
     try:
         parsed = httpx.URL(value)
     except Exception as e:
         raise OAuthError(f"OAuth 中繼資料的 {label} 不是有效網址") from e
-    if parsed.scheme not in ("http", "https") or not parsed.host:
+    if not parsed.host or parsed.scheme not in ("http", "https"):
         raise OAuthError(f"OAuth 中繼資料的 {label} 必須是 http(s) 網址")
+    if parsed.scheme != "https" and not is_loopback_host(parsed.host):
+        raise OAuthError(f"OAuth 中繼資料的 {label} 必須使用 HTTPS")
     return value
 
 
-async def _probe_resource_metadata_url(server_url: str, headers: Dict[str, str]) -> Optional[str]:
+def bearer_challenge(header: str) -> Dict[str, str]:
+    return {
+        key.lower(): bare or quoted.replace('\\"', '"')
+        for key, quoted, bare in CHALLENGE_PARAM_PATTERN.findall(header or "")
+    }
+
+
+async def _probe_challenge(server_url: str, headers: Dict[str, str]) -> Dict[str, str]:
     async with httpx.AsyncClient(
         timeout=PROBE_TIMEOUT_SECONDS,
         follow_redirects=False,
@@ -50,13 +77,12 @@ async def _probe_resource_metadata_url(server_url: str, headers: Dict[str, str])
     ) as client:
         request = client.build_request(
             "POST", server_url,
-            headers={**headers, "Accept": "application/json, text/event-stream"},
-            json={"jsonrpc": "2.0", "id": 0, "method": "ping"},
+            headers={**headers, "Accept": MCP_HTTP_ACCEPT, "MCP-Protocol-Version": MCP_PROTOCOL_VERSION, "Mcp-Method": "server/discover"},
+            json={"jsonrpc": "2.0", "id": 0, "method": "server/discover", "params": _modern_params({}, MCP_PROTOCOL_VERSION)},
         )
         response = await asyncio.wait_for(client.send(request, stream=True), timeout=PROBE_TIMEOUT_SECONDS)
         await response.aclose()
-    match = RESOURCE_METADATA_PATTERN.search(response.headers.get("www-authenticate", ""))
-    return match.group(1) if match else None
+    return bearer_challenge(response.headers.get("www-authenticate", ""))
 
 
 def _authorization_server_metadata_urls(issuer: str) -> List[str]:
@@ -72,21 +98,21 @@ def _authorization_server_metadata_urls(issuer: str) -> List[str]:
     ]
 
 
-async def _first_metadata(urls: List[str]) -> Dict[str, Any]:
+async def _first_metadata(urls: List[str], issuer: Optional[str] = None) -> Dict[str, Any]:
     for url in urls:
         try:
             status, data = await oauth_request("GET", url)
         except (OAuthError, httpx.HTTPError):
             continue
-        if status == 200 and data:
+        if status == 200 and data and (issuer is None or data.get("issuer") == issuer):
             return data
-    raise OAuthError("找不到 OAuth 授權伺服器的中繼資料")
+    raise OAuthError("找不到 OAuth 授權伺服器的中繼資料" if issuer is None else "找不到 issuer 相符的 OAuth 授權伺服器中繼資料")
 
 
 async def discover(server_url: str, headers: Dict[str, str]) -> Dict[str, Any]:
     server = httpx.URL(server_url)
-    metadata_url = await _probe_resource_metadata_url(server_url, headers)
-    candidates = [metadata_url] if metadata_url else []
+    challenge = await _probe_challenge(server_url, headers)
+    candidates = [challenge["resource_metadata"]] if challenge.get("resource_metadata") else []
     candidates += [f"{_origin(server)}/.well-known/oauth-protected-resource{server.path.rstrip('/')}",
                    f"{_origin(server)}/.well-known/oauth-protected-resource"]
     try:
@@ -97,31 +123,90 @@ async def discover(server_url: str, headers: Dict[str, str]) -> Dict[str, Any]:
         scopes = resource.get("scopes_supported")
     except OAuthError:
         issuer, resource_id, scopes = _origin(server), server_url, None
-    metadata = await _first_metadata(_authorization_server_metadata_urls(_require_web_url(issuer, "authorization_servers")))
+    issuer = _require_secure_url(issuer, "authorization_servers")
+    metadata = await _first_metadata(_authorization_server_metadata_urls(issuer), issuer)
     methods = metadata.get("code_challenge_methods_supported")
-    if isinstance(methods, list) and "S256" not in methods:
-        raise OAuthError("OAuth 授權伺服器不支援 PKCE S256")
+    if not isinstance(methods, list) or "S256" not in methods:
+        raise OAuthError("OAuth 授權伺服器沒有宣告支援 PKCE S256")
+    registration_endpoint = metadata.get("registration_endpoint")
     return {
-        "authorization_endpoint": _require_web_url(metadata.get("authorization_endpoint"), "authorization_endpoint"),
-        "token_endpoint": _require_web_url(metadata.get("token_endpoint"), "token_endpoint"),
-        "registration_endpoint": metadata.get("registration_endpoint"),
+        "issuer": issuer,
+        "authorization_endpoint": _require_secure_url(metadata.get("authorization_endpoint"), "authorization_endpoint"),
+        "token_endpoint": _require_secure_url(metadata.get("token_endpoint"), "token_endpoint"),
+        "registration_endpoint": _require_secure_url(registration_endpoint, "registration_endpoint") if registration_endpoint else None,
         "token_endpoint_auth_methods": metadata.get("token_endpoint_auth_methods_supported") or [],
+        "iss_parameter_supported": metadata.get("authorization_response_iss_parameter_supported") is True,
+        "client_id_metadata_document_supported": metadata.get("client_id_metadata_document_supported") is True,
         "resource": resource_id,
         "scopes_supported": scopes if isinstance(scopes, list) else [],
+        "challenged_scopes": challenge.get("scope", "").split(),
     }
 
 
-async def register_client(registration_endpoint: str, redirect_uri: str) -> Dict[str, Any]:
-    status, data = await oauth_request("POST", _require_web_url(registration_endpoint, "registration_endpoint"), json_body={
-        "client_name": "AskMiao",
+def application_type(redirect_uri: str) -> str:
+    return "native" if is_loopback_host(httpx.URL(redirect_uri).host) else "web"
+
+
+def client_metadata_document(client_id: str, redirect_uri: str) -> Dict[str, Any]:
+    return {
+        "client_id": client_id,
+        "client_name": CLIENT_NAME,
         "redirect_uris": [redirect_uri],
-        "grant_types": ["authorization_code", "refresh_token"],
+        "grant_types": CLIENT_GRANT_TYPES,
         "response_types": ["code"],
         "token_endpoint_auth_method": "none",
+        "application_type": application_type(redirect_uri),
+    }
+
+
+def can_use_metadata_document(config: Dict[str, Any], client_id: str) -> bool:
+    return bool(config.get("client_id_metadata_document_supported")) and httpx.URL(client_id).scheme == "https"
+
+
+async def register_client(registration_endpoint: str, redirect_uri: str) -> Dict[str, Any]:
+    status, data = await oauth_request("POST", _require_secure_url(registration_endpoint, "registration_endpoint"), json_body={
+        "client_name": CLIENT_NAME,
+        "redirect_uris": [redirect_uri],
+        "grant_types": CLIENT_GRANT_TYPES,
+        "response_types": ["code"],
+        "token_endpoint_auth_method": "none",
+        "application_type": application_type(redirect_uri),
     })
     if status >= 400 or not isinstance(data.get("client_id"), str):
         raise OAuthError(f"OAuth 動態註冊失敗（狀態碼 {status}）")
     return {"client_id": data["client_id"], "client_secret": data.get("client_secret") or "", "redirect_uri": redirect_uri}
+
+
+def prepare_client(stored: Dict[str, Any], discovered: Dict[str, Any], redirect_uri: str, metadata_client_id: str) -> Tuple[Dict[str, Any], bool]:
+    config = {**stored, **discovered, "redirect_uri": redirect_uri}
+    issuer = discovered["issuer"]
+    source = stored.get("client_source")
+    if source == "admin":
+        if stored.get("client_issuer") not in (None, issuer):
+            raise OAuthIssuerChanged("MCP 伺服器的授權伺服器已變更，請在 MCP 伺服器設定中更新 OAuth client_id")
+        return {**config, "client_issuer": issuer}, False
+    if can_use_metadata_document(discovered, metadata_client_id):
+        return {**config, "client_id": metadata_client_id, "client_secret": "", "client_source": "metadata_document", "client_issuer": issuer}, False
+    reusable = (
+        source == "registered" and stored.get("client_id")
+        and stored.get("client_issuer") == issuer and stored.get("redirect_uri") == redirect_uri
+    )
+    if reusable:
+        return config, False
+    if not discovered.get("registration_endpoint"):
+        raise OAuthClientRequired()
+    return config, True
+
+
+def requested_scope(config: Dict[str, Any]) -> str:
+    if config.get("scope"):
+        base = config["scope"].split()
+    elif config.get("granted_scope"):
+        base = config["granted_scope"].split()
+    else:
+        base = config.get("challenged_scopes") or config.get("scopes_supported") or []
+    scopes = list(dict.fromkeys(base + list(config.get("step_up_scopes") or [])))
+    return " ".join(scopes)
 
 
 def _pkce_pair() -> Tuple[str, str]:
@@ -142,11 +227,15 @@ def authorization_url(server_id: int, user_id: int, config: Dict[str, Any], redi
     _prune_pending()
     verifier, challenge = _pkce_pair()
     state = secrets.token_urlsafe(32)
+    scope = requested_scope(config)
     _pending[state] = {
         "server_id": server_id,
         "user_id": user_id,
         "verifier": verifier,
         "redirect_uri": redirect_uri,
+        "issuer": config["issuer"],
+        "iss_parameter_supported": bool(config.get("iss_parameter_supported")),
+        "scope": scope,
         "expires_at": time.time() + AUTHORIZATION_STATE_TTL_SECONDS,
     }
     params = {
@@ -158,7 +247,6 @@ def authorization_url(server_id: int, user_id: int, config: Dict[str, Any], redi
         "code_challenge_method": "S256",
         "resource": config["resource"],
     }
-    scope = config.get("scope") or " ".join(config.get("scopes_supported") or [])
     if scope:
         params["scope"] = scope
     separator = "&" if "?" in config["authorization_endpoint"] else "?"
@@ -170,6 +258,12 @@ def take_pending(state: str) -> Optional[Dict[str, Any]]:
     if entry is None or entry["expires_at"] < time.time():
         return None
     return entry
+
+
+def issuer_matches(pending: Dict[str, Any], iss: Optional[str]) -> bool:
+    if iss is None:
+        return not pending["iss_parameter_supported"]
+    return iss == pending["issuer"]
 
 
 def _client_auth(config: Dict[str, Any], form: Dict[str, str]) -> Optional[Tuple[str, str]]:
@@ -240,6 +334,23 @@ def save_tokens(server_id: int, tokens: Optional[Dict[str, Any]]) -> None:
         server = db.query(McpServer).filter(McpServer.id == server_id).first()
         if server is not None:
             server.oauth_tokens = encrypt_json(tokens)
+            db.commit()
+    finally:
+        db.close()
+
+
+def save_scope_challenge(server_id: int, scopes: List[str]) -> None:
+    from app.core.tool_secrets import decrypt_json, encrypt_json
+    from app.models import McpServer
+    from app.models.database import SessionLocal
+
+    db = SessionLocal()
+    try:
+        server = db.query(McpServer).filter(McpServer.id == server_id).first()
+        config = decrypt_json(server.oauth_config) if server is not None else None
+        if config:
+            config["step_up_scopes"] = list(dict.fromkeys(list(config.get("step_up_scopes") or []) + scopes))
+            server.oauth_config = encrypt_json(config)
             db.commit()
     finally:
         db.close()

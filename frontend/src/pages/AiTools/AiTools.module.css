@@ -859,6 +859,17 @@
   color: var(--text-secondary);
 }
 
+.entryTags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+  margin-top: var(--space-1);
+}
+
+.entryTags:empty {
+  display: none;
+}
+
 .settingRow {
   display: flex;
   align-items: flex-start;

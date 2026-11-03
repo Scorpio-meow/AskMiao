@@ -654,7 +654,8 @@ class ResearchToolRegistry:
                                 server_display_name=ms.display_name,
                                 mcp_tool=mt
                             )
-                            base_tools.append(fdef)
+                            if fdef is not None:
+                                base_tools.append(fdef)
                     except Exception as e:
                         logger.warning(f"解析 MCP 伺服器 {ms.name} 工具快取失敗: {e}")
             base_tools.extend(self._mcp_catalog_tool_definitions(mcp_servers))

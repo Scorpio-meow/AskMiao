@@ -127,6 +127,7 @@ class McpServer(Base):
     discovered_tools = Column(Text, nullable=True)
     discovered_resources = Column(Text, nullable=True)
     discovered_prompts = Column(Text, nullable=True)
+    protocol_version = Column(String, nullable=True)
     oauth_config = Column(Text, nullable=True)
     oauth_tokens = Column(Text, nullable=True)
     timeout = Column(Integer, default=30)

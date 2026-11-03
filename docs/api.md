@@ -2,7 +2,7 @@
 
 [繁體中文](api.md) | [English](api_en.md)
 
-> 本文件說明 AskMiao 後端 **8.0.0** 的 REST 與 SSE 串流端點，內容依 `backend/app/api/` 的實際路由撰寫。設定 `ENABLE_API_DOCS=true` 時，後端另外在 `http://localhost:8001/docs`（Swagger UI）與 `http://localhost:8001/redoc` 提供互動測試，OpenAPI 規格位於 `/openapi.json`；這三個路徑不需要登入且會列出所有端點與參數，對外服務時請保持 `ENABLE_API_DOCS=false`（範本值），此時三者一律回傳 `404`。
+> 本文件說明 AskMiao 後端 **8.1.0** 的 REST 與 SSE 串流端點，內容依 `backend/app/api/` 的實際路由撰寫。設定 `ENABLE_API_DOCS=true` 時，後端另外在 `http://localhost:8001/docs`（Swagger UI）與 `http://localhost:8001/redoc` 提供互動測試，OpenAPI 規格位於 `/openapi.json`；這三個路徑不需要登入且會列出所有端點與參數，對外服務時請保持 `ENABLE_API_DOCS=false`（範本值），此時三者一律回傳 `404`。
 
 ## 目錄
 
@@ -933,7 +933,7 @@ Swagger 1.x、未標示版本、OpenAPI 3.3 以上或 4.x 的文件回傳 `400` 
 
 ## 5. MCP 伺服器 `/api/mcp`
 
-管理 Model Context Protocol 伺服器，協定版本 `2025-06-18`（伺服器回覆的版本為準），以 JSON-RPC 2.0 進行 `initialize`、`notifications/initialized`、`tools/list`（依 `nextCursor` 讀完所有分頁，最多 50 頁）與 `tools/call`；伺服器在 `initialize` 的 capabilities 宣告 `resources`、`prompts` 時，另以同樣的分頁方式讀取 `resources/list`、`prompts/list`，並以 `resources/read`、`prompts/get` 取用。交握不宣告任何用戶端 capability（不支援 sampling、roots）。交握時的 `clientInfo` 為 `AskMiao-MCP-Client` 與後端版本號。
+管理 Model Context Protocol 伺服器。用戶端以 MCP `2026-07-28` 為主：每個 JSON-RPC 請求的 `_meta` 帶 `io.modelcontextprotocol/protocolVersion`、`io.modelcontextprotocol/clientInfo`（`AskMiao-MCP-Client` 與後端版本號）與 `io.modelcontextprotocol/clientCapabilities`（空物件，不支援 elicitation、sampling、roots），以 `server/discover` 取得伺服器支援的版本與 capabilities，再呼叫 `tools/list`（依 `nextCursor` 讀完所有分頁，最多 50 頁）與 `tools/call`；伺服器宣告 `resources`、`prompts` 時，另以同樣的分頁方式讀取 `resources/list`、`prompts/list`，並以 `resources/read`、`prompts/get` 取用。只支援 `initialize` 交握的舊版伺服器（`2025-11-25`、`2025-06-18`、`2025-03-26`、`2024-11-05`）自動改用交握（見下方「協定世代判斷」）。回應的 `resultType` 為 `input_required` 時視為呼叫失敗。
 
 > 本模組除了 OAuth 回呼（[5.11](#511-get-apimcpoauthcallback)）以外的所有端點（含查詢）都需要**管理員**權限：`stdio` 模式會在主機上執行指定的指令，伺服器設定也含環境變數與標頭等憑證（加密存放，回應中以 `••••••••` 遮蔽）。
 
@@ -944,7 +944,7 @@ Swagger 1.x、未標示版本、OpenAPI 3.3 以上或 4.x 的文件回傳 `400` 
 | `id` | integer | 伺服器 ID |
 | `name` | string | 唯一名稱（建立時轉為小寫），用於工具名稱 `mcp_<name>_<tool>` |
 | `display_name` / `description` | string | 顯示名稱與說明 |
-| `transport_type` | string | `stdio`，或 `http` / `sse`（兩者都先使用 Streamable HTTP：以 POST 傳送 JSON-RPC，帶 `Accept: application/json, text/event-stream`，接受 JSON 或 SSE 回應，並在之後的請求帶上伺服器發的 `Mcp-Session-Id` 與 `MCP-Protocol-Version`；帶工作階段的請求收到 `404` 時重新交握一次再重試，關閉時以 `DELETE` 結束工作階段。`initialize` 收到 `400`、`404` 或 `405` 時改用舊版 HTTP+SSE 傳輸，見下方說明） |
+| `transport_type` | string | `stdio`，或 `http` / `sse`（兩者都先使用 Streamable HTTP：以 POST 傳送 JSON-RPC，帶 `Accept: application/json, text/event-stream`，接受 JSON 或 SSE 回應；新版伺服器不使用工作階段，舊版伺服器的工作階段處理與舊版 HTTP+SSE 傳輸見下方「協定世代判斷」） |
 | `command` / `args` | string / array | `stdio` 模式的執行指令與參數 |
 | `env_vars` | object | `stdio` 子行程的額外環境變數；一律視為憑證，回應中每個值都以 `••••••••` 遮蔽 |
 | `url` / `headers` | string / object | HTTP 模式的伺服器位址與請求標頭；`headers` 的遮蔽規則同自訂 API 工具 |
@@ -952,9 +952,10 @@ Swagger 1.x、未標示版本、OpenAPI 3.3 以上或 4.x 的文件回傳 `400` 
 | `requires_approval` | boolean | Agent 呼叫此伺服器的工具前是否需要發問的使用者在對話中核准（見 [2.9](#29-post-apichatapprovalsapproval_id)）；建立時未指定為 `true`，管理員可逐台關閉 |
 | `status` | string | `connected`、`disconnected` 或 `error` |
 | `last_error` | string | 最近一次探索失敗的原因 |
-| `discovered_tools` | array | 最近一次探索到的工具快取（`name`、`description`、`inputSchema`）；名稱不符合 `[A-Za-z0-9_.-]{1,128}` 的工具會被略過 |
+| `discovered_tools` | array | 最近一次探索到的工具快取（伺服器回傳的完整定義，含 `title`、`inputSchema`、`outputSchema`、`annotations`）；名稱不符合 `[A-Za-z0-9_.-]{1,128}`、`inputSchema` 含工具定義以外的 `$ref`，或（HTTP 傳輸）`x-mcp-header` 不合規則的工具會被略過 |
 | `discovered_resources` | array | 最近一次探索到的 resources（`uri`、`name`、`description`、`mimeType`），最多 200 項；沒有 `uri` 或 `uri` 超過 2,048 字元的項目會被略過 |
 | `discovered_prompts` | array | 最近一次探索到的 prompts（`name`、`description`、`arguments`），最多 200 項；名稱不符合 `[A-Za-z0-9_.-]{1,128}` 的 prompt 與參數會被略過 |
+| `protocol_version` | string | 最近一次探索協商到的 MCP 協定版本（例如 `2026-07-28` 或舊版的 `2025-06-18`）；呼叫工具時直接沿用，失效時自動重新協商。修改傳輸方式、指令、參數或網址時清除 |
 | `oauth_authorized` | boolean | 只出現在回應中：是否已保存 OAuth 權杖（見 [5.10](#510-post-apimcpserversserver_idoauthstart)） |
 | `oauth_client` | object | 管理員填入的 OAuth client（`client_id`、`client_secret`、`scope`），`client_secret` 以 `••••••••` 遮蔽；沒有填入（或使用動態註冊）時為 `null` |
 | `timeout` | integer | 連線與呼叫逾時秒數，預設 30 |
@@ -971,9 +972,9 @@ resources 與 prompts 的說明截斷為 500 字元；伺服器沒有宣告對�
 
 **HTTP 模式**的每個請求與轉址都經 SSRF 驗證並把連線固定在驗證過的 IP，指向本機或內網位址的伺服器會被拒絕；本機的 MCP 伺服器請改用 `stdio`。轉址由後端手動跟隨，只接受同一來源（scheme、主機與埠號相同）的轉址，最多 5 次，轉址回應的本文不讀取；轉址到其他來源時中止，管理員設定的標頭與 JSON-RPC 本文不會送往其他網域。每個 JSON-RPC 請求（含轉址）的總時限為該伺服器的 `timeout` 秒。單次回應最多 4 MiB，錯誤訊息不再夾帶對端的回應本文。
 
-**舊版 HTTP+SSE 傳輸**：Streamable HTTP 的 `initialize` 回傳 `400`、`404` 或 `405` 時，改以 GET（`Accept: text/event-stream`）開啟 SSE 串流，等待伺服器的 `endpoint` 事件，再把 JSON-RPC POST 到該位址、從 SSE 串流讀取回應。`endpoint` 必須與 SSE 網址同一來源，否則拒絕連線；整條串流最多讀取 4 MiB。
+**協定世代判斷**：`stdio` 先送 `server/discover` 探測；收到 `DiscoverResult` 就用 `2026-07-28`，收到 `UnsupportedProtocolVersionError`（`-32022`）就改用對方列出、AskMiao 也支援的版本，其他錯誤或 5 秒內沒有回應時改用 `initialize` 交握。HTTP 先 POST 新版的 `server/discover`，每個請求帶 `MCP-Protocol-Version`、`Mcp-Method`，`tools/call`、`resources/read`、`prompts/get` 另帶 `Mcp-Name`（含非 ASCII、控制字元或前後空白時以 `=?base64?…?=` 編碼），工具 `inputSchema` 中標了 `x-mcp-header` 的參數另以 `Mcp-Param-{名稱}` 送出，伺服器回 `HeaderMismatch`（`-32020`）時重新讀取工具清單再試一次；收到 `400`、`404`、`405` 且本文不是新版 JSON-RPC 錯誤時改用 `initialize`（帶 `Mcp-Session-Id` 工作階段，收到 `404` 時重新交握一次，關閉時送 `DELETE`）。`initialize` 也收到 `400`、`404` 或 `405` 時，改以 GET（`Accept: text/event-stream`）開啟舊版 HTTP+SSE 串流，等待伺服器的 `endpoint` 事件，再把 JSON-RPC POST 到該位址、從 SSE 串流讀取回應。`endpoint` 必須與 SSE 網址同一來源，否則拒絕連線；整條串流最多讀取 4 MiB。
 
-**OAuth 權杖**：已授權的伺服器（見 [5.10](#510-post-apimcpserversserver_idoauthstart)），HTTP 請求帶 `Authorization: Bearer <存取權杖>`；權杖在到期前 60 秒內，或連線時收到 `401`，以 refresh token 換新一次（帶 `resource`）。探索收到 `401` 時，`last_error` 說明伺服器要求 OAuth 授權。
+**OAuth 權杖**：已授權的伺服器（見 [5.10](#510-post-apimcpserversserver_idoauthstart)），HTTP 請求帶 `Authorization: Bearer <存取權杖>`；權杖在到期前 60 秒內，或連線時收到 `401`，以 refresh token 換新一次（帶 `resource`）。探索收到 `401` 時，`last_error` 說明伺服器要求 OAuth 授權；收到 `403` 且 `WWW-Authenticate` 為 `error="insufficient_scope"` 時，記下其中的 `scope`，`last_error` 說明需要重新授權以取得額外權限，下次授權時一併要求。
 
 ### 5.1 GET /api/mcp/presets
 
@@ -1018,17 +1019,17 @@ resources 與 prompts 的說明截斷為 500 字元；伺服器沒有宣告對�
 
 ### 5.7 POST /api/mcp/servers/{server_id}/discover
 
-重新連線並探索工具、resources 與 prompts，結果寫入 `discovered_tools`、`discovered_resources`、`discovered_prompts`。名稱不符合 `[A-Za-z0-9_.-]{1,128}` 的工具會被略過（只寫入伺服器日誌），不會出現在 `tools` 中，也不會提供給 Agent。
+重新連線並探索工具、resources 與 prompts，結果寫入 `discovered_tools`、`discovered_resources`、`discovered_prompts`，協商到的協定版本寫入 `protocol_version`。名稱不符合 `[A-Za-z0-9_.-]{1,128}`、`inputSchema` 含工具定義以外的 `$ref`（不會下載網路上的 schema），或 HTTP 傳輸下 `x-mcp-header` 不合規則的工具會被略過（只寫入伺服器日誌），不會出現在 `tools` 中，也不會提供給 Agent。
 
 ```json
 {
   "status": "success",
   "message": "成功連線並探索到 1 項 MCP 工具、0 項 resource、0 項 prompt",
   "tools_count": 1,
-  "tools": [{"name": "get_current_time", "description": "查詢指定時區或城市的當前精確時間", "inputSchema": {"type": "object", "properties": {"timezone": {"type": "string"}}}}],
+  "tools": [{"name": "get_current_time", "title": "查詢目前時間", "description": "查詢指定時區或城市的當前精確時間", "inputSchema": {"type": "object", "properties": {"timezone": {"type": "string"}}, "additionalProperties": false}, "annotations": {"readOnlyHint": true, "destructiveHint": false, "idempotentHint": true, "openWorldHint": false}}],
   "resources": [],
   "prompts": [],
-  "init_info": {"protocolVersion": "2024-11-05", "capabilities": {"tools": {}}, "serverInfo": {"name": "mcp-time-server", "version": "1.0"}},
+  "init_info": {"protocolVersion": "2026-07-28", "capabilities": {"tools": {}}, "serverInfo": {"name": "mcp-time-server", "version": "1.1"}, "supportedVersions": ["2026-07-28", "2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05"]},
   "server": {...}
 }
 ```
@@ -1060,20 +1061,22 @@ resources 與 prompts 的說明截斷為 500 字元；伺服器沒有宣告對�
 
 呼叫失敗時 `result` 為 `{"is_success": false, "duration_seconds": ..., "error": "伺服器內部錯誤，請聯繫系統管理員並提供錯誤代碼（錯誤代碼：…）", "error_id": "…"}`；完整原因（例如子行程的 stderr、JSON-RPC 錯誤或 SSRF 拒絕原因）只寫入伺服器日誌。Agent 呼叫 MCP 工具失敗時收到相同的結果。
 
+`content` 交給模型前，圖片、音訊與內嵌資源的二進位資料換成 `"omitted": "二進位內容不提供給模型"`，`resource_link` 只保留 `uri`、`name`、`title`、`description`、`mimeType`。工具回傳 `structuredContent` 時一併出現在 `result`，與它相同的 JSON 文字區塊從 `content` 略過；`outputSchema` 不做驗證。
+
 ### 5.10 POST /api/mcp/servers/{server_id}/oauth/start
 
-依 MCP 授權規格（`2025-06-18`）為 HTTP / SSE 伺服器開始授權碼流程，不需要請求主體；`stdio` 伺服器或沒有 `url` 時回傳 `400`。
+依 MCP 授權規格（`2026-07-28`）為 HTTP / SSE 伺服器開始授權碼流程，不需要請求主體；`stdio` 伺服器或沒有 `url` 時回傳 `400`。授權伺服器導回的網址必須是 HTTPS 或 localhost，否則回傳 `400`。
 
-1. 對伺服器送出 `ping`，從回應的 `WWW-Authenticate` 讀取 `resource_metadata`；沒有時依序嘗試 `/.well-known/oauth-protected-resource<路徑>` 與 `/.well-known/oauth-protected-resource`。
-2. 讀取授權伺服器的中繼資料（RFC 8414 的 `/.well-known/oauth-authorization-server`，再退回 OpenID Connect 的位置）；找不到受保護資源的中繼資料時，以 MCP 伺服器的來源當作授權伺服器。中繼資料列出 `code_challenge_methods_supported` 但不含 `S256` 時拒絕。
-3. 使用 `oauth_client` 中管理員填入的 client；沒有時以動態註冊（RFC 7591，公開 client，`token_endpoint_auth_method` 為 `none`）取得 client。
-4. 產生 PKCE（S256）與一次性的 `state`，回傳授權網址，其中帶 `resource`（RFC 8707）與 `scope`（管理員填入的 scope，沒有時用 `scopes_supported`）。
+1. 對伺服器送出不帶權杖的 `server/discover`，從 `401` 回應的 `WWW-Authenticate` 讀取 `resource_metadata` 與 `scope`；沒有 `resource_metadata` 時依序嘗試 `/.well-known/oauth-protected-resource<路徑>` 與 `/.well-known/oauth-protected-resource`。
+2. 讀取授權伺服器的中繼資料（RFC 8414 的 `/.well-known/oauth-authorization-server`，再退回 OpenID Connect 的位置）；找不到受保護資源的中繼資料時，以 MCP 伺服器的來源當作授權伺服器。中繼資料的 `issuer` 必須與用來組網址的 issuer 完全相同，`code_challenge_methods_supported` 必須存在且包含 `S256`，授權、權杖與註冊端點必須是 HTTPS（loopback 除外），否則拒絕。
+3. 依序使用 `oauth_client` 中管理員填入的 client；授權伺服器宣告 `client_id_metadata_document_supported` 且 AskMiao 以 HTTPS 提供時，以 Client ID Metadata Document 的網址（[5.13](#513-get-apimcpoauthclient-metadatajson)）當作 `client_id`；再來才是動態註冊（RFC 7591，公開 client，`token_endpoint_auth_method` 為 `none`，`application_type` 在回呼網址為 localhost 時為 `native`，否則為 `web`）。動態註冊得到的 client 綁定核發它的授權伺服器（`issuer`），授權伺服器變更時重新註冊並清除已保存的權杖；管理員填入的 client 遇到授權伺服器變更時回傳 `400`，請管理員更新。
+4. 產生 PKCE（S256）與一次性的 `state`，記下預期的 `issuer`，回傳授權網址，其中帶 `resource`（RFC 8707）與 `scope`：管理員填入的 scope，沒有時用上次授權要求的 scope，再沒有時用第 1 步 `WWW-Authenticate` 的 `scope`，最後才是 `scopes_supported`；連線時記下的 `insufficient_scope` 會合併進去。
 
 **回應**：`{"status": "success", "authorization_url": "https://auth.example.com/authorize?..."}`，由管理員在瀏覽器開啟。
 
 | 狀態碼 | 情況 |
 |---|---|
-| `400` | 授權伺服器沒有註冊端點、也沒有填入 `client_id`：`授權伺服器不支援動態註冊，請在 MCP 伺服器設定中填入 OAuth client_id`；網址被 SSRF 防護拒絕，或其他探索失敗（只附錯誤代碼） |
+| `400` | 回呼網址不是 HTTPS 或 localhost；授權伺服器既不支援 Client ID Metadata Document、也沒有註冊端點，又沒有填入 `client_id`：`授權伺服器不支援 Client ID Metadata Document 或動態註冊，請在 MCP 伺服器設定中填入 OAuth client_id`；管理員填入的 client 屬於先前的授權伺服器；中繼資料不符上述條件、網址被 SSRF 防護拒絕，或其他探索失敗（只附錯誤代碼） |
 | `404` | `找不到該 MCP 伺服器` |
 
 授權伺服器導回的 `redirect_uri` 是後端依本次請求的網址組出的 `/api/mcp/oauth/callback`；經過反向代理時，代理必須把用戶端看到的 scheme 與主機傳給後端，否則導回的位址會錯誤。OAuth 端點的請求經 SSRF 驗證、只跟隨同一來源的轉址，逾時 15 秒、回應最多 256 KiB。
@@ -1082,11 +1085,15 @@ resources 與 prompts 的說明截斷為 500 字元；伺服器沒有宣告對�
 
 **公開**：授權伺服器在瀏覽器中導回的位址，不需要存取權杖，以 5.10 產生的一次性 `state` 對應發起授權的管理員與伺服器。`state` 10 分鐘內有效、使用一次即失效；它存在後端行程的記憶體中，後端重啟後失效，執行多個 worker 時，回呼必須送到處理 5.10 的同一個行程（例如以 sticky routing）。
 
-**查詢參數**：`state`、`code`（或授權伺服器回傳的 `error`）。後端以 `code`、`code_verifier`、`redirect_uri` 與 `resource` 換取權杖並加密保存，寫入安全事件 `ADMIN_MCP_OAUTH_AUTHORIZED`，回傳簡短的 HTML 頁面（`200`）。`state` 無效或過期、沒有 `code`、換取權杖失敗時回傳 `400` 的 HTML 頁面（換取失敗只附錯誤代碼），伺服器已刪除時回傳 `404`。授權完成後請呼叫 5.7 重新探索。
+**查詢參數**：`state`、`code`（或授權伺服器回傳的 `error`），以及 `iss`。後端先依 RFC 9207 比對 `iss`：授權伺服器宣告 `authorization_response_iss_parameter_supported` 時必須有 `iss`，有 `iss` 時一律與記下的 `issuer` 逐字比對，不符時回傳 `400` 的 HTML 頁面，不換取權杖、也不顯示授權伺服器的錯誤內容。通過後以 `code`、`code_verifier`、`redirect_uri` 與 `resource` 換取權杖並加密保存，寫入安全事件 `ADMIN_MCP_OAUTH_AUTHORIZED`，回傳簡短的 HTML 頁面（`200`）。`state` 無效或過期、沒有 `code`、換取失敗時回傳 `400` 的 HTML 頁面（換取失敗只顯示錯誤代碼），伺服器已刪除時回傳 `404`。之後請呼叫 5.7 重新探索。
 
 ### 5.12 DELETE /api/mcp/servers/{server_id}/oauth
 
 清除已保存的 OAuth 權杖，保留 OAuth client 設定。**回應**：`{"status": "success", "message": "已清除 OAuth 授權", "server": {...}}`
+
+### 5.13 GET /api/mcp/oauth/client-metadata.json
+
+**公開**：AskMiao 的 OAuth Client ID Metadata Document。網址本身就是 `client_id`，授權伺服器以它取得用戶端資料：`client_id`、`client_name`（`AskMiao`）、`redirect_uris`（本次請求組出的 `/api/mcp/oauth/callback`）、`grant_types`（`authorization_code`、`refresh_token`）、`response_types`（`code`）、`token_endpoint_auth_method`（`none`）與 `application_type`。只有 AskMiao 以 HTTPS 提供、且授權伺服器宣告支援時才會用到；經過反向代理時，代理必須把用戶端看到的 scheme 與主機傳給後端，網址才會與 `client_id` 一致。
 
 ---
 

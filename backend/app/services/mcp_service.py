@@ -13,15 +13,40 @@ import httpx
 from app import __version__
 from app.core.error_response import format_client_error, log_and_get_error_id
 from app.core.ssrf_protection import DnsPool, SSRFSafeTransport, same_origin, send_following_redirects
+from app.services.mcp_tools import (
+    McpToolDefinitionError,
+    encode_header_value,
+    function_parameters,
+    header_parameters,
+    param_headers,
+    prompt_messages,
+    resource_contents,
+    tool_result,
+)
 from app.services.openapi_parser import fit_tool_name
 logger = logging.getLogger(__name__)
-MCP_PROTOCOL_VERSION = "2025-06-18"
+MCP_PROTOCOL_VERSION = "2026-07-28"
+MCP_LEGACY_PROTOCOL_VERSIONS = ("2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05")
+MCP_LEGACY_PROTOCOL_VERSION = MCP_LEGACY_PROTOCOL_VERSIONS[0]
+MCP_META_PREFIX = "io.modelcontextprotocol/"
+MCP_CLIENT_INFO = {"name": "AskMiao-MCP-Client", "version": __version__}
+HEADER_MISMATCH_ERROR = -32020
+MISSING_CLIENT_CAPABILITY_ERROR = -32021
+UNSUPPORTED_PROTOCOL_VERSION_ERROR = -32022
+METHOD_NOT_FOUND_ERROR = -32601
+MODERN_NEGOTIATION_ERRORS = (HEADER_MISMATCH_ERROR, MISSING_CLIENT_CAPABILITY_ERROR, UNSUPPORTED_PROTOCOL_VERSION_ERROR)
+MODERN_HTTP_ERRORS = MODERN_NEGOTIATION_ERRORS + (METHOD_NOT_FOUND_ERROR,)
+MCP_NAME_PARAMS = {"tools/call": "name", "resources/read": "uri", "prompts/get": "name"}
+MCP_DISCOVER_PROBE_TIMEOUT_SECONDS = 5.0
+MCP_TIME_TOOLS_CACHE_TTL_MS = 3_600_000
+MAX_MCP_ERROR_BODY_BYTES = 64 * 1024
 MAX_MCP_TOOL_PAGES = 50
 MAX_MCP_CATALOG_ITEMS = 200
 MAX_MCP_URI_CHARS = 2048
 MAX_MCP_CATALOG_DESCRIPTION_CHARS = 500
 MCP_HTTP_ACCEPT = "application/json, text/event-stream"
 LEGACY_SSE_FALLBACK_STATUS = (400, 404, 405)
+AUTH_FAILURE_STATUS = (401, 403)
 # 同時存在的 stdio MCP 子行程數上限（每次探索或工具呼叫都會啟動一個）；等待空位的時間不超過該伺服器的逾時設定
 MAX_CONCURRENT_STDIO_PROCESSES = 4
 _stdio_process_slots = asyncio.Semaphore(MAX_CONCURRENT_STDIO_PROCESSES)
@@ -41,21 +66,94 @@ def mcp_function_name(server_name: str, tool_name: str) -> str:
     return fit_tool_name(f"mcp_{clean_server}_{clean_tool}")
 
 
+class McpRpcError(RuntimeError):
+    def __init__(self, error: Any):
+        super().__init__(f"MCP JSON-RPC 錯誤: {error}")
+        self.code = error.get("code") if isinstance(error, dict) else None
+        self.data = error.get("data") if isinstance(error, dict) else None
+
+
+class McpInputRequiredError(RuntimeError):
+    pass
+
+
+class McpLegacyServerError(RuntimeError):
+    pass
+
+
+class McpHttpStatusError(RuntimeError):
+    def __init__(self, status_code: int, rpc_error: Optional[Dict[str, Any]] = None, www_authenticate: str = ""):
+        super().__init__(f"HTTP MCP 伺服器返回狀態碼 {status_code}")
+        self.status_code = status_code
+        self.rpc_error = rpc_error
+        self.www_authenticate = www_authenticate
+
+
+class McpInsufficientScopeError(RuntimeError):
+    def __init__(self, scopes: List[str]):
+        super().__init__(f"MCP 伺服器要求額外的 OAuth scope: {' '.join(scopes)}")
+        self.scopes = scopes
+
+
 def _is_response_to(message: Any, req_id: int) -> bool:
     return isinstance(message, dict) and message.get("id") == req_id and "method" not in message
 
 
 def _rpc_result(message: Dict[str, Any]) -> Dict[str, Any]:
     if "error" in message:
-        raise RuntimeError(f"MCP JSON-RPC 錯誤: {message['error']}")
-    return message.get("result", {})
+        raise McpRpcError(message["error"])
+    result = message.get("result", {})
+    if not isinstance(result, dict):
+        raise RuntimeError("MCP 伺服器回應的 result 不是物件")
+    result_type = result.get("resultType", "complete")
+    if result_type == "input_required":
+        raise McpInputRequiredError("MCP 伺服器要求額外輸入（elicitation、sampling 或 roots），AskMiao 不提供這類互動")
+    if result_type != "complete":
+        raise RuntimeError(f"MCP 伺服器回應的 resultType 無法辨識: {result_type!r}")
+    return result
 
 
-async def _list_all(send_rpc_request, method: str, key: str) -> List[Any]:
+def _modern_params(params: Dict[str, Any], version: str) -> Dict[str, Any]:
+    meta = params.get("_meta") if isinstance(params.get("_meta"), dict) else {}
+    return {
+        **params,
+        "_meta": {
+            **meta,
+            f"{MCP_META_PREFIX}protocolVersion": version,
+            f"{MCP_META_PREFIX}clientInfo": MCP_CLIENT_INFO,
+            f"{MCP_META_PREFIX}clientCapabilities": {},
+        },
+    }
+
+
+def _select_version(supported: Any) -> Optional[str]:
+    if not isinstance(supported, list):
+        return None
+    if MCP_PROTOCOL_VERSION in supported:
+        return MCP_PROTOCOL_VERSION
+    return next((version for version in MCP_LEGACY_PROTOCOL_VERSIONS if version in supported), None)
+
+
+def _incompatible_versions(supported: Any) -> RuntimeError:
+    return RuntimeError(f"MCP 伺服器支援的協定版本 {supported!r} 都與 AskMiao 不相容")
+
+
+def _discover_info(result: Dict[str, Any], version: str) -> Dict[str, Any]:
+    meta = result.get("_meta") if isinstance(result.get("_meta"), dict) else {}
+    server_info = meta.get(f"{MCP_META_PREFIX}serverInfo")
+    return {
+        "protocolVersion": version,
+        "capabilities": result.get("capabilities") if isinstance(result.get("capabilities"), dict) else {},
+        "serverInfo": server_info if isinstance(server_info, dict) else {},
+        "supportedVersions": result.get("supportedVersions") if isinstance(result.get("supportedVersions"), list) else [],
+    }
+
+
+async def _list_all(request, method: str, key: str) -> List[Any]:
     items: List[Any] = []
     params: Dict[str, Any] = {}
     for _ in range(MAX_MCP_TOOL_PAGES):
-        result = await send_rpc_request(method, params)
+        result = await request(method, params)
         page = result.get(key, [])
         if isinstance(page, list):
             items.extend(page)
@@ -64,10 +162,6 @@ async def _list_all(send_rpc_request, method: str, key: str) -> List[Any]:
             return items
         params = {"cursor": cursor}
     raise RuntimeError(f"MCP 清單 {method} 超過 {MAX_MCP_TOOL_PAGES} 頁")
-
-
-async def _list_all_tools(send_rpc_request) -> List[Dict[str, Any]]:
-    return _usable_tools(await _list_all(send_rpc_request, "tools/list", "tools"))
 
 
 def _text(value: Any, limit: int) -> Optional[str]:
@@ -109,12 +203,6 @@ def _usable_prompts(items: List[Any]) -> List[Dict[str, Any]]:
     return prompts
 
 
-class McpHttpStatusError(RuntimeError):
-    def __init__(self, status_code: int):
-        super().__init__(f"HTTP MCP 伺服器返回狀態碼 {status_code}")
-        self.status_code = status_code
-
-
 def _sse_events(buffer: bytes) -> Tuple[List[Tuple[str, str]], bytes]:
     events = []
     normalized = buffer.replace(b"\r\n", b"\n")
@@ -146,15 +234,43 @@ def _sse_messages(buffer: bytes) -> Tuple[List[Any], bytes]:
     return messages, rest
 
 
-def _usable_tools(tools: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+def _usable_tools(tools: List[Dict[str, Any]], transport_type: str) -> List[Dict[str, Any]]:
     usable = []
     for tool in tools:
         name = tool.get("name") if isinstance(tool, dict) else None
-        if isinstance(name, str) and MCP_TOOL_NAME_PATTERN.fullmatch(name):
-            usable.append(tool)
-        else:
+        if not isinstance(name, str) or not MCP_TOOL_NAME_PATTERN.fullmatch(name):
             logger.warning("略過名稱不合規則的 MCP 工具: %r", name)
+            continue
+        try:
+            function_parameters(tool.get("inputSchema"))
+            if transport_type != "stdio":
+                header_parameters(tool.get("inputSchema"))
+        except McpToolDefinitionError as e:
+            logger.warning("略過定義不合規則的 MCP 工具 %s: %s", name, e)
+            continue
+        usable.append(tool)
     return usable
+
+
+def _tool_input_schema(tools: Any, name: str) -> Any:
+    for tool in tools if isinstance(tools, list) else []:
+        if isinstance(tool, dict) and tool.get("name") == name:
+            return tool.get("inputSchema")
+    return None
+
+
+async def _error_body(resp: httpx.Response) -> Optional[Dict[str, Any]]:
+    data = b""
+    async for chunk in resp.aiter_bytes():
+        data += chunk
+        if len(data) > MAX_MCP_ERROR_BODY_BYTES:
+            return None
+    try:
+        message = json.loads(data)
+    except ValueError:
+        return None
+    error = message.get("error") if isinstance(message, dict) else None
+    return error if isinstance(error, dict) else None
 # 檔案系統範本的專屬根目錄：與 DATA_DIR（含 Whoosh 以 pickle 載入的 BM25 索引）完全分開
 MCP_FILESYSTEM_SANDBOX_DIR = os.path.join(
     os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
@@ -219,7 +335,41 @@ PROCESS_GROUP_KWARGS: Dict[str, Any] = (
 )
 
 
-class McpStdioClient:
+class McpSession:
+    protocol_version: Optional[str] = None
+    modern = False
+
+    async def _send_rpc_request(
+        self, method: str, params: Dict[str, Any], extra_headers: Optional[Dict[str, str]] = None
+    ) -> Dict[str, Any]:
+        raise NotImplementedError
+
+    async def request(
+        self, method: str, params: Optional[Dict[str, Any]] = None, extra_headers: Optional[Dict[str, str]] = None
+    ) -> Dict[str, Any]:
+        body = dict(params or {})
+        if self.modern:
+            body = _modern_params(body, self.protocol_version)
+        return await self._send_rpc_request(method, body, extra_headers)
+
+    async def list_tools(self) -> List[Dict[str, Any]]:
+        return await _list_all(self.request, "tools/list", "tools")
+
+    async def call_tool(self, name: str, arguments: Dict[str, Any], input_schema: Any = None) -> Dict[str, Any]:
+        return await self.request("tools/call", {"name": name, "arguments": arguments or {}})
+
+    def _use_modern(self, version: str) -> None:
+        self.modern = True
+        self.protocol_version = version
+
+    def _use_legacy(self, result: Dict[str, Any], requested: str) -> Dict[str, Any]:
+        self.modern = False
+        negotiated = result.get("protocolVersion")
+        self.protocol_version = negotiated if isinstance(negotiated, str) else requested
+        return result
+
+
+class McpStdioClient(McpSession):
     """
     基於 Stdio (標準輸入/輸出子進程) 的 MCP 用戶端通訊器
     透過 JSON-RPC 2.0 協議與本地 MCP 伺服器交握並調用工具
@@ -318,26 +468,24 @@ class McpStdioClient:
                 self._stderr_task.cancel()
             self._release_slot()
             self._remove_workdir()
-    async def _send_rpc_request(self, method: str, params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
-        """發送單次 JSON-RPC 2.0 請求並讀取回應"""
+    async def _write(self, message: Dict[str, Any]) -> None:
         if not self.process or not self.process.stdin or not self.process.stdout:
             raise RuntimeError("MCP 子行程尚未啟動或通訊管線已中斷")
-        req_id = self._next_id()
-        payload = {
-            "jsonrpc": "2.0",
-            "id": req_id,
-            "method": method,
-            "params": params or {}
-        }
-        msg_line = json.dumps(payload, ensure_ascii=False) + "\n"
-        self.process.stdin.write(msg_line.encode("utf-8"))
+        self.process.stdin.write((json.dumps(message, ensure_ascii=False) + "\n").encode("utf-8"))
         await self.process.stdin.drain()
+    async def _send_rpc_request(
+        self, method: str, params: Dict[str, Any], extra_headers: Optional[Dict[str, str]] = None, timeout: Optional[float] = None
+    ) -> Dict[str, Any]:
+        """發送單次 JSON-RPC 2.0 請求並讀取回應"""
+        limit = timeout or self.timeout
+        req_id = self._next_id()
+        await self._write({"jsonrpc": "2.0", "id": req_id, "method": method, "params": params})
         start_t = time.time()
         while True:
-            if time.time() - start_t > self.timeout:
-                raise TimeoutError(f"等待 MCP 伺服器回應逾時 ({self.timeout}s)")
+            if time.time() - start_t > limit:
+                raise TimeoutError(f"等待 MCP 伺服器回應逾時 ({limit}s)")
             try:
-                line_bytes = await asyncio.wait_for(self.process.stdout.readline(), timeout=self.timeout)
+                line_bytes = await asyncio.wait_for(self.process.stdout.readline(), timeout=limit)
             except asyncio.TimeoutError:
                 raise TimeoutError(f"讀取 MCP 伺服器輸出逾時")
             if not line_bytes:
@@ -356,43 +504,55 @@ class McpStdioClient:
                 if _is_response_to(data, req_id):
                     return _rpc_result(data)
             except json.JSONDecodeError:
- 
+
                 logger.debug(f"[MCP Stdio Log] {line_str}")
                 continue
-    async def initialize(self) -> Dict[str, Any]:
-        """執行 MCP Initialize 交握"""
+    async def connect(self, hint: Optional[str]) -> Dict[str, Any]:
+        if hint in MCP_LEGACY_PROTOCOL_VERSIONS:
+            try:
+                return await self.initialize(hint)
+            except McpRpcError:
+                pass
+        return await self._negotiate()
+    async def _negotiate(self) -> Dict[str, Any]:
+        try:
+            result = await self._send_rpc_request(
+                "server/discover",
+                _modern_params({}, MCP_PROTOCOL_VERSION),
+                timeout=min(self.timeout, MCP_DISCOVER_PROBE_TIMEOUT_SECONDS),
+            )
+        except McpRpcError as e:
+            if e.code == UNSUPPORTED_PROTOCOL_VERSION_ERROR:
+                supported = e.data.get("supported") if isinstance(e.data, dict) else None
+                version = _select_version(supported)
+                if version is None or version == MCP_PROTOCOL_VERSION:
+                    raise _incompatible_versions(supported)
+                return await self.initialize(version)
+            if e.code in MODERN_NEGOTIATION_ERRORS:
+                raise
+            return await self.initialize(MCP_LEGACY_PROTOCOL_VERSION)
+        except (TimeoutError, McpInputRequiredError):
+            return await self.initialize(MCP_LEGACY_PROTOCOL_VERSION)
+        if not isinstance(result.get("supportedVersions"), list):
+            return await self.initialize(MCP_LEGACY_PROTOCOL_VERSION)
+        version = _select_version(result.get("supportedVersions"))
+        if version is None:
+            raise _incompatible_versions(result.get("supportedVersions"))
+        if version != MCP_PROTOCOL_VERSION:
+            return await self.initialize(version)
+        self._use_modern(version)
+        return _discover_info(result, version)
+    async def initialize(self, version: str) -> Dict[str, Any]:
+        """執行 MCP Initialize 交握（2025-11-25 以前的協定版本）"""
         result = await self._send_rpc_request(
             "initialize",
-            {
-                "protocolVersion": MCP_PROTOCOL_VERSION,
-                "capabilities": {},
-                "clientInfo": {
-                    "name": "AskMiao-MCP-Client",
-                    "version": __version__
-                }
-            }
+            {"protocolVersion": version, "capabilities": {}, "clientInfo": MCP_CLIENT_INFO},
         )
-        if self.process and self.process.stdin:
-            notif = {
-                "jsonrpc": "2.0",
-                "method": "notifications/initialized"
-            }
-            self.process.stdin.write((json.dumps(notif) + "\n").encode("utf-8"))
-            await self.process.stdin.drain()
-        return result
-    async def list_tools(self) -> List[Dict[str, Any]]:
-        """向 MCP 伺服器查詢所有可用工具"""
-        return await _list_all_tools(self._send_rpc_request)
-    async def call_tool(self, name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
-        """向 MCP 伺服器發送 tools/call 工具執行請求"""
-        result = await self._send_rpc_request("tools/call", {
-            "name": name,
-            "arguments": arguments or {}
-        })
-        return result
-class McpHttpClient:
+        await self._write({"jsonrpc": "2.0", "method": "notifications/initialized"})
+        return self._use_legacy(result, version)
+class McpHttpClient(McpSession):
     """
-    基於 HTTP / SSE 網路連線的 MCP 用戶端通訊器
+    基於 Streamable HTTP 的 MCP 用戶端通訊器
     """
     def __init__(
         self,
@@ -405,40 +565,53 @@ class McpHttpClient:
         self.timeout = timeout
         self._request_id = 0
         self._session_id: Optional[str] = None
-        self._protocol_version: Optional[str] = None
     def _next_id(self) -> int:
         self._request_id += 1
         return self._request_id
-    def _request_headers(self) -> Dict[str, str]:
+    def _request_headers(self, payload: Dict[str, Any], extra_headers: Optional[Dict[str, str]]) -> Dict[str, str]:
         headers = {**self.headers, "Accept": MCP_HTTP_ACCEPT}
+        if self.modern:
+            headers["MCP-Protocol-Version"] = self.protocol_version
+            headers["Mcp-Method"] = payload["method"]
+            name_key = MCP_NAME_PARAMS.get(payload["method"])
+            name = payload.get("params", {}).get(name_key) if name_key else None
+            if isinstance(name, str):
+                headers["Mcp-Name"] = encode_header_value(name)
+            headers.update(extra_headers or {})
+            return headers
         if self._session_id:
             headers["Mcp-Session-Id"] = self._session_id
-        if self._protocol_version:
-            headers["MCP-Protocol-Version"] = self._protocol_version
+        if self.protocol_version:
+            headers["MCP-Protocol-Version"] = self.protocol_version
         return headers
-    async def _send_rpc_request(self, method: str, params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    async def _send_rpc_request(
+        self, method: str, params: Dict[str, Any], extra_headers: Optional[Dict[str, str]] = None
+    ) -> Dict[str, Any]:
+        if self.modern:
+            return await self._send_once(method, params, extra_headers)
         try:
-            return await self._send_once(method, params)
+            return await self._send_once(method, params, extra_headers)
         except McpHttpStatusError as e:
             if e.status_code != 404 or not self._session_id or method == "initialize":
                 raise
         self._session_id = None
-        await self.initialize()
-        return await self._send_once(method, params)
-    async def _send_once(self, method: str, params: Optional[Dict[str, Any]]) -> Dict[str, Any]:
-        req_id = self._next_id()
-        payload = {
-            "jsonrpc": "2.0",
-            "id": req_id,
-            "method": method,
-            "params": params or {}
-        }
-        # httpx 的逾時是逐次讀寫計算；整個請求（含轉址與慢速逐段回應）另以伺服器的逾時設定為總時限
-        return await asyncio.wait_for(self._post(payload), timeout=self.timeout)
+        await self.initialize(self.protocol_version)
+        return await self._send_once(method, params, extra_headers)
+    async def _send_once(self, method: str, params: Dict[str, Any], extra_headers: Optional[Dict[str, str]]) -> Dict[str, Any]:
+        payload = {"jsonrpc": "2.0", "id": self._next_id(), "method": method, "params": params}
+        try:
+            # httpx 的逾時是逐次讀寫計算；整個請求（含轉址與慢速逐段回應）另以伺服器的逾時設定為總時限
+            return await asyncio.wait_for(self._post(payload, extra_headers), timeout=self.timeout)
+        except McpHttpStatusError as e:
+            if not self.modern or e.status_code not in LEGACY_SSE_FALLBACK_STATUS:
+                raise
+            if e.rpc_error is not None and e.rpc_error.get("code") in MODERN_HTTP_ERRORS:
+                raise McpRpcError(e.rpc_error) from e
+            raise McpLegacyServerError(str(e)) from e
     async def close(self) -> None:
         if not self._session_id:
             return
-        headers = self._request_headers()
+        headers = self._request_headers({}, None)
         self._session_id = None
         try:
             async with httpx.AsyncClient(
@@ -450,8 +623,8 @@ class McpHttpClient:
         except Exception as e:
             logger.debug("關閉 MCP session 失敗: %s", e)
     async def _send_notification(self, method: str) -> None:
-        await asyncio.wait_for(self._post({"jsonrpc": "2.0", "method": method}), timeout=self.timeout)
-    async def _post(self, payload: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        await asyncio.wait_for(self._post({"jsonrpc": "2.0", "method": method}, None), timeout=self.timeout)
+    async def _post(self, payload: Dict[str, Any], extra_headers: Optional[Dict[str, str]]) -> Optional[Dict[str, Any]]:
         # 與自訂 API 工具相同：第一跳與每次轉址都要通過 SSRF 檢查，並固定連線到核可的 IP。
         # 只跟隨同一來源的轉址：307／308 會把管理員設定的標頭與 JSON-RPC 本文（含使用者資料）原樣送往轉址目標；
         # 轉址回應的本文不讀取，最終回應才套用大小上限
@@ -460,7 +633,7 @@ class McpHttpClient:
             follow_redirects=False,
             transport=SSRFSafeTransport(DnsPool.CONFIGURED_ENDPOINT),
         ) as client:
-            request = client.build_request("POST", self.url, headers=self._request_headers(), json=payload)
+            request = client.build_request("POST", self.url, headers=self._request_headers(payload, extra_headers), json=payload)
             resp = await send_following_redirects(client, request, MAX_MCP_HTTP_REDIRECTS, allow_cross_origin=False)
             try:
                 if "id" not in payload:
@@ -468,9 +641,13 @@ class McpHttpClient:
                         raise McpHttpStatusError(resp.status_code)
                     return None
                 if resp.status_code != 200:
-                    raise McpHttpStatusError(resp.status_code)
+                    raise McpHttpStatusError(
+                        resp.status_code,
+                        rpc_error=await _error_body(resp),
+                        www_authenticate=resp.headers.get("www-authenticate", ""),
+                    )
                 session_id = resp.headers.get("mcp-session-id")
-                if session_id:
+                if session_id and not self.modern:
                     self._session_id = session_id
                 content_length = resp.headers.get("content-length")
                 if content_length and content_length.isdigit() and int(content_length) > MAX_MCP_HTTP_RESPONSE_BYTES:
@@ -502,29 +679,80 @@ class McpHttpClient:
             if not _is_response_to(data, payload["id"]):
                 raise RuntimeError("HTTP MCP 伺服器的回應與請求不符")
             return _rpc_result(data)
-    async def initialize(self) -> Dict[str, Any]:
+    async def connect(self, hint: Optional[str]) -> Dict[str, Any]:
+        if hint == MCP_PROTOCOL_VERSION:
+            self._use_modern(hint)
+            return {"protocolVersion": hint, "capabilities": {}, "serverInfo": {}}
+        if hint in MCP_LEGACY_PROTOCOL_VERSIONS:
+            try:
+                return await self.initialize(hint)
+            except McpRpcError:
+                pass
+            except McpHttpStatusError as e:
+                if e.status_code in AUTH_FAILURE_STATUS:
+                    raise
+        return await self._negotiate()
+    async def _negotiate(self) -> Dict[str, Any]:
+        self._use_modern(MCP_PROTOCOL_VERSION)
+        try:
+            result = await self.request("server/discover")
+        except McpRpcError as e:
+            self.modern = False
+            if e.code == UNSUPPORTED_PROTOCOL_VERSION_ERROR:
+                supported = e.data.get("supported") if isinstance(e.data, dict) else None
+                version = _select_version(supported)
+                if version is None or version == MCP_PROTOCOL_VERSION:
+                    raise _incompatible_versions(supported)
+                return await self.initialize(version)
+            if e.code in MODERN_NEGOTIATION_ERRORS:
+                raise
+            return await self.initialize(MCP_LEGACY_PROTOCOL_VERSION)
+        except McpLegacyServerError:
+            self.modern = False
+            return await self.initialize(MCP_LEGACY_PROTOCOL_VERSION)
+        except McpHttpStatusError as e:
+            self.modern = False
+            if e.status_code in AUTH_FAILURE_STATUS:
+                raise
+            return await self.initialize(MCP_LEGACY_PROTOCOL_VERSION)
+        except McpInputRequiredError:
+            self.modern = False
+            return await self.initialize(MCP_LEGACY_PROTOCOL_VERSION)
+        if not isinstance(result.get("supportedVersions"), list):
+            return await self.initialize(MCP_LEGACY_PROTOCOL_VERSION)
+        version = _select_version(result.get("supportedVersions"))
+        if version is None:
+            raise _incompatible_versions(result.get("supportedVersions"))
+        if version != MCP_PROTOCOL_VERSION:
+            self.modern = False
+            return await self.initialize(version)
+        return _discover_info(result, version)
+    async def initialize(self, version: str) -> Dict[str, Any]:
+        self.modern = False
+        self.protocol_version = None
         result = await self._send_rpc_request("initialize", {
-            "protocolVersion": MCP_PROTOCOL_VERSION,
+            "protocolVersion": version,
             "capabilities": {},
-            "clientInfo": {
-                "name": "AskMiao-MCP-Client",
-                "version": __version__
-            }
+            "clientInfo": MCP_CLIENT_INFO,
         })
-        self._protocol_version = result.get("protocolVersion") or MCP_PROTOCOL_VERSION
+        self._use_legacy(result, version)
         try:
             await self._send_notification("notifications/initialized")
         except McpHttpStatusError as e:
             raise RuntimeError(str(e)) from e
         return result
-    async def list_tools(self) -> List[Dict[str, Any]]:
-        return await _list_all_tools(self._send_rpc_request)
-    async def call_tool(self, name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
-        return await self._send_rpc_request("tools/call", {
-            "name": name,
-            "arguments": arguments or {}
-        })
-class McpLegacySseClient:
+    async def call_tool(self, name: str, arguments: Dict[str, Any], input_schema: Any = None) -> Dict[str, Any]:
+        params = {"name": name, "arguments": arguments or {}}
+        if not self.modern:
+            return await self.request("tools/call", params)
+        try:
+            return await self.request("tools/call", params, param_headers(header_parameters(input_schema), arguments or {}))
+        except McpRpcError as e:
+            if e.code != HEADER_MISMATCH_ERROR:
+                raise
+        refreshed = _tool_input_schema(await self.list_tools(), name)
+        return await self.request("tools/call", params, param_headers(header_parameters(refreshed), arguments or {}))
+class McpLegacySseClient(McpSession):
     def __init__(self, url: str, headers: Optional[Dict[str, str]] = None, timeout: float = 30.0):
         self.url = url
         self.headers = headers or {}
@@ -592,30 +820,28 @@ class McpLegacySseClient:
         await response.aclose()
         if response.status_code not in (200, 202):
             raise McpHttpStatusError(response.status_code)
-    async def _send_rpc_request(self, method: str, params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    async def _send_rpc_request(
+        self, method: str, params: Dict[str, Any], extra_headers: Optional[Dict[str, str]] = None
+    ) -> Dict[str, Any]:
         self._request_id += 1
         req_id = self._request_id
         future = asyncio.get_running_loop().create_future()
         self._pending[req_id] = future
         try:
-            payload = {"jsonrpc": "2.0", "id": req_id, "method": method, "params": params or {}}
+            payload = {"jsonrpc": "2.0", "id": req_id, "method": method, "params": params}
             await asyncio.wait_for(self._post_message(payload), timeout=self.timeout)
             message = await asyncio.wait_for(future, timeout=self.timeout)
         finally:
             self._pending.pop(req_id, None)
         return _rpc_result(message)
-    async def initialize(self) -> Dict[str, Any]:
+    async def initialize(self, version: str) -> Dict[str, Any]:
         result = await self._send_rpc_request("initialize", {
-            "protocolVersion": MCP_PROTOCOL_VERSION,
+            "protocolVersion": version,
             "capabilities": {},
-            "clientInfo": {"name": "AskMiao-MCP-Client", "version": __version__},
+            "clientInfo": MCP_CLIENT_INFO,
         })
         await asyncio.wait_for(self._post_message({"jsonrpc": "2.0", "method": "notifications/initialized"}), timeout=self.timeout)
-        return result
-    async def list_tools(self) -> List[Dict[str, Any]]:
-        return await _list_all_tools(self._send_rpc_request)
-    async def call_tool(self, name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
-        return await self._send_rpc_request("tools/call", {"name": name, "arguments": arguments or {}})
+        return self._use_legacy(result, version)
     async def close(self) -> None:
         if self._reader is not None:
             self._reader.cancel()
@@ -631,26 +857,99 @@ class McpLegacySseClient:
             await self._client.aclose()
 
 
-async def open_http_mcp_client(url: str, headers: Dict[str, str], timeout: float):
+async def open_http_mcp_client(url: str, headers: Dict[str, str], timeout: float, hint: Optional[str]):
     client = McpHttpClient(url=url, headers=headers, timeout=timeout)
     try:
-        return client, await client.initialize()
+        return client, await client.connect(hint)
     except McpHttpStatusError as e:
         if e.status_code not in LEGACY_SSE_FALLBACK_STATUS:
             raise
     legacy = McpLegacySseClient(url=url, headers=headers, timeout=timeout)
     try:
         await legacy.start()
-        return legacy, await legacy.initialize()
+        return legacy, await legacy.initialize(MCP_LEGACY_PROTOCOL_VERSION)
     except BaseException:
         await legacy.close()
         raise
+
+
+TIME_SERVER_SCRIPT = """import sys, json, datetime, zoneinfo
+META = 'io.modelcontextprotocol/'
+SERVER_INFO = {'name': 'mcp-time-server', 'version': '1.1'}
+SUPPORTED_VERSIONS = [PROTOCOL_VERSION] + LEGACY_VERSIONS
+TOOLS = [{
+    'name': 'get_current_time',
+    'title': '查詢目前時間',
+    'description': '查詢指定時區或城市的當前精確時間',
+    'inputSchema': {
+        'type': 'object',
+        'properties': {
+            'timezone': {'type': 'string', 'description': '時區名稱 (例如 Asia/Taipei, UTC, America/New_York)', 'default': 'Asia/Taipei'}
+        },
+        'additionalProperties': False
+    },
+    'annotations': {'readOnlyHint': True, 'destructiveHint': False, 'idempotentHint': True, 'openWorldHint': False}
+}]
+def send(message):
+    sys.stdout.write(json.dumps(message) + '\\n')
+    sys.stdout.flush()
+def error(mid, code, message, data=None):
+    body = {'code': code, 'message': message}
+    if data is not None:
+        body['data'] = data
+    send({'jsonrpc': '2.0', 'id': mid, 'error': body})
+def reply(mid, body, modern):
+    if modern:
+        body = dict(body, resultType='complete', _meta={META + 'serverInfo': SERVER_INFO})
+    send({'jsonrpc': '2.0', 'id': mid, 'result': body})
+def current_time(tz_name):
+    try:
+        return datetime.datetime.now(zoneinfo.ZoneInfo(tz_name)).strftime('%Y-%m-%d %H:%M:%S %Z')
+    except Exception:
+        return datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC')
+def handle(mid, method, params):
+    version = (params.get('_meta') or {}).get(META + 'protocolVersion')
+    modern = version is not None
+    if method == 'initialize':
+        requested = params.get('protocolVersion')
+        negotiated = requested if requested in LEGACY_VERSIONS else LEGACY_VERSIONS[0]
+        reply(mid, {'protocolVersion': negotiated, 'capabilities': {'tools': {}}, 'serverInfo': SERVER_INFO}, False)
+    elif modern and version != PROTOCOL_VERSION:
+        error(mid, -32022, 'Unsupported protocol version', {'supported': SUPPORTED_VERSIONS, 'requested': version})
+    elif method == 'server/discover' and modern:
+        reply(mid, {'supportedVersions': SUPPORTED_VERSIONS, 'capabilities': {'tools': {}}, 'ttlMs': CACHE_TTL_MS, 'cacheScope': 'public'}, True)
+    elif method == 'tools/list':
+        body = {'tools': TOOLS, 'ttlMs': CACHE_TTL_MS, 'cacheScope': 'public'} if modern else {'tools': TOOLS}
+        reply(mid, body, modern)
+    elif method == 'tools/call':
+        if params.get('name') != 'get_current_time':
+            error(mid, -32602, 'Unknown tool: ' + str(params.get('name')))
+            return
+        tz_name = (params.get('arguments') or {}).get('timezone', 'Asia/Taipei')
+        reply(mid, {'content': [{'type': 'text', 'text': '當前時間: ' + current_time(tz_name)}], 'isError': False}, modern)
+    else:
+        error(mid, -32601, 'Method not found')
+def main():
+    while True:
+        line = sys.stdin.readline()
+        if not line:
+            break
+        try:
+            req = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(req, dict) and 'id' in req:
+            handle(req['id'], req.get('method'), req.get('params') or {})
+if __name__ == '__main__':
+    main()
+"""
 
 
 class McpManager:
     """
     MCP 伺服器與工具調度管理器
     """
+    _negotiated_versions: Dict[Any, str] = {}
     @classmethod
     def get_preset_servers(cls) -> List[Dict[str, Any]]:
         """常見官方與社群 MCP 伺服器快速範本
@@ -659,6 +958,11 @@ class McpManager:
         網域白名單與網址來源防護約束。
         """
         os.makedirs(MCP_FILESYSTEM_SANDBOX_DIR, exist_ok=True)
+        script_constants = (
+            f"PROTOCOL_VERSION = {MCP_PROTOCOL_VERSION!r}\n"
+            f"LEGACY_VERSIONS = {list(MCP_LEGACY_PROTOCOL_VERSIONS)!r}\n"
+            f"CACHE_TTL_MS = {MCP_TIME_TOOLS_CACHE_TTL_MS!r}\n"
+        )
         return [
             {
                 "name": "mcp_time",
@@ -666,47 +970,7 @@ class McpManager:
                 "description": "提供全球各大城市當前精確時間查詢、時區換算與時間差計算工具。",
                 "transport_type": "stdio",
                 "command": "python",
-                "args": ["-c", """import sys, json, datetime, zoneinfo
-def main():
-    while True:
-        line = sys.stdin.readline()
-        if not line: break
-        try:
-            req = json.loads(line)
-            mid = req.get('id')
-            method = req.get('method')
-            if method == 'initialize':
-                res = {'jsonrpc': '2.0', 'id': mid, 'result': {'protocolVersion': '2024-11-05', 'capabilities': {'tools': {}}, 'serverInfo': {'name': 'mcp-time-server', 'version': '1.0'}}}
-                sys.stdout.write(json.dumps(res) + '\\n'); sys.stdout.flush()
-            elif method == 'tools/list':
-                tools = [{
-                    'name': 'get_current_time',
-                    'description': '查詢指定時區或城市的當前精確時間',
-                    'inputSchema': {
-                        'type': 'object',
-                        'properties': {
-                            'timezone': {'type': 'string', 'description': '時區名稱 (例如 Asia/Taipei, UTC, America/New_York)', 'default': 'Asia/Taipei'}
-                        }
-                    }
-                }]
-                res = {'jsonrpc': '2.0', 'id': mid, 'result': {'tools': tools}}
-                sys.stdout.write(json.dumps(res) + '\\n'); sys.stdout.flush()
-            elif method == 'tools/call':
-                params = req.get('params', {})
-                tz_name = params.get('arguments', {}).get('timezone', 'Asia/Taipei')
-                try:
-                    tz = zoneinfo.ZoneInfo(tz_name)
-                    now_str = datetime.datetime.now(tz).strftime('%Y-%m-%d %H:%M:%S %Z')
-                except Exception:
-                    now_str = datetime.datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S UTC')
-                content = [{'type': 'text', 'text': f'當前時間: {now_str}'}]
-                res = {'jsonrpc': '2.0', 'id': mid, 'result': {'content': content, 'isError': False}}
-                sys.stdout.write(json.dumps(res) + '\\n'); sys.stdout.flush()
-        except Exception:
-            pass
-if __name__ == '__main__':
-    main()
-"""],
+                "args": ["-c", script_constants + TIME_SERVER_SCRIPT],
                 "env_vars": {}
             },
             {
@@ -737,7 +1001,19 @@ if __name__ == '__main__':
                 headers["Authorization"] = f"Bearer {token}"
         return headers
     @classmethod
-    async def _run(cls, server_dict: Dict[str, Any], action) -> Any:
+    async def _open_http(cls, server_dict: Dict[str, Any], hint: Optional[str]):
+        url = server_dict.get("url")
+        if not url:
+            raise ValueError("SSE/HTTP 傳輸模式必須指定 url 連線網址")
+        timeout = float(server_dict.get("timeout", 30))
+        try:
+            return await open_http_mcp_client(url, await cls._http_headers(server_dict), timeout, hint)
+        except McpHttpStatusError as e:
+            if e.status_code != 401 or not server_dict.get("oauth_authorized"):
+                raise
+        return await open_http_mcp_client(url, await cls._http_headers(server_dict, force_refresh=True), timeout, hint)
+    @classmethod
+    async def _connect_and_run(cls, server_dict: Dict[str, Any], action, hint: Optional[str]) -> Any:
         transport_type = server_dict.get("transport_type", "stdio")
         timeout = float(server_dict.get("timeout", 30))
         if transport_type == "stdio":
@@ -749,46 +1025,70 @@ if __name__ == '__main__':
             client = McpStdioClient(command=cmd, args=raw_args, env_vars=raw_env, timeout=timeout)
             try:
                 await client.start()
-                init_res = await client.initialize()
+                init_res = await client.connect(hint)
+                cls._remember_version(server_dict, client)
                 return await action(client, init_res)
             finally:
                 await client.close()
         if transport_type in ("sse", "http"):
-            url = server_dict.get("url")
-            if not url:
-                raise ValueError("SSE/HTTP 傳輸模式必須指定 url 連線網址")
-            try:
-                client, init_res = await open_http_mcp_client(url, await cls._http_headers(server_dict), timeout)
-            except McpHttpStatusError as e:
-                if e.status_code != 401 or not server_dict.get("oauth_authorized"):
-                    raise
-                client, init_res = await open_http_mcp_client(url, await cls._http_headers(server_dict, force_refresh=True), timeout)
+            client, init_res = await cls._open_http(server_dict, hint)
+            cls._remember_version(server_dict, client)
             try:
                 return await action(client, init_res)
             finally:
                 await client.close()
         raise ValueError(f"不支援的傳輸模式: {transport_type}")
     @classmethod
+    def _remember_version(cls, server_dict: Dict[str, Any], client: McpSession) -> None:
+        if server_dict.get("id") is not None and client.protocol_version:
+            cls._negotiated_versions[server_dict["id"]] = client.protocol_version
+    @classmethod
+    async def _run(cls, server_dict: Dict[str, Any], action, use_hint: bool = True) -> Any:
+        hint = (cls._negotiated_versions.get(server_dict.get("id")) or server_dict.get("protocol_version")) if use_hint else None
+        try:
+            return await cls._connect_and_run(server_dict, action, hint)
+        except (McpLegacyServerError, McpRpcError) as e:
+            stale = isinstance(e, McpLegacyServerError) or e.code == UNSUPPORTED_PROTOCOL_VERSION_ERROR
+            if hint is None or not stale:
+                raise
+        except McpHttpStatusError as e:
+            if e.status_code == 403:
+                cls._record_scope_challenge(server_dict, e)
+            raise
+        cls._negotiated_versions.pop(server_dict.get("id"), None)
+        return await cls._connect_and_run(server_dict, action, None)
+    @staticmethod
+    def _record_scope_challenge(server_dict: Dict[str, Any], error: McpHttpStatusError) -> None:
+        from app.services import mcp_oauth
+        challenge = mcp_oauth.bearer_challenge(error.www_authenticate)
+        if challenge.get("error") != "insufficient_scope":
+            return
+        scopes = challenge.get("scope", "").split()
+        if server_dict.get("id") is not None and scopes:
+            mcp_oauth.save_scope_challenge(server_dict["id"], scopes)
+        raise McpInsufficientScopeError(scopes) from error
+    @classmethod
     async def discover_server_tools(cls, server_dict: Dict[str, Any]) -> Tuple[List[Dict[str, Any]], Dict[str, Any], Dict[str, List[Dict[str, Any]]]]:
         """
-        向指定 MCP 伺服器進行 Initialize 交握並探索工具、resources 與 prompts
+        向指定 MCP 伺服器判斷協定世代（server/discover 或 initialize）並探索工具、resources 與 prompts
         回傳: (tools_list, server_info, {"resources": [...], "prompts": [...]})
         """
+        transport_type = server_dict.get("transport_type", "stdio")
         async def discover(client, init_res):
-            tools = await client.list_tools()
+            tools = _usable_tools(await client.list_tools(), transport_type)
             capabilities = init_res.get("capabilities") or {}
             catalog = {"resources": [], "prompts": []}
             for kind, method in (("resources", "resources/list"), ("prompts", "prompts/list")):
                 if kind not in capabilities:
                     continue
                 try:
-                    items = await _list_all(client._send_rpc_request, method, kind)
+                    items = await _list_all(client.request, method, kind)
                 except Exception as e:
                     log_and_get_error_id(logger, f"探索 MCP {kind} 失敗", e, logging.WARNING)
                     continue
                 catalog[kind] = _usable_resources(items) if kind == "resources" else _usable_prompts(items)
-            return tools, init_res, catalog
-        return await cls._run(server_dict, discover)
+            return tools, {**init_res, "protocolVersion": client.protocol_version}, catalog
+        return await cls._run(server_dict, discover, use_hint=False)
     @classmethod
     async def _execute(cls, server_dict: Dict[str, Any], label: str, action, shape) -> Dict[str, Any]:
         start_t = time.time()
@@ -808,27 +1108,31 @@ if __name__ == '__main__':
     @classmethod
     async def execute_mcp_tool(cls, server_dict: Dict[str, Any], tool_name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
         """調用指定 MCP 伺服器之特定工具 (tools/call)"""
+        input_schema = _tool_input_schema(cls._json_value(server_dict.get("discovered_tools"), []), tool_name)
         return await cls._execute(
             server_dict,
             f"MCP 工具 {tool_name}",
-            lambda client: client.call_tool(tool_name, arguments),
-            lambda res: {"is_success": not res.get("isError", False), "content": res.get("content", [])},
+            lambda client: client.call_tool(tool_name, arguments, input_schema),
+            tool_result,
         )
     @classmethod
     async def read_mcp_resource(cls, server_dict: Dict[str, Any], uri: str) -> Dict[str, Any]:
         return await cls._execute(
             server_dict,
             f"MCP resource {uri}",
-            lambda client: client._send_rpc_request("resources/read", {"uri": uri}),
-            lambda res: {"is_success": True, "contents": res.get("contents", [])},
+            lambda client: client.request("resources/read", {"uri": uri}),
+            lambda res: {
+                "is_success": True,
+                "contents": [resource_contents(item) for item in res.get("contents", []) if isinstance(item, dict)],
+            },
         )
     @classmethod
     async def get_mcp_prompt(cls, server_dict: Dict[str, Any], name: str, arguments: Dict[str, str]) -> Dict[str, Any]:
         return await cls._execute(
             server_dict,
             f"MCP prompt {name}",
-            lambda client: client._send_rpc_request("prompts/get", {"name": name, "arguments": arguments}),
-            lambda res: {"is_success": True, "description": res.get("description"), "messages": res.get("messages", [])},
+            lambda client: client.request("prompts/get", {"name": name, "arguments": arguments}),
+            lambda res: {"is_success": True, "description": res.get("description"), "messages": prompt_messages(res.get("messages"))},
         )
     @classmethod
     def convert_mcp_tool_to_function_def(
@@ -836,19 +1140,23 @@ if __name__ == '__main__':
         server_name: str,
         server_display_name: str,
         mcp_tool: Dict[str, Any]
-    ) -> Dict[str, Any]:
+    ) -> Optional[Dict[str, Any]]:
         """
-        將 MCP tool 規格轉換為 OpenAI Function Calling 相容之 Tool Definition
+        將 MCP tool 規格轉換為 OpenAI Function Calling 相容之 Tool Definition；inputSchema 無法轉換時回傳 None
         """
         t_name = mcp_tool.get("name", "")
-        fn_name = mcp_function_name(server_name, t_name)
-        desc = mcp_tool.get("description") or f"由 MCP 伺服器 [{server_display_name}] 提供的工具: {t_name}"
-        input_schema = mcp_tool.get("inputSchema") or {"type": "object", "properties": {}}
+        try:
+            parameters = function_parameters(mcp_tool.get("inputSchema"))
+        except McpToolDefinitionError as e:
+            logger.warning("略過定義不合規則的 MCP 工具 %s: %s", t_name, e)
+            return None
+        title = mcp_tool.get("title") if isinstance(mcp_tool.get("title"), str) else t_name
+        desc = mcp_tool.get("description") or f"由 MCP 伺服器 [{server_display_name}] 提供的工具: {title}"
         return {
             "type": "function",
             "function": {
-                "name": fn_name,
-                "description": f"[MCP 協定工具]{server_display_name} -> {t_name}：{desc}",
-                "parameters": input_schema
+                "name": mcp_function_name(server_name, t_name),
+                "description": f"[MCP 協定工具]{server_display_name} -> {title}：{desc}",
+                "parameters": parameters
             }
         }

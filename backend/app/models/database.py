@@ -46,6 +46,7 @@ COLUMN_UPGRADES = (
     ("mcp_servers", "discovered_prompts", "TEXT", "UPDATE mcp_servers SET discovered_prompts = NULL"),
     ("mcp_servers", "oauth_config", "TEXT", "UPDATE mcp_servers SET oauth_config = NULL"),
     ("mcp_servers", "oauth_tokens", "TEXT", "UPDATE mcp_servers SET oauth_tokens = NULL"),
+    ("mcp_servers", "protocol_version", "VARCHAR", "UPDATE mcp_servers SET protocol_version = NULL"),
     ("agent_skills", "allow_scripts", "BOOLEAN", "UPDATE agent_skills SET allow_scripts = FALSE"),
     ("agent_skills", "allowed_user_ids", "TEXT", "UPDATE agent_skills SET allowed_user_ids = NULL"),
     ("custom_api_tools", "param_styles", "TEXT", "UPDATE custom_api_tools SET param_styles = NULL"),

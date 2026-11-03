@@ -2,7 +2,7 @@
 
 [繁體中文](api.md) | [English](api_en.md)
 
-> REST and SSE streaming endpoints of the AskMiao **8.0.0** backend, written against the actual routers in `backend/app/api/`. With `ENABLE_API_DOCS=true` the backend also serves interactive docs at `http://localhost:8001/docs` (Swagger UI) and `http://localhost:8001/redoc`, and the OpenAPI document at `/openapi.json`. These three paths need no sign-in and list every endpoint and parameter, so keep `ENABLE_API_DOCS=false` (the template value) for public deployments; all three then return `404`.
+> REST and SSE streaming endpoints of the AskMiao **8.1.0** backend, written against the actual routers in `backend/app/api/`. With `ENABLE_API_DOCS=true` the backend also serves interactive docs at `http://localhost:8001/docs` (Swagger UI) and `http://localhost:8001/redoc`, and the OpenAPI document at `/openapi.json`. These three paths need no sign-in and list every endpoint and parameter, so keep `ENABLE_API_DOCS=false` (the template value) for public deployments; all three then return `404`.
 
 ## Contents
 
@@ -935,7 +935,7 @@ The approval card lists every step's method and host, for example `Arazzo 工作
 
 ## 5. MCP servers `/api/mcp`
 
-Manage Model Context Protocol servers, protocol version `2025-06-18` (the version the server replies with wins), using JSON-RPC 2.0 for `initialize`, `notifications/initialized`, `tools/list` (all pages are read by following `nextCursor`, at most 50), and `tools/call`; when the server's `initialize` capabilities declare `resources` or `prompts`, `resources/list` and `prompts/list` are read with the same paging, and `resources/read` and `prompts/get` use them. The handshake declares no client capabilities (sampling and roots are not supported). The handshake identifies the client as `AskMiao-MCP-Client` with the backend version.
+Manage Model Context Protocol servers. The client speaks MCP `2026-07-28` first: every JSON-RPC request carries `io.modelcontextprotocol/protocolVersion`, `io.modelcontextprotocol/clientInfo` (`AskMiao-MCP-Client` with the backend version), and `io.modelcontextprotocol/clientCapabilities` (an empty object; elicitation, sampling, and roots are not supported) in `_meta`, `server/discover` returns the server's supported versions and capabilities, and then `tools/list` (all pages are read by following `nextCursor`, at most 50) and `tools/call` follow; when the server declares `resources` or `prompts`, `resources/list` and `prompts/list` are read with the same paging, and `resources/read` and `prompts/get` use them. Servers that only support the `initialize` handshake (`2025-11-25`, `2025-06-18`, `2025-03-26`, `2024-11-05`) are handled with the handshake automatically (see "Protocol era detection" below). A response whose `resultType` is `input_required` counts as a failed call.
 
 > Every endpoint in this module except the OAuth callback ([5.11](#511-get-apimcpoauthcallback)), including reads, requires **admin** access: `stdio` servers run the configured command on the host, and server settings include credentials such as environment variables and headers (stored encrypted and shown as `••••••••` in responses).
 
@@ -946,7 +946,7 @@ Manage Model Context Protocol servers, protocol version `2025-06-18` (the versio
 | `id` | integer | Server ID |
 | `name` | string | Unique name (lowercased on creation), used in tool names `mcp_<name>_<tool>` |
 | `display_name` / `description` | string | Display name and description |
-| `transport_type` | string | `stdio`, or `http` / `sse` (both try Streamable HTTP first: JSON-RPC over POST with `Accept: application/json, text/event-stream`, accepting a JSON or SSE response, and sending the server-issued `Mcp-Session-Id` and `MCP-Protocol-Version` on later requests; a `404` on a request that carries a session re-initializes once and retries, and closing ends the session with `DELETE`. When `initialize` gets `400`, `404`, or `405`, the legacy HTTP+SSE transport is used instead; see below) |
+| `transport_type` | string | `stdio`, or `http` / `sse` (both try Streamable HTTP first: JSON-RPC over POST with `Accept: application/json, text/event-stream`, accepting a JSON or SSE response; modern servers use no session, and sessions with legacy servers and the legacy HTTP+SSE transport are covered under "Protocol era detection" below) |
 | `command` / `args` | string / array | Command and arguments for `stdio` |
 | `env_vars` | object | Extra environment variables for the `stdio` subprocess; all are treated as credentials, so every value is shown as `••••••••` in responses |
 | `url` / `headers` | string / object | Server URL and request headers for HTTP; `headers` are masked like a custom API tool's |
@@ -954,9 +954,10 @@ Manage Model Context Protocol servers, protocol version `2025-06-18` (the versio
 | `requires_approval` | boolean | Whether the asking user must approve in the chat before the agent calls this server's tools (see [2.9](#29-post-apichatapprovalsapproval_id)); `true` when omitted on create, and admins can turn it off per server |
 | `status` | string | `connected`, `disconnected`, or `error` |
 | `last_error` | string | Why the latest discovery failed |
-| `discovered_tools` | array | Cached tools from the latest discovery (`name`, `description`, `inputSchema`); tools whose names do not match `[A-Za-z0-9_.-]{1,128}` are skipped |
+| `discovered_tools` | array | Cached tools from the latest discovery (the full definitions the server returned, including `title`, `inputSchema`, `outputSchema`, and `annotations`); tools whose names do not match `[A-Za-z0-9_.-]{1,128}`, whose `inputSchema` has a `$ref` outside the tool definition, or (HTTP transport) whose `x-mcp-header` breaks the rules are skipped |
 | `discovered_resources` | array | Resources from the latest discovery (`uri`, `name`, `description`, `mimeType`), at most 200; items without a `uri` or with a `uri` longer than 2,048 characters are skipped |
 | `discovered_prompts` | array | Prompts from the latest discovery (`name`, `description`, `arguments`), at most 200; prompts and arguments whose names do not match `[A-Za-z0-9_.-]{1,128}` are skipped |
+| `protocol_version` | string | The MCP protocol version negotiated by the latest discovery (such as `2026-07-28`, or a legacy `2025-06-18`); tool calls reuse it and renegotiate automatically when it no longer works. Cleared when the transport, command, arguments, or URL change |
 | `oauth_authorized` | boolean | Responses only: whether OAuth tokens are stored (see [5.10](#510-post-apimcpserversserver_idoauthstart)) |
 | `oauth_client` | object | The admin-entered OAuth client (`client_id`, `client_secret`, `scope`), with `client_secret` shown as `••••••••`; `null` when none was entered (or dynamic registration is used) |
 | `timeout` | integer | Connect and call timeout in seconds, 30 by default |
@@ -973,9 +974,9 @@ Resource and prompt descriptions are truncated to 500 characters; the lists are 
 
 **HTTP servers** are SSRF-validated on every request and redirect, with the connection pinned to the validated IP, so servers on loopback or intranet addresses are rejected; use `stdio` for local MCP servers. The backend follows redirects itself, only within the same origin (same scheme, host, and port), at most 5, and never reads the body of a redirect response; a redirect to another origin aborts the request, so admin-configured headers and the JSON-RPC body never go to another domain. Each JSON-RPC request, redirects included, has an overall deadline of the server's `timeout` seconds. One response may be at most 4 MiB, and error messages no longer include the peer's response body.
 
-**Legacy HTTP+SSE transport**: when Streamable HTTP `initialize` returns `400`, `404`, or `405`, the client opens an SSE stream with GET (`Accept: text/event-stream`), waits for the server's `endpoint` event, then POSTs JSON-RPC to that address and reads the responses from the SSE stream. The `endpoint` must be on the same origin as the SSE URL, or the connection is rejected; at most 4 MiB is read from the whole stream.
+**Protocol era detection**: `stdio` probes with `server/discover` first; a `DiscoverResult` selects `2026-07-28`, an `UnsupportedProtocolVersionError` (`-32022`) selects a version from the server's list that AskMiao also supports, and any other error or no reply within 5 seconds falls back to the `initialize` handshake. HTTP first POSTs a modern `server/discover`; every request carries `MCP-Protocol-Version` and `Mcp-Method`, `tools/call`, `resources/read`, and `prompts/get` also carry `Mcp-Name` (encoded as `=?base64?…?=` when it has non-ASCII or control characters or leading or trailing whitespace), parameters marked `x-mcp-header` in the tool's `inputSchema` are mirrored as `Mcp-Param-{name}`, and a `HeaderMismatch` (`-32020`) reply re-reads the tool list and retries once; a `400`, `404`, or `405` whose body is not a modern JSON-RPC error falls back to `initialize` (with an `Mcp-Session-Id` session, re-initialized once on `404`, and ended with `DELETE`). When `initialize` also returns `400`, `404`, or `405`, the client opens a legacy HTTP+SSE stream with GET (`Accept: text/event-stream`), waits for the server's `endpoint` event, then POSTs JSON-RPC to that address and reads the responses from the SSE stream. The `endpoint` must be on the same origin as the SSE URL, or the connection is rejected; at most 4 MiB is read from the whole stream.
 
-**OAuth tokens**: for an authorized server (see [5.10](#510-post-apimcpserversserver_idoauthstart)), HTTP requests carry `Authorization: Bearer <access token>`; within 60 seconds of expiry, or once when connecting gets `401`, the token is refreshed with the refresh token (sending `resource`). When discovery gets `401`, `last_error` says the server requires OAuth authorization.
+**OAuth tokens**: for an authorized server (see [5.10](#510-post-apimcpserversserver_idoauthstart)), HTTP requests carry `Authorization: Bearer <access token>`; within 60 seconds of expiry, or once when connecting gets `401`, the token is refreshed with the refresh token (sending `resource`). When discovery gets `401`, `last_error` says the server requires OAuth authorization; a `403` whose `WWW-Authenticate` says `error="insufficient_scope"` records its `scope`, `last_error` asks for re-authorization to get the extra permissions, and the next authorization requests them as well.
 
 ### 5.1 GET /api/mcp/presets
 
@@ -1020,17 +1021,17 @@ Send only the fields you change (`name` cannot be changed). An `env_vars` or `he
 
 ### 5.7 POST /api/mcp/servers/{server_id}/discover
 
-Reconnect and rediscover tools, resources, and prompts; the results are written to `discovered_tools`, `discovered_resources`, and `discovered_prompts`. Tools whose names do not match `[A-Za-z0-9_.-]{1,128}` are skipped (only the server log records them): they appear neither in `tools` nor among the tools offered to the agent.
+Reconnect and rediscover tools, resources, and prompts; the results are written to `discovered_tools`, `discovered_resources`, and `discovered_prompts`, and the negotiated protocol version to `protocol_version`. Tools whose names do not match `[A-Za-z0-9_.-]{1,128}`, whose `inputSchema` has a `$ref` outside the tool definition (schemas are never downloaded from the network), or whose `x-mcp-header` breaks the rules on the HTTP transport are skipped (only the server log records them): they appear neither in `tools` nor among the tools offered to the agent.
 
 ```json
 {
   "status": "success",
   "message": "成功連線並探索到 1 項 MCP 工具、0 項 resource、0 項 prompt",
   "tools_count": 1,
-  "tools": [{"name": "get_current_time", "description": "查詢指定時區或城市的當前精確時間", "inputSchema": {"type": "object", "properties": {"timezone": {"type": "string"}}}}],
+  "tools": [{"name": "get_current_time", "title": "查詢目前時間", "description": "查詢指定時區或城市的當前精確時間", "inputSchema": {"type": "object", "properties": {"timezone": {"type": "string"}}, "additionalProperties": false}, "annotations": {"readOnlyHint": true, "destructiveHint": false, "idempotentHint": true, "openWorldHint": false}}],
   "resources": [],
   "prompts": [],
-  "init_info": {"protocolVersion": "2024-11-05", "capabilities": {"tools": {}}, "serverInfo": {"name": "mcp-time-server", "version": "1.0"}},
+  "init_info": {"protocolVersion": "2026-07-28", "capabilities": {"tools": {}}, "serverInfo": {"name": "mcp-time-server", "version": "1.1"}, "supportedVersions": ["2026-07-28", "2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05"]},
   "server": {...}
 }
 ```
@@ -1062,20 +1063,22 @@ Call a tool once (`tools/call`). `tool_name` is the tool's original name on the 
 
 A failed call returns `result` as `{"is_success": false, "duration_seconds": ..., "error": "伺服器內部錯誤，請聯繫系統管理員並提供錯誤代碼（錯誤代碼：…）", "error_id": "…"}` ("internal server error; contact the administrator with the error code"); the full reason (such as the subprocess's stderr, a JSON-RPC error, or an SSRF rejection reason) goes only to the server log. The agent gets the same result when an MCP tool call fails.
 
+Before `content` reaches the model, binary data in images, audio, and embedded resources is replaced with `"omitted": "二進位內容不提供給模型"` ("binary content is not given to the model"), and a `resource_link` keeps only `uri`, `name`, `title`, `description`, and `mimeType`. A tool's `structuredContent` also appears in `result`, and a JSON text block identical to it is dropped from `content`; `outputSchema` is not validated.
+
 ### 5.10 POST /api/mcp/servers/{server_id}/oauth/start
 
-Starts the authorization code flow of the MCP authorization specification (`2025-06-18`) for an HTTP / SSE server; no request body. `stdio` servers or servers without a `url` return `400`.
+Starts the authorization code flow of the MCP authorization specification (`2026-07-28`) for an HTTP / SSE server; no request body. `stdio` servers or servers without a `url` return `400`. The redirect address must be HTTPS or localhost, or the request returns `400`.
 
-1. Sends `ping` to the server and reads `resource_metadata` from the `WWW-Authenticate` response header; without it, tries `/.well-known/oauth-protected-resource<path>` and then `/.well-known/oauth-protected-resource`.
-2. Reads the authorization server metadata (RFC 8414 `/.well-known/oauth-authorization-server`, falling back to the OpenID Connect locations); without protected resource metadata, the MCP server's origin is treated as the authorization server. Metadata that lists `code_challenge_methods_supported` without `S256` is rejected.
-3. Uses the admin-entered client in `oauth_client`; without one, gets a client through dynamic registration (RFC 7591, a public client with `token_endpoint_auth_method` `none`).
-4. Creates PKCE (S256) and a single-use `state`, and returns the authorization URL, which carries `resource` (RFC 8707) and `scope` (the admin-entered scope, or `scopes_supported` when there is none).
+1. Sends `server/discover` without a token and reads `resource_metadata` and `scope` from the `WWW-Authenticate` header of the `401` response; without `resource_metadata`, tries `/.well-known/oauth-protected-resource<path>` and then `/.well-known/oauth-protected-resource`.
+2. Reads the authorization server metadata (RFC 8414 `/.well-known/oauth-authorization-server`, falling back to the OpenID Connect locations); without protected resource metadata, the MCP server's origin is treated as the authorization server. The metadata's `issuer` must be identical to the issuer used to build the URL, `code_challenge_methods_supported` must exist and include `S256`, and the authorization, token, and registration endpoints must be HTTPS (loopback excepted); otherwise the metadata is rejected.
+3. Uses the admin-entered client in `oauth_client` first; when the authorization server declares `client_id_metadata_document_supported` and AskMiao is served over HTTPS, the URL of the Client ID Metadata Document ([5.13](#513-get-apimcpoauthclient-metadatajson)) becomes the `client_id`; only then dynamic registration (RFC 7591, a public client with `token_endpoint_auth_method` `none`, and `application_type` `native` when the redirect address is localhost or `web` otherwise). A registered client is bound to the authorization server (`issuer`) that issued it, so a changed authorization server registers again and clears the stored tokens; an admin-entered client returns `400` instead so the admin can update it.
+4. Creates PKCE (S256) and a single-use `state`, records the expected `issuer`, and returns the authorization URL, which carries `resource` (RFC 8707) and `scope`: the admin-entered scope, else the scope of the previous authorization, else the `scope` from step 1's `WWW-Authenticate`, and last `scopes_supported`; scopes recorded from an `insufficient_scope` reply are added.
 
 **Response**: `{"status": "success", "authorization_url": "https://auth.example.com/authorize?..."}`, which the admin opens in the browser.
 
 | Status | When |
 |---|---|
-| `400` | The authorization server has no registration endpoint and no `client_id` was entered: `授權伺服器不支援動態註冊，請在 MCP 伺服器設定中填入 OAuth client_id` ("the authorization server does not support dynamic registration; enter an OAuth client_id in the MCP server settings"); a URL rejected by the SSRF guard, or any other discovery failure (error code only) |
+| `400` | The redirect address is neither HTTPS nor localhost; the authorization server supports neither Client ID Metadata Documents nor dynamic registration and no `client_id` was entered: `授權伺服器不支援 Client ID Metadata Document 或動態註冊，請在 MCP 伺服器設定中填入 OAuth client_id` ("the authorization server supports neither Client ID Metadata Documents nor dynamic registration; enter an OAuth client_id in the MCP server settings"); the admin-entered client belongs to the previous authorization server; metadata that fails the checks above, a URL rejected by the SSRF guard, or any other discovery failure (error code only) |
 | `404` | `找不到該 MCP 伺服器` (server not found) |
 
 The `redirect_uri` the authorization server sends the browser back to is `/api/mcp/oauth/callback`, built by the backend from this request's URL; behind a reverse proxy, the proxy must pass the scheme and host the client sees to the backend, or the redirect address will be wrong. OAuth endpoint requests are SSRF-validated, follow only same-origin redirects, and have a 15-second timeout and a 256 KiB response limit.
@@ -1084,11 +1087,15 @@ The `redirect_uri` the authorization server sends the browser back to is `/api/m
 
 **Public**: where the authorization server sends the browser back. It needs no access token; the single-use `state` from 5.10 identifies the admin who started the authorization and the server. `state` is valid for 10 minutes and only once; it lives in the backend process's memory and is lost on restart, and with multiple workers the callback must reach the same process that handled 5.10 (for example with sticky routing).
 
-**Query parameters**: `state` and `code` (or the `error` returned by the authorization server). The backend exchanges `code` for tokens with `code_verifier`, `redirect_uri`, and `resource`, stores them encrypted, writes the security event `ADMIN_MCP_OAUTH_AUTHORIZED`, and returns a short HTML page (`200`). An invalid or expired `state`, a missing `code`, or a failed exchange returns an HTML page with `400` (a failed exchange shows only an error code), and a deleted server returns `404`. Call 5.7 afterwards to rediscover.
+**Query parameters**: `state` and `code` (or the `error` returned by the authorization server), plus `iss`. The backend first checks `iss` per RFC 9207: when the authorization server declares `authorization_response_iss_parameter_supported`, `iss` is required, and a present `iss` is always compared character for character with the recorded `issuer`; a mismatch returns an HTML page with `400`, exchanges nothing, and shows none of the authorization server's error details. It then exchanges `code` for tokens with `code_verifier`, `redirect_uri`, and `resource`, stores them encrypted, writes the security event `ADMIN_MCP_OAUTH_AUTHORIZED`, and returns a short HTML page (`200`). An invalid or expired `state`, a missing `code`, or a failed exchange returns an HTML page with `400` (a failed exchange shows only an error code), and a deleted server returns `404`. Call 5.7 afterwards to rediscover.
 
 ### 5.12 DELETE /api/mcp/servers/{server_id}/oauth
 
 Clears the stored OAuth tokens and keeps the OAuth client settings. **Response**: `{"status": "success", "message": "已清除 OAuth 授權", "server": {...}}`
+
+### 5.13 GET /api/mcp/oauth/client-metadata.json
+
+**Public**: AskMiao's OAuth Client ID Metadata Document. Its URL is the `client_id` itself, and authorization servers fetch it for the client details: `client_id`, `client_name` (`AskMiao`), `redirect_uris` (`/api/mcp/oauth/callback` built from this request), `grant_types` (`authorization_code`, `refresh_token`), `response_types` (`code`), `token_endpoint_auth_method` (`none`), and `application_type`. It is used only when AskMiao is served over HTTPS and the authorization server declares support; behind a reverse proxy, the proxy must pass the scheme and host the client sees to the backend so the URL matches the `client_id`.
 
 ---
 

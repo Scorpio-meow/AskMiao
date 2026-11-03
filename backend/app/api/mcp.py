@@ -2,6 +2,7 @@ import json
 import logging
 from typing import Any, Dict, List, Optional, Tuple
 import html
+import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse
 from sqlalchemy.orm import Session
@@ -15,7 +16,7 @@ from app.models import (
 from app.core.jwt_auth import get_current_admin_user
 from app.core.ssrf_protection import SSRFProtectionError
 from app.services import mcp_oauth
-from app.services.mcp_service import McpHttpStatusError, McpManager
+from app.services.mcp_service import McpHttpStatusError, McpInsufficientScopeError, McpManager
 from app.core.security_logging import log_security_event
 from app.core.error_response import SafeClientError, log_and_get_error_id, format_client_error
 from app.core.tool_secrets import decrypt_for_display, decrypt_json, encrypt_json, is_any_key, is_secret_header, mask, merge_masked
@@ -84,6 +85,7 @@ def _server_fields(server: McpServer, env_vars: Optional[Dict[str, Any]], header
         "discovered_tools": discovered_tools,
         "discovered_resources": _json_list(server.discovered_resources),
         "discovered_prompts": _json_list(server.discovered_prompts),
+        "protocol_version": server.protocol_version,
         "timeout": server.timeout or 30,
         "created_at": server.created_at,
         "updated_at": server.updated_at,
@@ -96,14 +98,18 @@ def _json_list(value: Optional[str]) -> List[Any]:
     except Exception:
         return []
     return parsed if isinstance(parsed, list) else []
-def _store_discovery(server: McpServer, tools: List[Dict[str, Any]], catalog: Dict[str, List[Dict[str, Any]]]) -> None:
+def _store_discovery(server: McpServer, tools: List[Dict[str, Any]], init_info: Dict[str, Any], catalog: Dict[str, List[Dict[str, Any]]]) -> None:
+    server.protocol_version = init_info.get("protocolVersion")
     server.discovered_tools = json.dumps(tools, ensure_ascii=False)
     server.discovered_resources = json.dumps(catalog["resources"], ensure_ascii=False)
     server.discovered_prompts = json.dumps(catalog["prompts"], ensure_ascii=False)
 OAUTH_REQUIRED_MESSAGE = "MCP 伺服器要求 OAuth 授權，請按「OAuth 授權」完成登入後再重新探索"
+OAUTH_SCOPE_MESSAGE = "MCP 伺服器要求額外的 OAuth 權限，請按「OAuth 授權」重新授權後再重新探索"
 def _discovery_error_message(e: Exception, error_id: str) -> str:
     if isinstance(e, McpHttpStatusError) and e.status_code == 401:
         return f"{OAUTH_REQUIRED_MESSAGE}（錯誤代碼：{error_id}）"
+    if isinstance(e, McpInsufficientScopeError):
+        return f"{OAUTH_SCOPE_MESSAGE}（錯誤代碼：{error_id}）"
     return format_client_error(error_id)
 def _format_ssrf_rejection(error_id: str) -> str:
     """SSRF 拒絕原因可能含伺服器端 DNS 解析出的內網 IP 或轉址目標，只寫入日誌；對外只說明遭拒並附錯誤代碼"""
@@ -169,7 +175,7 @@ async def create_server(
     try:
         server_dict = _serialize_mcp_server(new_server)
         tools, init_info, catalog = await McpManager.discover_server_tools(server_dict)
-        _store_discovery(new_server, tools, catalog)
+        _store_discovery(new_server, tools, init_info, catalog)
         new_server.status = "connected"
         new_server.last_error = None
         db.commit()
@@ -220,6 +226,7 @@ async def update_server(
         server.display_name = server_data.display_name
     if server_data.description is not None:
         server.description = server_data.description
+    connection = (server.transport_type, server.command, server.args, server.url)
     if server_data.transport_type is not None:
         server.transport_type = server_data.transport_type
     if server_data.command is not None:
@@ -243,6 +250,8 @@ async def update_server(
             _apply_oauth_client(server, server_data.oauth_client)
     except SafeClientError as e:
         raise HTTPException(status_code=400, detail=str(e))
+    if (server.transport_type, server.command, server.args, server.url) != connection:
+        server.protocol_version = None
     if server_data.is_enabled is not None:
         server.is_enabled = server_data.is_enabled
     if server_data.requires_approval is not None:
@@ -293,21 +302,26 @@ async def start_oauth(
     if server.transport_type not in ("http", "sse") or not server.url:
         raise HTTPException(status_code=400, detail="只有 HTTP / SSE 傳輸的 MCP 伺服器可以使用 OAuth 授權")
     redirect_uri = str(request.url_for("mcp_oauth_callback"))
+    redirect_url = httpx.URL(redirect_uri)
+    if redirect_url.scheme != "https" and not mcp_oauth.is_loopback_host(redirect_url.host):
+        raise HTTPException(status_code=400, detail="OAuth 回呼網址必須使用 HTTPS 或 localhost，請以 HTTPS 提供 AskMiao 後再授權")
     try:
-        config = decrypt_json(server.oauth_config) or {}
+        stored = decrypt_json(server.oauth_config) or {}
         discovered = await mcp_oauth.discover(server.url, decrypt_json(server.headers) or {})
-        config = {**config, **discovered}
-        if config.get("client_source") == "admin":
-            config["redirect_uri"] = redirect_uri
-        elif config.get("redirect_uri") != redirect_uri or not config.get("client_id"):
-            if not discovered.get("registration_endpoint"):
-                raise mcp_oauth.OAuthClientRequired()
+        if stored.get("issuer") not in (None, discovered["issuer"]):
+            server.oauth_tokens = None
+        config, needs_registration = mcp_oauth.prepare_client(
+            stored, discovered, redirect_uri, str(request.url_for("mcp_oauth_client_metadata"))
+        )
+        if needs_registration:
             config.update(await mcp_oauth.register_client(discovered["registration_endpoint"], redirect_uri))
-            config["client_source"] = "registered"
+            config.update({"client_source": "registered", "client_issuer": discovered["issuer"]})
     except SafeClientError as e:
         raise HTTPException(status_code=400, detail=str(e))
+    except mcp_oauth.OAuthIssuerChanged as e:
+        raise HTTPException(status_code=400, detail=str(e))
     except mcp_oauth.OAuthClientRequired:
-        raise HTTPException(status_code=400, detail="授權伺服器不支援動態註冊，請在 MCP 伺服器設定中填入 OAuth client_id")
+        raise HTTPException(status_code=400, detail="授權伺服器不支援 Client ID Metadata Document 或動態註冊，請在 MCP 伺服器設定中填入 OAuth client_id")
     except SSRFProtectionError as e:
         error_id = log_and_get_error_id(logger, "MCP OAuth 網址被 SSRF 防護拒絕", e, logging.WARNING)
         raise HTTPException(status_code=400, detail=_format_ssrf_rejection(error_id))
@@ -333,18 +347,27 @@ async def revoke_oauth(
     server.oauth_tokens = None
     db.commit()
     return {"status": "success", "message": "已清除 OAuth 授權", "server": _server_response(server)}
+@oauth_callback_router.get("/oauth/client-metadata.json", name="mcp_oauth_client_metadata")
+async def oauth_client_metadata(request: Request):
+    """OAuth Client ID Metadata Document：授權伺服器以這個網址作為 client_id 取得 AskMiao 的用戶端資料"""
+    return mcp_oauth.client_metadata_document(
+        str(request.url_for("mcp_oauth_client_metadata")), str(request.url_for("mcp_oauth_callback"))
+    )
 @oauth_callback_router.get("/oauth/callback", name="mcp_oauth_callback", response_class=HTMLResponse)
 async def oauth_callback(
     request: Request,
     state: str = Query(""),
     code: Optional[str] = Query(None),
     error: Optional[str] = Query(None),
+    iss: Optional[str] = Query(None),
     db: Session = Depends(get_db),
 ):
     """授權伺服器導回的位址：不需登入，以一次性的 state 對應發起授權的管理員與伺服器"""
     pending = mcp_oauth.take_pending(state)
     if pending is None:
         return _oauth_page("授權失敗", "授權連結無效或已過期，請回到 AskMiao 重新按「OAuth 授權」。", 400)
+    if not mcp_oauth.issuer_matches(pending, iss):
+        return _oauth_page("授權失敗", "授權回應的發行者與預期的授權伺服器不符，已拒絕這次授權。", 400)
     if error or not code:
         return _oauth_page("授權未完成", "授權伺服器沒有核發授權碼，請回到 AskMiao 重新授權。", 400)
     server = db.query(McpServer).filter(McpServer.id == pending["server_id"]).first()
@@ -357,6 +380,9 @@ async def oauth_callback(
         error_id = log_and_get_error_id(logger, "MCP OAuth 換取權杖失敗", e, logging.WARNING)
         return _oauth_page("授權失敗", f"無法換取存取權杖（錯誤代碼：{error_id}）。", 400)
     server.oauth_tokens = encrypt_json(tokens)
+    config.pop("step_up_scopes", None)
+    config["granted_scope"] = pending["scope"]
+    server.oauth_config = encrypt_json(config)
     db.commit()
     log_security_event(
         "ADMIN_MCP_OAUTH_AUTHORIZED", request=request, user_id=pending["user_id"], details={"server": server.name}
@@ -378,7 +404,7 @@ async def discover_server_tools(
         raise HTTPException(status_code=400, detail=str(e))
     try:
         tools, init_info, catalog = await McpManager.discover_server_tools(server_dict)
-        _store_discovery(server, tools, catalog)
+        _store_discovery(server, tools, init_info, catalog)
         server.status = "connected"
         server.last_error = None
         db.commit()

@@ -209,5 +209,5 @@ async def test_api_tool_redirect_to_metadata_ip_is_blocked(monkeypatch):
 async def test_mcp_http_client_rejects_private_address(no_side_effects):
     client = McpHttpClient(url="http://127.0.0.1:8080/mcp")
     with pytest.raises(SSRFProtectionError):
-        await client.initialize()
+        await client.connect(None)
     assert no_side_effects["sent"] == []

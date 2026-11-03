@@ -51,6 +51,8 @@ def server_handler(request):
     }
     if "id" not in body:
         return httpx.Response(202, request=request)
+    if method not in results:
+        return httpx.Response(400, request=request)
     return httpx.Response(200, json={"jsonrpc": "2.0", "id": body["id"], "result": results[method]}, request=request)
 
 
