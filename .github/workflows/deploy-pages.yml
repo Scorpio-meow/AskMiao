@@ -29,9 +29,20 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
 
       - name: Configure Pages
+        id: pages
         uses: actions/configure-pages@v5
+
+      - name: Generate sitemap
+        env:
+          SITE_URL: ${{ steps.pages.outputs.base_url }}
+        run: |
+          lastmod="$(git log -1 --format=%cs -- site)"
+          printf '<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n  <url>\n    <loc>%s/</loc>\n    <lastmod>%s</lastmod>\n  </url>\n</urlset>\n' "$SITE_URL" "$lastmod" > site/sitemap.xml
+          cat site/sitemap.xml
 
       - name: Upload site artifact
         uses: actions/upload-pages-artifact@v3

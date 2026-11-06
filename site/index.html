@@ -6,10 +6,11 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="light dark">
   <script>document.documentElement.classList.add('js');try{var s=localStorage.getItem('askmiao-site-theme');if(s==='light'||s==='dark'){document.querySelector('meta[name="color-scheme"]').content=s}}catch(e){}</script>
-  <title>AskMiao：企業級 Agentic RAG 智慧知識庫對話系統</title>
-  <meta name="description" content="AskMiao 是開源的企業級知識庫對話系統：向量與 BM25 以 RRF 融合、Cross-Encoder 重排門檻、ReAct 自主研究 Agent，答案逐句以 [n] 標註出處；有副作用的工具呼叫先經使用者核准，出站請求逐跳 SSRF 驗證並固定連線 IP。7.0.0 起每個帳號使用自己的模型 API 連線，管理員可以開放共用連線並指定帳號。">
+  <title>AskMiao：開源 Agentic RAG 企業知識庫問答系統</title>
+  <meta name="description" content="AskMiao 是開源、可自架的企業知識庫 AI 問答系統：Agent 自己查公司文件與網路，每句答案都標出處、點開就看到原文；查不到就直說。支援 OpenAI、Claude、Gemini 與本機 Ollama。">
   <meta name="theme-color" media="(prefers-color-scheme: light)" content="#f5f4f0">
   <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#05070d">
+  <meta name="google-site-verification" content="jjQRA2mVrlVkjlSTMgxrNE9bMVfG6cNSKgpwz3CQm6Y">
   <link rel="canonical" href="https://scorpio-meow.github.io/AskMiao/">
   <link rel="icon" type="image/png" sizes="32x32" href="assets/favicon-32.png">
   <link rel="icon" type="image/png" sizes="64x64" href="assets/favicon-64.png">
@@ -32,13 +33,18 @@
     "@context": "https://schema.org",
     "@type": "SoftwareSourceCode",
     "name": "AskMiao",
-    "description": "開源的企業級 Agentic RAG 智慧知識庫對話系統",
+    "alternateName": "AskMiao 企業知識庫問答系統",
+    "description": "開源、可自架的企業級 Agentic RAG 智慧知識庫對話系統，答案逐句附出處",
+    "url": "https://scorpio-meow.github.io/AskMiao/",
+    "image": "https://scorpio-meow.github.io/AskMiao/assets/og-image.png",
+    "author": {"@type": "Person", "name": "Scorpio-meow", "url": "https://github.com/Scorpio-meow"},
+    "keywords": "RAG, Agentic RAG, 知識庫, 混合檢索, FAISS, BM25, AI Agent, MCP, Model Context Protocol, OpenAPI, Ollama, 自架",
     "codeRepository": "https://github.com/Scorpio-meow/AskMiao",
     "license": "https://opensource.org/licenses/MIT",
     "programmingLanguage": ["Python", "TypeScript"],
     "runtimePlatform": ["FastAPI", "React"],
     "version": "8.1.0",
-    "dateModified": "2026-11-03"
+    "dateModified": "2026-11-06"
   }
   </script>
   <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -401,7 +407,7 @@
           <p class="section__lead">提問、自主研究、逐句標註出處、工具核准與安全防護，一次看完。畫面取自實際執行的 AskMiao，回答由本機 Ollama 模型產生。</p>
         </header>
         <div class="film__frame" data-film data-film-src="assets/film/askmiao-intro.mp4" data-film-poster="assets/film/askmiao-intro-poster.webp" data-film-label="AskMiao 介紹影片，文字稿在下方">
-          <img class="film__poster" src="assets/film/askmiao-intro-poster.webp" width="1920" height="1080" alt="" loading="lazy" decoding="async">
+          <img class="film__poster" src="assets/film/askmiao-intro-poster.webp" width="1920" height="1080" alt="AskMiao 介紹影片封面：蠍尾黑貓吉祥物與「開源 Agentic RAG 知識庫對話系統」字樣，旁邊的天蠍座星點標著引用編號 [1]、[2]、[3]" loading="lazy" decoding="async">
           <button class="film__play" type="button" data-film-play>
             <span class="film__play-icon"><svg class="icon" aria-hidden="true"><use href="#i-play"></use></svg></span>
             <span>播放介紹影片<small>1 分 15 秒 · 無旁白</small></span>
