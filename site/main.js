@@ -302,8 +302,12 @@
   };
   const applyScheme = (stored) => {
     schemeMeta.content = stored === null ? SYSTEM_SCHEME : stored;
+    if (stored === null) {
+      themeColorMetas.forEach((meta) => { meta.content = meta.dataset.system; });
+      return;
+    }
     const background = getComputedStyle(document.body).backgroundColor;
-    themeColorMetas.forEach((meta) => { meta.content = stored === null ? meta.dataset.system : background; });
+    themeColorMetas.forEach((meta) => { meta.content = background; });
   };
   applyScheme(readStoredScheme());
   const themeToggle = document.querySelector('[data-theme-toggle]');
@@ -334,17 +338,9 @@
   });
   systemDark.addEventListener('change', () => applyScheme(readStoredScheme()));
   const nav = document.querySelector('[data-nav]');
-  let navQueued = false;
-  const syncNav = () => {
-    navQueued = false;
-    nav.classList.toggle('is-scrolled', window.scrollY > 8);
-  };
-  window.addEventListener('scroll', () => {
-    if (navQueued) return;
-    navQueued = true;
-    requestAnimationFrame(syncNav);
-  }, { passive: true });
-  syncNav();
+  new IntersectionObserver(([entry]) => {
+    nav.classList.toggle('is-scrolled', !entry.isIntersecting);
+  }).observe(document.querySelector('[data-nav-sentinel]'));
   const menu = document.querySelector('[data-menu]');
   const menuOpen = document.querySelector('[data-menu-open]');
   if (menu && menuOpen) {

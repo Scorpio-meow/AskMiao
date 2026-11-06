@@ -22,7 +22,7 @@
   --accent-line: light-dark(rgb(31 79 216 / 0.32), rgb(132 168 255 / 0.4));
   --antares: light-dark(#cf2440, #ff5d71);
   --antares-soft: light-dark(rgb(207 36 64 / 0.1), rgb(255 93 113 / 0.16));
-  --ok: light-dark(#157f3c, #4ade80);
+  --ok: light-dark(#127035, #4ade80);
   --ok-soft: light-dark(rgb(21 127 60 / 0.1), rgb(74 222 128 / 0.12));
   --warn: light-dark(#9a5b05, #fbbf24);
   --warn-soft: light-dark(#fffbeb, rgb(245 158 11 / 0.12));
@@ -55,8 +55,8 @@
   --app-bar: light-dark(#2563eb, #142245);
   --app-bubble: light-dark(#eef2ff, #1c2740);
   --app-ok: light-dark(#16a34a, #4ade80);
-  --font-sans: "Geist", "Noto Sans TC", system-ui, -apple-system, "PingFang TC", "Microsoft JhengHei", sans-serif;
-  --font-mono: "Geist Mono", ui-monospace, "SFMono-Regular", Menlo, Consolas, "Noto Sans TC", monospace;
+  --font-sans: "Geist", system-ui, -apple-system, "PingFang TC", "Microsoft JhengHei", sans-serif;
+  --font-mono: "Geist Mono", ui-monospace, "SFMono-Regular", Menlo, Consolas, "PingFang TC", "Microsoft JhengHei", monospace;
   --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
   --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
   --spring: linear(0, 0.009, 0.035 2.1%, 0.141, 0.281 6.7%, 0.723 12.9%, 0.938 16.7%, 1.017, 1.077, 1.121, 1.149 24.3%, 1.159, 1.163, 1.161, 1.154 29.9%, 1.129 32.8%, 1.051 39.6%, 1.017 43.1%, 0.991, 0.977 51%, 0.974 53.8%, 0.975 57.1%, 0.997 69.8%, 1.003 76.9%, 1.004 83.8%, 1);
@@ -388,6 +388,15 @@ pre,
     backdrop-filter: saturate(1.6) blur(14px);
     -webkit-backdrop-filter: saturate(1.6) blur(14px);
   }
+}
+
+.nav-sentinel {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 1px;
+  height: 8px;
+  pointer-events: none;
 }
 
 .nav__inner {
@@ -1018,7 +1027,7 @@ pre,
     border-radius: 999px;
     font-size: 13px;
     font-weight: 600;
-    color: rgb(255 255 255 / 0.88);
+    color: rgb(255 255 255 / 0.94);
   }
 
   .is-on {
