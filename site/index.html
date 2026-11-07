@@ -267,6 +267,40 @@
         </ul>
       </div>
     </section>
+    <section class="section film" id="film" aria-labelledby="film-title">
+      <div class="wrap">
+        <header class="section__head section__head--split reveal">
+          <div>
+            <p class="eyebrow">介紹影片</p>
+            <h2 id="film-title">75&nbsp;秒看一個問題怎麼被查證</h2>
+          </div>
+          <p class="section__lead">提問、自主研究、逐句標註出處、工具核准與安全防護，一次看完。畫面取自實際執行的 AskMiao，回答由本機 Ollama 模型產生。</p>
+        </header>
+        <div class="film__frame" data-film data-film-src="assets/film/askmiao-intro.mp4" data-film-poster="assets/film/askmiao-intro-poster.webp" data-film-label="AskMiao 介紹影片，文字稿在下方">
+          <img class="film__poster" src="assets/film/askmiao-intro-poster.webp" width="1920" height="1080" alt="AskMiao 介紹影片封面：蠍尾黑貓吉祥物與「開源 Agentic RAG 知識庫對話系統」字樣，旁邊的天蠍座星點標著引用編號 [1]、[2]、[3]" loading="lazy" decoding="async">
+          <button class="film__play" type="button" data-film-play>
+            <span class="film__play-icon"><svg class="icon" aria-hidden="true"><use href="#i-play"></use></svg></span>
+            <span>播放介紹影片<small>1 分 15 秒 · 無旁白</small></span>
+          </button>
+        </div>
+        <details class="film__transcript">
+          <summary>影片文字稿</summary>
+          <ol>
+            <li><b>0:00</b>AskMiao，開源的 Agentic RAG 知識庫對話系統。</li>
+            <li><b>0:06</b>AI 回答很快，但你敢直接拿去用嗎？AskMiao 讓每句結論都對得回原文。</li>
+            <li><b>0:12</b>提問：「下個月去東京出差，住宿和膳雜費上限各是多少？」Agent 先啟用 travel-checklist 技能，再檢索內部知識庫。</li>
+            <li><b>0:18</b>答案逐句標上 [n]：出發前 14 個工作日 [2]、每晚上限 5,500 元 [3]、每日美金 50 至 80 元 [1]。</li>
+            <li><b>0:24</b>點開 [1]，看到原文段落與相關度。</li>
+            <li><b>0:30</b>FAISS 向量與 BM25 兩軌檢索，以 RRF 依名次融合，Cross-Encoder 重排後只把過門檻的段落交給 Agent。</li>
+            <li><b>0:36</b>會改動外部系統的工具，執行前先問過你；按下拒絕，請求就不會送出。</li>
+            <li><b>0:42</b>6.0.0 新功能：Agent Skills，輸入 / 叫出專業做法；MCP 支援 Streamable HTTP 與 OAuth，OpenAPI 匯入一併帶上認證。</li>
+            <li><b>0:48</b>每個出站請求都要過九道檢查，另有登入失敗節流、改密碼即撤銷權杖與工具憑證加密存放。</li>
+            <li><b>0:54</b>五家模型共用一層介面；影片裡的回答都由本機 Ollama 的 nemotron-3.5-bolt 產生。</li>
+            <li><b>1:00</b>自主研究，答案有出處。github.com/Scorpio-meow/AskMiao，MIT 授權。</li>
+          </ol>
+        </details>
+      </div>
+    </section>
     <section class="section how" id="how" aria-labelledby="how-title">
       <div class="wrap">
         <header class="section__head reveal">
@@ -396,40 +430,6 @@
             </div>
           </li>
         </ol>
-      </div>
-    </section>
-    <section class="section film" id="film" aria-labelledby="film-title">
-      <div class="wrap">
-        <header class="section__head section__head--split reveal">
-          <div>
-            <p class="eyebrow">介紹影片</p>
-            <h2 id="film-title">75&nbsp;秒看一個問題怎麼被查證</h2>
-          </div>
-          <p class="section__lead">提問、自主研究、逐句標註出處、工具核准與安全防護，一次看完。畫面取自實際執行的 AskMiao，回答由本機 Ollama 模型產生。</p>
-        </header>
-        <div class="film__frame" data-film data-film-src="assets/film/askmiao-intro.mp4" data-film-poster="assets/film/askmiao-intro-poster.webp" data-film-label="AskMiao 介紹影片，文字稿在下方">
-          <img class="film__poster" src="assets/film/askmiao-intro-poster.webp" width="1920" height="1080" alt="AskMiao 介紹影片封面：蠍尾黑貓吉祥物與「開源 Agentic RAG 知識庫對話系統」字樣，旁邊的天蠍座星點標著引用編號 [1]、[2]、[3]" loading="lazy" decoding="async">
-          <button class="film__play" type="button" data-film-play>
-            <span class="film__play-icon"><svg class="icon" aria-hidden="true"><use href="#i-play"></use></svg></span>
-            <span>播放介紹影片<small>1 分 15 秒 · 無旁白</small></span>
-          </button>
-        </div>
-        <details class="film__transcript">
-          <summary>影片文字稿</summary>
-          <ol>
-            <li><b>0:00</b>AskMiao，開源的 Agentic RAG 知識庫對話系統。</li>
-            <li><b>0:06</b>AI 回答很快，但你敢直接拿去用嗎？AskMiao 讓每句結論都對得回原文。</li>
-            <li><b>0:12</b>提問：「下個月去東京出差，住宿和膳雜費上限各是多少？」Agent 先啟用 travel-checklist 技能，再檢索內部知識庫。</li>
-            <li><b>0:18</b>答案逐句標上 [n]：出發前 14 個工作日 [2]、每晚上限 5,500 元 [3]、每日美金 50 至 80 元 [1]。</li>
-            <li><b>0:24</b>點開 [1]，看到原文段落與相關度。</li>
-            <li><b>0:30</b>FAISS 向量與 BM25 兩軌檢索，以 RRF 依名次融合，Cross-Encoder 重排後只把過門檻的段落交給 Agent。</li>
-            <li><b>0:36</b>會改動外部系統的工具，執行前先問過你；按下拒絕，請求就不會送出。</li>
-            <li><b>0:42</b>6.0.0 新功能：Agent Skills，輸入 / 叫出專業做法；MCP 支援 Streamable HTTP 與 OAuth，OpenAPI 匯入一併帶上認證。</li>
-            <li><b>0:48</b>每個出站請求都要過九道檢查，另有登入失敗節流、改密碼即撤銷權杖與工具憑證加密存放。</li>
-            <li><b>0:54</b>五家模型共用一層介面；影片裡的回答都由本機 Ollama 的 nemotron-3.5-bolt 產生。</li>
-            <li><b>1:00</b>自主研究，答案有出處。github.com/Scorpio-meow/AskMiao，MIT 授權。</li>
-          </ol>
-        </details>
       </div>
     </section>
     <section class="section retrieval" id="retrieval" aria-labelledby="retrieval-title">
