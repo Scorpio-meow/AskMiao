@@ -1,6 +1,8 @@
 import io
 import stat
+import time
 import zipfile
+from concurrent.futures import ThreadPoolExecutor
 from unittest.mock import patch
 
 import pytest
@@ -17,7 +19,7 @@ from app.rag.agent import ResearchAgent
 from app.rag.research_session import ResearchSession
 from app.rag.tools import ResearchToolRegistry
 from app.services import agent_skills
-from app.services.agent_skills import SkillError, parse_skill_md, read_skill_upload
+from app.services.agent_skills import SkillError, parse_skill_md, read_skill_folder, read_skill_upload
 from test_agent_guardrails import research
 
 NORMAL_USER = {"user_id": 2, "username": "member", "email": "member@example.com", "role": "user", "is_admin": False}
@@ -80,6 +82,20 @@ def upload(client, filename, data, replace=False):
     )
 
 
+def upload_folder(client, entries, replace=False):
+    return client.post(
+        "/api/skills/upload-folder",
+        params={"replace": str(replace).lower()},
+        files=[("files", (path, data, "application/octet-stream")) for path, data in entries],
+    )
+
+
+PDF_FOLDER = [
+    ("pdf-processing/SKILL.md", PDF_SKILL.encode()),
+    ("pdf-processing/references/REFERENCE.md", "參考內容".encode()),
+]
+
+
 def test_parse_valid_skill_keeps_optional_fields():
     skill = parse_skill_md(PDF_SKILL)
     assert skill.name == "pdf-processing"
@@ -127,6 +143,7 @@ def test_zip_with_top_directory_is_unwrapped():
 @pytest.mark.parametrize("entries, symlinks, message", [
     ({"SKILL.md": PDF_SKILL, "../evil.txt": "x"}, (), "不安全"),
     ({"SKILL.md": PDF_SKILL, "/abs.txt": "x"}, (), "不安全"),
+    ({"SKILL.md": PDF_SKILL, "a/D:/evil.txt": "x"}, (), "不安全"),
     ({"SKILL.md": PDF_SKILL}, ("link",), "符號連結"),
     ({"a/SKILL.md": PDF_SKILL, "b/x.md": "x"}, (), "找不到 SKILL.md"),
 ])
@@ -150,6 +167,70 @@ def test_zip_rejects_oversized_content(monkeypatch):
 def test_upload_rejects_unknown_extension():
     with pytest.raises(SkillError, match="zip"):
         read_skill_upload("skill.exe", b"MZ")
+
+
+def skill_md(name, description="Use when testing."):
+    return f"---\nname: {name}\ndescription: {description}\n---\nbody".encode()
+
+
+def test_folder_with_top_directory_is_unwrapped():
+    [found] = read_skill_folder(PDF_FOLDER + [
+        ("pdf-processing/.git/config", b"junk"),
+        ("pdf-processing/.DS_Store", b"junk"),
+    ])
+    assert found.path == "pdf-processing"
+    assert found.error is None
+    assert found.skill.name == "pdf-processing"
+    assert found.skill.warnings == []
+    assert found.files == {("SKILL.md",): PDF_SKILL.encode(), ("references", "REFERENCE.md"): "參考內容".encode()}
+
+
+def test_folder_named_differently_warns():
+    [found] = read_skill_folder([("my-pdf\\SKILL.md", PDF_SKILL.encode())])
+    assert set(found.files) == {("SKILL.md",)}
+    assert any("my-pdf" in w for w in found.skill.warnings)
+
+
+def test_folder_of_skills_finds_each_outermost_skill():
+    found = read_skill_folder([
+        ("skills/README.md", b"collection"),
+        ("skills/beta/SKILL.md", skill_md("beta")),
+        ("skills/alpha/SKILL.md", skill_md("alpha")),
+        ("skills/alpha/examples/nested/SKILL.md", skill_md("nested")),
+        ("skills/group/gamma/SKILL.md", skill_md("gamma")),
+        ("skills/broken/SKILL.md", b"no frontmatter"),
+    ])
+    assert [item.path for item in found] == ["skills/alpha", "skills/beta", "skills/broken", "skills/group/gamma"]
+    alpha = found[0]
+    assert set(alpha.files) == {("SKILL.md",), ("examples", "nested", "SKILL.md")}
+    assert found[2].skill is None and "frontmatter" in found[2].error
+    assert found[3].skill.name == "gamma"
+
+
+def test_folder_limits_files_per_skill(monkeypatch):
+    monkeypatch.setattr(agent_skills, "MAX_SKILL_FILES", 2)
+    found = read_skill_folder([
+        ("skills/small/SKILL.md", skill_md("small")),
+        ("skills/large/SKILL.md", skill_md("large")),
+        ("skills/large/a.md", b"a"),
+        ("skills/large/b.md", b"b"),
+    ])
+    assert [(item.path, item.error is None) for item in found] == [("skills/large", False), ("skills/small", True)]
+    assert "檔案數" in found[0].error
+
+
+@pytest.mark.parametrize("entries, message", [
+    ([("skill/SKILL.md", PDF_SKILL.encode()), ("skill/../evil.txt", b"x")], "不安全"),
+    ([("C:/skill/SKILL.md", PDF_SKILL.encode())], "不安全"),
+    ([("/skill/SKILL.md", PDF_SKILL.encode())], "不安全"),
+    ([("skill/SKILL.md", PDF_SKILL.encode()), ("skill/D:/evil.py", b"x")], "不安全"),
+    ([("skill/SKILL.md", PDF_SKILL.encode()), ("skill/notes.md:hidden", b"x")], "不安全"),
+    ([("skill/README.md", b"x")], "找不到 SKILL.md"),
+    ([("skill/.git/SKILL.md", PDF_SKILL.encode())], "找不到 SKILL.md"),
+])
+def test_folder_rejects_invalid_selection(entries, message):
+    with pytest.raises(SkillError, match=message):
+        read_skill_folder(entries)
 
 
 def test_install_and_read_resources(skills_dir):
@@ -242,6 +323,100 @@ def test_detail_hides_load_error_details(skills_dir):
     assert detail["body"] is None
     assert "錯誤代碼" in detail["load_error"]
     assert "frontmatter" not in detail["load_error"]
+
+
+def test_admin_uploads_skill_folder(skills_dir):
+    admin = client_for(ADMIN_USER)
+    response = upload_folder(admin, PDF_FOLDER + [("pdf-processing/.git/HEAD", b"ref")])
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["message"] == "已安裝技能「pdf-processing」"
+    assert [skill["name"] for skill in body["skills"]] == ["pdf-processing"]
+    assert body["skipped"] == []
+    assert (skills_dir / "pdf-processing" / "references" / "REFERENCE.md").read_text(encoding="utf-8") == "參考內容"
+    assert not (skills_dir / "pdf-processing" / ".git").exists()
+
+    conflict = upload_folder(admin, PDF_FOLDER)
+    assert conflict.status_code == 409
+    assert conflict.json()["detail"] == "已存在同名技能：pdf-processing"
+    replaced = upload_folder(admin, PDF_FOLDER[:1], replace=True)
+    assert replaced.status_code == 200
+    assert replaced.json()["message"] == "已更新技能「pdf-processing」"
+    assert not (skills_dir / "pdf-processing" / "references").exists()
+
+    invalid = upload_folder(admin, [("demo/SKILL.md", b"---\nname: demo\n---\n")])
+    assert invalid.status_code == 400
+    assert "description" in invalid.json()["detail"]
+
+    assert upload_folder(client_for(NORMAL_USER), PDF_FOLDER).status_code == 403
+
+
+def test_admin_uploads_folder_of_skills(skills_dir):
+    admin = client_for(ADMIN_USER)
+    assert upload_folder(admin, [("skills/alpha/SKILL.md", skill_md("alpha"))]).status_code == 200
+    collection = [
+        ("skills/alpha/SKILL.md", skill_md("alpha", "Updated alpha.")),
+        ("skills/beta/SKILL.md", skill_md("beta")),
+        ("skills/beta/references/notes.md", b"notes"),
+        ("skills/copy/SKILL.md", skill_md("beta")),
+        ("skills/broken/SKILL.md", b"no frontmatter"),
+    ]
+    response = upload_folder(admin, collection)
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["message"] == "已安裝 1 個技能，略過 3 個"
+    assert [skill["name"] for skill in body["skills"]] == ["beta"]
+    skipped = {entry["path"]: entry for entry in body["skipped"]}
+    assert skipped["skills/alpha"]["conflict"] is True
+    assert skipped["skills/copy"] == {"path": "skills/copy", "reason": "與資料夾中其他技能同名：beta", "conflict": False}
+    assert "frontmatter" in skipped["skills/broken"]["reason"]
+    assert (skills_dir / "beta" / "references" / "notes.md").read_bytes() == b"notes"
+
+    replaced = upload_folder(admin, collection[:3], replace=True).json()
+    assert replaced["message"] == "已更新 2 個技能"
+    assert {skill["name"]: skill["description"] for skill in replaced["skills"]}["alpha"] == "Updated alpha."
+
+    none_installed = upload_folder(admin, collection[:3])
+    assert none_installed.status_code == 409
+    assert none_installed.json()["detail"].startswith("沒有安裝任何技能：skills/alpha：已存在同名技能：alpha；")
+
+    names = sorted(skill["name"] for skill in admin.get("/api/skills").json()["skills"])
+    assert names == ["alpha", "beta"]
+
+
+def test_folder_upload_counts_skipped_files_toward_size_limit(skills_dir, monkeypatch):
+    monkeypatch.setattr(skills_api, "MAX_SKILL_UNCOMPRESSED_BYTES", 1024)
+    response = upload_folder(client_for(ADMIN_USER), PDF_FOLDER + [
+        ("pdf-processing/.git/pack", b"x" * 700),
+        ("pdf-processing/references/big.txt", b"y" * 300),
+    ])
+    assert response.status_code == 400
+    assert "MiB" in response.json()["detail"]
+    assert not (skills_dir / "pdf-processing").exists()
+
+
+def test_folder_upload_reports_too_many_files(skills_dir, monkeypatch):
+    monkeypatch.setattr(skills_api, "MAX_SKILL_FOLDER_FILES", 2)
+    response = upload_folder(client_for(ADMIN_USER), PDF_FOLDER + [("pdf-processing/extra.md", b"x")])
+    assert response.status_code == 400
+    assert response.json()["detail"] == "無法讀取上傳的資料夾，一次最多 2 個檔案"
+    assert not (skills_dir / "pdf-processing").exists()
+
+
+def test_concurrent_uploads_keep_record_and_files_in_sync(skills_dir, monkeypatch):
+    real_install = skills_api.install_skill
+
+    def slow_install(*args, **kwargs):
+        time.sleep(0.2)
+        real_install(*args, **kwargs)
+
+    monkeypatch.setattr(skills_api, "install_skill", slow_install)
+    versions = [PDF_SKILL.replace("Use when handling PDFs.", f"Version {n}.").encode() for n in (1, 2)]
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        responses = list(pool.map(lambda data: upload(client_for(ADMIN_USER), "SKILL.md", data, replace=True), versions))
+    assert [response.status_code for response in responses] == [200, 200]
+    [record] = client_for(ADMIN_USER).get("/api/skills").json()["skills"]
+    assert record["description"] in (skills_dir / "pdf-processing" / "SKILL.md").read_text(encoding="utf-8")
 
 
 def test_upload_reports_invalid_skill(skills_dir):

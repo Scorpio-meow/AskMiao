@@ -636,6 +636,12 @@ export interface AgentSkillItem {
   created_at: string;
   updated_at: string;
 }
+export interface SkillFolderUploadResult {
+  status: string;
+  message: string;
+  skills: AgentSkillItem[];
+  skipped: { path: string; reason: string; conflict: boolean }[];
+}
 export interface AgentSkillDetail extends AgentSkillItem {
   body: string | null;
   load_error?: string;
@@ -663,6 +669,17 @@ export const skillService = {
     const formData = new FormData();
     formData.append('file', file);
     const response = await api.post<{ status: string; message: string; skill: AgentSkillItem }>('/skills/upload', formData, {
+      params: { replace },
+      headers: {
+        'Content-Type': 'multipart/form-data',
+      },
+    });
+    return response.data;
+  },
+  async uploadSkillFolder(entries: { file: File; path: string }[], replace: boolean): Promise<SkillFolderUploadResult> {
+    const formData = new FormData();
+    entries.forEach(({ file, path }) => formData.append('files', file, path));
+    const response = await api.post<SkillFolderUploadResult>('/skills/upload-folder', formData, {
       params: { replace },
       headers: {
         'Content-Type': 'multipart/form-data',

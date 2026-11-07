@@ -2,7 +2,7 @@
 
 [繁體中文](configuration.md) | [English](configuration_en.md)
 
-> Every setting in the backend `backend/.env` and the frontend `frontend/.env`, with its default and what it actually does, as of **8.1.0** (to upgrade from 8.0.x, see the [upgrade guide](upgrading_en.md#upgrading-from-80x-to-810)). The source of truth is `Settings` in `backend/app/core/config.py`; the template is [`backend/.env.example`](../backend/.env.example).
+> Every setting in the backend `backend/.env` and the frontend `frontend/.env`, with its default and what it actually does, as of **8.2.0** (to upgrade from 8.1.0, see the [upgrade guide](upgrading_en.md#upgrading-from-810-to-820)). The source of truth is `Settings` in `backend/app/core/config.py`; the template is [`backend/.env.example`](../backend/.env.example).
 
 - [How settings are read](#how-settings-are-read)
 - [Required settings](#required-settings)
@@ -96,7 +96,7 @@ Each account can only chat through two kinds of connection, and the model menu g
 
 When a new connection is created, the form fills in the provider's official API address and the models below, which can be edited:
 
-| Provider | Prefilled models (8.1.0) |
+| Provider | Prefilled models (8.2.0) |
 |---|---|
 | OpenAI | `gpt-6.1-sol`, `gpt-6-sol`, `gpt-6-luna`, `gpt-6-astra`, `gpt-5.6-sol`, `gpt-5.6-luna`, `gpt-5.6-terra`, `gpt-5.4`, `gpt-5.4-mini` |
 | Anthropic | `claude-opus-5-5`, `claude-fable-5-1`, `claude-sonnet-5-5`, `claude-haiku-5-5`, `claude-sonnet-5`, `claude-opus-5`, `claude-fable-5`, `claude-opus-4-8`, `claude-haiku-4-5` |
@@ -433,8 +433,9 @@ The OOXML checks run before parsing and use the sizes the ZIP members declare. p
 | Constant | Value | Description |
 |---|---|---|
 | `MAX_SKILL_ARCHIVE_BYTES` | 10 MiB | Size of an uploaded skill file (`.zip` or `SKILL.md`); the body limit of `POST /api/skills/upload` is this plus 1 MiB, raised only when the access token's `is_admin` claim is `true`, as for document uploads |
-| `MAX_SKILL_UNCOMPRESSED_BYTES` | 50 MiB | Total uncompressed size of a skill zip, counted from the bytes actually decompressed |
-| `MAX_SKILL_FILES` | 500 | Files in one skill |
+| `MAX_SKILL_UNCOMPRESSED_BYTES` | 50 MiB | Total uncompressed size of a skill zip, counted from the bytes actually decompressed; also the total size of an uploaded folder (`POST /api/skills/upload-folder`), whose body limit is this plus 1 MiB, raised only for admins in the same way |
+| `MAX_SKILL_FILES` | 500 | Files in one skill; applied to each skill when a folder is uploaded |
+| `MAX_SKILL_FOLDER_FILES` | 1000 | Files in one folder upload (`POST /api/skills/upload-folder`), including skipped files such as `.git` |
 | `MAX_SKILL_MD_BYTES` | 256 KiB | Size of `SKILL.md` |
 | `MAX_SKILL_RESOURCE_LISTING` | 100 | Files listed to the model when a skill is activated |
 | `MAX_SKILL_RESOURCE_CHARS` | 20,000 characters | The `SKILL.md` body returned on activation and each `read_skill_resource` result; the rest is truncated |

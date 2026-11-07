@@ -2,7 +2,7 @@
 
 [繁體中文](api.md) | [English](api_en.md)
 
-> 本文件說明 AskMiao 後端 **8.1.0** 的 REST 與 SSE 串流端點，內容依 `backend/app/api/` 的實際路由撰寫。設定 `ENABLE_API_DOCS=true` 時，後端另外在 `http://localhost:8001/docs`（Swagger UI）與 `http://localhost:8001/redoc` 提供互動測試，OpenAPI 規格位於 `/openapi.json`；這三個路徑不需要登入且會列出所有端點與參數，對外服務時請保持 `ENABLE_API_DOCS=false`（範本值），此時三者一律回傳 `404`。
+> 本文件說明 AskMiao 後端 **8.2.0** 的 REST 與 SSE 串流端點，內容依 `backend/app/api/` 的實際路由撰寫。設定 `ENABLE_API_DOCS=true` 時，後端另外在 `http://localhost:8001/docs`（Swagger UI）與 `http://localhost:8001/redoc` 提供互動測試，OpenAPI 規格位於 `/openapi.json`；這三個路徑不需要登入且會列出所有端點與參數，對外服務時請保持 `ENABLE_API_DOCS=false`（範本值），此時三者一律回傳 `404`。
 
 ## 目錄
 
@@ -30,7 +30,7 @@
 | 內容型態 | 檔案上傳為 `multipart/form-data`，對話串流為 `text/event-stream`，其餘皆為 `application/json` |
 | 時間格式 | ISO 8601，時間為 UTC 但不含時區標記（例如 `2026-09-25T02:30:00`） |
 | 速率限制 | 每個來源 IP 每 60 秒 `RATE_LIMIT_PER_MINUTE` 次（預設 60），超過回傳 `429`；來源 IP 預設為實際連線對端，只有設定 `FORWARDED_ALLOW_IPS` 時才採信該代理送來的 `X-Forwarded-For` |
-| 請求本文上限 | 一般請求 1 MiB；`POST /api/chat/send` 帶有效存取權杖時放寬，`POST /api/documents/upload` 與 `POST /api/skills/upload` 只在有效存取權杖的 `is_admin` 聲明為 `true` 時放寬；超過回傳 `413` `{"detail": "請求內容超過大小上限"}`，詳見 [設定參考：資源上限](configuration.md#資源上限) |
+| 請求本文上限 | 一般請求 1 MiB；`POST /api/chat/send` 帶有效存取權杖時放寬，`POST /api/documents/upload`、`POST /api/skills/upload` 與 `POST /api/skills/upload-folder` 只在有效存取權杖的 `is_admin` 聲明為 `true` 時放寬；超過回傳 `413` `{"detail": "請求內容超過大小上限"}`，詳見 [設定參考：資源上限](configuration.md#資源上限) |
 
 ### 權限層級
 
@@ -103,6 +103,7 @@
 | GET | `/api/skills` | 管理員 | 技能清單 |
 | GET | `/api/skills/{skill_id}` | 管理員 | 單一技能與 `SKILL.md` 內文 |
 | POST | `/api/skills/upload` | 管理員 | 上傳並安裝技能 |
+| POST | `/api/skills/upload-folder` | 管理員 | 上傳資料夾，安裝其中的一個或多個技能 |
 | PATCH | `/api/skills/{skill_id}/toggle` | 管理員 | 切換啟用狀態 |
 | PATCH | `/api/skills/{skill_id}/settings` | 管理員 | 設定腳本執行與可使用的帳號 |
 | DELETE | `/api/skills/{skill_id}` | 管理員 | 刪除技能與技能檔案 |
@@ -1137,9 +1138,9 @@ Agent 以漸進揭露使用技能：有啟用且檔案存在的技能時，[`GET
 
 ### 6.4 POST /api/skills/upload
 
-`multipart/form-data`，欄位 `file` 為技能目錄的 `.zip`（`SKILL.md` 在根目錄或唯一的頂層目錄中；副檔名 `.skill` 也視為 zip）或單一 `SKILL.md`，最多 10 MiB。**查詢參數**：`replace`（預設 `false`），為 `true` 時取代同名技能的整個目錄。
+`multipart/form-data`，欄位 `file` 為技能目錄的 `.zip`（`SKILL.md` 在根目錄或唯一的頂層目錄中；副檔名 `.skill` 也視為 zip）或單一 `SKILL.md`，最多 10 MiB。**查詢參數**：`replace`（預設 `false`），為 `true` 時取代同名技能的整個目錄。不壓縮、直接上傳資料夾見 [6.8](#68-post-apiskillsupload-folder)。
 
-`name` 必須符合規格（小寫英數與連字號、最多 64 字、不以連字號開頭或結尾、不含連續連字號），且必須有 `description`；壓縮檔不可含絕對路徑、`..`、磁碟代號或符號連結，解壓後最多 500 個檔案、50 MiB，`SKILL.md` 最多 256 KiB。`name` 與頂層目錄名不同、欄位超過規格長度、未知的 frontmatter 欄位等問題列入 `warnings`，技能照常安裝。
+`name` 必須符合規格（小寫英數與連字號、最多 64 字、不以連字號開頭或結尾、不含連續連字號），且必須有 `description`；壓縮檔不可含絕對路徑、`..`、含冒號的路徑段落（磁碟代號、NTFS 替代資料流）或符號連結，解壓後最多 500 個檔案、50 MiB，`SKILL.md` 最多 256 KiB。`name` 與頂層目錄名不同、欄位超過規格長度、未知的 frontmatter 欄位等問題列入 `warnings`，技能照常安裝。
 
 **回應**：`{"status": "success", "message": "已安裝技能「meeting-minutes」", "skill": 技能物件}`；不合規時回傳 `400` 並說明原因，同名技能已存在且 `replace` 為 `false` 時回傳 `409` `已存在同名技能：<名稱>`。
 
@@ -1161,6 +1162,16 @@ Agent 以漸進揭露使用技能：有啟用且檔案存在的技能時，[`GET
 | `allowed_user_ids` | array | 可使用此技能的帳號 id；空陣列表示所有使用者（存為 `null`） |
 
 **回應**：`{"status": "success", "message": "技能設定已更新", "skill": 技能物件}`；`allowed_user_ids` 含不存在的帳號時回傳 `400` `找不到使用者：<id>`。成功時寫入安全事件 `ADMIN_SKILL_SETTINGS_UPDATED`。刪除帳號時，該帳號會從每個技能的 `allowed_user_ids` 中移除；清單因此變成空的技能不會改為所有人可用，而是沒有人能使用。
+
+### 6.8 POST /api/skills/upload-folder
+
+`multipart/form-data`，每個檔案一個 `files` 欄位，檔名為檔案在所選資料夾中的相對路徑（含資料夾本身的名稱，例如 `skills/pdf/SKILL.md`，即瀏覽器的 `webkitRelativePath`）。**查詢參數**：`replace`，與 [6.4](#64-post-apiskillsupload) 相同。
+
+每個含 `SKILL.md` 的目錄各安裝成一個技能，所以可以上傳單一技能的資料夾，也可以上傳內含多個技能的資料夾（例如 `~/.agents/skills`）。技能目錄內的其他 `SKILL.md` 視為該技能的檔案，不另外安裝；不在任何技能目錄內的檔案不會安裝。路徑段落為 `.git`、`__MACOSX`、`.DS_Store` 的檔案略過。路徑含絕對路徑、`..` 或含冒號的段落時整個請求回傳 `400`；整個資料夾（含略過的檔案）最多 1000 個檔案、50 MiB，超過時分別回傳 `400` `無法讀取上傳的資料夾，一次最多 1000 個檔案` 與 `資料夾超過 50 MiB`；每個技能最多 500 個檔案，其餘規則與 6.4 相同。
+
+逐一安裝：不合規、與資料夾中其他技能同名、或同名技能已存在且 `replace` 為 `false` 的技能會略過，其他技能照常安裝。
+
+**回應**：`{"status": "success", "message": "已安裝 20 個技能，略過 2 個", "skills": [技能物件, ...], "skipped": [{"path": "skills/ui-styling", "reason": "已存在同名技能：ui-styling", "conflict": true}]}`；只有一個技能且成功時 `message` 與 6.4 相同。沒有任何技能安裝成功時：全部因同名技能已存在而略過回傳 `409`，否則回傳 `400`；只有一個技能時 `detail` 為該技能的原因，多個時為 `沒有安裝任何技能：<路徑>：<原因>；…`。資料夾中沒有 `SKILL.md` 時回傳 `400` `資料夾中找不到 SKILL.md`。每個安裝的技能各寫入一筆安全事件 `ADMIN_SKILL_INSTALLED`。
 
 ---
 

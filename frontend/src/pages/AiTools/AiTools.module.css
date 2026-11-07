@@ -1496,6 +1496,12 @@ textarea.input {
   padding: var(--space-3) var(--space-4);
 }
 
+.skippedList {
+  margin: var(--space-2) 0 0;
+  padding-left: var(--space-5);
+  overflow-wrap: anywhere;
+}
+
 .alertActions {
   display: flex;
   flex-wrap: wrap;
@@ -1513,6 +1519,18 @@ textarea.input {
   font-family: inherit;
   font-size: var(--font-size-sm);
   cursor: pointer;
+}
+
+.folderPicker {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  cursor: default;
+}
+
+.folderPickerStatus {
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .fileInput::file-selector-button {

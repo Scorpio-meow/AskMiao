@@ -2,7 +2,7 @@
 
 [繁體中文](api.md) | [English](api_en.md)
 
-> REST and SSE streaming endpoints of the AskMiao **8.1.0** backend, written against the actual routers in `backend/app/api/`. With `ENABLE_API_DOCS=true` the backend also serves interactive docs at `http://localhost:8001/docs` (Swagger UI) and `http://localhost:8001/redoc`, and the OpenAPI document at `/openapi.json`. These three paths need no sign-in and list every endpoint and parameter, so keep `ENABLE_API_DOCS=false` (the template value) for public deployments; all three then return `404`.
+> REST and SSE streaming endpoints of the AskMiao **8.2.0** backend, written against the actual routers in `backend/app/api/`. With `ENABLE_API_DOCS=true` the backend also serves interactive docs at `http://localhost:8001/docs` (Swagger UI) and `http://localhost:8001/redoc`, and the OpenAPI document at `/openapi.json`. These three paths need no sign-in and list every endpoint and parameter, so keep `ENABLE_API_DOCS=false` (the template value) for public deployments; all three then return `404`.
 
 ## Contents
 
@@ -30,7 +30,7 @@
 | Content types | `multipart/form-data` for uploads, `text/event-stream` for chat streaming, `application/json` for everything else |
 | Timestamps | ISO 8601 in UTC without a timezone suffix (for example `2026-09-25T02:30:00`) |
 | Rate limit | `RATE_LIMIT_PER_MINUTE` requests per client IP per 60 seconds (default 60); beyond that the API returns `429`. The client IP is the direct peer unless `FORWARDED_ALLOW_IPS` names a proxy whose `X-Forwarded-For` is trusted |
-| Request body limit | 1 MiB for general requests; `POST /api/chat/send` allows more with a valid access token, and `POST /api/documents/upload` and `POST /api/skills/upload` only when the valid access token's `is_admin` claim is `true`. Larger bodies get `413` `{"detail": "請求內容超過大小上限"}`; see [configuration reference: resource limits](configuration_en.md#resource-limits) |
+| Request body limit | 1 MiB for general requests; `POST /api/chat/send` allows more with a valid access token, and `POST /api/documents/upload`, `POST /api/skills/upload`, and `POST /api/skills/upload-folder` only when the valid access token's `is_admin` claim is `true`. Larger bodies get `413` `{"detail": "請求內容超過大小上限"}`; see [configuration reference: resource limits](configuration_en.md#resource-limits) |
 
 ### Permission levels
 
@@ -105,6 +105,7 @@ API messages are in Traditional Chinese; the English glosses in this document ar
 | GET | `/api/skills` | Admin | List skills |
 | GET | `/api/skills/{skill_id}` | Admin | One skill with its `SKILL.md` body |
 | POST | `/api/skills/upload` | Admin | Upload and install a skill |
+| POST | `/api/skills/upload-folder` | Admin | Upload a folder and install the one or more skills in it |
 | PATCH | `/api/skills/{skill_id}/toggle` | Admin | Toggle enabled state |
 | PATCH | `/api/skills/{skill_id}/settings` | Admin | Set script execution and which accounts may use the skill |
 | DELETE | `/api/skills/{skill_id}` | Admin | Delete a skill and its files |
@@ -1139,9 +1140,9 @@ Sign-in required. Lists enabled skills whose files exist and that the caller may
 
 ### 6.4 POST /api/skills/upload
 
-`multipart/form-data` with a `file` field: a `.zip` of the skill directory (`SKILL.md` at the root or inside the single top-level directory; the `.skill` extension is treated as zip) or a single `SKILL.md`, at most 10 MiB. **Query parameter**: `replace` (default `false`); when `true`, the whole directory of a skill with the same name is replaced.
+`multipart/form-data` with a `file` field: a `.zip` of the skill directory (`SKILL.md` at the root or inside the single top-level directory; the `.skill` extension is treated as zip) or a single `SKILL.md`, at most 10 MiB. **Query parameter**: `replace` (default `false`); when `true`, the whole directory of a skill with the same name is replaced. To upload a folder without zipping it, see [6.8](#68-post-apiskillsupload-folder).
 
-`name` must follow the specification (lowercase letters, digits and hyphens, at most 64 characters, no leading, trailing or consecutive hyphens) and `description` is required. The archive may not contain absolute paths, `..`, drive letters or symbolic links, and may hold at most 500 files and 50 MiB uncompressed; `SKILL.md` is at most 256 KiB. A `name` that differs from the top-level directory, fields longer than the specification allows, unknown frontmatter fields and similar problems go into `warnings` and the skill is installed anyway.
+`name` must follow the specification (lowercase letters, digits and hyphens, at most 64 characters, no leading, trailing or consecutive hyphens) and `description` is required. The archive may not contain absolute paths, `..`, path segments with a colon (drive letters, NTFS alternate data streams) or symbolic links, and may hold at most 500 files and 50 MiB uncompressed; `SKILL.md` is at most 256 KiB. A `name` that differs from the top-level directory, fields longer than the specification allows, unknown frontmatter fields and similar problems go into `warnings` and the skill is installed anyway.
 
 **Response**: `{"status": "success", "message": "已安裝技能「meeting-minutes」", "skill": skill object}`. Invalid skills return `400` with the reason; when a skill with the same name exists and `replace` is `false`, it returns `409` `已存在同名技能：<name>`.
 
@@ -1163,6 +1164,16 @@ Sets script execution and which accounts may use the skill; send only the fields
 | `allowed_user_ids` | array | Account ids that may use the skill; an empty array means every user (stored as `null`) |
 
 **Response**: `{"status": "success", "message": "技能設定已更新", "skill": skill object}`; ids of accounts that do not exist return `400` `找不到使用者：<id>` ("user not found"). Success writes the security event `ADMIN_SKILL_SETTINGS_UPDATED`. Deleting an account removes it from every skill's `allowed_user_ids`; a skill whose list becomes empty this way is usable by nobody, not by everyone.
+
+### 6.8 POST /api/skills/upload-folder
+
+`multipart/form-data` with one `files` field per file, whose filename is the file's path relative to the selected folder, including the folder's own name (for example `skills/pdf/SKILL.md`; the browser's `webkitRelativePath`). **Query parameter**: `replace`, as in [6.4](#64-post-apiskillsupload).
+
+Every directory that contains a `SKILL.md` is installed as one skill, so the folder can be a single skill or a folder holding several skills (for example `~/.agents/skills`). Other `SKILL.md` files inside a skill directory are that skill's files and are not installed separately; files outside every skill directory are not installed. Files with a `.git`, `__MACOSX`, or `.DS_Store` path segment are skipped. An absolute path, `..`, or a path segment with a colon rejects the whole request with `400`; the whole folder, skipped files included, may hold at most 1000 files and 50 MiB, beyond which the response is `400` `無法讀取上傳的資料夾，一次最多 1000 個檔案` ("cannot read the uploaded folder, at most 1000 files at a time") or `資料夾超過 50 MiB` ("folder exceeds 50 MiB"); each skill may have at most 500 files, and the other rules are those of 6.4.
+
+Skills are installed one by one: a skill that is invalid, has the same name as another skill in the folder, or has the name of an existing skill while `replace` is `false` is skipped, and the others are still installed.
+
+**Response**: `{"status": "success", "message": "已安裝 20 個技能，略過 2 個", "skills": [skill object, ...], "skipped": [{"path": "skills/ui-styling", "reason": "已存在同名技能：ui-styling", "conflict": true}]}`; with a single skill that succeeds, `message` is the same as in 6.4. When no skill is installed, the response is `409` if every skill was skipped because a skill with that name exists, otherwise `400`; `detail` is that skill's reason when there is one skill, and `沒有安裝任何技能：<path>：<reason>；…` ("no skill installed") when there are several. A folder without any `SKILL.md` returns `400` `資料夾中找不到 SKILL.md` ("no SKILL.md in the folder"). Each installed skill writes one security event `ADMIN_SKILL_INSTALLED`.
 
 ---
 

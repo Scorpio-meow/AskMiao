@@ -6,6 +6,7 @@ All notable changes to AskMiao are documented in this file. The format is based 
 
 | Version | Release date | Highlights |
 |---|---|---|
+| [8.2.0](#820---2026-11-07) | 2026-11-07 | Agent Skills uploaded straight from a folder, several skills at once; skill uploads reject paths with a colon; installing skills no longer blocks other requests |
 | [8.1.0](#810---2026-11-03) | 2026-11-03 | MCP 2026-07-28 (stateless requests, `server/discover`, standard and `x-mcp-header` headers) with legacy servers still supported, MCP OAuth hardened to the new authorization specification (`iss` checks, required PKCE, Client ID Metadata Documents, step-up authorization), and binary content in MCP tool results kept from the model |
 | [8.0.2](#802---2026-11-02) | 2026-11-02 | How tests strip HTML tags; no user-visible change |
 | [8.0.1](#801---2026-11-02) | 2026-11-02 | pypdf upgraded to 6.21.4, fixing infinite loops and heavy memory use from malicious PDFs |
@@ -37,6 +38,20 @@ All notable changes to AskMiao are documented in this file. The format is based 
 ---
 
 ## [Unreleased]
+
+## [8.2.0] - 2026-11-07
+
+### Security
+
+- **Skill uploads reject paths with a colon**: only a leading drive letter used to be blocked, so a zip entry with a colon in the middle of its path, such as `skill/D:/evil.py` or `notes.md:stream`, was written outside the skill directory on a Windows host, to another drive or an NTFS alternate data stream. Now any path segment containing a colon rejects the whole upload with `400`, for both zip and folder uploads. Docker (Linux) deployments were not affected.
+
+### Added
+
+- **Upload Agent Skills from a folder**: "AI Tools → Upload skill" now selects a folder by default, so there is no need to zip it first. When the folder holds several skills (for example `~/.agents/skills`), every directory containing a `SKILL.md` is installed as one skill; other `SKILL.md` files inside a skill directory are that skill's files, and `.git`, `__MACOSX`, and `.DS_Store` are not uploaded. A skill that is invalid, shares its name with another skill in the folder, or has the name of an existing skill (without "replace") is skipped and listed with its reason in the dialog while the others are installed; name conflicts can be resolved with "Replace existing skills with the same name". The new endpoint is `POST /api/skills/upload-folder`, with at most 1000 files (`MAX_SKILL_FOLDER_FILES`) and 50 MiB (`MAX_SKILL_UNCOMPRESSED_BYTES`) per folder and 500 files per skill; see [API reference 6.8](docs/api_en.md#68-post-apiskillsupload-folder).
+
+### Changed
+
+- **Skills are installed on a worker thread**: writing skill files and database records during an upload no longer holds the main thread that serves every request, so other users' streamed answers do not pause during an upload; installs and deletions run one at a time, keeping database records and skill files in sync when the same skill is uploaded concurrently.
 
 ## [8.1.0] - 2026-11-03
 

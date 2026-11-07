@@ -174,20 +174,24 @@ def _is_ignored(parts: Tuple[str, ...]) -> bool:
     return any(part in IGNORED_ARCHIVE_PARTS for part in parts)
 
 
+def _path_parts(name: str, source: str) -> Tuple[str, ...]:
+    raw = name.replace("\\", "/")
+    path = PurePosixPath(raw)
+    if raw.startswith("/") or ".." in path.parts or any(":" in part for part in path.parts):
+        raise SkillError(f"{source}含不安全的路徑：{name}")
+    return tuple(p for p in path.parts if p not in ("", "."))
+
+
 def _archive_members(archive: zipfile.ZipFile) -> List[Tuple[zipfile.ZipInfo, Tuple[str, ...]]]:
     members = []
     declared_total = 0
     for info in archive.infolist():
-        raw = info.filename.replace("\\", "/")
-        path = PurePosixPath(raw)
-        if raw.startswith("/") or re.match(r"^[A-Za-z]:", raw) or ".." in path.parts:
-            raise SkillError(f"壓縮檔含不安全的路徑：{info.filename}")
+        parts = _path_parts(info.filename, "壓縮檔")
         mode = info.external_attr >> 16
         if stat.S_ISLNK(mode):
             raise SkillError(f"壓縮檔不可包含符號連結：{info.filename}")
         if info.is_dir():
             continue
-        parts = tuple(p for p in path.parts if p not in ("", "."))
         if not parts or _is_ignored(parts):
             continue
         members.append((info, parts))
@@ -247,6 +251,45 @@ def read_skill_upload(filename: str, data: bytes) -> Tuple[ParsedSkill, Dict[Tup
     raise SkillError("請上傳技能目錄的 .zip 壓縮檔或 SKILL.md")
 
 
+@dataclass
+class FolderSkill:
+    path: str
+    files: Dict[Tuple[str, ...], bytes]
+    skill: Optional[ParsedSkill] = None
+    error: Optional[str] = None
+
+
+def _skill_roots(members: List[Tuple[bytes, Tuple[str, ...]]]) -> List[Tuple[str, ...]]:
+    roots: List[Tuple[str, ...]] = []
+    for root in sorted({parts[:-1] for _, parts in members if parts[-1] == SKILL_FILE}, key=len):
+        if not any(root[:len(outer)] == outer for outer in roots):
+            roots.append(root)
+    return sorted(roots)
+
+
+def read_skill_folder(entries: List[Tuple[str, bytes]]) -> List[FolderSkill]:
+    members = []
+    for name, content in entries:
+        parts = _path_parts(name, "資料夾")
+        if parts and not _is_ignored(parts):
+            members.append((content, parts))
+    roots = _skill_roots(members)
+    if not roots:
+        raise SkillError("資料夾中找不到 SKILL.md")
+    found = []
+    for root in roots:
+        files = {parts[len(root):]: content for content, parts in members if parts[:len(root)] == root and len(parts) > len(root)}
+        item = FolderSkill(path="/".join(root) or ".", files=files)
+        try:
+            if len(files) > MAX_SKILL_FILES:
+                raise SkillError(f"技能檔案數超過 {MAX_SKILL_FILES} 個")
+            item.skill = parse_skill_md(_decode_skill_md(files[(SKILL_FILE,)]), directory_name=root[-1] if root else None)
+        except SkillError as e:
+            item.error = str(e)
+        found.append(item)
+    return found
+
+
 def install_skill(skill: ParsedSkill, files: Dict[Tuple[str, ...], bytes], replace: bool) -> None:
     root = skills_root()
     root.mkdir(parents=True, exist_ok=True)
@@ -270,7 +313,7 @@ def install_skill(skill: ParsedSkill, files: Dict[Tuple[str, ...], bytes], repla
                     stale.rename(target)
                 raise
         except OSError as e:
-            raise SkillError("技能檔案無法寫入，請確認壓縮檔內沒有重複或不合法的檔名") from e
+            raise SkillError("技能檔案無法寫入，請確認技能內沒有重複或不合法的檔名") from e
         finally:
             shutil.rmtree(staging, ignore_errors=True)
             shutil.rmtree(stale, ignore_errors=True)

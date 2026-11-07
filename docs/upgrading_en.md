@@ -4,6 +4,7 @@
 
 > How to upgrade an existing deployment to a new release, with rollback steps and troubleshooting. See the [CHANGELOG](../CHANGELOG_en.md) for the full list of changes in each version.
 
+- [Upgrading from 8.1.0 to 8.2.0](#upgrading-from-810-to-820)
 - [Upgrading from 8.0.x to 8.1.0](#upgrading-from-80x-to-810)
 - [Upgrading from 7.0.0 to 8.0.0](#upgrading-from-700-to-800)
   - [New required `.env` settings](#new-required-env-settings)
@@ -37,6 +38,20 @@
   - [Step 5: verify the upgrade](#step-5-verify-the-upgrade)
   - [Rolling back to 2.2.x](#rolling-back-to-22x)
   - [Troubleshooting](#troubleshooting)
+
+---
+
+## Upgrading from 8.1.0 to 8.2.0
+
+For upgrading from 8.1.0 to 8.2.0 (2026-11-07); see the [CHANGELOG](../CHANGELOG_en.md#820---2026-11-07) for the full list of changes. This release needs no `.env` changes and does not change the database.
+
+| Item | 8.1.0 | 8.2.0 | Action |
+|---|---|---|---|
+| Uploading skills | Only a `.zip` or a single `SKILL.md` | A folder can also be selected, installing every skill in it | None; after rebuilding the frontend, the "Upload skill" dialog selects a folder by default |
+| Colons in skill zip paths | Only a leading drive letter is blocked | Any path segment containing a colon returns `400` | Rename such files and zip the skill again |
+| Reverse proxy body limit | — | A folder upload body is up to about 51 MiB | Nothing to do with `deploy/nginx.conf` (120 MiB); a reverse proxy of your own must allow at least 51 MiB for `/api/skills/upload-folder` |
+
+To roll back to 8.1.0, switch back to the older code.
 
 ---
 

@@ -2,7 +2,7 @@
 
 [繁體中文](configuration.md) | [English](configuration_en.md)
 
-> 本文件逐一說明後端 `backend/.env` 與前端 `frontend/.env` 的每個設定、預設值與實際作用，適用於 **8.1.0**（從 8.0.x 升級見 [升級指南](upgrading.md#從-80x-升級到-810)）。設定以 `backend/app/core/config.py` 的 `Settings` 為準，範本見 [`backend/.env.example`](../backend/.env.example)。
+> 本文件逐一說明後端 `backend/.env` 與前端 `frontend/.env` 的每個設定、預設值與實際作用，適用於 **8.2.0**（從 8.1.0 升級見 [升級指南](upgrading.md#從-810-升級到-820)）。設定以 `backend/app/core/config.py` 的 `Settings` 為準，範本見 [`backend/.env.example`](../backend/.env.example)。
 
 - [讀取規則](#讀取規則)
 - [必填設定](#必填設定)
@@ -96,7 +96,7 @@ python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().d
 
 新增連線時，表單依供應商預先帶入官方 API 位址與下列模型清單，可以再增刪：
 
-| 供應商 | 預先帶入的模型（8.1.0） |
+| 供應商 | 預先帶入的模型（8.2.0） |
 |---|---|
 | OpenAI | `gpt-6.1-sol`、`gpt-6-sol`、`gpt-6-luna`、`gpt-6-astra`、`gpt-5.6-sol`、`gpt-5.6-luna`、`gpt-5.6-terra`、`gpt-5.4`、`gpt-5.4-mini` |
 | Anthropic | `claude-opus-5-5`、`claude-fable-5-1`、`claude-sonnet-5-5`、`claude-haiku-5-5`、`claude-sonnet-5`、`claude-opus-5`、`claude-fable-5`、`claude-opus-4-8`、`claude-haiku-4-5` |
@@ -433,8 +433,9 @@ OOXML 的檢查在解析前進行，依 ZIP 成員宣告的大小計算。python
 | 常數 | 值 | 說明 |
 |---|---|---|
 | `MAX_SKILL_ARCHIVE_BYTES` | 10 MiB | 上傳的技能檔（`.zip` 或 `SKILL.md`）大小；`POST /api/skills/upload` 的本文上限為此值加 1 MiB，與文件上傳相同只在存取權杖的 `is_admin` 聲明為 `true` 時放寬 |
-| `MAX_SKILL_UNCOMPRESSED_BYTES` | 50 MiB | 技能 zip 解壓後的總大小，以實際解壓的位元組數計算 |
-| `MAX_SKILL_FILES` | 500 | 單一技能的檔案數 |
+| `MAX_SKILL_UNCOMPRESSED_BYTES` | 50 MiB | 技能 zip 解壓後的總大小，以實際解壓的位元組數計算；也是上傳資料夾（`POST /api/skills/upload-folder`）的總大小，該端點的本文上限為此值加 1 MiB，同樣只對管理員放寬 |
+| `MAX_SKILL_FILES` | 500 | 單一技能的檔案數；上傳資料夾時逐一套用在每個技能 |
+| `MAX_SKILL_FOLDER_FILES` | 1000 | 一次上傳資料夾（`POST /api/skills/upload-folder`）的檔案數，含會被略過的 `.git` 等檔案 |
 | `MAX_SKILL_MD_BYTES` | 256 KiB | `SKILL.md` 的大小 |
 | `MAX_SKILL_RESOURCE_LISTING` | 100 | 啟用技能時列給模型的檔案數 |
 | `MAX_SKILL_RESOURCE_CHARS` | 20,000 字元 | 啟用技能時回傳的 `SKILL.md` 內文與每次 `read_skill_resource` 的結果，超過的部分截斷 |

@@ -27,6 +27,7 @@ export type IconName =
   | 'code'
   | 'image'
   | 'file'
+  | 'folder'
   | 'save'
   | 'lock'
   | 'person'
@@ -121,6 +122,10 @@ export const Icon: React.FC<IconProps> = ({
           <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" fill="none" />
         );
       case 'description':
+      case 'folder':
+        return (
+          <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" fill="none" />
+        );
       case 'file':
         return (
           <>
