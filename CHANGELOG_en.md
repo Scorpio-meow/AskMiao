@@ -6,6 +6,7 @@ All notable changes to AskMiao are documented in this file. The format is based 
 
 | Version | Release date | Highlights |
 |---|---|---|
+| [8.2.2](#822---2026-11-07) | 2026-11-07 | How document upload rejection reasons are returned; no user-visible change |
 | [8.2.1](#821---2026-11-07) | 2026-11-07 | Claude output token limit error messages point to the API connection; documentation checked against the code and reorganized, with a new deployment guide and troubleshooting page |
 | [8.2.0](#820---2026-11-07) | 2026-11-07 | Agent Skills uploaded straight from a folder, several skills at once; skill uploads reject paths with a colon; installing skills no longer blocks other requests |
 | [8.1.0](#810---2026-11-03) | 2026-11-03 | MCP 2026-07-28 (stateless requests, `server/discover`, standard and `x-mcp-header` headers) with legacy servers still supported, MCP OAuth hardened to the new authorization specification (`iss` checks, required PKCE, Client ID Metadata Documents, step-up authorization), and binary content in MCP tool results kept from the model |
@@ -36,6 +37,12 @@ All notable changes to AskMiao are documented in this file. The format is based 
 ---
 
 ## [Unreleased]
+
+## [8.2.2] - 2026-11-07
+
+### Changed
+
+- **Document upload rejection reasons come from the exception's `reason` field**: `POST /api/documents/upload` no longer builds its response by calling `str()` on the exception (CodeQL `py/stack-trace-exposure`); the rejection reasons and other error messages are unchanged. No user-visible change.
 
 ## [8.2.1] - 2026-11-07
 

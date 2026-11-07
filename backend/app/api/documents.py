@@ -250,7 +250,7 @@ async def upload_document(
                 results.append({
                     "filename": safe_filename,
                     "status": "failed",
-                    "detail": str(ve) if isinstance(ve, DocumentRejected) else "安全驗證失敗: 上傳的檔案未通過安全檢查",
+                    "detail": ve.reason if isinstance(ve, DocumentRejected) else "安全驗證失敗: 上傳的檔案未通過安全檢查",
                     "http_status": 400
                 })
                 continue

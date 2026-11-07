@@ -4,6 +4,7 @@
 
 > How to upgrade an existing deployment to a new release, with rollback steps and troubleshooting. See the [CHANGELOG](../CHANGELOG_en.md) for the full list of changes in each version.
 
+- [Upgrading from 8.2.1 to 8.2.2](#upgrading-from-821-to-822)
 - [Upgrading from 8.2.0 to 8.2.1](#upgrading-from-820-to-821)
 - [Upgrading from 8.1.0 to 8.2.0](#upgrading-from-810-to-820)
 - [Upgrading from 8.0.x to 8.1.0](#upgrading-from-80x-to-810)
@@ -39,6 +40,12 @@
   - [Step 5: verify the upgrade](#step-5-verify-the-upgrade)
   - [Rolling back to 2.2.x](#rolling-back-to-22x)
   - [Troubleshooting](#troubleshooting)
+
+---
+
+## Upgrading from 8.2.1 to 8.2.2
+
+For upgrading from 8.2.1 to 8.2.2 (2026-11-07); see the [CHANGELOG](../CHANGELOG_en.md#822---2026-11-07) for the full list of changes. This release has no user-visible change: no `.env` changes, and the database and API are unchanged, so switching to the new code is enough. To roll back to 8.2.1, switch back to the older code.
 
 ---
 

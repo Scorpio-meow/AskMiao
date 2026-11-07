@@ -34,7 +34,9 @@ MAX_TOC_LINE_CHARS = 300
 OOXML_CONTENT_TYPES_PART = "[Content_Types].xml"
 OOXML_XML_PARSER = etree.XMLParser(resolve_entities=False, no_network=True)
 class DocumentRejected(ValueError):
-    pass
+    def __init__(self, reason: str):
+        super().__init__(reason)
+        self.reason = reason
 class DocumentLimitExceeded(DocumentRejected):
     pass
 def _is_xml_content_type(content_type: str) -> bool:
