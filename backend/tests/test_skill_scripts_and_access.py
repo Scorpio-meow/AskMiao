@@ -3,11 +3,9 @@ import io
 import json
 import zipfile
 from datetime import datetime
-
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-
 from app.api import skills as skills_api
 from app.core.config import settings
 from app.core.jwt_auth import get_current_user_from_token
@@ -18,10 +16,8 @@ from app.rag.agent import ResearchAgent
 from app.rag.tools import ResearchToolRegistry
 from app.services import agent_skills
 from test_agent_guardrails import ScriptedLLM, answer, collect, research, tool_call
-
 ADMIN_USER = {"user_id": 1, "username": "admin", "email": "admin@example.com", "role": "admin", "is_admin": True}
 USERNAMES = ("skill_member_a", "skill_member_b")
-
 SKILL_MD = """---
 name: script-skill
 description: Runs helper scripts. Use when testing scripts.
@@ -29,14 +25,12 @@ allowed-tools: run_skill_script Read
 ---
 Run scripts/echo.py.
 """
-
 OTHER_SKILL_MD = """---
 name: other-skill
 description: Runs other scripts. Use when testing cross-skill approval.
 ---
 Run scripts/echo.py.
 """
-
 ECHO_PY = """import os, sys
 data = sys.stdin.read()
 open("written.txt", "w").write("x")
@@ -45,16 +39,12 @@ print("stdin=" + data)
 print("secret=" + os.environ.get("DATABASE_URL", "absent"))
 print("x" * int(os.environ.get("NO_SUCH", "0")))
 """
-
-
 def make_zip(entries):
     buffer = io.BytesIO()
     with zipfile.ZipFile(buffer, "w") as archive:
         for path, content in entries.items():
             archive.writestr(path, content)
     return buffer.getvalue()
-
-
 @pytest.fixture
 def env(tmp_path, monkeypatch, existing_users):
     monkeypatch.setattr(settings, "SKILLS_DIR", str(tmp_path / "skills"))
@@ -89,12 +79,8 @@ def env(tmp_path, monkeypatch, existing_users):
         db.query(AgentSkill).delete()
         db.query(User).filter(User.username.in_(USERNAMES)).delete(synchronize_session=False)
         db.commit()
-
-
 def tool(definitions, name):
     return next((t for t in definitions if t["function"]["name"] == name), None)
-
-
 @pytest.mark.anyio
 async def test_scripts_require_opt_in(env):
     _, _, _ = env
@@ -102,8 +88,6 @@ async def test_scripts_require_opt_in(env):
     assert tool(registry.get_tool_definitions(), "run_skill_script") is None
     result = await registry.execute_tool("run_skill_script", {"skill": "script-skill", "path": "scripts/echo.py"})
     assert "不允許執行腳本" in result["error"]
-
-
 @pytest.mark.anyio
 async def test_script_runs_isolated_with_args_and_stdin(env):
     client, skill, _ = env
@@ -111,7 +95,6 @@ async def test_script_runs_isolated_with_args_and_stdin(env):
     registry = ResearchToolRegistry()
     definition = tool(registry.get_tool_definitions(), "run_skill_script")
     assert definition["function"]["parameters"]["properties"]["skill"]["enum"] == ["script-skill"]
-
     result = await registry.execute_tool(
         "run_skill_script", {"skill": "script-skill", "path": "scripts/echo.py", "args": ["a", "b"], "stdin": "hello"}
     )
@@ -119,14 +102,10 @@ async def test_script_runs_isolated_with_args_and_stdin(env):
     assert "args=a,b" in result["stdout"] and "stdin=hello" in result["stdout"]
     assert "secret=absent" in result["stdout"]
     assert not (agent_skills.skill_directory("script-skill") / "written.txt").exists()
-
     loud = await registry.execute_tool("run_skill_script", {"skill": "script-skill", "path": "scripts/loud.py"})
     assert loud["output_truncated"] is True and len(loud["stdout"]) <= 20_000
-
     for bad in ({"path": "scripts/tool.exe"}, {"path": "../x.py"}, {"path": "scripts/echo.py", "args": "not-a-list"}):
         assert "error" in await registry.execute_tool("run_skill_script", {"skill": "script-skill", **bad})
-
-
 @pytest.mark.anyio
 async def test_script_timeout_kills_process(env, monkeypatch):
     client, skill, _ = env
@@ -135,15 +114,11 @@ async def test_script_timeout_kills_process(env, monkeypatch):
     result = await ResearchToolRegistry().execute_tool("run_skill_script", {"skill": "script-skill", "path": "scripts/sleep.py"})
     assert result["timed_out"] is True
     assert result["duration_seconds"] < 15
-
-
 def test_script_approval_names_the_command(env):
     requirement = ResearchToolRegistry().approval_requirement("run_skill_script", {"skill": "script-skill", "path": "scripts/echo.py"})
     assert requirement["kind"] == "skill_script"
     assert requirement["display_name"] == "script-skill → scripts/echo.py"
     assert requirement["target"].startswith("本機指令 python")
-
-
 @pytest.mark.anyio
 async def test_allowed_tools_preapprove_only_after_activation(env, monkeypatch):
     client, skill, _ = env
@@ -163,8 +138,6 @@ async def test_allowed_tools_preapprove_only_after_activation(env, monkeypatch):
     assert steps[1]["status"] == "success"
     assert '"exit_code": 0' in steps[2]["output_preview"]
     assert not any(e["event"] == "approval_required" for e in events)
-
-
 @pytest.mark.anyio
 async def test_allowed_tools_preapprove_only_the_listing_skills_scripts(env, monkeypatch):
     client, skill, _ = env
@@ -186,8 +159,6 @@ async def test_allowed_tools_preapprove_only_the_listing_skills_scripts(env, mon
     assert steps[0]["status"] == "success"
     assert "核准" in steps[1]["output_preview"]
     assert '"exit_code": 0' in steps[2]["output_preview"]
-
-
 @pytest.mark.anyio
 async def test_cancelled_script_is_killed(env, monkeypatch):
     client, skill, _ = env
@@ -195,13 +166,11 @@ async def test_cancelled_script_is_killed(env, monkeypatch):
     spawned = []
     started = asyncio.Event()
     create = asyncio.create_subprocess_exec
-
     async def spawn(*args, **kwargs):
         process = await create(*args, **kwargs)
         spawned.append(process)
         started.set()
         return process
-
     monkeypatch.setattr(asyncio, "create_subprocess_exec", spawn)
     task = asyncio.create_task(
         ResearchToolRegistry().execute_tool("run_skill_script", {"skill": "script-skill", "path": "scripts/sleep.py"})
@@ -211,47 +180,36 @@ async def test_cancelled_script_is_killed(env, monkeypatch):
     with pytest.raises(asyncio.CancelledError):
         await task
     assert spawned[0].returncode is not None
-
-
 @pytest.mark.anyio
 async def test_prompts_mention_running_scripts_only_when_offered(env, monkeypatch):
     client, skill, _ = env
     agent = ResearchAgent(tool_registry=ResearchToolRegistry())
-
     async def prompts():
         llm = ScriptedLLM([tool_call("activate_skill", {"name": "script-skill"}, "c1"), answer("完成")]).install(monkeypatch)
         await collect(research(agent, "跑腳本"))
         return llm.chat_messages[0][0]["content"], llm.chat_messages[1][-1]["content"]
-
     system, activation = await prompts()
     assert "本系統不會執行技能內的腳本" in system
     assert "本系統不會執行技能內的腳本" in activation
-
     client.patch(f"/api/skills/{skill['id']}/settings", json={"allow_scripts": True})
     system, activation = await prompts()
     assert "run_skill_script" in system and "本系統不會執行技能內的腳本" not in system
     assert "run_skill_script" in activation and "本系統不會執行技能內的腳本" not in activation
-
-
 @pytest.mark.anyio
 async def test_skill_restricted_to_users(env):
     client, skill, (member_a, member_b) = env
     assert client.patch(f"/api/skills/{skill['id']}/settings", json={"allowed_user_ids": [999999]}).status_code == 400
     updated = client.patch(f"/api/skills/{skill['id']}/settings", json={"allowed_user_ids": [member_a]}).json()["skill"]
     assert updated["allowed_user_ids"] == [member_a]
-
     registry = ResearchToolRegistry()
     assert tool(registry.get_tool_definitions(member_a), "activate_skill") is not None
     assert tool(registry.get_tool_definitions(member_b), "activate_skill") is None
     assert tool(registry.get_tool_definitions(), "activate_skill") is None
     assert "error" in await registry.execute_tool("activate_skill", {"name": "script-skill"}, user_id=member_b)
     assert "content" in await registry.execute_tool("activate_skill", {"name": "script-skill"}, user_id=member_a)
-
     cleared = client.patch(f"/api/skills/{skill['id']}/settings", json={"allowed_user_ids": []}).json()["skill"]
     assert cleared["allowed_user_ids"] is None
     assert tool(registry.get_tool_definitions(member_b), "activate_skill") is not None
-
-
 def test_empty_allow_list_means_nobody():
     assert agent_skills.skill_visible_to(None, 5) is True
     assert agent_skills.skill_visible_to(json.dumps([5]), 5) is True

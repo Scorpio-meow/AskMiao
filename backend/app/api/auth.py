@@ -32,7 +32,6 @@ REFRESH_COOKIE_NAME = "refresh_token"
 REFRESH_COOKIE_PATH = "/api/auth"
 router = APIRouter(prefix="/api/auth", tags=["Authentication"])
 security = HTTPBearer()
-# Argon2 雜湊與驗證刻意耗費 CPU 與記憶體：移到執行緒，並限制同時進行的數量
 _password_hash_slots = asyncio.Semaphore(MAX_CONCURRENT_PASSWORD_HASHES)
 async def _run_password_work(func, *args):
     async with _password_hash_slots:
@@ -67,7 +66,6 @@ def _set_refresh_cookie(response: Response, refresh_token: str) -> None:
     )
 @router.get("/registration")
 async def get_registration_status():
-    """是否開放自行註冊；前端據此顯示或隱藏註冊入口"""
     return {"enabled": settings.ALLOW_REGISTRATION}
 @router.post("/register", response_model=LoginResponse, status_code=status.HTTP_201_CREATED)
 async def register(
@@ -80,12 +78,11 @@ async def register(
         log_security_event("REGISTER_REJECTED", request=request, details={"reason": "未開放註冊"})
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="目前不開放註冊，請聯繫管理員建立帳號"
+            detail="目前不開放註冊，請聯絡管理員建立帳號"
         )
     username = user_data.username
-
     if get_user_by_username(db, username):
-        log_security_event("REGISTER_FAILED", request=request, details={"username": username, "reason": "用戶名已存在"})
+        log_security_event("REGISTER_FAILED", request=request, details={"username": username, "reason": "使用者名稱已存在"})
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="使用者名稱已被使用"
@@ -144,11 +141,11 @@ async def register(
         
     except Exception as e:
         logger = logging.getLogger(__name__)
-        logger.exception("用戶註冊失敗")
+        logger.exception("使用者註冊失敗")
         log_security_event("REGISTER_ERROR", request=request, details={"error": "internal_error"})
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="註冊失敗: 內部錯誤，請聯繫系統管理員"
+            detail="註冊失敗: 內部錯誤，請聯絡系統管理員"
         )
 @router.post("/login", response_model=LoginResponse)
 async def login(
@@ -160,8 +157,6 @@ async def login(
     address = _client_address(request)
     _reject_if_throttled(request, credentials.username, address)
     async with _password_hash_slots:
-        # 同時送出的請求都會通過上面的檢查：拿到雜湊名額後再檢查一次，失敗也在釋放名額前記下，
-        # 進入鎖定後最多只有已在驗證中的 MAX_CONCURRENT_PASSWORD_HASHES 個請求會完成
         _reject_if_throttled(request, credentials.username, address)
         user = await asyncio.to_thread(authenticate_user, db, credentials.username, credentials.password)
         if not user:
@@ -176,7 +171,6 @@ async def login(
                 detail="使用者名稱或密碼錯誤",
                 headers={"WWW-Authenticate": "Bearer"},
             )
-
     bind_request_user(user.id)
     login_throttle.record_success(credentials.username)
     update_user_last_login(db, user.id)
@@ -221,9 +215,7 @@ async def refresh_token(
         
         payload = verify_refresh_token(refresh_token_value)
         user = resolve_token_user(db, payload)
-        # 重新整理權杖只能使用一次，換發後立即撤銷舊權杖
         revoke_token(refresh_token_value)
-
         tokens = create_token_pair({
             "user_id": user.id,
             "username": user.username,
@@ -309,7 +301,7 @@ async def change_password(
     
     if not await _run_password_work(PasswordManager.verify_password, password_data.current_password, user_obj.hashed_password):
         log_security_event("PASSWORD_CHANGE_FAILED", request=request, user_id=user_obj.id, details={
-            "reason": "當前密碼錯誤"
+            "reason": "目前的密碼錯誤"
         })
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -324,7 +316,6 @@ async def change_password(
         )
     
     await _run_password_work(update_user_password, db, user_obj.id, password_data.new_password)
-    # 變更密碼後所有權杖（含本次的）都已失效，需以新密碼重新登入
     _clear_refresh_cookie(response)
     log_security_event("PASSWORD_CHANGED", request=request, user_id=user_obj.id)
     
@@ -335,8 +326,6 @@ async def logout(
     response: Response,
     credentials: HTTPAuthorizationCredentials = Depends(security)
 ):
-    """撤銷這次帶來的存取權杖與重新整理權杖 Cookie。存取權杖過期時也要能登出（否則重新整理權杖
-    會留在瀏覽器裡繼續有效），因此只驗簽章；仍要求 Authorization 標頭，跨站表單無法觸發登出"""
     payload = TokenManager.decode_token_ignoring_expiry(credentials.credentials)
     if not TokenManager.verify_token_type(payload, "access"):
         raise HTTPException(
@@ -344,7 +333,6 @@ async def logout(
             detail="權杖類型無效",
             headers={"WWW-Authenticate": "Bearer"},
         )
-    # 已過期的存取權杖撤銷會失敗，本來也已無效
     revoke_token(credentials.credentials)
     refresh_token_value = request.cookies.get(REFRESH_COOKIE_NAME)
     if refresh_token_value:

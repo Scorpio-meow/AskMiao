@@ -5,7 +5,6 @@ import re
 import time
 from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import urlparse
-
 from app.core.error_response import SafeClientError
 from app.core.limits import (
     MAX_ARAZZO_NESTED_WORKFLOWS,
@@ -17,26 +16,19 @@ from app.rag.tool_approval import SAFE_HTTP_METHODS
 from app.services import jsonpath
 from app.services.api_tool_request import scalar_text
 from app.services.openapi_documents import SpecDocuments, decode_pointer, document_base, is_remote_uri, join_uri, load_source, walk_pointer
-
 ARAZZO_VERSION_PATTERN = re.compile(r"^1\.[01](\.\d+)?$")
 EXPRESSION_PATTERN = re.compile(r"^\$(url|method|statusCode|self|request|response|inputs|outputs|steps|workflows|sourceDescriptions|components)\b")
 EMBEDDED_PATTERN = re.compile(r"\{(\$[^{}]+)\}")
 MAX_REGEX_CONTEXT_CHARS = 20_000
-
-
 def _tool_name(workflow_id: str) -> str:
     from app.services.openapi_parser import OpenApiParser
     return OpenApiParser._generate_tool_name("WORKFLOW", "", f"workflow_{workflow_id}")
-
-
 def _operation_view(endpoint: Dict[str, Any]) -> Dict[str, Any]:
     keys = (
         "method", "full_url", "path", "base_url", "param_locations", "param_styles", "body_content_type",
         "auth_type", "auth_config", "headers", "operation_id", "parameters_schema",
     )
     return {key: copy.deepcopy(endpoint.get(key)) for key in keys}
-
-
 async def _load_sources(root: Dict[str, Any], base: str, default_base_url: Optional[str], warnings: List[str]):
     from app.services.openapi_parser import OpenApiParser
     sources: Dict[str, Dict[str, Any]] = {}
@@ -67,8 +59,6 @@ async def _load_sources(root: Dict[str, Any], base: str, default_base_url: Optio
                 entry["by_id"][endpoint["operation_id"]] = endpoint
             entry["by_path"][(endpoint["path"], endpoint["method"].lower())] = endpoint
     return sources
-
-
 def _find_operation(step: Dict[str, Any], sources: Dict[str, Dict[str, Any]]) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
     if isinstance(step.get("operationId"), str):
         ref = step["operationId"]
@@ -90,8 +80,6 @@ def _find_operation(step: Dict[str, Any], sources: Dict[str, Dict[str, Any]]) ->
         endpoint = sources[match.group(1)]["by_path"].get((parts[1], parts[2].lower()))
         return (endpoint, None) if endpoint else (None, f"找不到 operationPath {ref}")
     return None, "步驟沒有 operationId、operationPath 或 workflowId"
-
-
 def _compile_workflows(root: Dict[str, Any], sources: Dict[str, Dict[str, Any]], warnings: List[str]) -> Dict[str, Dict[str, Any]]:
     workflows: Dict[str, Dict[str, Any]] = {}
     ids = {wf.get("workflowId") for wf in root.get("workflows") or [] if isinstance(wf, dict)}
@@ -139,8 +127,6 @@ def _compile_workflows(root: Dict[str, Any], sources: Dict[str, Dict[str, Any]],
             "steps": steps,
         }
     return workflows
-
-
 def _step_targets(workflows: Dict[str, Dict[str, Any]], workflow_id: str, seen: Optional[set] = None) -> List[str]:
     seen = seen or set()
     if workflow_id in seen or workflow_id not in workflows:
@@ -157,8 +143,6 @@ def _step_targets(workflows: Dict[str, Dict[str, Any]], workflow_id: str, seen: 
         elif step.get("workflowId"):
             targets.extend(_step_targets(workflows, step["workflowId"], seen))
     return list(dict.fromkeys(targets))
-
-
 async def parse_arazzo(root: Dict[str, Any], url: Optional[str], size: int, default_base_url: Optional[str]) -> Dict[str, Any]:
     from app.services.openapi_schema import SchemaNormalizer
     version = str(root.get("arazzo", "")).strip()
@@ -240,18 +224,13 @@ async def parse_arazzo(root: Dict[str, Any], url: Optional[str], size: int, defa
         "endpoints": endpoints,
         "warnings": [w for w in warnings if not any(f"{wid}." in w for wid in workflows)],
     }
-
-
 class WorkflowError(Exception):
     pass
-
-
 class _Tokens:
     PATTERN = re.compile(
         r"\s*(?:(?P<expr>\$[A-Za-z][\w.\-]*(?:#[^\s()\[\]=!<>&|]*)?)|(?P<num>-?\d+(?:\.\d+)?)|(?P<str>'(?:[^']|'')*')"
         r"|(?P<op>==|!=|<=|>=|&&|\|\||[<>!()\[\].])|(?P<word>[A-Za-z_][\w-]*))"
     )
-
     def __init__(self, text: str):
         self.items: List[Tuple[str, str]] = []
         pos = 0
@@ -264,16 +243,12 @@ class _Tokens:
             self.items.append((kind, m.group(kind)))
             pos = m.end()
         self.i = 0
-
     def peek(self) -> Tuple[str, str]:
         return self.items[self.i] if self.i < len(self.items) else ("end", "")
-
     def take(self) -> Tuple[str, str]:
         tok = self.peek()
         self.i += 1
         return tok
-
-
 class _Run:
     def __init__(self, tool_dict: Dict[str, Any], tool_name: str):
         self.tool = tool_dict
@@ -285,14 +260,12 @@ class _Run:
         self.step_runs = 0
         self.trace: List[Dict[str, Any]] = []
         self.results: Dict[str, Dict[str, Any]] = {}
-
     def check_budget(self) -> None:
         self.step_runs += 1
         if self.step_runs > MAX_ARAZZO_STEP_RUNS:
             raise WorkflowError(f"執行步驟數超過 {MAX_ARAZZO_STEP_RUNS} 次上限，可能是 goto 或 retry 形成迴圈")
         if time.monotonic() > self.deadline:
             raise WorkflowError(f"工作流程超過 {int(MAX_ARAZZO_WORKFLOW_SECONDS)} 秒上限")
-
     def expression(self, expr: str, scope: Dict[str, Any]) -> Any:
         head, _, pointer = expr.partition("#")
         parts = head[1:].split(".")
@@ -341,7 +314,6 @@ class _Run:
             except (KeyError, IndexError, ValueError, TypeError):
                 return None
         return value
-
     def value(self, raw: Any, scope: Dict[str, Any]) -> Any:
         if isinstance(raw, str):
             if raw.startswith("$") and EXPRESSION_PATTERN.match(raw) and " " not in raw.strip():
@@ -354,7 +326,6 @@ class _Run:
         if isinstance(raw, list):
             return [self.value(v, scope) for v in raw]
         return raw
-
     def select(self, selector: Dict[str, Any], scope: Dict[str, Any]) -> Any:
         context = self.value(selector["context"], scope)
         kind = selector.get("type", "jsonpath")
@@ -369,7 +340,6 @@ class _Run:
             found = jsonpath.values(context, expression)
             return found[0] if len(found) == 1 else (found or None)
         raise WorkflowError(f"不支援 {kind} 選擇器")
-
     def criterion(self, criterion: Any, scope: Dict[str, Any]) -> bool:
         if not isinstance(criterion, dict) or not isinstance(criterion.get("condition"), str):
             return False
@@ -393,14 +363,12 @@ class _Run:
             return False
         except (WorkflowError, SafeClientError, ValueError, re.error):
             return False
-
     def simple(self, condition: str, scope: Dict[str, Any]) -> bool:
         tokens = _Tokens(condition)
         result = self._or(tokens, scope)
         if tokens.peek()[0] != "end":
             raise WorkflowError(f"條件語法錯誤：{condition}")
         return result is True
-
     def _or(self, t: _Tokens, scope) -> Any:
         left = self._and(t, scope)
         while t.peek() == ("op", "||"):
@@ -408,7 +376,6 @@ class _Run:
             right = self._and(t, scope)
             left = left is True or right is True
         return left
-
     def _and(self, t: _Tokens, scope) -> Any:
         left = self._not(t, scope)
         while t.peek() == ("op", "&&"):
@@ -416,13 +383,11 @@ class _Run:
             right = self._not(t, scope)
             left = left is True and right is True
         return left
-
     def _not(self, t: _Tokens, scope) -> Any:
         if t.peek() == ("op", "!"):
             t.take()
             return not (self._not(t, scope) is True)
         return self._compare(t, scope)
-
     def _compare(self, t: _Tokens, scope) -> Any:
         left = self._operand(t, scope)
         kind, text = t.peek()
@@ -431,7 +396,6 @@ class _Run:
             right = self._operand(t, scope)
             return self._apply(text, left, right)
         return left
-
     @staticmethod
     def _apply(op: str, a: Any, b: Any) -> bool:
         if isinstance(a, str) and isinstance(b, (int, float)) and not isinstance(b, bool):
@@ -456,7 +420,6 @@ class _Run:
             return {"<": a < b, "<=": a <= b, ">": a > b, ">=": a >= b}[op]
         except TypeError:
             return False
-
     def _operand(self, t: _Tokens, scope) -> Any:
         kind, text = t.take()
         if kind == "op" and text == "(":
@@ -487,7 +450,6 @@ class _Run:
             except (KeyError, IndexError, TypeError):
                 value = None
         return value
-
     def parameters(self, workflow: Dict[str, Any], step: Dict[str, Any]) -> List[Dict[str, Any]]:
         merged: Dict[Tuple[str, str], Dict[str, Any]] = {}
         for raw in list(workflow.get("parameters") or []) + list(step.get("parameters") or []):
@@ -495,7 +457,6 @@ class _Run:
             if isinstance(param, dict) and isinstance(param.get("name"), str):
                 merged[(param["name"], param.get("in", ""))] = param
         return list(merged.values())
-
     def reusable(self, raw: Any, kind: str) -> Any:
         if isinstance(raw, dict) and isinstance(raw.get("reference"), str):
             match = re.match(rf"^\$components\.{kind}\.(.+)$", raw["reference"])
@@ -507,7 +468,6 @@ class _Run:
                 merged["value"] = raw["value"]
             return merged
         return raw
-
     def actions(self, workflow: Dict[str, Any], step: Dict[str, Any], success: bool) -> List[Dict[str, Any]]:
         step_actions = [self.reusable(a, "successActions" if success else "failureActions") for a in step.get("onSuccess" if success else "onFailure") or []]
         names = {a.get("name") for a in step_actions if isinstance(a, dict)}
@@ -516,7 +476,6 @@ class _Run:
             for a in workflow.get("successActions" if success else "failureActions") or []
         ]
         return [a for a in step_actions if isinstance(a, dict)] + [a for a in workflow_actions if isinstance(a, dict) and a.get("name") not in names]
-
     async def http_step(self, step: Dict[str, Any], workflow: Dict[str, Any], scope: Dict[str, Any]) -> Dict[str, Any]:
         from app.api.api_tools import execute_http_request
         op = step["operation"]
@@ -579,7 +538,6 @@ class _Run:
             },
             "response": {"header": exchange.get("response_headers") or {}, "body": result.get("data")},
         }
-
     def replace(self, payload: Any, replacement: Dict[str, Any], scope: Dict[str, Any]) -> Any:
         target = replacement["target"]
         value = self.value(replacement.get("value"), scope)
@@ -607,7 +565,6 @@ class _Run:
         elif isinstance(parent, dict):
             parent[parts[-1]] = value
         return payload
-
     async def run_workflow(self, workflow_id: str, inputs: Dict[str, Any], depth: int) -> Dict[str, Any]:
         if depth > MAX_ARAZZO_NESTED_WORKFLOWS:
             raise WorkflowError(f"巢狀工作流程超過 {MAX_ARAZZO_NESTED_WORKFLOWS} 層")
@@ -675,7 +632,6 @@ class _Run:
             outputs = {name: self.value(expr, scope) for name, expr in (workflow.get("outputs") or {}).items()}
         self.results[workflow_id] = {"inputs": inputs, "outputs": outputs, "success": succeeded}
         return {"success": succeeded, "outputs": outputs, "error": failure}
-
     async def run_step(self, step: Dict[str, Any], workflow: Dict[str, Any], workflow_id: str, scope: Dict[str, Any], depth: int):
         self.check_budget()
         if step.get("error"):
@@ -696,7 +652,6 @@ class _Run:
         if success:
             scope["steps"][step["stepId"]] = {name: self.value(expr, step_scope) for name, expr in (step.get("outputs") or {}).items()}
         return exchange, success, step_scope
-
     async def goto(self, action: Dict[str, Any], index_of: Dict[str, int], scope: Dict[str, Any], depth: int) -> int:
         if action.get("stepId"):
             if action["stepId"] not in index_of:
@@ -707,8 +662,6 @@ class _Run:
             await self.run_workflow(action["workflowId"], sub_inputs, depth + 1)
             return -1
         raise WorkflowError("goto 動作缺少 stepId 或 workflowId")
-
-
 async def run_workflow(tool_dict: Dict[str, Any], arguments: Dict[str, Any], tool_name: str) -> Dict[str, Any]:
     started = time.time()
     declared = set(((tool_dict.get("parameters_schema") or {}).get("properties") or {}).keys())

@@ -4,7 +4,6 @@ import { describeCustomTool } from './catalog';
 import CustomToolRow from './CustomToolRow';
 import McpServerRow from './McpServerRow';
 import SkillRow from './SkillRow';
-
 const noop = () => {};
 const textOf = (html) => {
   let text = '';
@@ -21,7 +20,6 @@ const buttonNamed = (html, text) => [...html.matchAll(/<button([^>]*)>(.*?)<\/bu
   .find((button) => button.text.startsWith(text));
 const attribute = (attrs, name) => attrs.match(new RegExp(`\\s${name}="([^"]*)"`))?.[1];
 const switchInput = (html) => html.match(/<input[^>]*role="switch"[^>]*>/)[0];
-
 describe('custom tool row', () => {
   const tool = describeCustomTool({
     id: 5,
@@ -39,7 +37,6 @@ describe('custom tool row', () => {
       <CustomToolRow tool={tool} expanded={false} onToggleDetails={noop} onToggle={noop} onTest={noop} onEdit={noop} onDelete={noop} />
     </ul>
   );
-
   it('labels the row by its heading and names its switch', () => {
     expect(html).toContain('<article aria-labelledby="tool-custom_5">');
     expect(html).toMatch(/<h3[^>]*id="tool-custom_5"[^>]*>派遣工單<\/h3>/);
@@ -48,12 +45,10 @@ describe('custom tool row', () => {
     expect(toggle).not.toMatch(/\schecked=""/);
     expect(textOf(html)).toContain('已停用');
   });
-
   it('shows the approval setting and the credentials notice', () => {
     expect(textOf(html)).toContain('呼叫前需確認');
     expect(textOf(html)).toContain('憑證需要重新輸入');
   });
-
   it('keeps details collapsed and out of the tab order until expanded', () => {
     const toggle = buttonNamed(html, '詳細資訊');
     expect(attribute(toggle.attrs, 'aria-expanded')).toBe('false');
@@ -61,13 +56,11 @@ describe('custom tool row', () => {
     const region = html.slice(html.indexOf(`id="${regionId}"`));
     expect(region.slice(0, region.indexOf('>', region.indexOf('<div', 1)) + 1)).toContain('inert=""');
   });
-
   it('gives repeated actions a unique accessible name', () => {
-    expect(buttonNamed(html, '編輯配置').text).toBe('編輯配置「派遣工單」');
+    expect(buttonNamed(html, '編輯設定').text).toBe('編輯設定「派遣工單」');
     expect(buttonNamed(html, '刪除工具').text).toBe('刪除工具「派遣工單」');
   });
 });
-
 describe('MCP server row', () => {
   const server = {
     id: 9,
@@ -101,19 +94,16 @@ describe('MCP server row', () => {
       />
     </ul>
   );
-
   it('shows the connection error and the OAuth actions of an HTTP server', () => {
     expect(textOf(html)).toContain('連線錯誤');
     expect(textOf(html)).toContain('連線逾時');
     expect(buttonNamed(html, '重新 OAuth 授權')).toBeDefined();
     expect(buttonNamed(html, '清除授權')).toBeDefined();
   });
-
   it('lists the discovered tools with a test action when expanded', () => {
     expect(attribute(buttonNamed(html, '提供的工具（1）').attrs, 'aria-expanded')).toBe('true');
     expect(buttonNamed(html, '線上測試').text).toBe('線上測試 search_docs');
   });
-
   it('shows the negotiated protocol version and the declared tool hints', () => {
     expect(textOf(html)).toContain('MCP 2026-07-28');
     expect(textOf(html)).toContain('search_docs（搜尋文件庫）');
@@ -121,7 +111,6 @@ describe('MCP server row', () => {
     expect(textOf(html)).not.toContain('會連到外部');
   });
 });
-
 describe('skill row', () => {
   const skill = {
     id: 4,
@@ -149,12 +138,10 @@ describe('skill row', () => {
       />
     </ul>
   );
-
   it('cannot be used in chat while its files are missing', () => {
     expect(textOf(html)).toContain('找不到技能檔案');
     expect(buttonNamed(html, '在對話中使用').attrs).toMatch(/\sdisabled=""/);
   });
-
   it('summarises access, scripts and spec warnings on the row', () => {
     expect(textOf(html)).toContain('限 2 位使用者');
     expect(textOf(html)).toContain('可執行腳本');

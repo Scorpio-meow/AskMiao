@@ -3,14 +3,10 @@ import logging
 from datetime import datetime
 from .types import Document, RecursiveCharacterTextSplitter
 from .retrievers.hybrid import HybridRetriever
-
 from .tools import ResearchToolRegistry
 from .agent import ResearchAgent
 from app.core.llm_client import LlmEndpoint
-
 logger = logging.getLogger(__name__)
-
-
 class RAGPipeline:
     def __init__(
         self,
@@ -21,12 +17,9 @@ class RAGPipeline:
         self.retriever = retriever
         self.chunk_size = chunk_size
         self.chunk_overlap = chunk_overlap
-
         self.tool_registry = ResearchToolRegistry(retriever=self.retriever)
         self.agent = ResearchAgent(tool_registry=self.tool_registry)
-
         self.text_splitter = self._create_text_splitter()
-
     def _create_text_splitter(self) -> RecursiveCharacterTextSplitter:
         separators = [
             "\n\n---\n\n",
@@ -42,9 +35,7 @@ class RAGPipeline:
             length_function=len,
             separators=separators,
         )
-
     def split_documents(self, raw_documents: List[Document]) -> List[Document]:
-        """將原始文件切成片段（chunk_id 由資料庫寫入時指派）"""
         chunks: List[Document] = []
         for doc in raw_documents:
             if doc.metadata.get("preserve_whole", False):
@@ -62,7 +53,6 @@ class RAGPipeline:
                     }
                 ))
         return chunks
-
     async def generate_response_stream(
         self,
         query: str,
@@ -74,7 +64,6 @@ class RAGPipeline:
         attachments: Optional[List[Any]] = None,
         approval_user_id: Optional[int] = None
     ) -> AsyncGenerator[Dict[str, Any], None]:
-        """非同步生成器：向 API 層提供研究步驟與回答文字串流"""
         async for event_item in self.agent.stream_research(
             query=query,
             endpoint=endpoint,

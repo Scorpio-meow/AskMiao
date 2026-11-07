@@ -5,25 +5,17 @@ import json
 import time
 from typing import Any, Dict, Optional, Tuple
 from urllib.parse import quote_plus
-
 import httpx
-
 from app.core.ssrf_protection import DnsPool, SSRFSafeTransport, send_following_redirects
-
 MAX_OAUTH_RESPONSE_BYTES = 256 * 1024
 OAUTH_TIMEOUT_SECONDS = 15.0
 OAUTH_MAX_REDIRECTS = 3
 TOKEN_EXPIRY_MARGIN_SECONDS = 30
 MAX_CACHED_TOKENS = 1000
-
 _token_cache: Dict[str, Tuple[str, float]] = {}
 _token_locks: Dict[str, asyncio.Lock] = {}
-
-
 class OAuthError(RuntimeError):
     pass
-
-
 async def _read_json(response: httpx.Response) -> Dict[str, Any]:
     chunks = []
     total = 0
@@ -39,8 +31,6 @@ async def _read_json(response: httpx.Response) -> Dict[str, Any]:
     if not isinstance(data, dict):
         raise OAuthError("OAuth 端點回傳的 JSON 不是物件")
     return data
-
-
 async def oauth_request(
     method: str,
     url: str,
@@ -66,30 +56,21 @@ async def oauth_request(
                 return response.status_code, await _read_json(response)
             finally:
                 await response.aclose()
-
     return await asyncio.wait_for(perform(), timeout=OAUTH_TIMEOUT_SECONDS)
-
-
 def token_from_response(status: int, data: Dict[str, Any]) -> Dict[str, Any]:
     if status >= 400 or "error" in data:
         raise OAuthError(f"OAuth 權杖端點拒絕請求：{data.get('error', status)}")
     if not isinstance(data.get("access_token"), str) or not data["access_token"]:
         raise OAuthError("OAuth 權杖端點沒有回傳 access_token")
     return data
-
-
 def _cache_key(config: Dict[str, Any]) -> str:
     raw = json.dumps(
         [config.get("token_url"), config.get("client_id"), config.get("client_secret"), config.get("scope"), config.get("client_auth")],
         ensure_ascii=False,
     )
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
-
-
 def invalidate_client_credentials_token(config: Dict[str, Any]) -> None:
     _token_cache.pop(_cache_key(config), None)
-
-
 async def client_credentials_token(config: Dict[str, Any]) -> str:
     token_url = str(config.get("token_url") or "")
     client_id = str(config.get("client_id") or "")

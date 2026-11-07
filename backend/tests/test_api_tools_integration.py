@@ -75,20 +75,14 @@ paths:
     db.commit()
     db.close()
     print("Custom API Tools 完整生命週期測試通過！")
-
-
 def admin_client():
     app = FastAPI()
     app.include_router(api_tools.router, prefix="/api/api-tools")
     app.dependency_overrides[get_current_user_from_token] = lambda: ADMIN_USER
     return TestClient(app)
-
-
 def import_item(name, **fields):
     return {"name": name, "display_name": name, "description": "d", "method": "GET", "path": "/x",
             "full_url": "https://api.example.com/x", **fields}
-
-
 def test_tool_names_over_the_limit_are_rejected():
     Base.metadata.create_all(bind=engine)
     client = admin_client()
@@ -100,8 +94,6 @@ def test_tool_names_over_the_limit_are_rejected():
     assert imported.status_code == 400
     with SessionLocal() as db:
         assert db.query(CustomApiTool).filter(CustomApiTool.name == long_name).count() == 0
-
-
 def test_reimport_keeps_stored_credentials_and_enabled_state(existing_users):
     existing_users(ADMIN_USER)
     name = "reimport_keeps_credentials"
@@ -119,17 +111,14 @@ def test_reimport_keeps_stored_credentials_and_enabled_state(existing_users):
             "auth_config": {"key_name": "X-API-Key", "key_in": "header", "key_value": "secret-1"},
             "is_enabled": False,
         })
-
         def stored():
             with SessionLocal() as db:
                 return _serialize_tool_model(db.query(CustomApiTool).filter(CustomApiTool.id == tool_id).one())
-
         assert client.post("/api/api-tools/import", json={"tools": [import_item(name, **spec_auth)]}).json()["updated"] == 1
         tool = stored()
         assert tool["headers"] == {"X-Tenant": "tenant-1"}
         assert (tool["auth_type"], tool["auth_config"]["key_value"]) == ("api_key", "secret-1")
         assert tool["is_enabled"] is False
-
         client.post("/api/api-tools/import", json={
             "tools": [import_item(name, **spec_auth)],
             "global_headers": {"Accept": "application/json"},
@@ -139,7 +128,6 @@ def test_reimport_keeps_stored_credentials_and_enabled_state(existing_users):
         tool = stored()
         assert tool["headers"] == {"X-Tenant": "tenant-1", "Accept": "application/json"}
         assert tool["auth_config"]["key_value"] == "secret-2"
-
         client.put(f"/api/api-tools/{tool_id}", json={"auth_type": "bearer", "auth_config": {"token": "bearer-1"}})
         client.post("/api/api-tools/import", json={"tools": [import_item(name, **spec_auth)]})
         tool = stored()
@@ -148,13 +136,10 @@ def test_reimport_keeps_stored_credentials_and_enabled_state(existing_users):
         with SessionLocal() as db:
             db.query(CustomApiTool).filter(CustomApiTool.name == name).delete()
             db.commit()
-
-
 @pytest.mark.anyio
 async def test_stored_tool_name_over_the_limit_is_fitted_for_the_model(existing_users, monkeypatch):
     import re
     from app.services.openapi_parser import fit_tool_name
-
     existing_users(ADMIN_USER)
     name = "legacy_" + "x" * 63
     with SessionLocal() as db:
@@ -163,11 +148,9 @@ async def test_stored_tool_name_over_the_limit_is_fitted_for_the_model(existing_
                              is_enabled=True, requires_approval=True, created_by=ADMIN_USER["user_id"]))
         db.commit()
     calls = []
-
     async def fake_execute(tool_dict, arguments, tool_name):
         calls.append((tool_dict["name"], arguments))
         return {"ok": True}
-
     monkeypatch.setattr(api_tools, "execute_http_api_tool", fake_execute)
     try:
         registry = ResearchToolRegistry()

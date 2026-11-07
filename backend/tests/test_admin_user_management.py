@@ -1,13 +1,9 @@
 import json
-
 import pytest
-
 from app.api import llm_connections as connections_api
 from app.core.jwt_auth import PasswordManager
 from app.models import LlmConnection, User
 from test_llm_connections import env, personal
-
-
 def test_admin_creates_accounts_with_the_registration_rules(env):
     login, Session, ids = env
     root = login("root")
@@ -27,8 +23,6 @@ def test_admin_creates_accounts_with_the_registration_rules(env):
         assert response.status_code == 400
         assert message in response.json()["detail"]
     assert login("alice").post("/api/admin/users", json={"username": "eve", "email": "eve@example.com", "password": "Secret123", "is_admin": True}).status_code == 403
-
-
 def test_admin_resets_passwords_and_revokes_sessions(env):
     login, Session, ids = env
     with Session() as session:
@@ -42,8 +36,6 @@ def test_admin_resets_passwords_and_revokes_sessions(env):
         alice = session.get(User, ids["alice"])
         assert PasswordManager.verify_password("NewSecret456", alice.hashed_password)
         assert alice.tokens_valid_after > before
-
-
 def test_admins_cannot_lock_themselves_out(env):
     login, Session, ids = env
     root = login("root")
@@ -52,13 +44,10 @@ def test_admins_cannot_lock_themselves_out(env):
         assert response.status_code == 400
     assert root.delete(f"/api/admin/users/{ids['root']}").status_code == 400
     assert root.put(f"/api/admin/users/{ids['root']}", json={"email": "root2@example.com"}).status_code == 200
-
     promoted = root.put(f"/api/admin/users/{ids['alice']}", json={"is_admin": True}).json()["user"]
     assert (promoted["is_admin"], promoted["role"]) == (True, "admin")
     demoted = root.put(f"/api/admin/users/{ids['alice']}", json={"is_admin": False}).json()["user"]
     assert (demoted["is_admin"], demoted["role"]) == (False, "user")
-
-
 @pytest.mark.parametrize("changes", [
     {"username": "a b"},
     {"username": "ab"},
@@ -70,32 +59,24 @@ def test_admins_cannot_lock_themselves_out(env):
 def test_admin_user_updates_are_validated(env, changes):
     login, _, ids = env
     assert login("root").put(f"/api/admin/users/{ids['alice']}", json=changes).status_code == 422
-
-
 def test_admin_sets_which_shared_connections_an_account_may_use(env):
     login, Session, ids = env
     root = login("root")
     restricted = root.post("/api/admin/llm-connections", json={**personal(name="限定"), "allowed_user_ids": [ids["bob"]]}).json()["id"]
     everyone = root.post("/api/admin/llm-connections", json={**personal(name="全部"), "allowed_user_ids": []}).json()["id"]
     login("alice").post("/api/llm-connections", json=personal(name="我的"))
-
     access = login("root").get(f"/api/admin/users/{ids['alice']}/llm-connections").json()
     assert [c["name"] for c in access["personal"]] == ["我的"]
     assert {c["id"]: (c["all_users"], c["allowed"]) for c in access["shared"]} == {restricted: (False, False), everyone: (True, True)}
-
     updated = login("root").put(f"/api/admin/users/{ids['alice']}/llm-connections", json={"shared_connection_ids": [restricted]})
     assert {c["id"]: c["allowed"] for c in updated.json()["shared"]} == {restricted: True, everyone: True}
     assert {c["id"] for c in login("alice").get("/api/chat/models").json()["connections"]} >= {restricted, everyone}
-
     login("root").put(f"/api/admin/users/{ids['alice']}/llm-connections", json={"shared_connection_ids": []})
     with Session() as session:
         assert json.loads(session.get(LlmConnection, restricted).allowed_user_ids) == [ids["bob"]]
         assert session.get(LlmConnection, everyone).allowed_user_ids is None
-
     assert login("root").put(f"/api/admin/users/{ids['alice']}/llm-connections", json={"shared_connection_ids": [999]}).status_code == 400
     assert login("alice").get(f"/api/admin/users/{ids['alice']}/llm-connections").status_code == 403
-
-
 def test_access_changes_leave_unaffected_connections_untouched(env):
     login, Session, ids = env
     root = login("root")
@@ -105,22 +86,17 @@ def test_access_changes_leave_unaffected_connections_untouched(env):
         connection.allowed_user_ids = json.dumps([ids["bob"], ids["root"]], separators=(",", ":"))
         session.commit()
         before = (connection.allowed_user_ids, connection.updated_at)
-
     assert root.put(f"/api/admin/users/{ids['alice']}/llm-connections", json={"shared_connection_ids": []}).status_code == 200
     assert root.delete(f"/api/admin/users/{ids['alice']}").status_code == 200
     with Session() as session:
         connection = session.get(LlmConnection, untouched)
         assert (connection.allowed_user_ids, connection.updated_at) == before
-
-
 def test_model_discovery_uses_the_stored_key_and_network_scope(env, monkeypatch):
     login, _, ids = env
     calls = []
-
     async def fake_list_models(endpoint):
         calls.append((endpoint.provider, endpoint.api_base, endpoint.api_key, endpoint.public_only))
         return ["gpt-6-luna", "gpt-6-sol"]
-
     monkeypatch.setattr(connections_api, "list_models", fake_list_models)
     alice = login("alice")
     connection_id = alice.post("/api/llm-connections", json=personal()).json()["id"]
@@ -134,23 +110,17 @@ def test_model_discovery_uses_the_stored_key_and_network_scope(env, monkeypatch)
         ("openai", "https://api.example.com/v1", "sk-draft", True),
         ("ollama", "http://localhost:11434", None, False),
     ]
-
     async def failing(endpoint):
         raise ValueError("Foundry 無法從 API 列出部署，請手動填寫部署名稱")
-
     monkeypatch.setattr(connections_api, "list_models", failing)
     failed = login("root").post("/api/llm-connections/discover-models", json={"provider": "foundry", "api_base": "https://x.services.ai.azure.com", "api_key": "k"})
     assert failed.status_code == 400 and "手動填寫" in failed.json()["detail"]
-
-
 def test_model_discovery_never_sends_the_stored_key_to_another_endpoint(env, monkeypatch):
     login, _, _ = env
     keys = []
-
     async def fake_list_models(endpoint):
         keys.append(endpoint.api_key)
         return []
-
     monkeypatch.setattr(connections_api, "list_models", fake_list_models)
     alice = login("alice")
     connection_id = alice.post("/api/llm-connections", json=personal()).json()["id"]

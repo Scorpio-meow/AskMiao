@@ -137,7 +137,6 @@ export const ChatPage: React.FC = () => {
     try {
       await sendChatMessage(toSend, selectedModel, effectiveReasoningEffort, toSendAttachments);
     } catch (err) {
-      // 訊息沒送出去：把內容放回輸入框，使用者已開始輸入新內容時則不覆蓋
       setNewMessage((current) => current || toSend);
       setAttachments((current) => (current.length > 0 ? current : toSendAttachments));
       showSnackbar(`訊息沒有送出：${describeSendError(err)}`, 'error');

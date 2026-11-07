@@ -47,7 +47,7 @@ def reset_indexes():
         else:
             print(f"  嵌入維度: {rag.embedding_dimension}")
             print(f"  索引中的向量數: {rag.index.ntotal if hasattr(rag, 'index') else 0}")
-            print(f"  文檔數: {len(rag.documents) if hasattr(rag, 'documents') else 0}")
+            print(f"  文件數: {len(rag.documents) if hasattr(rag, 'documents') else 0}")
         
         print("\n✅ 索引重置成功!")
         print("   已依資料庫 rag_chunks 中的片段重新計算向量並重建 BM25 索引")

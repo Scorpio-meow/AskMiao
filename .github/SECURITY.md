@@ -8,8 +8,8 @@
 
 | 版本 | 安全修正 |
 |---|---|
-| 5.x | ✅ |
-| 4.x 以前 | ❌ |
+| 8.x | ✅ |
+| 7.x 以前 | ❌ |
 
 ## 回報漏洞
 
@@ -40,7 +40,7 @@
 
 1. **確認收到**：回覆已收到，並說明初步評估。
 2. **評估**：確認是否屬於漏洞、影響範圍與嚴重程度，必要時向你詢問細節；不屬於漏洞時會說明原因。
-3. **修正**：在私下的 GitHub Security Advisory 中與你討論修正方式，你也可以在其中的私人分支提交修正。
+3. **修正**：在私下的 GitHub Security Advisory 中與你討論修正方式，你也可以在它的私人分支提交修正。
 4. **發布**：發行修正版本、公開 Security Advisory，適用時透過 GitHub 申請 CVE 編號，並在[版本變更紀錄](https://github.com/Scorpio-meow/AskMiao/blob/HEAD/CHANGELOG.md)的「安全性」分類記錄。
 5. **致謝**：你願意的話，會在 Advisory 中列名致謝。
 
@@ -50,7 +50,7 @@
 
 ### 範圍內
 
-本版本庫的程式碼與設定，包括 `backend/`、`frontend/`、`site/` 介紹頁與 `backend/docker-compose.yml`。
+本版本庫的程式碼與設定，包括 `backend/`、`frontend/`、`site/` 介紹頁、`backend/docker-compose.yml` 與 `deploy/` 的部署設定（Dockerfile、`docker-compose.yml`、`nginx.conf`、`gen-env.sh`）。
 
 ### 不在範圍內
 

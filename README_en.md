@@ -10,10 +10,10 @@ AskMiao answers with hybrid retrieval (FAISS + BM25 + Cross-Encoder) and agentic
 
 [繁體中文](README.md) | [English](README_en.md)
 
-[![Version](https://img.shields.io/badge/version-8.2.0-2563eb?style=flat)](CHANGELOG_en.md)
+[![Version](https://img.shields.io/badge/version-8.2.1-2563eb?style=flat)](CHANGELOG_en.md)
 [![Python](https://img.shields.io/badge/Python-3.12+-3776AB?style=flat&logo=python&logoColor=white)](https://www.python.org/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-005571?style=flat&logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
-[![React](https://img.shields.io/badge/React-19.2-61DAFB?style=flat&logo=react&logoColor=black)](https://react.dev/)
+[![React](https://img.shields.io/badge/React-19.3-61DAFB?style=flat&logo=react&logoColor=black)](https://react.dev/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-7-3178C6?style=flat&logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
 [![Vite](https://img.shields.io/badge/Vite-8-646CFF?style=flat&logo=vite&logoColor=white)](https://vite.dev/)
 [![Bun](https://img.shields.io/badge/Bun-1.x-000000?style=flat&logo=bun&logoColor=white)](https://bun.sh/)
@@ -30,16 +30,12 @@ AskMiao answers with hybrid retrieval (FAISS + BM25 + Cross-Encoder) and agentic
   <img src="site/assets/screens/hero-chat-light.webp" alt="AskMiao chat: an answer comparing NIST SP 800-63B-4 with the company password policy, citing sources as [n] and listing the cited web page and document passages below" width="1440" height="900">
 </picture>
 
-> [!IMPORTANT]
-> **5.0.0 contains breaking changes that need manual steps**: `.env` has 10 new required settings (including `TOOL_SECRETS_KEY`, which each deployment generates itself), the compose PostgreSQL is accessed as a non-superuser, the backend packages must be reinstalled from the new `requirements.txt` (pinned versions with hashes), and every session must sign in again after a password change. Read the [upgrade guide](docs/upgrading_en.md#upgrading-from-400-to-500) before upgrading; the [5.0.0 changelog](CHANGELOG_en.md#500---2026-10-10) lists every change.
->
-> **4.0.0 contains breaking changes**: `JWT_SECRET_KEY` and `JWT_ALGORITHM` are removed, RSA keys are mandatory, compose needs `POSTGRES_PASSWORD`, the dev server only accepts local connections, and tool calls with side effects need user approval. Read the [upgrade guide](docs/upgrading_en.md#upgrading-from-300-to-400) before upgrading from 3.x.
+> [!TIP]
+> Before upgrading from an older release, read the [upgrade guide](docs/upgrading_en.md): every major release has changes that need manual steps. To deploy AskMiao on a host for a team, see the [deployment guide](docs/deployment_en.md).
 
 ## Contents
 
 - [Highlights](#highlights)
-- [What's new in 5.0.0](#whats-new-in-500)
-- [What's new in 4.0.0](#whats-new-in-400)
 - [Features](#features)
 - [Screenshots](#screenshots)
 - [Architecture](#architecture)
@@ -64,40 +60,9 @@ AskMiao answers with hybrid retrieval (FAISS + BM25 + Cross-Encoder) and agentic
 | 3 | **Autonomous research** | A ReAct agent decides whether to search the knowledge base, count records precisely, search the web, or read a page, with the research trace shown live |
 | 4 | **Hybrid retrieval** | Vector search and BM25 always both run, fused by rank with RRF and reranked by a Cross-Encoder; chunks are keyed by a database chunk_id |
 | 5 | **Five LLM providers** | Ollama, OpenAI, Microsoft Foundry, Anthropic Claude, and Google Gemini all support tool calling and streaming |
-| 6 | **External tools and MCP** | Paste an OpenAPI spec to import API tools or connect MCP servers; managed by admins only, and calls with side effects need the user's approval first |
-| 7 | **Defense in depth** | RSA JWT, Argon2 password hashing with login failure throttling, per-hop SSRF validation with the connection pinned to the checked IP, tool credentials encrypted at rest, a trust boundary for tool output, resource limits, and error codes instead of stack traces |
-
-## What's new in 5.0.0
-
-5.0.0 addresses the findings of a second security audit: day to day, logins pause after too many failures and a password change signs every session out; for deployment, `.env` has 10 new required settings, PostgreSQL is accessed as a non-superuser, and dependencies are pinned by hash.
-
-| Area | Change | What to do when upgrading |
-|---|---|---|
-| Sign-in | Once a login identifier or source address reaches its failure threshold, logins pause with `429` and `Retry-After`; even the right password is not accepted during a lockout | Set the four `LOGIN_*` thresholds |
-| Password changes | Every token issued earlier is rejected, so every session, including the current one, must sign in again with the new password | Nothing; `users.tokens_valid_after` is added and backfilled at startup |
-| Accounts | New required `ALLOW_REGISTRATION`: when it is `false`, registration returns `403` and accounts (including the first admin) are created with `scripts/create_user.py` | Decide whether to allow self-registration |
-| Tools | Tool credentials are encrypted with `TOOL_SECRETS_KEY` (Fernet) and the admin API shows `••••••••` in place of secret values; custom API tools accept only parameters declared in `parameters_schema` | Generate `TOOL_SECRETS_KEY` and keep it with your database backups; review each tool's parameter declarations |
-| Dependencies | `requirements.txt` pins versions with hashes, and PyJWT replaces python-jose; `bun.lock` is committed with `frozenLockfile = true` | Reinstall the backend packages from the new `requirements.txt` (a fresh virtualenv is recommended); add backend packages through `requirements.in` |
-| Frontend build | `bun run build` writes a CSP `<meta>` tag into `index.html`, so injected HTML cannot run scripts even when the web server sets no CSP | Rebuild; set `VITE_API_BASE` at build time when the API is on another origin |
-| Deployment | `.env` has 10 new required settings, and `HOST`, `RELOAD`, and `COOKIE_SECURE` no longer have defaults; the interactive API docs are served only with `ENABLE_API_DOCS=true`; the compose PostgreSQL is accessed as the non-superuser `POSTGRES_APP_USER` | Add the required settings; set `POSTGRES_APP_USER` and `POSTGRES_APP_PASSWORD` and point `DATABASE_URL` at that account; for an existing data volume, run `20-app-role.sh` once after recreating the container |
-| API | `GET /api/external-tags` and the WebSocket `/api/chat/ws/{user_id}` are removed; `POST /api/api-tools/parse-spec` no longer returns `raw_spec`; the admin user API no longer returns `hashed_password` | Adjust clients per the [API reference](docs/api_en.md) |
-
-See the [5.0.0 changelog](CHANGELOG_en.md#500---2026-10-10) for everything that changed and the [upgrade guide](docs/upgrading_en.md#upgrading-from-400-to-500) for the steps.
-
-## What's new in 4.0.0
-
-4.0.0 is a security-audit release that addresses 52 findings. The change you will notice day to day is that tools with side effects now need approval; the change that affects deployment is that RSA keys and `POSTGRES_PASSWORD` are now required.
-
-| Area | Change | What to do when upgrading |
-|---|---|---|
-| Tool calls | The agent pauses before calling a custom API or MCP tool with side effects until the asking user approves it in the chat; no answer within 300 seconds counts as a denial | Review each tool's "requires approval" setting on the AI tools page |
-| Authentication | Tokens are resolved to the database account on every request, so disabling, deleting, or demoting an account takes effect immediately; refresh tokens are single-use; the HS256 fallback is gone | Remove `JWT_SECRET_KEY` and `JWT_ALGORITHM` from `.env`, and make sure `backend/keys/` is readable and writable |
-| Outbound requests | After validation, connections are pinned to the approved IP, which stops DNS rebinding; `web_fetch` matches URL provenance on the full normalized URL | Nothing |
-| Resource usage | Request bodies, messages, attachments, tool results, concurrent streams, and attachment storage are capped | Clients must handle `413`, `422`, and `429` |
-| Deployment | The compose PostgreSQL needs `POSTGRES_PASSWORD` and binds to localhost only; the Vite dev server listens on `localhost` only; `X-Forwarded-For` is ignored by default | Set `POSTGRES_PASSWORD`; set `FORWARDED_ALLOW_IPS` behind a reverse proxy |
-| API | `context_used` on messages is always `null`; `GET /api/chat/tools` requires login; `model_name` must be in the available model list | Adjust clients per the [API reference](docs/api_en.md) |
-
-See the [4.0.0 changelog](CHANGELOG_en.md#400---2026-09-27) for everything that changed and the [upgrade guide](docs/upgrading_en.md#upgrading-from-300-to-400) for the steps.
+| 6 | **External tools and MCP** | Paste an OpenAPI spec to import API tools or connect MCP servers (with OAuth); managed by admins only, and calls with side effects need the user's approval first |
+| 7 | **Agent Skills** | Upload a skill folder (a whole collection of skills at once), a zip, or a `SKILL.md`; the model loads a skill's instructions and reference files when a question calls for it |
+| 8 | **Defense in depth** | RSA JWT, Argon2 password hashing with login failure throttling, per-hop SSRF validation with the connection pinned to the checked IP, tool credentials encrypted at rest, a trust boundary for tool output, resource limits, and error codes instead of stack traces |
 
 ## Features
 
@@ -161,11 +126,21 @@ flowchart LR
 ### External tools and MCP
 
 - **Custom API tools**: create them with a form, or import Swagger 2.0 and OpenAPI 3.0–3.2 specs in bulk (optionally applying Overlay 1.0–1.2, with external `$ref`s loaded too); Arazzo 1.0/1.1 workflows become tools that chain several API calls. Parameters are serialized by OpenAPI `style`/`explode` and request bodies are sent with their declared media type, with Bearer, API key (header / query / cookie), Basic, and OAuth2 client credentials, plus a live test. Calls accept only the parameters declared in `parameters_schema`, and fixed query parameters in the tool URL cannot be overridden.
-- **MCP client**: `stdio` and HTTP transports, automatic tool discovery, and tools added to the agent as `mcp_<server>_<tool>`; presets for time and filesystem servers are built in (the filesystem preset exposes only the dedicated sandbox directory `backend/mcp_filesystem_sandbox`).
+- **MCP client**: `stdio` and HTTP transports (2026-07-28 protocol first, with legacy handshake-only servers still supported) and OAuth for remote servers, automatic tool discovery, and tools added to the agent as `mcp_<server>_<tool>`; presets for time and filesystem servers are built in (the filesystem preset exposes only the dedicated sandbox directory `backend/mcp_filesystem_sandbox`).
 - **Loaded dynamically**: enabled tools are read from the database whenever tool definitions are assembled, so changes need no restart.
 - **Approval before calls**: tools with side effects run only after the asking user approves them in the chat; see [tool call approval](#tool-call-approval) below.
-- **Admins only**: tools are shared by every user's agent, so `/api/api-tools`, `/api/mcp`, and the AI tools page are admin-only; `stdio` subprocesses inherit only system variables such as `PATH`, never see the backend's keys, run in a fresh empty temporary directory, and are terminated together with their whole process tree on close ([ADR-0004](docs/adr/0004-tool-admin-permissions-and-subprocess-isolation_en.md)).
+- **Admins only**: tools are shared by every user's agent, so `/api/api-tools`, `/api/mcp`, `/api/skills`, and the AI tools page are admin-only (except the MCP OAuth callback and client metadata endpoints); `stdio` subprocesses inherit only system variables such as `PATH`, never see the backend's keys, run in a fresh empty temporary directory, and are terminated together with their whole process tree on close ([ADR-0004](docs/adr/0004-tool-admin-permissions-and-subprocess-isolation_en.md)).
 - **Credentials encrypted at rest**: custom API tools' headers and auth settings and MCP servers' environment variables and headers are encrypted with `TOOL_SECRETS_KEY` before they reach the database; the admin API returns only `••••••••`, and leaving the mask unchanged when editing keeps the stored value.
+
+### Agent Skills
+
+Skills following the [Agent Skills](https://agentskills.io/specification) specification are supported; see [API reference: Agent Skills](docs/api_en.md#7-agent-skills-apiskills).
+
+- **Upload**: "AI tools → Upload skill" accepts a folder, a `.zip` of the skill directory, or a single instructions-only `SKILL.md`. Every directory in the folder that contains a `SKILL.md` is installed as one skill, so a collection such as `~/.agents/skills` installs in one go; invalid or duplicate skills are skipped and listed with the reason.
+- **Progressive loading**: with enabled skills, the agent gets two tools, `activate_skill` and `read_skill_resource`. The tool description lists only skill names and descriptions; the `SKILL.md` body and file list arrive after the model activates a skill, and reference files are read one at a time when needed.
+- **Choosing a skill**: a message starting with `/skill-name` loads that skill first; typing `/` in the input lists the available skills.
+- **Scripts**: not run by default. Once an admin turns on script execution for a skill, the agent can run its scripts with `run_skill_script`, and every run needs the asking user's approval (see the exception in the table under [tool call approval](#tool-call-approval)). Scripts run as the backend's OS account and are **not sandboxed**, so enable this only for trusted skills.
+- **Who can use it**: each skill is available to everyone or only to chosen accounts.
 
 ### Tool call approval
 
@@ -179,9 +154,10 @@ The agent can look things up on its own, but it will not submit a request, delet
 | Tool type | Default | Notes |
 |---|---|---|
 | Built-in tools (`search_knowledge_base` and 3 others) | Not required | Read-only; guarded by URL provenance and SSRF rules |
-| Custom API tools using `GET`, `HEAD`, or `OPTIONS` | Not required | Admins can still tick "requires approval" per tool |
+| Custom API tools using `GET`, `HEAD`, or `OPTIONS` | Not required | Admins can still tick 「AI 呼叫前需使用者在對話中確認」 ("ask the user in the chat before the AI calls it") per tool |
 | Custom API tools using any other method | Required | Existing tools are backfilled from their HTTP method when upgrading to 4.0.0 |
 | MCP servers | Required | Set per server; the card shows "server → tool" |
+| Skill scripts (`run_skill_script`) | Required | When a skill's `allowed-tools` lists `run_skill_script`, that skill's scripts are not asked about again within the same question |
 
 - A pending approval is bound to the asking user; any other account replying with the same `approval_id` gets `404`.
 - Agent runs not started by a user in a chat have nobody to approve, so these tools never run there.
@@ -224,7 +200,7 @@ The agent can look things up on its own, but it will not submit a request, delet
 
 | Item | Limit | When exceeded |
 |---|---|---|
-| General request body | 1 MiB (chat sends with a valid access token and document uploads whose token carries `is_admin` are allowed more) | `413` |
+| General request body | 1 MiB (chat sends with a valid access token, and document and skill uploads whose token carries `is_admin`, are allowed more) | `413` |
 | One chat message | 20,000 characters | `422` |
 | Attachments per message | 5, up to 15 MiB each and 20 MiB in total | `422` |
 | Chat attachment parsing | 8 MiB of docx / pptx XML built into a DOM, 64 MiB uncompressed in total, 10,000 members | The attachment is not read, and the model is told so |
@@ -291,12 +267,12 @@ flowchart TB
         Auth["Auth /api/auth<br/>RSA JWT, revocation list"]
         ChatAPI["Chat /api/chat (SSE)"]
         DocAPI["Documents /api/documents"]
-        ToolAPI["Tools /api/api-tools, /api/mcp"]
+        ToolAPI["Tools /api/api-tools, /api/mcp, /api/skills"]
 
         subgraph Core ["Agentic RAG core"]
             Agent["ResearchAgent<br/>ReAct tool loop"]
             Session["ResearchSession<br/>citations, URL provenance, trust boundary"]
-            Registry["ResearchToolRegistry<br/>built-in, custom API, MCP tools"]
+            Registry["ResearchToolRegistry<br/>built-in, custom API, MCP tools, skills"]
             Retriever["HybridRetriever<br/>RRF, exact matches, rerank, threshold"]
             LLM["llm_client<br/>Ollama, OpenAI, Foundry, Claude, Gemini"]
         end
@@ -450,7 +426,7 @@ Open `http://localhost:3000`. Without `frontend/.env`, the frontend calls the re
 
 The knowledge base, AI tools, and admin dashboard pages are admin-only, and no admin account exists out of the box. The template's `ALLOW_REGISTRATION=false` keeps self-registration closed (the login page shows no sign-up link and `POST /api/auth/register` returns `403`), so an admin creates accounts with `scripts/create_user.py`:
 
-1. In `backend/` (with the virtual environment active), run the command below and enter the password twice when prompted. User names are 3 to 50 characters of letters, digits, underscores, and hyphens; passwords need at least 8 characters with an uppercase letter, a lowercase letter, and a digit.
+1. In `backend/` (with the virtual environment active), run the command below and enter the password twice when prompted. User names are 3 to 50 characters of Chinese characters, English letters, digits, underscores, and hyphens; passwords need at least 8 characters with an uppercase letter, a lowercase letter, and a digit.
 
    ```bash
    python scripts/create_user.py --username admin --email admin@example.com --admin
@@ -494,30 +470,18 @@ The container is published on the loopback address `127.0.0.1:7690` only, so nei
 
 A data volume initialized by an older compose file does not get the application account automatically: after setting the variables above and recreating the container with `docker compose up -d --wait` so that it is ready, run `docker compose exec postgres bash /docker-entrypoint-initdb.d/20-app-role.sh` once; see the [upgrade guide](docs/upgrading_en.md#upgrading-from-400-to-500).
 
+### Deploying with Docker Compose
+
+To deploy AskMiao on a host (for example a VM) for a team, `deploy/` provides a Docker Compose setup with PostgreSQL, the backend, and nginx; see the **[deployment guide](docs/deployment_en.md)** for the steps.
+
 ## Configuration
 
-Backend settings live in `backend/.env`. These 20 have no defaults, and the backend refuses to start if any is missing (the template provides recommended values; `TOOL_SECRETS_KEY` must be generated):
+Backend settings live in `backend/.env`; the template `backend/.env.example` provides recommended values (`TOOL_SECRETS_KEY` must be generated). These 20 have no defaults, and the backend refuses to start if any is missing; see [configuration reference: required settings](docs/configuration_en.md#required-settings) for each template value and effect:
 
-| Variable | Template | Description |
-|---|---|---|
-| `DATABASE_URL` | PostgreSQL example | Connection string; use `sqlite:///./chatbot.db` for SQLite |
-| `TOOL_SECRETS_KEY` | placeholder (not a valid key) | Fernet key that encrypts tool credentials, validated at startup; after changing it, stored tool credentials must be entered again |
-| `ALLOW_REGISTRATION` | `false` | Whether self-registration is open; when closed, accounts are created with `scripts/create_user.py` |
-| `LOGIN_MAX_FAILURES_PER_ACCOUNT` | `5` | Failures of one login identifier (case-insensitive) within the window that pause its logins (≥ 1) |
-| `LOGIN_MAX_FAILURES_PER_ADDRESS` | `20` | Failures from one source address within the window that pause its logins (≥ 1); users behind a proxy share one address |
-| `LOGIN_FAILURE_WINDOW_SECONDS` | `900` | Window in seconds for counting login failures (≥ 1) |
-| `LOGIN_LOCKOUT_SECONDS` | `900` | Seconds logins stay paused (≥ 1), answered with `429` and `Retry-After` |
-| `HOST` | `127.0.0.1` | Listen address of `python main.py`; change to `0.0.0.0` only when a container or a reverse proxy on another host must connect |
-| `RELOAD` | `false` | Reload on code changes; set to `true` only for development |
-| `COOKIE_SECURE` | `false` | Whether the refresh token cookie is sent over HTTPS only; must be `true` when serving over HTTPS |
-| `ENABLE_API_DOCS` | `false` | Serve `/docs`, `/redoc`, and `/openapi.json`; keep `false` for public deployments |
-| `ENABLE_WEB_SEARCH` | `true` | Offer `web_search` and `web_fetch` |
-| `CONVERSATION_HISTORY_MESSAGES` | `6` | Prior messages loaded as context (0 disables) |
-| `WEB_FETCH_ALLOWED_DOMAINS` | `*` | Domains `web_fetch` may read; only an explicit `*` means unrestricted |
-| `BLOCK_WEB_TOOLS_AFTER_KB` | `true` | Disable web tools once knowledge-base content has been read |
-| `RRF_K` | `60` | RRF fusion constant |
-| `RERANK_RELEVANCE_THRESHOLD` | `0.02` | Reranker probability threshold (calibrated on short posts; recalibrate with a golden set for other data) |
-| `DOMAIN_PROFILE_PATH` | `config/domain_profile.json` | Domain profile (domain words, date fields, summary fallback rules) |
+- **Database and paths**: `DATABASE_URL`, `LOG_DIR`, `SKILLS_DIR`, `DOMAIN_PROFILE_PATH`
+- **Accounts and security**: `TOOL_SECRETS_KEY`, `ALLOW_REGISTRATION`, `LOGIN_MAX_FAILURES_PER_ACCOUNT`, `LOGIN_MAX_FAILURES_PER_ADDRESS`, `LOGIN_FAILURE_WINDOW_SECONDS`, `LOGIN_LOCKOUT_SECONDS`, `COOKIE_SECURE`, `ENABLE_API_DOCS`
+- **Server**: `HOST`, `RELOAD`
+- **Agent and retrieval**: `ENABLE_WEB_SEARCH`, `CONVERSATION_HISTORY_MESSAGES`, `WEB_FETCH_ALLOWED_DOMAINS`, `BLOCK_WEB_TOOLS_AFTER_KB`, `RRF_K`, `RERANK_RELEVANCE_THRESHOLD`
 
 Common optional settings:
 
@@ -539,7 +503,7 @@ AskMiao/
 │   ├── main.py                       # Entry point (python main.py)
 │   ├── app/
 │   │   ├── __init__.py               # Backend version __version__
-│   │   ├── api/                      # Routers: auth, chat, documents, api_tools, mcp, admin, tags
+│   │   ├── api/                      # Routers: auth, chat, documents, api_tools, mcp, skills, llm_connections, admin
 │   │   ├── core/                     # Settings, auth, security, and the LLM layer
 │   │   │   ├── config.py             # Settings: every environment variable and its validation
 │   │   │   ├── lifespan.py           # Startup: create tables, initialize RAG, watch uploads
@@ -565,7 +529,7 @@ AskMiao/
 │   │   │   ├── evaluator.py          # Retrieval evaluation (hit@k, MRR, negative rejection)
 │   │   │   ├── indices/              # chunk_store (rag_chunks), vector_store (FAISS), bm25_store
 │   │   │   └── retrievers/hybrid.py  # RRF fusion, exact matches, reranking, relevance threshold
-│   │   ├── services/                 # Chat, document processing (with PDF OCR), OpenAPI parsing, MCP client
+│   │   ├── services/                 # Chat, document processing (with PDF OCR), OpenAPI and Arazzo, MCP client and OAuth, Agent Skills, API connections and system models
 │   │   └── tasks/uploads_watcher.py  # Missing-upload watcher (warnings only)
 │   ├── config/domain_profile.json    # Domain profile
 │   ├── eval/                         # Retrieval evaluation golden sets and the built-in benchmark corpus (corpus/)
@@ -580,20 +544,23 @@ AskMiao/
 │   └── .env.example                  # Backend settings template
 ├── frontend/                         # React 19 + TypeScript + Vite 8
 │   ├── src/
-│   │   ├── pages/                    # Chat/, AiTools/, Documents, AdminDashboard, login, register, profile
-│   │   ├── components/               # Layout, route guards, and the ui/ component library
-│   │   ├── hooks/                    # useChat (streaming, stop, retry), useAuth, useDocuments
+│   │   ├── pages/                    # Chat/, AiTools/, Admin/, Documents, AdminDashboard, login, register, profile
+│   │   ├── components/               # Layout, route guards, LlmConnections/, and the ui/ component library
+│   │   ├── hooks/                    # useChat (streaming, stop, retry), useAuth, useDocuments, useLlmProviders, and more
 │   │   ├── services/                 # api.ts (Axios and token refresh), sse.ts (SSE parser)
 │   │   ├── contexts/ThemeContext.tsx # Light / dark / follow system
 │   │   └── styles/                   # Design tokens and reset
 │   ├── package.json                  # Frontend version and scripts
 │   ├── bun.lock                      # Pinned frontend dependencies (never rewritten by bun install)
 │   └── .env.example
+├── deploy/                           # Docker Compose deployment: PostgreSQL, backend, nginx frontend, and gen-env.sh
 ├── site/                             # GitHub Pages intro site (static)
 ├── docs/
 │   ├── api.md                        # API reference
 │   ├── architecture.md               # Architecture and design
 │   ├── configuration.md              # Configuration reference
+│   ├── deployment.md                 # Deployment guide (Docker Compose)
+│   ├── troubleshooting.md            # Troubleshooting
 │   ├── upgrading.md                  # Upgrade guide
 │   └── adr/                          # Architecture decision records
 ├── .github/workflows/deploy-pages.yml # Deploys site/ to GitHub Pages when it changes
@@ -614,6 +581,7 @@ python -m pytest
 ```
 
 - The tests load the settings, so the required settings must be available in `backend/.env` or the environment.
+- The tests use the configured `DATABASE_URL` directly and empty tables such as `agent_skills`. Point it at a throwaway SQLite database through an environment variable (for example `DATABASE_URL=sqlite:///./test-run.db`), never at a development or production database.
 - Some tests load the real embedding and reranker models (the model cache is needed), so a full run takes a few minutes.
 - On Windows accounts whose user name contains non-ASCII characters, pass an ASCII temp path such as `--basetemp=C:\pytest-tmp`; otherwise FAISS fails to write its temporary indexes.
 
@@ -621,7 +589,7 @@ python -m pytest
 
 ```bash
 cd frontend
-bun run test --run   # Vitest unit tests (SSE parser)
+bun run test --run   # Vitest unit tests
 bun run lint         # ESLint (JS / JSX)
 bun x tsc --noEmit   # TypeScript type check
 bun run build        # Build into build/
@@ -653,109 +621,7 @@ Run them from `backend/` with `python scripts/<script>`:
 
 ## Troubleshooting
 
-<details>
-<summary><b>The backend fails to start with <code>Field required</code></b></summary>
-
-A required setting is missing from `.env`; the error names the fields. Add them as listed under [Configuration](#configuration). `ALLOW_REGISTRATION`, `TOOL_SECRETS_KEY`, `HOST`, `RELOAD`, `COOKIE_SECURE`, `ENABLE_API_DOCS`, and the four `LOGIN_*` settings were added in 5.0.0; when coming from an older release, follow the [upgrade guide](docs/upgrading_en.md).
-
-</details>
-
-<details>
-<summary><b>The backend fails to start with <code>TOOL_SECRETS_KEY 必須是 Fernet 金鑰</code> (TOOL_SECRETS_KEY must be a Fernet key)</b></summary>
-
-`TOOL_SECRETS_KEY` is still the template placeholder or is not a valid Fernet key. Generate one with `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"` and put it in `backend/.env`. Keep this key safe: after switching to a new key, the stored credentials of custom API tools and MCP servers can no longer be decrypted and must be entered again on the AI tools page.
-
-</details>
-
-<details>
-<summary><b>The backend fails to start with an error about the RSA keys or <code>backend/keys</code></b></summary>
-
-JWTs are always signed with the RSA keys, and the backend refuses to start when it cannot load or generate them instead of falling back to a shared secret. Make sure `jwt_private.pem` and `jwt_public.pem` in `backend/keys/` are intact and readable; on the first start the backend account must be able to write to that directory.
-
-</details>
-
-<details>
-<summary><b>The backend fails to start because the reranker cannot load</b></summary>
-
-The reranker is required. The first start downloads it from Hugging Face, so check the network and make sure `HF_HUB_OFFLINE` is not `true`; if the models were downloaded before, point `HF_HOME` at that cache.
-
-</details>
-
-<details>
-<summary><b><code>python init_db.py</code> fails with <code>near "EXISTS": syntax error</code></b></summary>
-
-SQLite does not need `init_db.py`; the backend creates the tables at startup. The script only patches older PostgreSQL databases.
-
-</details>
-
-<details>
-<summary><b>The knowledge base, AI tools, and admin pages are missing after signing in</b></summary>
-
-Those pages are admin-only. Follow [Create the first admin](#4-create-the-first-admin) and sign in again.
-
-</details>
-
-<details>
-<summary><b>Every question reports that the knowledge base has nothing relevant</b></summary>
-
-Make sure documents were uploaded and that `total_vectors` in `GET /api/admin/vector-store/info` (admin only) is above 0. If the index is fine, the relevance threshold may be too high; calibrate it with a real golden set as described in [calibrating the relevance threshold](docs/configuration_en.md#calibrating-the-relevance-threshold).
-
-</details>
-
-<details>
-<summary><b>The frontend shows network or CORS errors</b></summary>
-
-- Without `frontend/.env`, the frontend reaches `http://127.0.0.1:8001` through the Vite proxy, so make sure the backend is running on that port.
-- With an absolute `VITE_API_BASE`, the browser calls the backend directly, and the backend's `ALLOWED_ORIGINS` must include the frontend origin (for example `http://localhost:3001`).
-- With a `bun run build` output, the CSP's `connect-src` allows only the `VITE_API_BASE`/`VITE_API_URL` origin from build time; rebuild after changing the API address.
-
-</details>
-
-<details>
-<summary><b>Other devices on the LAN cannot reach the frontend started with <code>bun run dev</code></b></summary>
-
-The Vite dev and preview servers listen on `localhost` only, on purpose (dev-server endpoints such as `/__open-in-editor` must not be exposed). Build with `bun run build` and serve `frontend/build/` from a real web server such as nginx that reverse-proxies `/api` to the backend.
-
-</details>
-
-<details>
-<summary><b><code>bun install</code> fails with <code>lockfile had changes, but lockfile is frozen</code></b></summary>
-
-`frontend/bunfig.toml` sets `frozenLockfile = true`, so the install fails whenever `package.json` and `bun.lock` disagree instead of rewriting the pinned versions. Make sure both files come from the same revision; to add or upgrade a package on purpose, update `bun.lock` as described under [Dependencies](#dependencies) and commit both.
-
-</details>
-
-<details>
-<summary><b>Clicking the approval card shows 「無法送出決定，可能已逾時」 (could not send the decision, it may have timed out)</b></summary>
-
-A pending approval lasts only 300 seconds; after that the agent treats it as a denial and carries on, and each approval can be answered only once. Replies from any account other than the asking user fail the same way. Ask again and approve within 5 minutes.
-
-</details>
-
-<details>
-<summary><b>A read-only tool asks for approval every time</b></summary>
-
-MCP servers require approval by default, and custom API tools follow their HTTP method. Once you are sure the tool does not change external systems, an admin can edit the tool or MCP server on the AI tools page and untick "requires approval".
-
-</details>
-
-<details>
-<summary><b>Signing in returns <code>429</code> with 「登入失敗次數過多，請稍後再試」 (too many failed logins, try again later)</b></summary>
-
-Once one login identifier (user name or email, case-insensitive) fails `LOGIN_MAX_FAILURES_PER_ACCOUNT` times, or one source address fails `LOGIN_MAX_FAILURES_PER_ADDRESS` times, within `LOGIN_FAILURE_WINDOW_SECONDS` seconds, logins for that identifier or address pause for `LOGIN_LOCKOUT_SECONDS` seconds, and even the right password is refused meanwhile; the `Retry-After` header gives the seconds left.
-
-- The pause lifts on its own. The counts live only in the backend process's memory, so restarting the backend also clears them.
-- Behind the Vite dev proxy or a reverse proxy, every user's failures add up on the same source address, and reaching `LOGIN_MAX_FAILURES_PER_ADDRESS` pauses logins for everyone. Keep the per-address threshold looser than the per-account one; if the reverse proxy in front overwrites `X-Forwarded-For`, set `FORWARDED_ALLOW_IPS` to count real client addresses instead.
-
-</details>
-
-<details>
-<summary><b>The API returns <code>429 Too Many Requests</code></b></summary>
-
-- Rate limiting counts requests per connecting IP, 60 per 60 seconds by default. Behind the Vite dev proxy or a reverse proxy every user shares one IP, so raise `RATE_LIMIT_PER_MINUTE` if needed; if the reverse proxy in front overwrites `X-Forwarded-For`, set its address as `FORWARDED_ALLOW_IPS` to count real client IPs instead.
-- A 429 from `POST /api/chat/send` means the same user already has 2 answers streaming; wait for one to finish.
-
-</details>
+Common problems such as the backend failing to start, sign-in being paused, the frontend not reaching the backend, every question finding nothing, or tools always asking for approval are collected in **[Troubleshooting](docs/troubleshooting_en.md)**. For problems with a Docker Compose deployment, see the [deployment guide](docs/deployment_en.md).
 
 ## Documentation
 
@@ -764,7 +630,9 @@ Once one login identifier (user name or email, case-insensitive) fails `LOGIN_MA
 | [API Reference](docs/api_en.md) | Every endpoint's permission, request and response format, the SSE event contract, and error codes |
 | [Architecture & Design](docs/architecture_en.md) | Layers, data model, retrieval pipeline, agent loop, authentication, and security design |
 | [Configuration Reference](docs/configuration_en.md) | Defaults and effects of every environment variable, provider routing, threshold calibration, frontend settings |
-| [Upgrade Guide](docs/upgrading_en.md) | Steps from 2.x to 3.0.0 and every release since (up to 8.1.0 to 8.2.0), rollback, and troubleshooting |
+| [Deployment Guide](docs/deployment_en.md) | Deploying on a host with Docker Compose, HTTPS, backups, and updates |
+| [Troubleshooting](docs/troubleshooting_en.md) | Common errors at startup, sign-in, in the frontend, and with tools, and how to fix them |
+| [Upgrade Guide](docs/upgrading_en.md) | Steps from 2.x to 3.0.0 and every release since (up to 8.2.0 to 8.2.1), rollback, and troubleshooting |
 | [Architecture Decision Records](docs/adr/README_en.md) | Context, trade-offs, and amendments of major design decisions |
 | [llms_en.txt](llms_en.txt) | File map, system constraints, and verification steps for AI agents |
 | [Changelog](CHANGELOG_en.md) | What was added, changed, removed, and fixed in each release |
@@ -772,7 +640,7 @@ Once one login identifier (user name or email, case-insensitive) fails `LOGIN_MA
 
 ## Versioning
 
-- **Current version**: 8.2.0 (2026-11-07); see the [changelog](CHANGELOG_en.md).
+- **Current version**: 8.2.1 (2026-11-07); see the [changelog](CHANGELOG_en.md).
 - **Policy**: [Semantic Versioning](https://semver.org/). Incompatible changes, such as new required settings or changes to API permissions or the index format, bump the major version.
 - **Where the version lives**: `__version__` in `backend/app/__init__.py` (used by the OpenAPI document and the MCP handshake) and `frontend/package.json`, updated together with `CHANGELOG.md` for each release.
 

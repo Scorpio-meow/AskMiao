@@ -7,7 +7,6 @@ interface ThemeContextType {
   toggleTheme: () => void;
 }
 const ThemeContext = createContext<ThemeContextType | undefined>(undefined);
-// index.html 的內嵌腳本會在首次繪製前讀取同一個鍵值
 const THEME_STORAGE_KEY = 'askmiao_theme_mode';
 export const ThemeProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [theme, setThemeState] = useState<Theme>(() => {

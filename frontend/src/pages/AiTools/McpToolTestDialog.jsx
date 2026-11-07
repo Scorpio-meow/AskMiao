@@ -17,7 +17,7 @@ export default function McpToolTestDialog({ server, tool, onClose }) {
     } catch (err) {
       setResult({
         is_success: false,
-        error: getRequestErrorMessage(err, 'MCP 工具調用失敗')
+        error: getRequestErrorMessage(err, 'MCP 工具呼叫失敗')
       });
     } finally {
       setTesting(false);
@@ -61,7 +61,7 @@ export default function McpToolTestDialog({ server, tool, onClose }) {
           loading={testing}
           startIcon={<Icon name="send" size={16} />}
         >
-          {testing ? '正在調用 MCP...' : '發送 MCP 測試請求'}
+          {testing ? '正在呼叫 MCP...' : '發送 MCP 測試請求'}
         </Button>
       </DialogActions>
     </Dialog>

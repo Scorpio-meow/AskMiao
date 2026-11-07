@@ -2,7 +2,7 @@
 
 [繁體中文](configuration.md) | [English](configuration_en.md)
 
-> Every setting in the backend `backend/.env` and the frontend `frontend/.env`, with its default and what it actually does, as of **8.2.0** (to upgrade from 8.1.0, see the [upgrade guide](upgrading_en.md#upgrading-from-810-to-820)). The source of truth is `Settings` in `backend/app/core/config.py`; the template is [`backend/.env.example`](../backend/.env.example).
+> Every setting in the backend `backend/.env` and the frontend `frontend/.env`, with its default and what it actually does, as of **8.2.1** (to upgrade from 8.2.0, see the [upgrade guide](upgrading_en.md#upgrading-from-820-to-821)). The source of truth is `Settings` in `backend/app/core/config.py`; the template is [`backend/.env.example`](../backend/.env.example).
 
 - [How settings are read](#how-settings-are-read)
 - [Required settings](#required-settings)
@@ -29,14 +29,14 @@
 
 - **Source**: the backend reads `backend/.env` regardless of the startup directory, and process environment variables take precedence over `.env`. Unknown keys are ignored, so removed settings left in `.env` cause no errors.
 - **Required settings have no defaults**: if any is missing, the backend stops at startup with a `Field required` error that names the missing fields.
-- **Value ranges and formats**: `CONVERSATION_HISTORY_MESSAGES ≥ 0`, `RRF_K ≥ 1`, and `0 ≤ RERANK_RELEVANCE_THRESHOLD ≤ 1`; `LOGIN_MAX_FAILURES_PER_ACCOUNT`, `LOGIN_MAX_FAILURES_PER_ADDRESS`, `LOGIN_FAILURE_WINDOW_SECONDS`, and `LOGIN_LOCKOUT_SECONDS` must all be ≥ 1, and `TOOL_SECRETS_KEY` must be a valid Fernet key; out-of-range or malformed values also stop startup.
+- **Value ranges and formats**: `CONVERSATION_HISTORY_MESSAGES ≥ 0`, `RRF_K ≥ 1`, and `0 ≤ RERANK_RELEVANCE_THRESHOLD ≤ 1`; `LOGIN_MAX_FAILURES_PER_ACCOUNT`, `LOGIN_MAX_FAILURES_PER_ADDRESS`, `LOGIN_FAILURE_WINDOW_SECONDS`, and `LOGIN_LOCKOUT_SECONDS` must all be ≥ 1, `OLLAMA_NUM_CTX` and `RERANKER_OPENVINO_MAX_LENGTH` must also be ≥ 1 when set, and `TOOL_SECRETS_KEY` must be a valid Fernet key; out-of-range or malformed values also stop startup.
 - **Booleans**: `true` / `false`, `1` / `0`, and `yes` / `no` all work.
 - **Relative paths**: relative values of `DATA_DIR`, `UPLOAD_DIR`, `FAISS_INDEX_PATH`, `BM25_INDEX_DIR`, `METADATA_PATH`, `HF_HOME`, `HF_HUB_CACHE`, `SENTENCE_TRANSFORMERS_HOME`, `DOMAIN_PROFILE_PATH`, `JIEBA_DICTIONARY`, `SKILLS_DIR`, and `LOG_DIR` always resolve against `backend/`. `DATABASE_URL` is not one of them: a relative SQLite path depends on the startup directory.
 - **Code default versus template value**: in the tables below, "Code default" applies when `.env` does not set the key, and "Template" is the value suggested by `backend/.env.example`; your `.env` wins whenever they differ.
 
 ## Required settings
 
-These 22 settings have no default; the backend does not start if any is missing.
+These 20 settings have no default; the backend does not start if any is missing.
 
 | Variable | Template | Description |
 |---|---|---|
@@ -77,7 +77,7 @@ Chat only uses the [API connections](#api-connections) available to the account,
 | `LLM_TAGS_TIMEOUT` | `10` | — | Timeout in seconds for "Fetch models from API" |
 | `OLLAMA_TEMPERATURE` | empty | `0.3` | `temperature` for every Ollama connection; the model default when unset |
 | `OLLAMA_NUM_PREDICT` | empty | `2048` | `num_predict` for every Ollama connection; the model default when unset |
-| `OLLAMA_NUM_CTX` | empty | commented example | `num_ctx` (context length) for every Ollama connection; the model default when unset, which may be too short for long retrieved context |
+| `OLLAMA_NUM_CTX` | empty | commented example | `num_ctx` (context length, ≥ 1) for every Ollama connection; the model default when unset, which may be too short for long retrieved context |
 
 ### API connections
 
@@ -96,7 +96,7 @@ Each account can only chat through two kinds of connection, and the model menu g
 
 When a new connection is created, the form fills in the provider's official API address and the models below, which can be edited:
 
-| Provider | Prefilled models (8.2.0) |
+| Provider | Prefilled models (8.2.1) |
 |---|---|
 | OpenAI | `gpt-6.1-sol`, `gpt-6-sol`, `gpt-6-luna`, `gpt-6-astra`, `gpt-5.6-sol`, `gpt-5.6-luna`, `gpt-5.6-terra`, `gpt-5.4`, `gpt-5.4-mini` |
 | Anthropic | `claude-opus-5-5`, `claude-fable-5-1`, `claude-sonnet-5-5`, `claude-haiku-5-5`, `claude-sonnet-5`, `claude-opus-5`, `claude-fable-5`, `claude-opus-4-8`, `claude-haiku-4-5` |
@@ -128,7 +128,7 @@ Each API connection is called according to its provider and the model name:
 |---|---|---|
 | `foundry` | Starts with `claude-` | `{API address}/anthropic/v1/messages`, authenticated with `x-api-key`; the API address must be `*.services.ai.azure.com` |
 | `foundry` | Starts with `gpt-`, `o3`, or `o4` (except `gpt-oss` and `o3-mini`) | `{API address}/openai/v1/responses` |
-| `foundry` | Anything else (chat-completion models such as Kimi, Mistral, Grok, DeepSeek, Llama) | `{API address}/openai/v1/chat/completions`, with no `reasoning_effort` |
+| `foundry` | Anything else (models starting with `o1`, `gpt-oss`, or `o3-mini`, plus chat-completion models such as Kimi, Mistral, Grok, DeepSeek, Llama) | `{API address}/openai/v1/chat/completions`; `reasoning_effort` is sent when the name starts with `gpt-`, `o1`, `o3`, or `o4`, and not otherwise |
 | `anthropic` | Any | Official `anthropic` SDK (Messages API) |
 | `gemini` | Any | `{API address}/v1beta/openai/chat/completions` |
 | `openai` | Starts with `gpt-6` | `{API address}/responses` |
@@ -146,11 +146,11 @@ Each API connection is called according to its provider and the model name:
 | `CONVERSATION_HISTORY_MESSAGES` | — (required, ≥ 0) | `6` | Prior messages loaded from the database as context (user and assistant messages combined; history always starts with a user message); `0` disables history |
 | `WEB_FETCH_ALLOWED_DOMAINS` | — (required) | `*` | Domains `web_fetch` may read, including subdomains, comma-separated; only an explicit `*` means unrestricted |
 | `BLOCK_WEB_TOOLS_AFTER_KB` | — (required) | `true` | Within one question, refuse `web_search` and `web_fetch` once a knowledge-base tool has returned content |
-| `OLLAMA_API_KEY` | empty | commented example | Key for the Ollama Web Search / Web Fetch APIs. When set, the web tools try the Ollama APIs first and fall back to DuckDuckGo or a direct fetch; it is not used for model calls, so put an Ollama Cloud key on the API connection |
+| `OLLAMA_API_KEY` | empty | commented example | Key for the Ollama Web Search / Web Fetch APIs. When set, `web_search` tries the Ollama API first and falls back to DuckDuckGo; `web_fetch` tries the Ollama API first (falling back to a direct fetch) only when `WEB_FETCH_ALLOWED_DOMAINS` is `*`, and always fetches directly when an allowlist is set. It is not used for model calls, so put an Ollama Cloud key on the API connection |
 | `OLLAMA_SEARCH_ENDPOINT` | `https://ollama.com/api/web_search` | — | Ollama Web Search endpoint |
 | `OLLAMA_FETCH_ENDPOINT` | `https://ollama.com/api/web_fetch` | — | Ollama Web Fetch endpoint |
 | `DUCKDUCKGO_SEARCH_ENDPOINT` | `https://html.duckduckgo.com/html/` | — | Fallback search endpoint for `web_search` |
-| `DEFAULT_CONVERSATION_TITLE` | `新對話` | — | Placeholder title of a new conversation; replaced by the first 50 characters of the first user message |
+| `DEFAULT_CONVERSATION_TITLE` | `新對話` | — | Placeholder title of a new conversation; replaced by the first 50 characters of the first user message, followed by `...` when the message is longer |
 
 Format rules for `WEB_FETCH_ALLOWED_DOMAINS`:
 
@@ -188,7 +188,7 @@ Each search runs: `TOP_K` candidates from vector search and from BM25 → RRF fu
 | `FORCE_CPU` | `true` | `true` | Use the CPU even when CUDA is available; in CPU mode PyTorch uses min(16, CPU cores) threads |
 | `USE_FP16_QUANTIZATION` | `false` | `false` | CUDA only: run the embedding and reranker models in FP16 |
 | `RERANKER_OPENVINO_DEVICE` | empty | commented example | Device for running the reranker through OpenVINO (`GPU`, `CPU`; use `GPU` for Intel integrated graphics); empty uses PyTorch. `NPU` is not supported: compilation fails and the server does not start. When set, only the reranker's tokenizer is loaded, not the PyTorch model. The first start converts the model to an OpenVINO IR in `DATA_DIR/openvino_cache`, which takes about 10–30 seconds, or several minutes on a busy machine. The IR file name includes a fingerprint of the model files, so an updated model is converted again automatically. Each call sends 1–`RERANK_TOP_K` pairs, depending on the actual number of candidates. The GPU runs in FP16; probabilities are within 0.01 of PyTorch and the ranking is the same. Measured on an Intel Core Ultra 7 155U, 50 pairs take about 1.5–2.8 s on the GPU (depending on temperature and load), 7.6 s on the CPU, and about 13 s with PyTorch on the CPU. The first time the GPU sees a new number of candidates it spends about 0.3 s more compiling; the compiled kernels are cached in the same folder, so later starts are faster |
-| `RERANKER_OPENVINO_MAX_LENGTH` | empty | commented example | Required when `RERANKER_OPENVINO_DEVICE` is set: token length of each query + chunk pair; shorter pairs are padded and longer pairs truncated. It must not exceed the reranker's limit (512 for `bge-reranker-base`), or startup fails |
+| `RERANKER_OPENVINO_MAX_LENGTH` | empty | commented example | Required when `RERANKER_OPENVINO_DEVICE` is set (≥ 1): token length of each query + chunk pair; shorter pairs are padded and longer pairs truncated. It must not exceed the reranker's limit (512 for `bge-reranker-base`), or startup fails |
 | `GPU_BATCH_SIZE` | `128` | `128` | Embedding batch size on GPU |
 | `CPU_BATCH_SIZE` | `64` | `32` | Embedding batch size on CPU |
 | `USE_FAISS_GPU` | `false` | `false` | Run FAISS on GPU (requires `faiss-gpu`; falls back to CPU if initialization fails) |
@@ -217,7 +217,7 @@ These settings are exported to the environment before any model loads (booleans 
 | `FAISS_INDEX_PATH` | `data/faiss_index.bin` | same | FAISS vector index (`IndexIDMap2`, ids are chunk_ids) |
 | `BM25_INDEX_DIR` | `data/bm25_index` | same | Whoosh BM25 index directory (including `tokenizer_signature.json`) |
 | `METADATA_PATH` | `data/index_metadata.json` | same | Index metadata (JSON) such as the last rebuild time |
-| `MAX_FILE_SIZE_MB` | `50` | `10` | Per-file upload limit for the knowledge base (MB); also sets the upload request body limit, see [Resource limits](#resource-limits) |
+| `MAX_FILE_SIZE_MB` | `50` | `10` | Per-file upload limit for the knowledge base (MB); also sets the upload request body limit, see [Resource limits](#resource-limits). With the Docker Compose deployment in `deploy/`, nginx accepts request bodies up to 120 MiB only, so above 11 any upload larger than 120 MiB is rejected by nginx with `413` first; see [Docker Compose deployment (deploy/.env)](#docker-compose-deployment-deployenv) |
 | `UPLOADS_WATCHER_INTERVAL` | `30` | `30` | Seconds between checks for missing uploads; a missing file is logged once and nothing is deleted |
 
 ## Database
@@ -226,7 +226,7 @@ These settings are exported to the environment before any model loads (booleans 
 |---|---|---|---|
 | `DATABASE_URL` | — (required) | PostgreSQL example | SQLAlchemy connection string |
 | `DB_POOL_SIZE` | `20` | `20` | Connection pool size (PostgreSQL and other non-SQLite databases; fixed at 5 for SQLite) |
-| `DB_MAX_OVERFLOW` | `40` | `40` | Pool overflow limit (fixed at 10 for SQLite) |
+| `DB_MAX_OVERFLOW` | `40` | `40` | Extra connections allowed once the pool is full (fixed at 10 for SQLite) |
 | `DB_POOL_RECYCLE` | `3600` | — | Seconds before a connection is recycled |
 | `DB_POOL_PRE_PING` | `true` | — | Check connections before use (non-SQLite only) |
 | `SQLALCHEMY_ECHO` | `false` | — | Log SQL statements |
@@ -239,7 +239,7 @@ Common `DATABASE_URL` values:
 | PostgreSQL 17 from `backend/docker-compose.yml` | `postgresql+psycopg2://<POSTGRES_APP_USER>:<POSTGRES_APP_PASSWORD>@localhost:7690/chatbot` (the container binds `127.0.0.1:7690` only) |
 | Your own PostgreSQL | `postgresql+psycopg2://<user>:<password>@<host>:5432/<database>` (a non-superuser account is recommended; see the next section) |
 
-Tables are created automatically when the backend starts, and missing new columns (such as `custom_api_tools.requires_approval`, `mcp_servers.requires_approval`, and `users.tokens_valid_after`) are added and backfilled at startup too; tool credentials stored in plaintext by older versions are encrypted at startup as well (see [Tool credential encryption](#tool-credential-encryption)). New SQLite databases create `users`, `documents`, and `rag_chunks` with `AUTOINCREMENT`, so deleted ids are never reused; existing SQLite tables are not rewritten. `init_db.py` is a compatibility script that adds columns and indexes to older PostgreSQL databases; SQLite does not need it (SQLite does not support its `ADD COLUMN IF NOT EXISTS` statement).
+At startup the backend creates the tables, adds and backfills missing new columns (such as `custom_api_tools.requires_approval`, `mcp_servers.requires_approval`, and `users.tokens_valid_after`), and encrypts tool credentials that older versions stored in plaintext (see [Tool credential encryption](#tool-credential-encryption)). New SQLite databases create `users`, `documents`, `rag_chunks`, and `llm_connections` with `AUTOINCREMENT`, so deleted ids are never reused; existing SQLite tables are not rewritten. `init_db.py` is a compatibility script that adds columns and indexes to older PostgreSQL databases; SQLite does not need it (SQLite does not support its `ADD COLUMN IF NOT EXISTS` statement).
 
 ### PostgreSQL non-superuser account
 
@@ -361,6 +361,35 @@ Rate limiting counts in each backend process's memory, and the number of tracked
 
 `HOST`, `PORT`, `RELOAD`, and `FORWARDED_ALLOW_IPS` apply only when the backend is started with `python main.py`; started any other way (for example by running `uvicorn main:app` directly), they are not applied, although `HOST` and `RELOAD` are still required. The uvicorn server started by `python main.py` processes proxy headers (`proxy_headers`) only when `FORWARDED_ALLOW_IPS` is set; see [Network access control](#network-access-control).
 
+### Docker Compose deployment (deploy/.env)
+
+With `deploy/docker-compose.yml`, both the compose variables and the backend container's environment (`env_file`) come from `deploy/.env`, and the backend container starts with `python main.py`. See the [deployment guide](deployment_en.md) for step-by-step instructions.
+
+`deploy/docker-compose.yml` ships no passwords or network settings, and `docker compose` refuses to start if any of these variables is missing:
+
+| Variable | Description |
+|---|---|
+| `POSTGRES_PASSWORD`, `POSTGRES_APP_USER`, `POSTGRES_APP_PASSWORD` | Same as in [PostgreSQL non-superuser account](#postgresql-non-superuser-account) |
+| `WEB_PORT` | Host port mapped to port 80 of the `web` (nginx) container |
+| `WEB_CONTAINER_IP` | Fixed IP of the `web` container on the compose network |
+| `NETWORK_SUBNET` | Subnet of the compose network `askmiao-net`; pick a range that does not overlap the company network, a VPN, or other Docker networks on the host |
+
+`deploy/gen-env.sh` generates the file: `PUBLIC_ORIGIN`, `WEB_PORT`, `NETWORK_SUBNET`, and `WEB_CONTAINER_IP` must be given as environment variables, and the script refuses to overwrite an existing `deploy/.env`. It copies `backend/.env.example` and appends these values at the end:
+
+| Variable | Value written |
+|---|---|
+| `HOST` | `0.0.0.0`, so the nginx container can connect |
+| `ENVIRONMENT` | `production`; currently this only changes the wording of the CORS line in the startup log (`backend/app/middleware.py`) |
+| `COOKIE_SECURE` | `true` when `PUBLIC_ORIGIN` starts with `https://`, otherwise `false` |
+| `TOOL_SECRETS_KEY` | A randomly generated Fernet key |
+| `POSTGRES_PASSWORD`, `POSTGRES_APP_USER`, `POSTGRES_APP_PASSWORD` | Two randomly generated passwords; the account is `askmiao_app` |
+| `DATABASE_URL` | That account on the `chatbot` database at `postgres:5432` |
+| `ALLOWED_ORIGINS` | `PUBLIC_ORIGIN` |
+| `FORWARDED_ALLOW_IPS` | `WEB_CONTAINER_IP`; the nginx in the container overwrites the header with `X-Forwarded-For: $remote_addr`, so rate limiting and login throttling count real client IPs |
+| `WEB_PORT`, `WEB_CONTAINER_IP`, `NETWORK_SUBNET` | The values given |
+
+The nginx in the container accepts request bodies up to 120 MiB only (`client_max_body_size 120m` in `deploy/nginx.conf`). With `MAX_FILE_SIZE_MB` above 11, the backend's document upload body limit (see [Resource limits](#resource-limits)) exceeds 120 MiB, and uploads larger than 120 MiB are rejected by nginx with `413` first.
+
 ## Resource limits
 
 The limits below protect a single backend process and the operator's paid usage. They are code constants, **not** `.env` settings, and live in [`backend/app/core/limits.py`](../backend/app/core/limits.py) (a few constants tied to one module are defined there, as noted in the tables). To change one, edit the source and update this section.
@@ -371,7 +400,7 @@ The limits below protect a single backend process and the operator's paid usage.
 |---|---|---|
 | `MAX_REQUEST_BODY_BYTES` | 1 MiB | Body limit for general API requests and for every request without a valid access token; larger bodies get `413`. An oversized `Content-Length` is rejected up front, and chunked bodies are counted as they arrive |
 | `MAX_CHAT_REQUEST_BODY_BYTES` | about 27.7 MiB | Body limit of `POST /api/chat/send` (20 MiB of attachments inflated 4/3 by base64, plus 1 MiB); applies only with a validly signed access token, otherwise the limit stays 1 MiB |
-| Document upload body limit | `MAX_FILES_PER_UPLOAD` × `MAX_FILE_SIZE_MB` MiB + 1 MiB | Body limit of `POST /api/documents/upload` (101 MiB with the template's `MAX_FILE_SIZE_MB=10`); raised only when the access token is validly signed and its `is_admin` claim is `true`, otherwise the limit stays 1 MiB |
+| Document upload body limit | `MAX_FILES_PER_UPLOAD` × `MAX_FILE_SIZE_MB` MiB + 1 MiB | Body limit of `POST /api/documents/upload` (101 MiB with the template's `MAX_FILE_SIZE_MB=10`); raised only when the access token is validly signed and its `is_admin` claim is `true`, otherwise the limit stays 1 MiB. With the deployment in `deploy/`, nginx also caps bodies at 120 MiB, which wins when `MAX_FILE_SIZE_MB` is above 11 |
 | `MAX_FILES_PER_UPLOAD` | 10 | Files per upload |
 | `MAX_FILENAME_BYTES` | 255 bytes | Length of an uploaded file name in UTF-8 (the Linux file-system limit); a longer name gets `400` for that file |
 | `MAX_CHAT_MESSAGE_CHARS` | 20,000 characters | Length of one chat message; longer messages get `422` |
@@ -392,19 +421,41 @@ The limits below protect a single backend process and the operator's paid usage.
 | `MAX_TOOL_RESULT_CHARS` | 20,000 characters | Each tool call's result is truncated to this length before it enters the model context |
 | `MAX_TOOL_NAME_CHARS` | 64 characters | Length of the tool function names given to the model (the limit of OpenAI and other providers); names generated from an OpenAPI operationId or an MCP tool are truncated with an 8-character hash appended, and longer names created by hand or sent to import return `400` |
 | `MAX_OPENAPI_SCHEMA_REFS` | 200 | `$ref`s expanded at most per parameter or request body schema when an OpenAPI spec is parsed; references past this count and cyclic references are replaced by an object schema holding only a description |
+| `MAX_OPENAPI_SCHEMA_DEPTH` | 32 | Nesting depth expanded per parameter or request body schema when an OpenAPI spec is parsed (each step into `$ref`, `properties`, `items`, `allOf`, and so on counts as one level); anything deeper is replaced by an object schema holding only a description |
+| `MAX_OPENAPI_DOCUMENT_BYTES` | 10 MiB | Size of each document on import: the spec (including Arazzo), Overlays, the spec an Overlay points to, Arazzo `sourceDescriptions`, and external reference documents, whether pasted or fetched from a URL |
+| `MAX_OPENAPI_EXTERNAL_DOCUMENTS`, `MAX_OPENAPI_TOTAL_BYTES` | 20 documents, 30 MiB | External reference documents downloaded at most while resolving external `$ref`s, and the combined size of the spec and its external documents; past either, the remaining documents are not loaded and are listed in the warnings |
+| `OPENAPI_FETCH_TIMEOUT_SECONDS`, `OPENAPI_FETCH_MAX_REDIRECTS` | 15 seconds, 5 | Timeout and redirect count for fetching those documents from a URL; every hop passes SSRF validation again |
+| `MAX_OVERLAY_ACTIONS` (`services/openapi_overlay.py`) | 500 | `actions` in one Overlay; more return `400` |
+| `MAX_JSONPATH_CHARS`, `MAX_JSONPATH_NODES` (`services/jsonpath.py`) | 2,000 characters, 100,000 nodes | Length of a JSONPath expression in Overlays and Arazzo workflows, and nodes visited by one query; past either, the query fails |
+| `MAX_ARAZZO_STEP_RUNS`, `MAX_ARAZZO_WORKFLOW_SECONDS` | 50 runs, 300 seconds | Total steps run (including `retry`, `goto`, and nested workflows) and total time for one call to an Arazzo workflow tool; past either the call fails, so `goto` or `retry` cannot loop forever |
+| `MAX_ARAZZO_RETRY_AFTER_SECONDS` | 30 seconds | Longest wait per `retry` action (`retryAfter`, or a `Retry-After` in seconds from the response), also bounded by the time left |
+| `MAX_ARAZZO_NESTED_WORKFLOWS` | 5 levels | Nesting depth of workflows calling other workflows through `dependsOn` or a step's or action's `workflowId` |
+| `MAX_REGEX_CONTEXT_CHARS` (`services/arazzo.py`) | 20,000 characters | Arazzo `successCriteria` regex conditions match only this many leading characters of the content |
 | `MAX_KB_CATALOG_CHARS` | 4,000 characters | Length of the document catalog (file names and summaries) in the `search_knowledge_base` tool description; it is sent on every model call, so past this length only the first documents are listed and the rest are counted |
 | `MAX_MCP_CATALOG_CHARS` | 8,000 characters | Length of the MCP resource or prompt list in the `read_mcp_resource` and `get_mcp_prompt` tool descriptions (each tool separately); servers that do not fit are left out with a warning in the log |
-| `MAX_TEXT_CLEANUP_CHARS` | 2,000,000 characters | HTML is truncated to this length before `web_fetch` extracts text |
+| `MAX_TEXT_CLEANUP_CHARS` | 2,000,000 characters | HTML is truncated to this length before `web_fetch` extracts text and before `web_search` parses a DuckDuckGo result page |
+| Web tool timeouts (`rag/tools.py`) | 15 seconds, 12 seconds | Timeout for calls to the Ollama Web Search / Web Fetch APIs, and for `web_search` when it falls back to DuckDuckGo |
+| `web_fetch` direct fetch (`rag/tools.py`) | 12 seconds, 5, 5 MiB, 3,500 characters | Timeout, redirect count (every hop passes SSRF validation again and is checked against `WEB_FETCH_ALLOWED_DOMAINS`), and response size of a direct page fetch; the returned text, including text from Ollama Web Fetch, is truncated to 3,500 characters |
 | `MAX_DATE_RANGE_CHARS`, `MAX_TARGET_DATES`, `MAX_FILTER_RECORDS` (`rag/tools.py`) | 200 characters, 93 days, 50 records | Length of `filter_and_count_records`' `date_range`, the number of dates it may expand to, and the records returned (a larger `limit` is clamped to 50) |
 | `MAX_API_TOOL_RESPONSE_BYTES` (`api/api_tools.py`) | 1 MiB | Response body limit of custom API tools; reading stops and the call returns `502` |
+| `MAX_API_TOOL_TEXT_CHARS` (`api/api_tools.py`) | 4,000 characters | Text returned to the model when a custom API tool's response is not JSON (its `Content-Type` lacks `application/json`, or the content does not parse) |
 | `MAX_API_TOOL_REDIRECTS` (`api/api_tools.py`), `MAX_MCP_HTTP_REDIRECTS` (`services/mcp_service.py`) | 5, 5 | Redirects that custom API tools and HTTP MCP follow, manually: redirect response bodies are never read, and every hop passes SSRF validation again; HTTP MCP, and custom API tools with methods other than `GET`, `HEAD`, and `OPTIONS`, follow only same-origin redirects, while custom API tools with `GET`, `HEAD`, or `OPTIONS` drop credential headers on cross-origin redirects. The whole call, redirects included, is also bounded by the tool's or server's `timeout` setting; a custom API tool that runs out of time returns `504` |
+| `MAX_OAUTH_RESPONSE_BYTES`, `OAUTH_TIMEOUT_SECONDS`, `OAUTH_MAX_REDIRECTS` (`services/oauth_client.py`) | 256 KiB, 15 seconds, 3 | Response size, time limit for the whole request (redirects included), and same-origin-only redirects followed for OAuth requests (the OAuth2 client credentials token endpoint of custom API tools, and the metadata, client registration, and token endpoints of MCP OAuth); every connection passes SSRF validation |
+| `MAX_CACHED_TOKENS` (`services/oauth_client.py`) | 1,000 | OAuth2 client credentials tokens cached in the process; when full, the whole cache is cleared |
 | `MAX_MCP_HTTP_RESPONSE_BYTES` (`services/mcp_service.py`) | 4 MiB | Limit for one response from an HTTP MCP server |
 | `MAX_MCP_STDIO_LINE_BYTES` (`services/mcp_service.py`) | 4 MiB | Limit for one JSON-RPC message line from a `stdio` MCP subprocess, the same as the HTTP response limit |
 | `MCP_STDERR_TAIL_BYTES` (`services/mcp_service.py`) | 2,048 bytes | A `stdio` subprocess's stderr is drained continuously (so a full pipe cannot stall it) and only this many trailing bytes are kept, written to the server log if the subprocess exits abnormally |
 | `MAX_CONCURRENT_STDIO_PROCESSES` (`services/mcp_service.py`) | 4 | `stdio` MCP subprocesses alive at once; waiting for a free slot is bounded by the server's `timeout` setting, after which the call fails |
+| `MCP_DISCOVER_PROBE_TIMEOUT_SECONDS` (`services/mcp_service.py`) | 5 seconds | How long connecting waits for `server/discover` to negotiate the newer protocol (never longer than the server's `timeout`); on timeout the legacy `initialize` is used |
+| `MAX_MCP_ERROR_BODY_BYTES` (`services/mcp_service.py`) | 64 KiB | When an HTTP MCP response is not `200`, the body is read up to this size to extract a JSON-RPC error; larger bodies are not parsed |
+| `MAX_MCP_TOOL_PAGES` (`services/mcp_service.py`) | 50 pages | Pages read through `nextCursor` for `tools/list`, `resources/list`, and `prompts/list`; more pages fail the listing |
+| `MAX_MCP_CATALOG_ITEMS`, `MAX_MCP_URI_CHARS`, `MAX_MCP_CATALOG_DESCRIPTION_CHARS` (`services/mcp_service.py`) | 200 items, 2,048 characters, 500 characters | Only the first 200 resources and the first 200 prompts of each server are kept; resources with a URI longer than 2,048 characters are skipped; descriptions of resources, prompts, and prompt arguments are cut to 500 characters |
+| `AUTHORIZATION_STATE_TTL_SECONDS`, `MAX_PENDING_AUTHORIZATIONS` (`services/mcp_oauth.py`) | 600 seconds, 1,000 | Time allowed between starting an MCP OAuth authorization and its callback, and pending authorizations kept in the process at once (when full, the oldest is evicted first) |
+| `PROBE_TIMEOUT_SECONDS` (`services/mcp_oauth.py`) | 15 seconds | Timeout for probing the MCP server's `WWW-Authenticate` when an MCP OAuth authorization starts |
 | `APPROVAL_TIMEOUT_SECONDS` (`rag/tool_approval.py`) | 300 seconds | How long a tool call waits for the user's approval; a timeout counts as a denial |
 | `DNS_RESOLVE_TIMEOUT_SECONDS`, `DNS_RESOLVER_MAX_WORKERS` (`core/ssrf_protection.py`) | 5 seconds; 8 and 4 threads | SSRF validation resolves DNS in two dedicated thread pools: 8 threads for user-supplied URLs from `web_fetch` (`DnsPool.USER_URL`) and 4 for custom API tools, HTTP MCP, and OpenAPI spec URLs (`DnsPool.CONFIGURED_ENDPOINT`), so slow domains that fill the first pool do not affect the second; a timeout counts as unresolvable |
 | `LLM_POOL_ACQUIRE_TIMEOUT_SECONDS` (`core/llm_client.py`) | 15 seconds | Limit for waiting on an LLM connection pool slot, separate from `LLM_TIMEOUT`, so a saturated pool fails fast |
+| `MAX_DISCOVERED_MODELS` | 500 | Models returned by "Fetch models from API": the first 500 after sorting by name |
 
 **Document parsing**
 
@@ -437,6 +488,7 @@ The OOXML checks run before parsing and use the sizes the ZIP members declare. p
 | `MAX_SKILL_FILES` | 500 | Files in one skill; applied to each skill when a folder is uploaded |
 | `MAX_SKILL_FOLDER_FILES` | 1000 | Files in one folder upload (`POST /api/skills/upload-folder`), including skipped files such as `.git` |
 | `MAX_SKILL_MD_BYTES` | 256 KiB | Size of `SKILL.md` |
+| `MAX_SKILL_NAME_CHARS`, `MAX_SKILL_DESCRIPTION_CHARS`, `MAX_SKILL_COMPATIBILITY_CHARS` (`services/agent_skills.py`) | 64, 1,024, 500 characters | Length of `name`, `description`, and `compatibility` in `SKILL.md`; a longer `name` rejects the install, while the other two only add a warning |
 | `MAX_SKILL_RESOURCE_LISTING` | 100 | Files listed to the model when a skill is activated |
 | `MAX_SKILL_RESOURCE_CHARS` | 20,000 characters | The `SKILL.md` body returned on activation and each `read_skill_resource` result; the rest is truncated |
 | `MAX_SKILL_CATALOG_CHARS` | 8,000 characters | Length of the skill catalog (names and descriptions) in the `activate_skill` tool description; skills that do not fit are left out with a warning in the log |
@@ -480,7 +532,7 @@ Ignored if left in `.env`; safe to delete:
 
 ## Domain profile
 
-The JSON file at `DOMAIN_PROFILE_PATH` (default `backend/config/domain_profile.json`) holds deployment-specific domain data and is validated strictly at startup: a missing field, an unknown field, or an empty string stops the backend.
+The JSON file at `DOMAIN_PROFILE_PATH` (required; template value `config/domain_profile.json`, that is `backend/config/domain_profile.json`) holds deployment-specific domain data and is validated strictly at startup: a missing field, an unknown field, or an empty string stops the backend.
 
 ```json
 {
@@ -546,7 +598,7 @@ The frontend works without a `.env`: the API base defaults to the relative path 
 
 | Variable | When unset | Description |
 |---|---|---|
-| `VITE_API_BASE` | `/api` | API base. With an absolute URL (such as `http://localhost:8001`) the browser calls the backend directly, so the backend's `ALLOWED_ORIGINS` must include the frontend origin; the value is also the target of the Vite `/api` proxy. `/api` is appended to the path automatically. Its origin is written into the CSP `connect-src` at build time, so changing it requires a rebuild |
+| `VITE_API_BASE` | `/api` | API base. With an absolute URL (such as `http://localhost:8001`) the browser calls the backend directly, so the backend's `ALLOWED_ORIGINS` must include the frontend origin; the value is also the target of the Vite `/api` proxy. `/api` is appended to the path automatically. Its origin is written into the CSP `connect-src` at build time, so changing it requires a rebuild. When the host name contains `devtunnels.ms`, the port is dropped both from request URLs and from the origin written into `connect-src` (`frontend/src/services/api.ts`, `frontend/vite.config.js`) |
 | `VITE_API_URL` | — | Used only when `VITE_API_BASE` is unset; same format. When it is an absolute URL, its origin is likewise written into `connect-src` at build time |
 | `PORT` | `3000` | Vite dev server port (`bun run preview` always uses 3000) |
 | `GENERATE_SOURCEMAP` | emitted | Emit source maps in builds; only `false` turns them off |
@@ -557,6 +609,6 @@ The Vite dev and preview servers always listen on `localhost` only (set in `fron
 
 ### Build-time CSP
 
-`bun run build` writes a CSP into `index.html` as a `<meta http-equiv="Content-Security-Policy">` tag (`frontend/vite.config.js`; the dev server needs inline HMR scripts, so this applies to builds only): `default-src 'self'`; scripts and styles only from same-origin files plus the SHA-256 hashes of the inline scripts and styles in `index.html` (the anti-framing guard and theme initialization); images only from `'self'`, `data:`, and `blob:`; `connect-src` set to `'self'` plus the origins of absolute URLs in `VITE_API_BASE` and `VITE_API_URL`; and `object-src 'none'`, `base-uri 'none'`, and `form-action 'self'`. Even when the web server sets no CSP, injected HTML cannot run scripts.
+`bun run build` writes a CSP into `index.html` as a `<meta http-equiv="Content-Security-Policy">` tag (`frontend/vite.config.js`; the dev server needs inline HMR scripts, so this applies to builds only): `default-src 'self'`; scripts and styles only from same-origin files plus the SHA-256 hashes of the inline scripts and styles in `index.html` (the anti-framing guard and theme initialization); images only from `'self'`, `data:`, and `blob:`; `connect-src` set to `'self'` plus the origins of absolute URLs in `VITE_API_BASE` and `VITE_API_URL` (without the port when the host name contains `devtunnels.ms`); and `object-src 'none'`, `base-uri 'none'`, and `form-action 'self'`. Even when the web server sets no CSP, injected HTML cannot run scripts.
 
 A `<meta>` CSP cannot set `frame-ancestors`, so the web server that serves the build must still send an anti-framing header (`X-Frame-Options: DENY` or `Content-Security-Policy: frame-ancestors 'none'`).

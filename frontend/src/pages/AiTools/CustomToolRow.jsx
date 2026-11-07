@@ -52,7 +52,7 @@ export default function CustomToolRow({ tool, expanded, onToggleDetails, onToggl
             即時線上測試<span className="sr-only">「{title}」</span>
           </Button>
           <Button variant="secondary" size="sm" onClick={onEdit} startIcon={<Icon name="edit" size={16} />}>
-            編輯配置<span className="sr-only">「{title}」</span>
+            編輯設定<span className="sr-only">「{title}」</span>
           </Button>
         </>
       )}
@@ -65,7 +65,7 @@ export default function CustomToolRow({ tool, expanded, onToggleDetails, onToggl
           <DetailList
             items={[
               ...(tool.url ? [{ label: '請求網址', value: tool.url, mono: true }] : []),
-              { label: '觸發調用時機', value: tool.triggerTiming },
+              { label: '觸發呼叫時機', value: tool.triggerTiming },
               { label: '調度模式', value: tool.executionMode },
               { label: '優先級', value: tool.priority },
             ]}

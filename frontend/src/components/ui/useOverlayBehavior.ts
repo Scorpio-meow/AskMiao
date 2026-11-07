@@ -8,18 +8,12 @@ const FOCUSABLE_SELECTOR = [
   '[tabindex]:not([tabindex="-1"])',
   '[contenteditable="true"]',
 ].join(',');
-// 只有最上層的浮層處理 Esc
 const overlayStack: symbol[] = [];
 export const getFocusableElements = (container: HTMLElement): HTMLElement[] =>
   Array.from(container.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR)).filter(
     (el) => !el.closest('[inert]') && el.getClientRects().length > 0
   );
 export type InitialFocus = 'auto' | 'container' | ((container: HTMLElement) => HTMLElement | null);
-/**
- * 非模態浮層（選單、資訊浮層）的鍵盤與焦點行為：
- * 開啟時把焦點移入、Esc 關閉，關閉後把焦點還給原本的觸發元素。
- * 模態視窗請改用原生 <dialog>（見 useModalDialog）。
- */
 export function useOverlayBehavior(
   open: boolean,
   containerRef: React.RefObject<HTMLElement | null>,
@@ -51,7 +45,6 @@ export function useOverlayBehavior(
     }
     const handleKeyDown = (event: KeyboardEvent) => {
       if (overlayStack[overlayStack.length - 1] !== id || event.key !== 'Escape') return;
-      // 阻止預設行為，避免外層原生 <dialog> 同時收到關閉要求
       event.preventDefault();
       event.stopPropagation();
       onCloseRef.current?.();

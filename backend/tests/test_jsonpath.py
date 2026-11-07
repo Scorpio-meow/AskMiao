@@ -1,7 +1,5 @@
 import pytest
-
 from app.services.jsonpath import JsonPathError, query, values
-
 STORE = {
     "store": {
         "book": [
@@ -19,8 +17,6 @@ FILTER_DOC = {
     "e": "f",
 }
 AUTHORS = ["Nigel Rees", "Evelyn Waugh", "Herman Melville", "J. R. R. Tolkien"]
-
-
 @pytest.mark.parametrize("path, expected", [
     ("$.store.book[*].author", AUTHORS),
     ("$..author", AUTHORS),
@@ -36,8 +32,6 @@ AUTHORS = ["Nigel Rees", "Evelyn Waugh", "Herman Melville", "J. R. R. Tolkien"]
 ])
 def test_rfc9535_bookstore_examples(path, expected):
     assert values(STORE, path) == expected
-
-
 @pytest.mark.parametrize("path, expected", [
     ("$.a[?@.b == 'kilo']", [{"b": "kilo"}]),
     ("$.a[?(@.b == 'kilo')]", [{"b": "kilo"}]),
@@ -57,8 +51,6 @@ def test_rfc9535_bookstore_examples(path, expected):
 ])
 def test_rfc9535_filter_examples(path, expected):
     assert values(FILTER_DOC, path) == expected
-
-
 @pytest.mark.parametrize("path, expected", [
     ("$[1:3]", ["b", "c"]),
     ("$[5:]", ["f", "g"]),
@@ -70,13 +62,9 @@ def test_rfc9535_filter_examples(path, expected):
 ])
 def test_rfc9535_slice_examples(path, expected):
     assert values(list("abcdefg"), path) == expected
-
-
 def test_nodes_carry_their_location_for_updates():
     nodes = query(STORE, "$.store.book[?@.price > 20]")
     assert [n.location for n in nodes] == [("store", "book", 3)]
-
-
 @pytest.mark.parametrize("path", ["store", "$.store.", "$[?@.price < ]", "$[?length(@.a)]", "$[01]", "$.a[?@.*  == 1]", "$[?foo(@)]"])
 def test_invalid_queries_are_rejected(path):
     with pytest.raises(JsonPathError):

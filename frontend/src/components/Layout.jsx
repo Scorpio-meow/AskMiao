@@ -23,7 +23,6 @@ function Layout() {
   const [anchorEl, setAnchorEl] = useState(null);
   const menuId = useId();
   const open = Boolean(anchorEl);
-  // 聊天頁需要固定在一個視窗高度內，讓訊息列表自己捲動
   const isFixedLayout = location.pathname.startsWith('/chat');
   const navItems = [
     { to: '/chat', icon: 'chat', label: '聊天' },

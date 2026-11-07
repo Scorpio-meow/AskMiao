@@ -3,22 +3,14 @@ import math
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Set
-
 from .retrievers.hybrid import HybridRetriever, RetrievedChunk
 from .types import Document
-
-
 @dataclass
 class RetrievalCase:
     query: str
-    # 空陣列表示這題應查無資料（反例）
     relevant_sources: List[str]
     relevant_passages: List[str] = field(default_factory=list)
-
-
 def load_golden_set(path: str) -> List[RetrievalCase]:
-    """讀取 JSONL 標準問答集：每行 {"query": "...", "relevant_sources": ["檔名", ...], "relevant_passages": ["原文片段", ...]}；
-    relevant_passages 可省略，應查無資料的題目 relevant_sources 填 []"""
     cases: List[RetrievalCase] = []
     with open(path, encoding="utf-8") as f:
         for line_number, line in enumerate(f, start=1):
@@ -41,27 +33,18 @@ def load_golden_set(path: str) -> List[RetrievalCase]:
     if not cases:
         raise ValueError(f"{path} 沒有任何評估案例")
     return cases
-
-
 def ranked_sources(results: Sequence[RetrievedChunk]) -> List[str]:
-    """依排名取出不重複的來源檔名（同一文件的多個片段只算一次）"""
     sources: List[str] = []
     for result in results:
         source = result.document.metadata.get("source")
         if source and source not in sources:
             sources.append(source)
     return sources
-
-
 def _dcg(flags: Sequence[bool]) -> float:
     return sum(1.0 / math.log2(rank + 1) for rank, flag in enumerate(flags, start=1) if flag)
-
-
 def _covered(passages: Sequence[str], results: Iterable[RetrievedChunk]) -> Set[str]:
     contents = [result.document.page_content for result in results]
     return {passage for passage in passages if any(passage in content for content in contents)}
-
-
 def passage_relevant_chunk_ids(case: RetrievalCase, chunks: Dict[int, Document]) -> Set[int]:
     missing = [p for p in case.relevant_passages if not any(p in doc.page_content for doc in chunks.values())]
     if missing:
@@ -70,23 +53,17 @@ def passage_relevant_chunk_ids(case: RetrievalCase, chunks: Dict[int, Document])
         chunk_id for chunk_id, doc in chunks.items()
         if any(passage in doc.page_content for passage in case.relevant_passages)
     }
-
-
 class RAGEvaluator:
     def __init__(self, retriever: HybridRetriever):
         self.retriever = retriever
-
     def evaluate(self, cases: Sequence[RetrievalCase], k_values: Sequence[int]) -> Dict[str, Any]:
-        """以線上檢索流程（重排後套用設定的相關性門檻，與 smart_search 相同）計算指標"""
         return self.sweep_relevance_thresholds(cases, k_values, [self.retriever.relevance_threshold])[0]
-
     def sweep_relevance_thresholds(
         self,
         cases: Sequence[RetrievalCase],
         k_values: Sequence[int],
         thresholds: Sequence[float]
     ) -> List[Dict[str, Any]]:
-        """每題只重排一次，對同一份重排結果套用多個相關性門檻，依門檻順序回傳各自的報告"""
         relevant_ids = self._passage_relevant_ids(cases)
         rankings = [self.retriever.rank(case.query) for case in cases]
         return [
@@ -96,14 +73,12 @@ class RAGEvaluator:
             )
             for threshold in thresholds
         ]
-
     def _passage_relevant_ids(self, cases: Sequence[RetrievalCase]) -> List[Optional[Set[int]]]:
         if not any(case.relevant_passages for case in cases):
             return [None] * len(cases)
         with self.retriever.vector_store.lock:
             chunks = dict(self.retriever.vector_store.chunks)
         return [passage_relevant_chunk_ids(case, chunks) if case.relevant_passages else None for case in cases]
-
     @staticmethod
     def _report(
         cases: Sequence[RetrievalCase],
@@ -113,8 +88,6 @@ class RAGEvaluator:
         k_values: Sequence[int],
         threshold: float
     ) -> Dict[str, Any]:
-        """正例計算文件層級的 hit@k、recall@k 與 MRR；有 relevant_passages 的正例另計片段層級的 precision@k、nDCG@k、
-        原文片段 recall@k、MRR 與候選召回（重排前候選涵蓋的原文片段比例）；反例計算拒絕率（沒有回傳任何片段）"""
         per_query = []
         for case, ranked, results, relevant_chunks in zip(cases, rankings, results_per_case, relevant_ids):
             ranking = ranked_sources(results)
@@ -147,7 +120,6 @@ class RAGEvaluator:
                     "candidate_recall": len(_covered(passages, ranked)) / len(passages),
                 }
             per_query.append(entry)
-
         positives = [q for q in per_query if q["relevant_sources"]]
         negatives = [q for q in per_query if not q["relevant_sources"]]
         with_passages = [q["passage"] for q in per_query if "passage" in q]

@@ -2,14 +2,10 @@ import json
 import re
 import secrets
 from typing import Any, Dict, Iterable, List, Optional, Set
-
 import httpx
-
 from app.core.config import settings
 from app.core.limits import MAX_TOOL_RESULT_CHARS
 from app.rag.tools import SKILL_SCRIPT_TOOL_NAME, SKILL_TOOL_NAMES, WEB_TOOL_NAMES
-
-# 答案中的引用標記：[1]、[1,2]、[1，2]、[1、2]；[1][2] 會被視為兩個標記
 CITATION_NUMBERS = r"\d+(?:\s*[,，、]\s*\d+)*"
 CITATION_PATTERN = re.compile(rf"\[({CITATION_NUMBERS})\]")
 CITATION_SEPARATOR = re.compile(r"\s*[,，、]\s*")
@@ -17,14 +13,9 @@ CODE_SPAN = r"(?P<code>```[\s\S]*?(?:```|\Z)|~~~[\s\S]*?(?:~~~|\Z)|`[^`\n]+`)"
 CODE_OR_CITATION_PATTERN = re.compile(CODE_SPAN + "|" + CITATION_PATTERN.pattern)
 CODE_OR_SPACED_CITATION_PATTERN = re.compile(CODE_SPAN + rf"|(?P<space>[ \t]*)\[(?P<numbers>{CITATION_NUMBERS})\]")
 SNIPPET_LENGTH = 200
-# 從來源文字抽出完整網址記號；網址結尾常接的標點與全形文字不屬於網址
 URL_TOKEN_PATTERN = re.compile(r"https?://[^\s<>\"'`]+", re.IGNORECASE)
 URL_TRAILING_PUNCTUATION = ".,;:!?)]}'\"，。、；：！？）」』]"
-
-
 def canonical_url(url: str) -> Optional[str]:
-    """以 httpx 的網址正規化作為唯一比對形式：與實際送出的請求網址一致，
-    只統一非 ASCII 字元的百分比編碼，不做 unquote 這類多對一的解碼"""
     try:
         parsed = httpx.URL(url.strip())
     except Exception:
@@ -32,10 +23,7 @@ def canonical_url(url: str) -> Optional[str]:
     if parsed.scheme not in ("http", "https") or not parsed.host:
         return None
     return str(parsed)
-
-
 def extract_url_tokens(text: str) -> Set[str]:
-    """抽出文字中出現的網址（正規化後），含去掉結尾標點與截在第一個非 ASCII 字元前的形式"""
     tokens: Set[str] = set()
     for match in URL_TOKEN_PATTERN.finditer(text):
         candidates = {match.group(0)}
@@ -52,8 +40,6 @@ def extract_url_tokens(text: str) -> Set[str]:
             if normalized:
                 tokens.add(normalized)
     return tokens
-
-
 def _record_link(item: Dict[str, Any]) -> Dict[str, Any]:
     detail: Dict[str, Any] = {}
     url = next((u for u in map(canonical_url, item.get("links") or []) if u), None)
@@ -62,19 +48,13 @@ def _record_link(item: Dict[str, Any]) -> Dict[str, Any]:
     if item.get("label"):
         detail["label"] = item["label"]
     return detail
-
-
 TOOL_RESULT_OPEN = "<untrusted_tool_result"
 TOOL_RESULT_CLOSE = "</untrusted_tool_result"
 TOOL_RESULT_BLOCK_PATTERN = re.compile(r"<untrusted_tool_result\b[^>]*>.*?</untrusted_tool_result\b[^>]*>", re.DOTALL)
 TOOL_RESULT_TAG_PATTERN = re.compile(r"</?untrusted_tool_result\b[^>]*>")
 TOOL_RESULT_OPEN_TAG_PATTERN = re.compile(r"<untrusted_tool_result\b[^>]*>")
-
-
 def strip_tool_result_blocks(text: str) -> str:
     return TOOL_RESULT_TAG_PATTERN.sub("", TOOL_RESULT_BLOCK_PATTERN.sub("", text))
-
-
 def _pending_start(text: str) -> int:
     cut = len(text)
     last_lt = text.rfind("<")
@@ -84,36 +64,23 @@ def _pending_start(text: str) -> int:
             cut = last_lt
     unclosed = [m for m in TOOL_RESULT_OPEN_TAG_PATTERN.finditer(text, 0, cut) if TOOL_RESULT_CLOSE not in text[m.end():cut]]
     return unclosed[0].start() if unclosed else cut
-
-
 class ToolResultFilter:
     def __init__(self) -> None:
         self._raw = ""
         self._emitted = 0
-
     def feed(self, chunk: str) -> str:
         self._raw += chunk
         return self._emit(strip_tool_result_blocks(self._raw[:_pending_start(self._raw)]))
-
     def flush(self) -> str:
         return self._emit(strip_tool_result_blocks(self._raw))
-
     def _emit(self, clean: str) -> str:
         delta = clean[self._emitted:]
         self._emitted = max(self._emitted, len(clean))
         return delta
-
-
 def strip_citations(text: str) -> str:
-    """移除先前回答中的引用標記；那些編號屬於上一次提問的引用表，留著會讓模型沿用錯誤的編號"""
     return CODE_OR_CITATION_PATTERN.sub(lambda match: match.group("code") or "", text)
-
-
 class ResearchSession:
-    """單次提問的狀態：引用編號表、可讀取網址的來源文字、是否已讀取知識庫內容，以及工具結果的不可信資料包裝"""
-
     def __init__(self, user_texts: Iterable[str]):
-        # 每次提問不同的邊界 id，資料內容無法預先偽造結束標記
         self.boundary_id = secrets.token_hex(4)
         self.kb_content_returned = False
         self._url_sources: Set[str] = set()
@@ -125,14 +92,11 @@ class ResearchSession:
         self.activated_skills: Set[str] = set()
         self.preapproved_tools: Set[str] = set()
         self.preapproved_script_skills: Set[str] = set()
-
     def is_preapproved(self, name: str, arguments: Dict[str, Any]) -> bool:
         if name == SKILL_SCRIPT_TOOL_NAME:
             return str(arguments.get("skill", "")) in self.preapproved_script_skills
         return name in self.preapproved_tools
-
     def refuse_tool_call(self, name: str, arguments: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-        """依聯網安全規則檢查工具呼叫；應拒絕時回傳要交給模型的錯誤結果"""
         if name in WEB_TOOL_NAMES and settings.BLOCK_WEB_TOOLS_AFTER_KB and self.kb_content_returned:
             return {"error": "本次提問已讀取知識庫內容，依系統設定（BLOCK_WEB_TOOLS_AFTER_KB）不再使用聯網工具，請以已取得的資料回答"}
         if name == "activate_skill" and arguments.get("name") in self.activated_skills:
@@ -142,14 +106,9 @@ class ResearchSession:
             target = canonical_url(url)
             if target is None or target not in self._url_sources:
                 return {"url": url, "error": "只能讀取使用者訊息或本次工具結果中原樣出現過的網址", "content": ""}
-            # 實際送出的網址就是通過比對的正規化網址，檢查與使用的是同一個值
             arguments["url"] = target
         return None
-
     def record_tool_output(self, name: str, output: Any) -> None:
-        """記錄是否讀到知識庫內容與可讀取的網址來源，並替可引用的資料配號（寫入 citation 欄位）。
-        只收資料欄位，不收 query 等回聲參數，避免模型把自己組的網址經由工具回聲變成「出現過」的網址。
-        自訂 API 與 MCP 工具的結果不列入。"""
         if not isinstance(output, dict) or "error" in output:
             return
         if name in SKILL_TOOL_NAMES:
@@ -203,12 +162,10 @@ class ResearchSession:
                     "snippet": content[:SNIPPET_LENGTH],
                 })
             self._add_url_source(content)
-
     def _add_url_source(self, *texts: Optional[str]) -> None:
         for text in texts:
             if text:
                 self._url_sources |= extract_url_tokens(text)
-
     def _cite(self, key: str, detail: Dict[str, Any]) -> int:
         number = self._citation_numbers.get(key)
         if number is None:
@@ -216,14 +173,11 @@ class ResearchSession:
             self._citation_numbers[key] = number
             self._citation_details[number] = {"citation": number, **detail}
         return number
-
     def tool_message_content(self, name: str, output: Any) -> str:
         if name in SKILL_TOOL_NAMES and isinstance(output, dict) and "error" not in output and isinstance(output.get("content"), str):
             return output["content"]
         return self.wrap_tool_output(output)
-
     def wrap_tool_output(self, output: Any) -> str:
-        # 工具結果每輪都會重送給模型，截斷以限制單次請求的輸入量
         serialized = json.dumps(output, ensure_ascii=False)
         if len(serialized) > MAX_TOOL_RESULT_CHARS:
             serialized = serialized[:MAX_TOOL_RESULT_CHARS] + "…[工具結果過長，以下已截斷]"
@@ -233,9 +187,7 @@ class ResearchSession:
             f"{serialized}\n"
             f'</untrusted_tool_result id="{self.boundary_id}">'
         )
-
     def cited_sources(self, answer: str) -> List[Dict[str, Any]]:
-        """答案中實際引用的條目，依第一次引用的順序排列並去重；不在引用表內的編號忽略"""
         ordered: List[int] = []
         for match in CITATION_PATTERN.finditer(answer):
             for part in CITATION_SEPARATOR.split(match.group(1)):
@@ -243,7 +195,6 @@ class ResearchSession:
                 if number in self._citation_details and number not in ordered:
                     ordered.append(number)
         return [self._citation_details[number] for number in ordered]
-
     def drop_unknown_citations(self, answer: str) -> str:
         def replace(match: "re.Match[str]") -> str:
             if match.group("code"):

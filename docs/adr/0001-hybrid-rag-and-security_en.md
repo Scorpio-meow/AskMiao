@@ -10,20 +10,20 @@ Accepted - 2026-08-01
 
 ## Context & Problem Statement
 
-As an intelligent conversational and multi-Agent collaboration system, AskMiao faced two core technical challenges regarding retrieval precision and authentication security:
+AskMiao, an intelligent conversational and multi-Agent collaboration system, faced two core challenges in retrieval precision and authentication security:
 
 1. **Limitations of Single Retrieval Approaches**:
    - Pure dense vector search excels at semantic similarity but misses exact technical terms, proper names, or model codes, occasionally introducing hallucinations.
    - Pure sparse keyword search (e.g. BM25) excels at exact matching but lacks semantic understanding and synonym expansion.
 2. **Authentication Security & Credential Leakage Prevention**:
-   - Long-lived single JWT tokens pose security risks if intercepted, whereas pure session-based auth scales poorly in async microservices.
+   - Long-lived single JWT tokens pose security risks if intercepted, whereas pure session-based auth scales poorly in distributed, asynchronous API architectures.
    - System logs risk inadvertently printing user passwords or API secrets, triggering CodeQL security alerts.
 
 ---
 
 ## Decision Outcome
 
-After evaluation, the engineering team adopted the following architectural solution:
+After evaluation, the team adopted the following:
 
 ### 1. Contextual Hybrid RAG Pipeline
 
@@ -47,7 +47,7 @@ After evaluation, the engineering team adopted the following architectural solut
 
 ### Positive Consequences
 
-- **Significant Accuracy Boost**: Hybrid RAG with re-ranking drastically reduces hallucinations and improves exact domain-keyword retrieval.
+- **Significant Accuracy Boost**: Hybrid RAG with re-ranking drastically reduces hallucinations and markedly improves retrieval of Chinese domain terms and exact keywords.
 - **Enhanced Security Profile**: Silent refresh balances UX with short-lived tokens, while two-layer log masking eliminates credential leakage risks and satisfies CodeQL audits.
 
 ### Negative Consequences & Risks

@@ -12,9 +12,7 @@ const ATTACHMENT_KIND_CLASS: Record<AttachmentKind, string> = {
   code: styles.badgeCode,
   other: '',
 };
-// 觸控裝置聚焦輸入框會彈出螢幕鍵盤，只在有滑鼠等精確指標的裝置自動聚焦
 const canAutoFocus = () => window.matchMedia('(pointer: fine)').matches;
-// 支援 field-sizing 的瀏覽器由 CSS 自動長高，其餘才用 JS 計算高度
 const supportsFieldSizing = typeof CSS !== 'undefined' && CSS.supports('field-sizing', 'content');
 const MAX_SKILL_SUGGESTIONS = 8;
 const MAX_ATTACHMENT_BYTES = 15 * 1024 * 1024;
@@ -90,7 +88,6 @@ export const ChatInputArea: React.FC<ChatInputAreaProps> = ({
   const hasContent = Boolean(value.trim()) || attachments.length > 0;
   const canSend = hasContent && !sending && !disabled;
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    // 注音、倉頡等輸入法組字時按 Enter 是在選字，不能當成送出
     if (isImeComposition({ isComposing: e.nativeEvent.isComposing, keyCode: e.keyCode })) return;
     if (suggestionsOpen) {
       if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
@@ -143,7 +140,6 @@ export const ChatInputArea: React.FC<ChatInputAreaProps> = ({
   const handleDragLeave = (e: React.DragEvent) => {
     e.preventDefault();
     e.stopPropagation();
-    // 移到子元素上也會觸發 dragleave，只有真的離開輸入區才取消提示
     if (!e.currentTarget.contains(e.relatedTarget as Node | null)) {
       setIsDragging(false);
     }
@@ -162,7 +158,6 @@ export const ChatInputArea: React.FC<ChatInputAreaProps> = ({
       e.target.value = '';
     }
   };
-  // 不支援 field-sizing 時依內容調整高度，上限由 CSS 的 max-height 決定
   useLayoutEffect(() => {
     const textarea = textareaRef.current;
     if (supportsFieldSizing || !textarea) return;
@@ -175,7 +170,6 @@ export const ChatInputArea: React.FC<ChatInputAreaProps> = ({
   useEffect(() => {
     if (sending || !canAutoFocus()) return;
     const active = document.activeElement;
-    // 使用者正在操作其他元素時不搶焦點
     if (!active || active === document.body) {
       textareaRef.current?.focus();
     }

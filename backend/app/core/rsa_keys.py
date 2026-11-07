@@ -8,7 +8,6 @@ class RSAKeyManager:
     
     def __init__(self, keys_dir: str = "keys"):
         self.keys_dir = Path(keys_dir)
-        # 只有後端帳號能進入金鑰目錄
         self.keys_dir.mkdir(mode=0o700, exist_ok=True)
         
         self.private_key_path = self.keys_dir / "jwt_private.pem"
@@ -35,7 +34,6 @@ class RSAKeyManager:
             encryption_algorithm=serialization.NoEncryption()
         )
         
-        # 建立當下就是 0600：先寫入再 chmod 會有一段其他帳號可讀取私鑰的空窗
         self.private_key_path.unlink(missing_ok=True)
         fd = os.open(self.private_key_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
         with os.fdopen(fd, 'wb') as f:

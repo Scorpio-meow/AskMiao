@@ -5,8 +5,6 @@ import styles from './MarkdownContent.module.css';
 const SOCIAL_PLATFORM_DOMAINS = ['threads.com', 'threads.net', 'instagram.com', 'twitter.com', 'x.com'];
 const ACTION_BUTTON_KEYWORDS = ['貼文', '查看', '前往', '開啟', '↗'];
 const POST_TIME_PREFIX_REGEX = /^(上午|下午|\d{1,2}:\d{2}|\d{4}[-/年]\d{1,2}[-/月])/;
-// 不在結尾加上 $：分隔符號與作者名稱都接受「.」，加上 $ 後一長串「.」會回溯成二次方時間，
-// 模型輸出的長段落可讓分頁凍結；需要整段比對時改以比對長度是否等於整段判斷
 const POST_AUTHOR_PREFIX_REGEX = /^(?:(\d+)[\.:\s]+)?(@?[\w\.-]+)/;
 const POST_LINK_PREFIX_REGEX = /^(連結|來源)[：:]\s*/;
 const POST_CONTENT_PREFIX_REGEX = /^(內容)[：:]\s*/;
@@ -20,7 +18,6 @@ const isSocialUrl = (href?: string): boolean => {
     return false;
   }
 };
-/** 連到其他網站的 http(s) 連結回傳解析後的網址；站內連結與 mailto 等其他協定回傳 null */
 const parseExternalLink = (href?: string): URL | null => {
   if (!href) return null;
   try {
@@ -31,10 +28,6 @@ const parseExternalLink = (href?: string): URL | null => {
     return null;
   }
 };
-/**
- * 把「作者 ｜ 時間 ｜ 內容 ｜ 社群連結」這類貼文清單轉成卡片。
- * 只在段落確實連到社群平台、且不含行內程式碼時套用，避免一般文字或指令中的 | 被誤判。
- */
 function parsePipeDelimitedPost(children: React.ReactNode): React.ReactNode | null {
   const childArray = React.Children.toArray(children);
   let fullText = '';
@@ -125,8 +118,6 @@ function parsePipeDelimitedPost(children: React.ReactNode): React.ReactNode | nu
   );
 }
 const MARKDOWN_COMPONENTS: Components = {
-  // 回答可能受外部資料影響，連結文字可以與實際網址不同；外部連結一律標示實際前往的網站，
-  // 不套用站內動作按鈕的樣式，Markdown 中的 title 也不能取代實際網址的提示
   a: ({ node, href, children, ...props }) => {
     const external = parseExternalLink(href);
     const isSocial = isSocialUrl(href);
@@ -149,8 +140,6 @@ const MARKDOWN_COMPONENTS: Components = {
       </a>
     );
   },
-  // 模型回答可能受外部資料影響，圖片若自動載入會在不需點擊的情況下把網址中的資料送往外部主機；
-  // 一律改成需使用者點擊的連結
   img: ({ node, src, alt }) => {
     const label = `圖片：${alt || src || '（無說明）'}`;
     const isExternal = typeof src === 'string' && /^https?:\/\//i.test(src);

@@ -53,7 +53,6 @@ def test_rag_facade_lifecycle(session_factory):
     rag = HybridContextualRAG(session_factory=session_factory)
     assert rag.documents == []
     assert rag.embedding_dimension > 0
-    # 片段只能寫給資料庫中存在的文件
     with session_factory() as session:
         session.add_all([
             DbDocument(id=101, filename="差勤管理辦法.docx", content="", file_type="text/plain"),

@@ -7,11 +7,6 @@ from typing import Dict, List, Tuple
 from app.core.limits import MAX_REVOKED_TOKENS
 logger = logging.getLogger(__name__)
 class TokenBlacklist:
-    """記憶體型 Token 黑名單管理器（無須外部 Redis 依賴）
-
-    以權杖的 SHA-256 為鍵（固定大小），到期時間另存於最小堆積：每次操作只清掉堆頂已到期的條目，
-    不再逐筆掃描整份名單。條目數超過 MAX_REVOKED_TOKENS 時淘汰最早到期的條目。
-    """
     _blacklist: Dict[str, float] = {}
     _expiry_heap: List[Tuple[float, str]] = []
     _lock = threading.Lock()

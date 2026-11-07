@@ -27,13 +27,11 @@ class LlmEndpoint:
 FOUNDRY_ANTHROPIC_HOST_SUFFIX = ".services.ai.azure.com"
 REASONING_EFFORT_VALUES = ("none", "minimal", "low", "medium", "high", "xhigh", "max")
 OPENAI_MODEL_PREFIXES = ("gpt-", "o1", "o3", "o4")
-# Claude 的工具呼叫回合需原樣送回 response.content（含 thinking 區塊），以此鍵附在標準化後的 assistant 訊息上
 ANTHROPIC_CONTENT_KEY = "_anthropic_content"
 OLLAMA_HEADERS = {
     "Content-Type": "application/json",
     "ngrok-skip-browser-warning": "true"
 }
-# 等待連線池名額的上限與單次請求逾時分開：池被占滿時很快失敗，而不是排隊到 LLM_TIMEOUT
 LLM_POOL_ACQUIRE_TIMEOUT_SECONDS = 15.0
 OLLAMA_CLOUD_HOST = "ollama.com"
 OLLAMA_THINKING_KEY = "_ollama_thinking"
@@ -75,7 +73,6 @@ DEFAULT_CLAUDE_MODELS = ["claude-opus-5-5", "claude-fable-5-1", "claude-sonnet-5
 ANTHROPIC_CACHE_CONTROL = {"type": "ephemeral"}
 ANTHROPIC_EFFORT_BY_REASONING = {"none": "low", "minimal": "low", "low": "low", "medium": "medium", "high": "high", "xhigh": "xhigh", "max": "max"}
 ANTHROPIC_MODELS_WITHOUT_EFFORT = ("claude-haiku-4-5",)
-# 這些模型未送 thinking 時完全不思考，需明確啟用 adaptive；較新的模型未送 thinking 即為 adaptive
 ANTHROPIC_MODELS_WITH_OPT_IN_THINKING = ("claude-opus-4-8", "claude-opus-4-7", "claude-opus-4-6", "claude-sonnet-4-6")
 ANTHROPIC_FALLBACK_MODELS = ("claude-opus-5-5", "claude-opus-5", "claude-fable-5-1", "claude-sonnet-5-5")
 ANTHROPIC_FALLBACK_BETA = "server-side-fallback-2026-07-01"
@@ -206,8 +203,6 @@ class _LlmCallLog:
 def _public_message(message: Dict[str, Any]) -> Dict[str, Any]:
     return {key: value for key, value in message.items() if not key.startswith("_")}
 def _parse_image_url(url: str) -> Tuple[str, str]:
-    """data URL 回傳 (media_type, base64 內容)。
-    只接受內嵌影像：遠端網址會讓模型供應商代為擷取使用者指定的任意位址"""
     if url.startswith("data:") and "," in url:
         header, data = url.split(",", 1)
         return header[5:].split(";")[0], data
@@ -299,7 +294,6 @@ async def _openai_stream(
     url, headers = _openai_endpoint(endpoint)
     client = await get_llm_http_client(endpoint.public_only)
     payload = _openai_payload(provider, messages, model, None, reasoning_effort, stream=True)
-    # 不另給 timeout：沿用連線池的設定，排隊等連線超過 LLM_POOL_ACQUIRE_TIMEOUT_SECONDS 即失敗
     async with client.stream("POST", url, json=payload, headers=headers) as response:
         if response.status_code != 200:
             body = await response.aread()
@@ -635,7 +629,6 @@ def _anthropic_client(endpoint: LlmEndpoint):
         http_client=_anthropic_http_client(endpoint.public_only)
     )
 async def _anthropic_model_output_limit(endpoint: LlmEndpoint, model: str) -> Optional[int]:
-    """以 Models API 查詢模型的輸出 token 上限並快取；Foundry 不提供 Models API，回傳 None"""
     if endpoint.provider == "foundry":
         return None
     key = (endpoint.api_base, model)
@@ -644,9 +637,8 @@ async def _anthropic_model_output_limit(endpoint: LlmEndpoint, model: str) -> Op
         _anthropic_output_limits[key] = info.max_tokens
     return _anthropic_output_limits[key]
 async def _anthropic_max_tokens(endpoint: LlmEndpoint, model: str) -> int:
-    """連線設定的輸出 token 上限與模型輸出上限取較小值，避免輸出上限較低的模型回傳 400"""
     if endpoint.max_output_tokens is None:
-        raise ValueError("使用 Claude 模型前需設定輸出 token 上限：API 連線的「輸出 token 上限」，系統模型則為 .env 的 ANTHROPIC_MAX_TOKENS")
+        raise ValueError("使用 Claude 模型前需設定輸出 token 上限：請在 API 連線填寫「輸出 token 上限」，系統模型則設定在所指定的共用連線")
     limit = await _anthropic_model_output_limit(endpoint, model)
     if limit is None:
         return endpoint.max_output_tokens
@@ -667,7 +659,6 @@ def _anthropic_user_content(content: Any) -> Any:
             blocks.append({"type": "image", "source": {"type": "base64", "media_type": media_type, "data": data}})
     return blocks
 def _mark_history_cache_breakpoint(converted: List[Dict[str, Any]]) -> None:
-    """在最後一則使用者訊息的最後一個區塊加上快取標記，system、工具與先前的對話歷史都會成為可快取的前綴"""
     if not converted or converted[-1].get("role") != "user":
         return
     last = converted[-1]
@@ -682,7 +673,6 @@ def _anthropic_request(
     messages: List[Dict[str, Any]],
     tools: Optional[List[Dict[str, Any]]]
 ) -> Dict[str, Any]:
-    """將 OpenAI 格式訊息轉為 Messages API 參數：system 抽出、連續的 tool 訊息併成一則 tool_result 使用者訊息"""
     system_parts: List[str] = []
     converted: List[Dict[str, Any]] = []
     tool_results: List[Dict[str, Any]] = []
@@ -721,7 +711,6 @@ def _anthropic_request(
     if tool_results:
         converted.append({"role": "user", "content": tool_results})
     _mark_history_cache_breakpoint(converted)
-
     request: Dict[str, Any] = {"messages": converted}
     if system_parts:
         request["system"] = [{"type": "text", "text": "\n\n".join(system_parts), "cache_control": ANTHROPIC_CACHE_CONTROL}]
@@ -737,7 +726,6 @@ def _anthropic_request(
         request["tools"][-1]["cache_control"] = ANTHROPIC_CACHE_CONTROL
     return request
 def _anthropic_effort_options(reasoning_effort: Optional[str], model: str, provider: str) -> Dict[str, Any]:
-    """依模型組出 thinking、effort 與拒答備援參數；拒答備援只在直連 Claude API 時由伺服器端處理"""
     options: Dict[str, Any] = {}
     extra_body: Dict[str, Any] = {}
     effort = ANTHROPIC_EFFORT_BY_REASONING.get(reasoning_effort or "")
@@ -763,7 +751,7 @@ def _anthropic_message(response) -> Dict[str, Any]:
     _raise_if_refused(response)
     tool_uses = [block for block in response.content if block.type == "tool_use"]
     if tool_uses and response.stop_reason == "max_tokens":
-        raise RuntimeError("Claude 的工具呼叫參數被輸出 token 上限截斷，請調高 API 連線的輸出 token 上限（系統模型為 .env 的 ANTHROPIC_MAX_TOKENS）")
+        raise RuntimeError("Claude 的工具呼叫參數被輸出 token 上限截斷，請調高 API 連線的「輸出 token 上限」（系統模型請調整所指定的共用連線）")
     message: Dict[str, Any] = {
         "role": "assistant",
         "content": "".join(block.text for block in response.content if block.type == "text"),
@@ -826,7 +814,6 @@ async def chat_completion(
     reasoning_effort: Optional[str] = None,
     timeout: Optional[float] = None
 ) -> Dict[str, Any]:
-    """單次呼叫 endpoint 指定的供應商，回傳 OpenAI 格式的 assistant 訊息（content、tool_calls）"""
     provider = endpoint.provider
     request_timeout = timeout if timeout is not None else settings.LLM_TIMEOUT
     call_log = _LlmCallLog("chat", endpoint, model_name, messages, tools, reasoning_effort, request_timeout)
@@ -856,7 +843,6 @@ async def stream_completion(
     tools: Optional[List[Dict[str, Any]]] = None,
     reasoning_effort: Optional[str] = None
 ) -> AsyncIterator[str]:
-    """串流產生最終答案；tools 只在歷史含工具呼叫時提供給需要宣告工具的供應商，不會再觸發工具"""
     provider = endpoint.provider
     call_log = _LlmCallLog("stream", endpoint, model_name, messages, tools, reasoning_effort, settings.LLM_TIMEOUT)
     if _uses_anthropic_api(endpoint, model_name):

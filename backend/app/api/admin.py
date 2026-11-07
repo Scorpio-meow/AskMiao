@@ -20,37 +20,27 @@ from typing import List, Dict, Any, Optional
 from datetime import datetime, timedelta
 from pydantic import BaseModel, EmailStr, Field, field_validator
 router = APIRouter()
-
-
 class UserUpdate(BaseModel):
     username: Optional[str] = Field(default=None, min_length=3, max_length=50)
     email: Optional[EmailStr] = None
     is_active: Optional[bool] = None
     is_admin: Optional[bool] = None
-
     @field_validator("username")
     @classmethod
     def _validate_username(cls, value: Optional[str]) -> Optional[str]:
         return value if value is None else validate_username(value)
-
-
 class AdminUserCreate(BaseModel):
     username: str = Field(max_length=50)
     email: str = Field(max_length=254)
     password: str = Field(max_length=MAX_PASSWORD_CHARS)
     is_admin: bool
-
-
 class AdminPasswordReset(BaseModel):
     new_password: str = Field(max_length=MAX_PASSWORD_CHARS)
-
-
 class UserSharedConnectionsUpdate(BaseModel):
     shared_connection_ids: List[int]
 class AdminUserUpdateResponse(BaseModel):
     message: str
     user: UserProfile
-# 回應一律經 UserProfile 篩選欄位：直接序列化資料表會連同 hashed_password 一起送出
 @router.get("/users", response_model=List[UserProfile])
 async def get_users(
     db: Session = Depends(get_db),
@@ -58,8 +48,6 @@ async def get_users(
 ):
     users = db.query(User).order_by(User.id).all()
     return users
-
-
 @router.post("/users", response_model=UserProfile, status_code=201)
 async def create_user_account(
     data: AdminUserCreate,
@@ -78,8 +66,6 @@ async def create_user_account(
     }, severity="WARNING")
     invalidate_cache("admin_stats")
     return UserProfile.model_validate(user)
-
-
 @router.put("/users/{user_id}/password")
 async def reset_user_password(
     user_id: int,
@@ -100,8 +86,6 @@ async def reset_user_password(
         "target_user_id": user_id
     }, severity="WARNING")
     return {"message": "已重設密碼，這個帳號在所有裝置都需要以新密碼重新登入"}
-
-
 @router.get("/users/{user_id}/llm-connections")
 def get_user_llm_connections(
     user_id: int,
@@ -111,8 +95,6 @@ def get_user_llm_connections(
     if not db.get(User, user_id):
         raise HTTPException(status_code=404, detail="使用者不存在")
     return user_connection_access(db, user_id)
-
-
 @router.put("/users/{user_id}/llm-connections")
 def update_user_llm_connections(
     user_id: int,
@@ -238,10 +220,8 @@ async def delete_conversation(
         raise HTTPException(status_code=404, detail="對話不存在")
     
     db.query(Message).filter(Message.conversation_id == conversation_id).delete()
-
     db.delete(conversation)
     db.commit()
-
     return {"message": "對話刪除成功"}
 @router.get("/documents")
 def get_documents(
@@ -259,9 +239,7 @@ async def delete_document(
     document = db.query(Document).filter(Document.id == document_id).first()
     if not document:
         raise HTTPException(status_code=404, detail="文件不存在")
-
     await remove_document(db, document)
-
     return {"message": "文件刪除成功"}
 @router.put("/users/{user_id}", response_model=AdminUserUpdateResponse)
 async def update_user(
@@ -316,7 +294,6 @@ async def update_user(
     db.commit()
     db.refresh(user)
     if changes:
-        # 權限與帳號狀態的變更要能追溯到操作的管理員
         log_security_event("ADMIN_USER_UPDATED", request=request, user_id=current_user["user_id"], details={
             "target_user_id": user_id,
             "changes": changes
@@ -341,10 +318,8 @@ async def delete_user(
     conversations = db.query(Conversation).filter(Conversation.user_id == user_id).all()
     for conv in conversations:
         db.query(Message).filter(Message.conversation_id == conv.id).delete()
-
         db.delete(conv)
     
-    # 文件與工具留給其他管理員使用，只清掉指向這個帳號的欄位；PostgreSQL 的外鍵不允許指向已刪除的帳號
     for column in (Document.uploaded_by, CustomApiTool.created_by, McpServer.created_by, AgentSkill.created_by):
         db.query(column.class_).filter(column == user_id).update({column: None}, synchronize_session=False)
     for skill in db.query(AgentSkill).filter(AgentSkill.allowed_user_ids.isnot(None)).all():
@@ -410,4 +385,4 @@ async def force_reindex(
         import logging
         logger = logging.getLogger(__name__)
         logger.exception("強制索引重建失敗")
-        raise HTTPException(status_code=500, detail="重建失敗: 內部錯誤，請聯繫系統管理員")
+        raise HTTPException(status_code=500, detail="重建失敗: 內部錯誤，請聯絡系統管理員")

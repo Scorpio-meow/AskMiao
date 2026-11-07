@@ -1,5 +1,4 @@
 name: askmiao
-
 services:
   postgres:
     image: postgres:17.9
@@ -16,14 +15,13 @@ services:
       - ../backend/init.sql:/docker-entrypoint-initdb.d/10-init.sql:ro
       - ../backend/init-app-role.sh:/docker-entrypoint-initdb.d/20-app-role.sh:ro
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres -d chatbot"]
+      test: [ "CMD-SHELL", "pg_isready -U postgres -d chatbot" ]
       interval: 10s
       timeout: 5s
       retries: 10
       start_period: 20s
     networks:
       - askmiao-net
-
   backend:
     build:
       context: ..
@@ -38,14 +36,13 @@ services:
       - backend_keys:/app/keys
       - backend_logs:/app/logs
     healthcheck:
-      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8001/health"]
+      test: [ "CMD", "curl", "-fsS", "http://127.0.0.1:8001/health" ]
       interval: 15s
       timeout: 5s
       retries: 20
       start_period: 180s
     networks:
       - askmiao-net
-
   web:
     build:
       context: ..
@@ -59,13 +56,11 @@ services:
     networks:
       askmiao-net:
         ipv4_address: ${WEB_CONTAINER_IP:?WEB_CONTAINER_IP is required}
-
 volumes:
   postgres_data:
   backend_data:
   backend_keys:
   backend_logs:
-
 networks:
   askmiao-net:
     driver: bridge

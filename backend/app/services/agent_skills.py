@@ -14,9 +14,7 @@ import zipfile
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 from typing import Any, Dict, List, Optional, Tuple
-
 import yaml
-
 from app.core.config import settings
 from app.core.limits import (
     MAX_SKILL_ARCHIVE_BYTES,
@@ -32,7 +30,6 @@ from app.core.limits import (
     MAX_SKILL_SCRIPT_STDIN_CHARS,
     MAX_SKILL_UNCOMPRESSED_BYTES,
 )
-
 SKILL_FILE = "SKILL.md"
 SKILL_NAME_PATTERN = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*")
 MAX_SKILL_NAME_CHARS = 64
@@ -42,14 +39,9 @@ KNOWN_FIELDS = ("name", "description", "license", "compatibility", "metadata", "
 IGNORED_ARCHIVE_PARTS = ("__MACOSX", ".DS_Store", ".git")
 TEMP_PREFIX = ".tmp-"
 STALE_PREFIX = ".old-"
-
 _install_lock = threading.Lock()
-
-
 class SkillError(ValueError):
     pass
-
-
 @dataclass
 class ParsedSkill:
     name: str
@@ -60,12 +52,8 @@ class ParsedSkill:
     metadata: Optional[Dict[str, str]] = None
     allowed_tools: Optional[str] = None
     warnings: List[str] = field(default_factory=list)
-
-
 def skills_root() -> Path:
     return Path(settings.SKILLS_DIR)
-
-
 def _split_frontmatter(text: str) -> Tuple[str, str]:
     lines = text.splitlines()
     if not lines or lines[0].strip() != "---":
@@ -74,8 +62,6 @@ def _split_frontmatter(text: str) -> Tuple[str, str]:
         if lines[index].strip() == "---":
             return "\n".join(lines[1:index]), "\n".join(lines[index + 1:]).strip()
     raise SkillError("SKILL.md 的 YAML frontmatter 缺少結尾的 ---")
-
-
 def _quote_colon_values(frontmatter: str) -> str:
     fixed = []
     for line in frontmatter.splitlines():
@@ -86,8 +72,6 @@ def _quote_colon_values(frontmatter: str) -> str:
         else:
             fixed.append(line)
     return "\n".join(fixed)
-
-
 def _load_frontmatter(frontmatter: str) -> Dict[str, Any]:
     try:
         data = yaml.safe_load(frontmatter)
@@ -99,21 +83,16 @@ def _load_frontmatter(frontmatter: str) -> Dict[str, Any]:
     if not isinstance(data, dict):
         raise SkillError("SKILL.md 的 YAML frontmatter 必須是鍵值對應")
     return data
-
-
 def _optional_text(data: Dict[str, Any], key: str) -> Optional[str]:
     value = data.get(key)
     if value is None:
         return None
     text = str(value).strip()
     return text or None
-
-
 def parse_skill_md(text: str, directory_name: Optional[str] = None) -> ParsedSkill:
     frontmatter, body = _split_frontmatter(text)
     data = _load_frontmatter(frontmatter)
     warnings: List[str] = []
-
     name = _optional_text(data, "name")
     if not name:
         raise SkillError("SKILL.md 缺少 name 欄位")
@@ -124,31 +103,26 @@ def parse_skill_md(text: str, directory_name: Optional[str] = None) -> ParsedSki
         )
     if directory_name and directory_name != name:
         warnings.append(f"name「{name}」與技能目錄名稱「{directory_name}」不同，已以 name 作為目錄名稱安裝")
-
     description = _optional_text(data, "description")
     if not description:
         raise SkillError("SKILL.md 缺少 description 欄位，Agent 無法判斷何時使用此技能")
     if len(description) > MAX_SKILL_DESCRIPTION_CHARS:
         warnings.append(f"description 超過 {MAX_SKILL_DESCRIPTION_CHARS} 字")
-
     compatibility = _optional_text(data, "compatibility")
     if compatibility and len(compatibility) > MAX_SKILL_COMPATIBILITY_CHARS:
         warnings.append(f"compatibility 超過 {MAX_SKILL_COMPATIBILITY_CHARS} 字")
-
     metadata = data.get("metadata")
     if metadata is not None and not isinstance(metadata, dict):
         warnings.append("metadata 應為鍵值對應，已忽略")
         metadata = None
     if metadata is not None:
         metadata = {str(k): "" if v is None else str(v) for k, v in metadata.items()}
-
     allowed_tools = _optional_text(data, "allowed-tools")
     unknown = sorted(str(k) for k in data if k not in KNOWN_FIELDS)
     if unknown:
         warnings.append(f"規格未定義的欄位：{', '.join(unknown)}")
     if not body:
         warnings.append("SKILL.md 沒有指示內容")
-
     return ParsedSkill(
         name=name,
         description=description,
@@ -159,8 +133,6 @@ def parse_skill_md(text: str, directory_name: Optional[str] = None) -> ParsedSki
         allowed_tools=allowed_tools,
         warnings=warnings,
     )
-
-
 def _decode_skill_md(data: bytes) -> str:
     if len(data) > MAX_SKILL_MD_BYTES:
         raise SkillError(f"SKILL.md 超過 {MAX_SKILL_MD_BYTES // 1024} KiB")
@@ -168,20 +140,14 @@ def _decode_skill_md(data: bytes) -> str:
         return data.decode("utf-8-sig")
     except UnicodeDecodeError as e:
         raise SkillError("SKILL.md 必須是 UTF-8 文字檔") from e
-
-
 def _is_ignored(parts: Tuple[str, ...]) -> bool:
     return any(part in IGNORED_ARCHIVE_PARTS for part in parts)
-
-
 def _path_parts(name: str, source: str) -> Tuple[str, ...]:
     raw = name.replace("\\", "/")
     path = PurePosixPath(raw)
     if raw.startswith("/") or ".." in path.parts or any(":" in part for part in path.parts):
         raise SkillError(f"{source}含不安全的路徑：{name}")
     return tuple(p for p in path.parts if p not in ("", "."))
-
-
 def _archive_members(archive: zipfile.ZipFile) -> List[Tuple[zipfile.ZipInfo, Tuple[str, ...]]]:
     members = []
     declared_total = 0
@@ -201,8 +167,6 @@ def _archive_members(archive: zipfile.ZipFile) -> List[Tuple[zipfile.ZipInfo, Tu
         if declared_total > MAX_SKILL_UNCOMPRESSED_BYTES:
             raise SkillError(f"技能解壓後超過 {MAX_SKILL_UNCOMPRESSED_BYTES // (1024 * 1024)} MiB")
     return members
-
-
 def _strip_top_directory(members: List[Tuple[zipfile.ZipInfo, Tuple[str, ...]]]) -> Tuple[List[Tuple[zipfile.ZipInfo, Tuple[str, ...]]], Optional[str]]:
     if any(parts == (SKILL_FILE,) for _, parts in members):
         return members, None
@@ -213,16 +177,12 @@ def _strip_top_directory(members: List[Tuple[zipfile.ZipInfo, Tuple[str, ...]]])
         if any(parts == (SKILL_FILE,) for _, parts in stripped):
             return stripped, top
     raise SkillError("壓縮檔根目錄或唯一的頂層目錄中找不到 SKILL.md")
-
-
 def _read_member(archive: zipfile.ZipFile, info: zipfile.ZipInfo, budget: int) -> bytes:
     with archive.open(info) as source:
         data = source.read(budget + 1)
     if len(data) > budget:
         raise SkillError(f"技能解壓後超過 {MAX_SKILL_UNCOMPRESSED_BYTES // (1024 * 1024)} MiB")
     return data
-
-
 def _extract_archive(data: bytes) -> Tuple[ParsedSkill, Dict[Tuple[str, ...], bytes]]:
     try:
         archive = zipfile.ZipFile(io.BytesIO(data))
@@ -238,8 +198,6 @@ def _extract_archive(data: bytes) -> Tuple[ParsedSkill, Dict[Tuple[str, ...], by
             files[parts] = content
     skill = parse_skill_md(_decode_skill_md(files[(SKILL_FILE,)]), directory_name=top)
     return skill, files
-
-
 def read_skill_upload(filename: str, data: bytes) -> Tuple[ParsedSkill, Dict[Tuple[str, ...], bytes]]:
     if len(data) > MAX_SKILL_ARCHIVE_BYTES:
         raise SkillError(f"上傳檔超過 {MAX_SKILL_ARCHIVE_BYTES // (1024 * 1024)} MiB")
@@ -249,24 +207,18 @@ def read_skill_upload(filename: str, data: bytes) -> Tuple[ParsedSkill, Dict[Tup
     if lower.endswith(".md"):
         return parse_skill_md(_decode_skill_md(data)), {(SKILL_FILE,): data}
     raise SkillError("請上傳技能目錄的 .zip 壓縮檔或 SKILL.md")
-
-
 @dataclass
 class FolderSkill:
     path: str
     files: Dict[Tuple[str, ...], bytes]
     skill: Optional[ParsedSkill] = None
     error: Optional[str] = None
-
-
 def _skill_roots(members: List[Tuple[bytes, Tuple[str, ...]]]) -> List[Tuple[str, ...]]:
     roots: List[Tuple[str, ...]] = []
     for root in sorted({parts[:-1] for _, parts in members if parts[-1] == SKILL_FILE}, key=len):
         if not any(root[:len(outer)] == outer for outer in roots):
             roots.append(root)
     return sorted(roots)
-
-
 def read_skill_folder(entries: List[Tuple[str, bytes]]) -> List[FolderSkill]:
     members = []
     for name, content in entries:
@@ -288,8 +240,6 @@ def read_skill_folder(entries: List[Tuple[str, bytes]]) -> List[FolderSkill]:
             item.error = str(e)
         found.append(item)
     return found
-
-
 def install_skill(skill: ParsedSkill, files: Dict[Tuple[str, ...], bytes], replace: bool) -> None:
     root = skills_root()
     root.mkdir(parents=True, exist_ok=True)
@@ -317,33 +267,23 @@ def install_skill(skill: ParsedSkill, files: Dict[Tuple[str, ...], bytes], repla
         finally:
             shutil.rmtree(staging, ignore_errors=True)
             shutil.rmtree(stale, ignore_errors=True)
-
-
 def remove_skill_files(name: str) -> None:
     target = skill_directory(name)
     if target is not None and target.exists():
         with _install_lock:
             shutil.rmtree(target)
-
-
 def skill_directory(name: str) -> Optional[Path]:
     if not SKILL_NAME_PATTERN.fullmatch(name or ""):
         return None
     return skills_root() / name
-
-
 def skill_files_present(name: str) -> bool:
     directory = skill_directory(name)
     return directory is not None and (directory / SKILL_FILE).is_file()
-
-
 def load_skill(name: str) -> ParsedSkill:
     directory = skill_directory(name)
     if directory is None or not (directory / SKILL_FILE).is_file():
         raise SkillError(f"找不到技能檔案：{name}")
     return parse_skill_md(_decode_skill_md((directory / SKILL_FILE).read_bytes()), directory_name=name)
-
-
 def list_skill_resources(name: str) -> Tuple[List[str], bool]:
     directory = skill_directory(name)
     if directory is None or not directory.is_dir():
@@ -354,8 +294,6 @@ def list_skill_resources(name: str) -> Tuple[List[str], bool]:
         if path.is_file() and not path.is_symlink() and path.relative_to(directory).as_posix() != SKILL_FILE
     )
     return resources[:MAX_SKILL_RESOURCE_LISTING], len(resources) > MAX_SKILL_RESOURCE_LISTING
-
-
 def _skill_file(name: str, relative_path: str) -> Tuple[Optional[Path], Optional[PurePosixPath], Dict[str, Any]]:
     directory = skill_directory(name)
     if directory is None or not directory.is_dir():
@@ -372,8 +310,6 @@ def _skill_file(name: str, relative_path: str) -> Tuple[Optional[Path], Optional
     if directory.resolve() not in resolved.parents or target.is_symlink() or not resolved.is_file():
         return None, None, {"error": f"技能「{name}」中沒有這個檔案：{raw}"}
     return resolved, path, {}
-
-
 def read_skill_resource(name: str, relative_path: str) -> Dict[str, Any]:
     resolved, path, error = _skill_file(name, relative_path)
     if resolved is None:
@@ -394,8 +330,6 @@ def read_skill_resource(name: str, relative_path: str) -> Dict[str, Any]:
         "truncated": truncated,
         "content": format_skill_resource(name, raw, text[:MAX_SKILL_RESOURCE_CHARS], truncated),
     }
-
-
 def format_skill_activation(skill: ParsedSkill, resources: List[str], listing_truncated: bool, allow_scripts: bool) -> str:
     body = skill.body
     truncated_note = ""
@@ -417,17 +351,11 @@ def format_skill_activation(skill: ParsedSkill, resources: List[str], listing_tr
         parts.append(f"<skill_resources>\n{listing}{more}\n</skill_resources>")
     parts.append("</skill_content>")
     return "\n".join(parts)
-
-
 def format_skill_resource(name: str, path: str, text: str, truncated: bool) -> str:
     note = "\n[檔案過長，以下已截斷]" if truncated else ""
     return f'<skill_resource skill="{name}" path="{path}">\n{text}{note}\n</skill_resource>'
-
-
 def allowed_tool_names(allowed_tools: Optional[str]) -> List[str]:
     return [token.split("(", 1)[0] for token in (allowed_tools or "").split() if token.split("(", 1)[0]]
-
-
 def activate_skill(name: str, allow_scripts: bool) -> Dict[str, Any]:
     try:
         skill = load_skill(name)
@@ -439,8 +367,6 @@ def activate_skill(name: str, allow_scripts: bool) -> Dict[str, Any]:
         "allowed_tools": allowed_tool_names(skill.allowed_tools),
         "content": format_skill_activation(skill, resources, listing_truncated, allow_scripts),
     }
-
-
 def skill_visible_to(allowed_user_ids: Optional[str], user_id: Optional[int]) -> bool:
     if allowed_user_ids is None:
         return True
@@ -449,8 +375,6 @@ def skill_visible_to(allowed_user_ids: Optional[str], user_id: Optional[int]) ->
     except json.JSONDecodeError:
         return False
     return isinstance(users, list) and user_id is not None and user_id in users
-
-
 def script_interpreter(path: PurePosixPath) -> Optional[List[str]]:
     suffix = path.suffix.lower()
     if suffix == ".py":
@@ -458,11 +382,7 @@ def script_interpreter(path: PurePosixPath) -> Optional[List[str]]:
     program = {".sh": "bash", ".js": "node", ".mjs": "node"}.get(suffix)
     located = shutil.which(program) if program else None
     return [located] if located else None
-
-
 _script_slots = asyncio.Semaphore(MAX_CONCURRENT_SKILL_SCRIPTS)
-
-
 async def _read_capped(stream: asyncio.StreamReader) -> Tuple[str, bool]:
     kept = bytearray()
     truncated = False
@@ -477,11 +397,8 @@ async def _read_capped(stream: asyncio.StreamReader) -> Tuple[str, bool]:
             truncated = True
     text = kept.decode("utf-8", errors="replace")
     return text[:MAX_SKILL_SCRIPT_OUTPUT_CHARS], truncated or len(text) > MAX_SKILL_SCRIPT_OUTPUT_CHARS
-
-
 async def run_skill_script(name: str, relative_path: str, args: Any, stdin_text: Any) -> Dict[str, Any]:
     from app.services.mcp_service import PROCESS_GROUP_KWARGS, build_stdio_env, kill_process_tree
-
     resolved, path, error = _skill_file(name, relative_path)
     if resolved is None:
         return error
@@ -509,7 +426,6 @@ async def run_skill_script(name: str, relative_path: str, args: Any, stdin_text:
                 cwd=str(copy),
                 **PROCESS_GROUP_KWARGS,
             )
-
             async def communicate():
                 async def feed():
                     try:
@@ -522,7 +438,6 @@ async def run_skill_script(name: str, relative_path: str, args: Any, stdin_text:
                 _, stdout, stderr = await asyncio.gather(feed(), _read_capped(process.stdout), _read_capped(process.stderr))
                 await process.wait()
                 return stdout, stderr
-
             timed_out = False
             try:
                 (stdout, stdout_cut), (stderr, stderr_cut) = await asyncio.wait_for(communicate(), timeout=MAX_SKILL_SCRIPT_SECONDS)
@@ -546,8 +461,6 @@ async def run_skill_script(name: str, relative_path: str, args: Any, stdin_text:
         "stderr": stderr,
         "output_truncated": stdout_cut or stderr_cut,
     }
-
-
 def skill_record_fields(skill: ParsedSkill) -> Dict[str, Any]:
     return {
         "description": skill.description,
@@ -557,8 +470,6 @@ def skill_record_fields(skill: ParsedSkill) -> Dict[str, Any]:
         "allowed_tools": skill.allowed_tools,
         "warnings": json.dumps(skill.warnings, ensure_ascii=False) if skill.warnings else None,
     }
-
-
 def cleanup_staging_directories() -> None:
     root = skills_root()
     if not root.is_dir():

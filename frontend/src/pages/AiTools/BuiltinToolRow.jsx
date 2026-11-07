@@ -19,7 +19,7 @@ export default function BuiltinToolRow({ tool, expanded, onToggleDetails, onTryE
         <>
           <DetailList
             items={[
-              { label: '觸發調用時機', value: tool.triggerTiming },
+              { label: '觸發呼叫時機', value: tool.triggerTiming },
               { label: '調度模式', value: tool.executionMode },
               { label: '優先級', value: tool.priority },
             ]}

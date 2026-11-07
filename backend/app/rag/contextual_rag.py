@@ -3,10 +3,8 @@ import os
 import json
 import logging
 from datetime import datetime
-
 import numpy as np
 from sqlalchemy.orm import Session
-
 from .types import Document
 from .tokenizers import configure_tokenizer
 from .indices.chunk_store import ChunkStore
@@ -15,19 +13,11 @@ from .indices.bm25_store import BM25StoreManager
 from .retrievers.hybrid import HybridRetriever, RetrievedChunk
 from .pipeline import RAGPipeline
 from .evaluator import RAGEvaluator, RetrievalCase
-
 logger = logging.getLogger(__name__)
-
-
 from app.core.config import settings
 from app.core.domain_profile import domain_profile
 from app.core.llm_client import LlmEndpoint
-
 class HybridContextualRAG:
-    """
-    RAG 核心門面（Facade），統整片段儲存、向量檢索、BM25 倒排索引、混合檢索、Cross-Encoder 重排序與生成管線。
-    片段以資料庫 rag_chunks 為準，FAISS 與 BM25 皆以 chunk_id 對應，啟動時會依資料庫校正兩份索引。
-    """
     def __init__(self, session_factory: Callable[[], Session], read_only: bool = False):
         self.chunk_size = settings.CHUNK_SIZE
         self.chunk_overlap = settings.CHUNK_OVERLAP
@@ -43,12 +33,9 @@ class HybridContextualRAG:
         self.force_cpu = settings.FORCE_CPU
         self.use_faiss_gpu = settings.USE_FAISS_GPU
         self.faiss_gpu_device = settings.FAISS_GPU_DEVICE
-
         os.makedirs(self.data_dir, exist_ok=True)
         configure_tokenizer(settings.JIEBA_DICTIONARY, domain_profile.domain_words)
-
         self.chunk_store = ChunkStore(session_factory)
-
         self.vector_store = VectorStoreManager(
             data_dir=self.data_dir,
             embedding_model=settings.EMBEDDING_MODEL,
@@ -59,11 +46,7 @@ class HybridContextualRAG:
             similarity_threshold=self.similarity_threshold,
             top_k=self.top_k,
         )
-
-
         self.bm25_store = BM25StoreManager(data_dir=self.data_dir)
-
-
         self.retriever = HybridRetriever(
             vector_store=self.vector_store,
             bm25_store=self.bm25_store,
@@ -78,33 +61,24 @@ class HybridContextualRAG:
             openvino_device=settings.RERANKER_OPENVINO_DEVICE,
             openvino_max_length=settings.RERANKER_OPENVINO_MAX_LENGTH,
         )
-
-
         self.pipeline = RAGPipeline(
             retriever=self.retriever,
             chunk_size=self.chunk_size,
             chunk_overlap=self.chunk_overlap,
         )
-
-
         self.evaluator = RAGEvaluator(self.retriever)
-
         if read_only:
             self._load_chunks_read_only()
         else:
             self._reconcile_indices()
-
         logger.info("HybridContextualRAG 門面模組初始化完成")
-
     def _reconcile_indices(self) -> None:
-        """以資料庫片段為準，移除 FAISS 中多出的向量、補算缺少的向量，並校正 BM25"""
         with self.vector_store.lock:
             self.chunk_store.delete_orphans()
             chunks = self.chunk_store.load_all()
             indexed_ids = self.vector_store.ids()
             stale_ids = sorted(indexed_ids - chunks.keys())
             missing_ids = sorted(chunks.keys() - indexed_ids)
-
             if stale_ids:
                 self.vector_store.remove(stale_ids)
             self.vector_store.chunks = chunks
@@ -116,11 +90,8 @@ class HybridContextualRAG:
                     f"FAISS 索引已依資料庫片段校正：移除 {len(stale_ids)} 個多餘向量，補算 {len(missing_ids)} 個缺少的向量"
                 )
                 self.vector_store.save_indices()
-
             self.bm25_store.ensure_aligned(self.vector_store.chunks)
-
     def _load_chunks_read_only(self) -> None:
-        """唯讀模式（例如離線評估）：只載入片段，不修改資料庫或索引檔；三方不一致或斷詞設定不符時拒絕執行"""
         chunks = self.chunk_store.load_all()
         expected_bm25_ids = sorted(str(chunk_id) for chunk_id in chunks)
         if self.vector_store.ids() != set(chunks) or sorted(self.bm25_store.indexed_ids()) != expected_bm25_ids:
@@ -128,63 +99,45 @@ class HybridContextualRAG:
         if not self.bm25_store.tokenizer_matches():
             raise RuntimeError("BM25 索引的斷詞簽章與目前設定不符；請先啟動後端完成重建，再執行唯讀評估")
         self.vector_store.chunks = chunks
-
-
     @property
     def documents(self) -> List[Document]:
         return self.vector_store.documents
-
     @property
     def index(self):
         return self.vector_store.index
-
     @property
     def embedding_dimension(self) -> int:
         return self.vector_store.embedding_dimension
-
     @property
     def local_embeddings(self):
         return self.vector_store.local_embeddings
-
     @property
     def cross_encoder(self):
         return self.retriever.cross_encoder
-
     @property
     def device(self):
         return self.vector_store.device
-
     @property
     def bm25_index(self):
         return self.bm25_store.bm25_index
-
     @property
     def bm25_searcher(self):
         return self.bm25_store.bm25_searcher
-
-
     def vector_search(self, query: str, top_k: int = None, apply_threshold: bool = True) -> List[Tuple[Document, float]]:
         query_embedding = self.vector_store.embed_query(query)
         with self.vector_store.lock:
             return self.vector_store.search(query_embedding, top_k=top_k, apply_threshold=apply_threshold)
-
     def bm25_search(self, query: str, top_k: int = None) -> List[Tuple[Document, float]]:
         with self.vector_store.lock:
             return self.bm25_store.search(query, self.vector_store.chunks, top_k=top_k or self.top_k)
-
     def smart_search(self, query: str, target_document: Optional[str] = None) -> List[RetrievedChunk]:
         return self.retriever.smart_search(query, target_document)
-
-
     def add_documents(self, documents: List[Document]) -> int:
         chunks = self.pipeline.split_documents(documents)
         if not chunks:
             return 0
-        # 計算向量可能要數分鐘，在鎖外進行，這段期間其他人的檢索不必等待
         embeddings = self.vector_store.embed([chunk.page_content for chunk in chunks])
         with self.vector_store.lock:
-            # 刪除文件時會先刪 documents 列、再持鎖移除片段；持鎖後才確認文件仍存在，
-            # 已被刪除（或正在刪除）的文件不會再把片段寫回知識庫
             existing = self.chunk_store.existing_document_ids([chunk.metadata.get("document_id") for chunk in chunks])
             kept = [index for index, chunk in enumerate(chunks) if chunk.metadata.get("document_id") in existing]
             if len(kept) != len(chunks):
@@ -204,7 +157,6 @@ class HybridContextualRAG:
             self.bm25_store.add_documents(dict(zip(chunk_ids, chunks)))
             self.vector_store.save_indices()
         return len(chunks)
-
     def remove_document_by_id(self, document_id: int) -> int:
         with self.vector_store.lock:
             chunk_ids = [
@@ -218,14 +170,11 @@ class HybridContextualRAG:
                 self.vector_store.save_indices()
         logger.info(f"Removed {len(chunk_ids)} chunks for document_id {document_id}")
         return len(chunk_ids)
-
     def clear_indices(self):
         with self.vector_store.lock:
             self.chunk_store.delete_all()
             self.vector_store.clear()
             self.bm25_store.clear()
-
-
     async def generate_response_stream(
         self,
         query: str,
@@ -247,12 +196,8 @@ class HybridContextualRAG:
             approval_user_id=approval_user_id
         ):
             yield event
-
-
     def evaluate_retrieval(self, cases: List[RetrievalCase], k_values: List[int]) -> Dict[str, Any]:
         return self.evaluator.evaluate(cases, k_values)
-
-
     def get_statistics(self) -> Dict[str, Any]:
         bm25_status = "Available" if self.bm25_store.bm25_index else "Not Available"
         return {
@@ -265,7 +210,6 @@ class HybridContextualRAG:
             "chunk_overlap": self.chunk_overlap,
             "last_reindex": self._get_last_reindex_time()
         }
-
     def _get_last_reindex_time(self) -> Optional[str]:
         try:
             if os.path.exists(self.vector_store.metadata_path):
@@ -277,7 +221,6 @@ class HybridContextualRAG:
         except Exception:
             pass
         return None
-
     def get_vector_store_info(self) -> Dict[str, Any]:
         return {
             "total_vectors": self.vector_store.index.ntotal,
@@ -288,12 +231,10 @@ class HybridContextualRAG:
             "bm25_index_exists": os.path.exists(self.bm25_store.bm25_index_dir),
             "last_reindex": self._get_last_reindex_time()
         }
-
     def force_reindex(self):
         logger.info("Forcing reindex...")
         with self.vector_store.lock:
             snapshot = dict(self.vector_store.chunks)
-        # 整個語料的向量在鎖外計算；期間新增或刪除的片段在持鎖後補算或略過
         vectors = dict(zip(snapshot, self.vector_store.embed([chunk.page_content for chunk in snapshot.values()]))) if snapshot else {}
         with self.vector_store.lock:
             chunks = dict(self.vector_store.chunks)
@@ -307,6 +248,4 @@ class HybridContextualRAG:
             self.bm25_store.rebuild(chunks)
             self.vector_store.save_indices()
         return True
-
-
 ContextualRAG = HybridContextualRAG

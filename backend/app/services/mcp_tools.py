@@ -2,10 +2,8 @@ import base64
 import json
 import re
 from typing import Any, Dict, List, Optional, Tuple
-
 from app.services.openapi_documents import SpecDocuments
 from app.services.openapi_schema import SchemaNormalizer
-
 MCP_TOOL_SCHEMA_URI = "urn:askmiao:mcp-tool-input"
 LEGACY_SCHEMA_DIALECT_MARKERS = ("draft-04", "draft-06", "draft-07")
 UNRESOLVED_REF_WARNING = "無法解析之參照"
@@ -17,19 +15,12 @@ BINARY_CONTENT_TYPES = ("image", "audio")
 OMITTED_BINARY_NOTE = "二進位內容不提供給模型"
 RESOURCE_LINK_FIELDS = ("type", "uri", "name", "title", "description", "mimeType")
 RESOURCE_TEXT_FIELDS = ("uri", "mimeType", "text")
-
 HeaderParameter = Tuple[Tuple[str, ...], str]
-
-
 class McpToolDefinitionError(ValueError):
     pass
-
-
 def _uses_json_schema_2020(schema: Dict[str, Any]) -> bool:
     dialect = schema.get("$schema")
     return not (isinstance(dialect, str) and any(marker in dialect for marker in LEGACY_SCHEMA_DIALECT_MARKERS))
-
-
 def function_parameters(input_schema: Any) -> Dict[str, Any]:
     if input_schema is None:
         return {"type": "object", "properties": {}}
@@ -44,8 +35,6 @@ def function_parameters(input_schema: Any) -> Dict[str, Any]:
     if parameters.get("type") != "object":
         return {"type": "object", "properties": {}}
     return {"properties": {}, **parameters}
-
-
 def header_parameters(input_schema: Any) -> List[HeaderParameter]:
     found: List[HeaderParameter] = []
     seen = set()
@@ -75,22 +64,16 @@ def header_parameters(input_schema: Any) -> List[HeaderParameter]:
             elif isinstance(value, (dict, list)):
                 stack.append((value, path, False))
     return found
-
-
 def _is_plain_header_value(value: str) -> bool:
     return (
         value == value.strip(" \t")
         and all(char == "\t" or " " <= char <= "~" for char in value)
         and not (value.startswith(BASE64_SENTINEL_PREFIX) and value.endswith(BASE64_SENTINEL_SUFFIX))
     )
-
-
 def encode_header_value(value: str) -> str:
     if _is_plain_header_value(value):
         return value
     return f"{BASE64_SENTINEL_PREFIX}{base64.b64encode(value.encode('utf-8')).decode('ascii')}{BASE64_SENTINEL_SUFFIX}"
-
-
 def _header_text(value: Any) -> Optional[str]:
     if isinstance(value, bool):
         return "true" if value else "false"
@@ -101,8 +84,6 @@ def _header_text(value: Any) -> Optional[str]:
     if isinstance(value, str):
         return value
     return None
-
-
 def param_headers(parameters: List[HeaderParameter], arguments: Dict[str, Any]) -> Dict[str, str]:
     headers: Dict[str, str] = {}
     for path, name in parameters:
@@ -113,8 +94,6 @@ def param_headers(parameters: List[HeaderParameter], arguments: Dict[str, Any]) 
         if text is not None:
             headers[f"Mcp-Param-{name}"] = encode_header_value(text)
     return headers
-
-
 def _content_item(item: Any) -> Optional[Dict[str, Any]]:
     if not isinstance(item, dict):
         return None
@@ -128,27 +107,19 @@ def _content_item(item: Any) -> Optional[Dict[str, Any]]:
     if kind == "resource" and isinstance(item.get("resource"), dict):
         return {"type": "resource", "resource": resource_contents(item["resource"])}
     return None
-
-
 def resource_contents(resource: Dict[str, Any]) -> Dict[str, Any]:
     shaped = {key: resource[key] for key in RESOURCE_TEXT_FIELDS if key in resource}
     if "blob" in resource:
         shaped["omitted"] = OMITTED_BINARY_NOTE
     return shaped
-
-
 def model_content(items: Any) -> List[Dict[str, Any]]:
     shaped = [_content_item(item) for item in items] if isinstance(items, list) else []
     return [item for item in shaped if item is not None]
-
-
 def _same_json(text: str, value: Any) -> bool:
     try:
         return json.loads(text) == value
     except (TypeError, ValueError):
         return False
-
-
 def tool_result(result: Dict[str, Any]) -> Dict[str, Any]:
     content = model_content(result.get("content"))
     shaped: Dict[str, Any] = {"is_success": not result.get("isError", False), "content": content}
@@ -157,8 +128,6 @@ def tool_result(result: Dict[str, Any]) -> Dict[str, Any]:
         shaped["content"] = [item for item in content if not (item["type"] == "text" and _same_json(item["text"], structured))]
         shaped["structuredContent"] = structured
     return shaped
-
-
 def prompt_messages(messages: Any) -> List[Dict[str, Any]]:
     shaped = []
     for message in messages if isinstance(messages, list) else []:

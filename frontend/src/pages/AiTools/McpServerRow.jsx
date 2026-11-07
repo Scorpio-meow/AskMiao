@@ -82,7 +82,7 @@ export default function McpServerRow({
             {discovering ? '正在連線探索...' : '重新探索工具'}<span className="sr-only">「{title}」</span>
           </Button>
           <Button variant="secondary" size="sm" onClick={onEdit} startIcon={<Icon name="edit" size={16} />}>
-            編輯配置<span className="sr-only">「{title}」</span>
+            編輯設定<span className="sr-only">「{title}」</span>
           </Button>
           {!isStdio && (
             <Button variant="secondary" size="sm" onClick={onStartOAuth} startIcon={<Icon name="lock" size={16} />}>

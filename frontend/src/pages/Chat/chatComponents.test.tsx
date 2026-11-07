@@ -6,7 +6,6 @@ import ChatMessageList from './ChatMessageList';
 import ChatSidebar from './ChatSidebar';
 import ResearchTraceBlock from './ResearchTraceBlock';
 import ToolApprovalCard from './ToolApprovalCard';
-
 const noop = () => {};
 const ENTITIES: Record<string, string> = { '&quot;': '"', '&#x27;': "'", '&lt;': '<', '&gt;': '>', '&amp;': '&' };
 const stripTags = (html: string) => {
@@ -23,7 +22,6 @@ const textOf = (html: string) => stripTags(html).replace(/&(quot|#x27|lt|gt|amp)
 const buttons = (html: string) => [...html.matchAll(/<button([^>]*)>(.*?)<\/button>/gs)]
   .map(([, attrs, inner]) => ({ attrs, text: textOf(inner) }));
 const buttonNamed = (html: string, text: string) => buttons(html).find((button) => button.text.includes(text));
-
 const renderMessage = (message: Message, options: { isStreaming?: boolean; onRetry?: (m: Message) => void } = {}) =>
   renderToStaticMarkup(
     <ChatMessageItem
@@ -37,7 +35,6 @@ const renderMessage = (message: Message, options: { isStreaming?: boolean; onRet
       onRetry={options.onRetry}
     />
   );
-
 describe('ChatMessageItem', () => {
   it('renders the user message as plain text with a copy action', () => {
     const html = renderMessage({ id: 1, content: '**不要**轉成粗體', is_user: true, created_at: '2026-11-02T01:00:00' });
@@ -46,14 +43,12 @@ describe('ChatMessageItem', () => {
     expect(html).toContain('aria-label="複製訊息內容"');
     expect(html).toContain('dateTime="2026-11-02T01:00:00"');
   });
-
   it('shows the waiting state before anything arrives', () => {
     const html = renderMessage({ id: 2, content: '', is_user: false, model_name: 'fake-text' }, { isStreaming: true });
     expect(textOf(html)).toContain('AI 正在分析您的問題...');
     expect(textOf(html)).toContain('fake-text');
     expect(html).not.toContain('aria-label="複製訊息內容"');
   });
-
   it('renders markdown answers with the think block collapsed', () => {
     const html = renderMessage({ id: 3, content: '<think>先找規定</think>## 特休\n\n滿一年 **七天** [1]', is_user: false });
     expect(html).toContain('<h2>特休</h2>');
@@ -62,7 +57,6 @@ describe('ChatMessageItem', () => {
     expect(toggle?.attrs).toContain('aria-expanded="false"');
     expect(textOf(html)).toContain('先找規定');
   });
-
   it('offers to resend a failed answer only when retry is allowed', () => {
     const failed: Message = { id: 4, content: '', is_user: false, error: '連線中斷，回答可能不完整，請重新傳送。' };
     expect(buttonNamed(renderMessage(failed, { onRetry: noop }), '重新傳送')).toBeDefined();
@@ -71,12 +65,10 @@ describe('ChatMessageItem', () => {
     expect(buttonNamed(html, '重新傳送')).toBeUndefined();
     expect(textOf(html)).not.toContain('AI 正在分析您的問題...');
   });
-
   it('explains that a stopped answer was not saved', () => {
     const html = renderMessage({ id: 5, content: '部分內容', is_user: false, stopped: true });
     expect(textOf(html)).toContain('已停止產生。這則回答沒有被儲存，重新整理後不會出現。');
   });
-
   it('lists cited sources with their citation numbers', () => {
     const html = renderMessage({
       id: 6,
@@ -95,13 +87,11 @@ describe('ChatMessageItem', () => {
     expect(html).toMatch(/<a[^>]*href="https:\/\/example\.com\/leave"[^>]*target="_blank"[^>]*rel="noopener noreferrer"/);
     expect(textOf(html)).toContain('（在新分頁開啟）');
   });
-
   it('falls back to plain source names from older answers', () => {
     const html = renderMessage({ id: 7, content: '舊回答', is_user: false, sources: ['舊文件.pdf'] });
     expect(textOf(html)).toContain('舊文件.pdf');
     expect(buttonNamed(html, '舊文件.pdf')).toBeUndefined();
   });
-
   it('shows the approval card only while the answer is streaming', () => {
     const message: Message = {
       id: 8,
@@ -121,7 +111,6 @@ describe('ChatMessageItem', () => {
     expect(textOf(renderMessage(message))).not.toContain('AI 想執行外部工具，需要你確認');
   });
 });
-
 describe('ResearchTraceBlock', () => {
   it('names the running step and keeps arbitrary arguments as text', () => {
     const html = renderToStaticMarkup(
@@ -139,7 +128,6 @@ describe('ResearchTraceBlock', () => {
     expect(textOf(html)).toContain('0.4s');
     expect(textOf(html)).toContain('進行中');
   });
-
   it('summarises a finished trace and counts failures', () => {
     const html = renderToStaticMarkup(
       <ResearchTraceBlock
@@ -157,7 +145,6 @@ describe('ResearchTraceBlock', () => {
     expect(textOf(html)).toContain('["a",1]');
   });
 });
-
 describe('ToolApprovalCard', () => {
   it('reveals hidden characters in the tool arguments', () => {
     const html = renderToStaticMarkup(
@@ -179,7 +166,6 @@ describe('ToolApprovalCard', () => {
     expect(buttonNamed(html, '拒絕')).toBeDefined();
     expect(buttonNamed(html, '核准執行')).toBeDefined();
   });
-
   it('says when there are no arguments', () => {
     const html = renderToStaticMarkup(
       <ToolApprovalCard approval={{ approval_id: 'a3', step: 1, tool: 'ping', tool_display_name: 'Ping', target: 'GET api.example.com' }} />
@@ -187,7 +173,6 @@ describe('ToolApprovalCard', () => {
     expect(textOf(html)).toContain('（沒有參數）');
   });
 });
-
 const listProps = {
   conversationLoading: false,
   sending: false,
@@ -201,7 +186,6 @@ const listProps = {
   onSelectPrompt: noop,
   onRetry: noop,
 };
-
 describe('ChatMessageList', () => {
   it('offers suggested prompts for a new conversation', () => {
     const html = renderToStaticMarkup(<ChatMessageList {...listProps} messages={[]} />);
@@ -209,14 +193,12 @@ describe('ChatMessageList', () => {
     expect(buttonNamed(html, '請幫我分析並總結文件的核心重點')).toBeDefined();
     expect(html).toMatch(/role="group" aria-labelledby="[^"]+"/);
   });
-
   it('shows placeholders while a conversation loads', () => {
     const html = renderToStaticMarkup(<ChatMessageList {...listProps} messages={[]} conversationLoading />);
     expect(html).toContain('aria-busy="true"');
     expect(textOf(html)).toContain('正在載入對話...');
     expect(textOf(html)).not.toContain('開始新的對話');
   });
-
   it('renders messages and the button to load older ones', () => {
     const html = renderToStaticMarkup(
       <ChatMessageList
@@ -233,7 +215,6 @@ describe('ChatMessageList', () => {
     expect(textOf(html)).toContain('AskMiao 回覆：回答');
   });
 });
-
 describe('ChatSidebar', () => {
   const sidebarProps = {
     id: 'sidebar',
@@ -247,7 +228,6 @@ describe('ChatSidebar', () => {
     loadError: null,
     onRetryLoad: noop,
   };
-
   it('groups conversations by date and marks the current one', () => {
     const today = new Date().toISOString();
     const older = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
@@ -263,13 +243,11 @@ describe('ChatSidebar', () => {
     expect(buttonNamed(html, '請假規定')?.attrs).toContain('aria-current="true"');
     expect(html).toContain('aria-label="刪除對話「未命名對話」"');
   });
-
   it('shows the load error with a retry button', () => {
     const html = renderToStaticMarkup(<ChatSidebar {...sidebarProps} conversations={[]} loadError="無法載入對話清單" />);
     expect(html).toContain('role="alert"');
     expect(buttonNamed(html, '重新載入')).toBeDefined();
   });
-
   it('shows the empty state once loading has finished', () => {
     const html = renderToStaticMarkup(<ChatSidebar {...sidebarProps} conversations={[]} />);
     expect(textOf(html)).toContain('尚無歷史對話');

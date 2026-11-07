@@ -13,7 +13,6 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 app_log_handler = configure_log_handler(rotating_log_file_handler('app.log'))
 logging.basicConfig(level=settings.LOG_LEVEL, handlers=[configure_log_handler(logging.StreamHandler()), app_log_handler])
 logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
-# httpx／httpcore 的 INFO 日誌會記下完整請求網址，查詢字串型 API 金鑰等憑證會因此明文落地
 logging.getLogger("httpx").setLevel(logging.WARNING)
 logging.getLogger("httpcore").setLevel(logging.WARNING)
 logger = logging.getLogger(__name__)
@@ -22,7 +21,6 @@ app = FastAPI(
     description="AskMiao 智慧知識庫對話系統：Agentic RAG 自主研究、混合檢索與外部工具整合",
     version=__version__,
     lifespan=lifespan,
-    # 互動式文件會列出所有端點與參數，由 ENABLE_API_DOCS 決定是否對外提供
     docs_url="/docs" if settings.ENABLE_API_DOCS else None,
     redoc_url="/redoc" if settings.ENABLE_API_DOCS else None,
     openapi_url="/openapi.json" if settings.ENABLE_API_DOCS else None
@@ -81,8 +79,6 @@ if __name__ == "__main__":
         reload_dirs=reload_dirs if args.reload else None,
         reload_excludes=reload_excludes if args.reload else None,
         app_dir=BASE_DIR,
-        # 預設不採信 X-Forwarded-For：本機代理（例如 Vite）會原樣轉送用戶端自帶的標頭。
-        # 前方有會覆寫該標頭的反向代理時，以 FORWARDED_ALLOW_IPS 明確指定信任的代理位址
         proxy_headers=bool(settings.FORWARDED_ALLOW_IPS),
         forwarded_allow_ips=settings.FORWARDED_ALLOW_IPS
     )

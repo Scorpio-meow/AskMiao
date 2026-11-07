@@ -77,7 +77,7 @@ export default function ApiToolFormDialog({ tool, onClose, onSaved }) {
           {tool?.credentials_unreadable && <Alert severity="warning">{CREDENTIALS_UNREADABLE_NOTICE}</Alert>}
           <FormSection title="基本資訊">
             <FormRow>
-              <Field id="tool-name" label="工具識別碼" required hint="英文小寫與底線，供 LLM 調用">
+              <Field id="tool-name" label="工具識別碼" required hint="英文小寫與底線，供 LLM 呼叫">
                 <input
                   id="tool-name"
                   type="text"
@@ -103,11 +103,11 @@ export default function ApiToolFormDialog({ tool, onClose, onSaved }) {
                 />
               </Field>
             </FormRow>
-            <Field id="tool-description" label="工具用途描述" required hint="詳細說明工具功能與調用時機，AI 會依此判斷何時使用">
+            <Field id="tool-description" label="工具用途描述" required hint="詳細說明工具功能與呼叫時機，AI 會依此判斷何時使用">
               <textarea
                 id="tool-description"
                 className={`${styles.input} ${styles.textareaSm}`}
-                placeholder="例如：當使用者需要查詢特定 ID 的使用者基本資料時調用。"
+                placeholder="例如：當使用者需要查詢特定 ID 的使用者基本資料時呼叫。"
                 value={form.description}
                 onChange={(e) => setForm({ ...form, description: e.target.value })}
                 required

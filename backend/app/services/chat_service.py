@@ -9,16 +9,11 @@ from app.core.limits import MAX_ATTACHMENT_TEXT_CHARS, MAX_USER_ATTACHMENT_STORA
 from app.rag.agent import attachment_context, query_with_attachments
 DEFAULT_CONVERSATION_TITLE = settings.DEFAULT_CONVERSATION_TITLE
 MAX_TITLE_PREVIEW_LENGTH = 50
-# 讀取路徑的上限：對話清單只列最近的對話；單段對話只回最近的訊息
 MAX_LISTED_CONVERSATIONS = 200
 MAX_CONVERSATION_MESSAGES = 500
 MAX_HISTORY_ATTACHMENT_CHARS = MAX_ATTACHMENT_TEXT_CHARS
-
-
 class AttachmentQuotaExceeded(Exception):
     pass
-
-
 def _build_message_response(msg: Message) -> MessageResponse:
     sources = []
     sources_detail = []
@@ -36,7 +31,6 @@ def _build_message_response(msg: Message) -> MessageResponse:
                 sources = parsed
         except Exception:
             pass
-    # 解析後的欄位已完整回傳，原始 context_used（含附件 base64）不再重複輸出
     return MessageResponse(
         id=msg.id,
         content=msg.content,
@@ -49,16 +43,12 @@ def _build_message_response(msg: Message) -> MessageResponse:
         sources_detail=sources_detail,
         research_trace=research_trace
     )
-
-
 def _stored_attachments(msg: Message) -> List[Dict]:
     try:
         parsed = json.loads(msg.context_used)
     except ValueError:
         return []
     return parsed.get("attachments", []) if isinstance(parsed, dict) else []
-
-
 class ChatService:
     def get_recent_history(
         self,
@@ -67,7 +57,6 @@ class ChatService:
         before_message_id: int,
         limit: int
     ) -> List[Dict[str, str]]:
-        """讀取指定訊息之前的最近 limit 則訊息作為 Agent 前文（確保以使用者訊息開頭）"""
         if limit <= 0:
             return []
         rows = db.query(Message).filter(
@@ -93,7 +82,6 @@ class ChatService:
             history.pop(0)
         return history
     def ensure_attachment_quota(self, db: Session, user_id: int, new_bytes: int) -> None:
-        """使用者訊息的附件（存在 context_used）總量不可超過每位使用者的配額"""
         used = db.query(func.coalesce(func.sum(func.length(Message.context_used)), 0)).join(
             Conversation, Conversation.id == Message.conversation_id
         ).filter(

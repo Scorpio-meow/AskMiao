@@ -76,7 +76,6 @@
   cursor: not-allowed;
 }
 
-/* iOS Safari 會在字級小於 16px 的欄位聚焦時自動放大畫面 */
 @media (pointer: coarse) {
   .input {
     font-size: var(--font-size-base);

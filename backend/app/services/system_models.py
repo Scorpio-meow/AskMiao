@@ -3,26 +3,18 @@ import base64
 import logging
 from dataclasses import dataclass
 from typing import Callable, Dict, Optional
-
 from sqlalchemy.orm import Session
-
 from app.core.error_response import SafeClientError
 from app.core.llm_client import LlmEndpoint, call_llm
 from app.models import SYSTEM_MODEL_PURPOSES, LlmConnection, SystemModel, SystemModelAssignment
 from app.services.llm_connections import endpoint_of, models_of
-
 logger = logging.getLogger(__name__)
-
-PDF_OCR_PROMPT = "精確識別並提取此頁面中的所有繁體中文、英文、表格與文字內容，保留標題結構與階層，排版整潔，不要添加任何多餘的問候或客套話。"
-
-
+PDF_OCR_PROMPT = "精確辨識並擷取此頁面中的所有繁體中文、英文、表格與文字內容，保留標題結構與階層，排版整潔，不要加入任何多餘的問候或客套話。"
 @dataclass(frozen=True)
 class SystemModelTarget:
     endpoint: LlmEndpoint
     model_name: str
     reasoning_effort: str
-
-
 def system_model_target(db: Session, purpose: str) -> Optional[SystemModelTarget]:
     row = db.get(SystemModel, purpose)
     if row is None:
@@ -37,8 +29,6 @@ def system_model_target(db: Session, purpose: str) -> Optional[SystemModelTarget
         logger.warning("系統模型 %s 的連線金鑰無法解密，視為未指定: %s", purpose, e)
         return None
     return SystemModelTarget(endpoint=endpoint, model_name=row.model_name, reasoning_effort=row.reasoning_effort)
-
-
 def system_models_response(db: Session) -> Dict[str, Optional[Dict[str, object]]]:
     rows = {row.purpose: row for row in db.query(SystemModel).all()}
     return {
@@ -50,8 +40,6 @@ def system_models_response(db: Session) -> Dict[str, Optional[Dict[str, object]]
         if purpose in rows else None
         for purpose in SYSTEM_MODEL_PURPOSES
     }
-
-
 def set_system_models(db: Session, assignments: Dict[str, Optional[SystemModelAssignment]]) -> None:
     for purpose in SYSTEM_MODEL_PURPOSES:
         assignment = assignments[purpose]
@@ -76,21 +64,16 @@ def set_system_models(db: Session, assignments: Dict[str, Optional[SystemModelAs
             row.connection_id = connection.id
             row.model_name = assignment.model_name
             row.reasoning_effort = assignment.reasoning_effort
-
-
 def release_system_models(db: Session, connection: LlmConnection, deleted: bool) -> None:
     available = set() if deleted else set(models_of(connection))
     for row in db.query(SystemModel).filter(SystemModel.connection_id == connection.id).all():
         if row.model_name not in available:
             logger.warning("共用連線 %s 不再提供系統模型 %s 使用的 %s，已取消指定", connection.id, row.purpose, row.model_name)
             db.delete(row)
-
-
 def page_ocr(target: Optional[SystemModelTarget]) -> Optional[Callable[[bytes], str]]:
     if target is None:
         return None
     loop = asyncio.get_running_loop()
-
     def recognize(png: bytes) -> str:
         image_url = f"data:image/png;base64,{base64.b64encode(png).decode('ascii')}"
         messages = [{
@@ -104,5 +87,4 @@ def page_ocr(target: Optional[SystemModelTarget]) -> Optional[Callable[[bytes], 
             messages, endpoint=target.endpoint, model_name=target.model_name, reasoning_effort=target.reasoning_effort
         )
         return asyncio.run_coroutine_threadsafe(request, loop).result()
-
     return recognize

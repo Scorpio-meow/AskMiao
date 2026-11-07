@@ -20,31 +20,21 @@ from app.services.llm_connections import chat_option, connections_for_user, reso
 from pydantic import BaseModel
 router = APIRouter()
 chat_service = ChatService()
-# 每位使用者進行中的聊天串流數；行程內只有一個事件迴圈，不需要鎖
 _active_streams: Dict[int, int] = {}
-# 檢查附件配額與寫入訊息之間會讓出事件迴圈，同時送出的請求會看到同一個舊用量；含附件的訊息逐一檢查並寫入
 _attachment_quota_lock = asyncio.Lock()
-
-
 def _has_stream_slot(user_id: int) -> bool:
     return _active_streams.get(user_id, 0) < MAX_CONCURRENT_CHAT_STREAMS_PER_USER
-
-
 def _acquire_stream_slot(user_id: int) -> bool:
     if not _has_stream_slot(user_id):
         return False
     _active_streams[user_id] = _active_streams.get(user_id, 0) + 1
     return True
-
-
 def _release_stream_slot(user_id: int) -> None:
     remaining = _active_streams.get(user_id, 0) - 1
     if remaining > 0:
         _active_streams[user_id] = remaining
     else:
         _active_streams.pop(user_id, None)
-
-
 @router.get("/models")
 def get_available_models(
     db: Session = Depends(get_db),
@@ -53,7 +43,6 @@ def get_available_models(
     return {"connections": [chat_option(c) for c in connections_for_user(db, user_id)]}
 @router.get("/tools")
 def get_available_tools(user_id: int = Depends(get_current_user_id)):
-    """獲取 AI 系統當前已註冊並啟用的所有工具定義清單與說明（需登入；同步函式在執行緒池執行）"""
     try:
         tool_defs = get_rag_system().pipeline.tool_registry.get_tool_definitions(user_id)
         return {
@@ -99,7 +88,6 @@ async def send_message(
                 await asyncio.to_thread(chat_service.ensure_attachment_quota, db, user_id, len(user_context))
             except AttachmentQuotaExceeded:
                 raise HTTPException(status_code=413, detail="附件儲存空間已達上限，請刪除部分含附件的對話後再試")
-        # 資料庫存取是同步的，移到執行緒以免阻塞事件迴圈
         user_message = await asyncio.to_thread(
             chat_service.save_message,
             db,
@@ -119,7 +107,6 @@ async def send_message(
         before_message_id=user_message_id,
         limit=settings.CONVERSATION_HISTORY_MESSAGES
     )
-    # 串流可能持續數分鐘；先把連線還給連線池，結束時儲存回答再重新取得
     await asyncio.to_thread(db.close)
     async def sse_generator():
         if not _acquire_stream_slot(user_id):
@@ -209,21 +196,15 @@ async def send_message(
     )
 class ToolApprovalDecision(BaseModel):
     approved: bool
-
-
 @router.post("/approvals/{approval_id}")
 async def resolve_tool_approval(
     approval_id: str,
     decision: ToolApprovalDecision,
     user_id: int = Depends(get_current_user_id)
 ):
-    """核准或拒絕 Agent 暫停等待中的工具呼叫；只有發問的使用者能處理自己的項目"""
     if not approval_broker.resolve(approval_id, user_id, decision.approved):
         raise HTTPException(status_code=404, detail="找不到待核准的工具呼叫，可能已逾時或已處理")
     return {"approval_id": approval_id, "approved": decision.approved}
-
-
-# 以下讀取與刪除路由是同步函式：FastAPI 在執行緒池執行，同步資料庫查詢不會阻塞事件迴圈
 @router.get("/conversations", response_model=List[ConversationResponse])
 def get_conversations(
     db: Session = Depends(get_db),

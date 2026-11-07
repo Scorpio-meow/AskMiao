@@ -35,7 +35,6 @@ export const Alert: React.FC<AlertProps> = ({
     ) : (
       <Icon name="info" size={18} />
     );
-  // 錯誤與警告需要立即播報；成功與資訊以禮貌模式播報即可
   const liveRole = role ?? (severity === 'error' || severity === 'warning' ? 'alert' : 'status');
   return (
     <div className={`${styles.alert} ${severityClass} ${className}`} role={liveRole} {...props}>

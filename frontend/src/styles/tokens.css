@@ -49,7 +49,6 @@
   --bg-backdrop: rgba(15, 23, 42, 0.45);
   --text-primary: #0f172a;
   --text-secondary: #475569;
-  /* 需在白底、bg-app、surface-secondary 與 surface-active 上都達 4.5:1 */
   --text-tertiary: #586980;
   --text-disabled: #cbd5e1;
   --text-inverse: #ffffff;
@@ -63,7 +62,6 @@
   --color-primary-active: #1e40af;
   --color-primary-light: #eff6ff;
   --color-primary-text: #1d4ed8;
-  /* 實心底色（按鈕、使用者泡泡）搭配 --text-on-primary，兩種主題都維持 4.5:1 以上 */
   --color-primary-solid: #2563eb;
   --color-primary-solid-hover: #1d4ed8;
   --color-primary-solid-active: #1e40af;

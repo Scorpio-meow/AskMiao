@@ -1,14 +1,10 @@
 import io
-
 import pymupdf
 import pytest
 from fontTools.feaLib.builder import addOpenTypeFeaturesFromString
 from fontTools.fontBuilder import FontBuilder
 from fontTools.pens.ttGlyphPen import TTGlyphPen
-
 from app.services.pdf_service import PDFService
-
-
 def _font_with_alternate_digit() -> bytes:
     glyph_order = [".notdef", "one", "one.alt"]
     builder = FontBuilder(1000, isTTF=True)
@@ -33,8 +29,6 @@ def _font_with_alternate_digit() -> bytes:
     output = io.BytesIO()
     builder.save(output)
     return output.getvalue()
-
-
 def _pdf_drawing_one_and_its_alternate(alternate_target: str) -> bytes:
     font = _font_with_alternate_digit()
     to_unicode = (
@@ -69,14 +63,10 @@ def _pdf_drawing_one_and_its_alternate(alternate_target: str) -> bytes:
     pdf += b"".join(f"{offset:010d} 00000 n \n".encode() for offset in offsets)
     pdf += f"trailer\n<< /Size {len(objects) + 1} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n".encode()
     return bytes(pdf)
-
-
 @pytest.mark.parametrize("alternate_target, expected", [("FFFD", "11"), ("0041", "1A")])
 def test_alternate_glyphs_without_unicode_are_mapped_back_to_their_source_character(alternate_target, expected):
     pdf = _pdf_drawing_one_and_its_alternate(alternate_target)
     assert pymupdf.open("pdf", pdf)[0].get_text().strip() != "11"
-
     doc = pymupdf.open("pdf", pdf)
     PDFService._map_unmapped_alternate_glyphs(doc)
-
     assert doc[0].get_text().strip() == expected

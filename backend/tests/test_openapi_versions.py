@@ -1,20 +1,12 @@
 import json
-
 import pytest
-
 from app.core.error_response import SafeClientError
 from app.services import openapi_documents
 from app.services.openapi_parser import OpenApiParser
-
-
 async def parse(spec, base=None):
     return await OpenApiParser.parse(json.dumps(spec) if isinstance(spec, dict) else spec, base, [])
-
-
 def by_name(result):
     return {e["name"]: e for e in result["endpoints"]}
-
-
 @pytest.mark.anyio
 @pytest.mark.parametrize("field, version, label", [
     ("swagger", "2.0", "swagger_2.0"),
@@ -26,21 +18,17 @@ def by_name(result):
 async def test_every_supported_version_is_detected(field, version, label):
     result = await parse({field: version, "info": {"title": "t", "version": "1"}, "paths": {}})
     assert (result["version"], result["spec_version"]) == (label, version)
-
-
 @pytest.mark.anyio
 @pytest.mark.parametrize("spec, message", [
     ({"swaggerVersion": "1.2", "apis": []}, "Swagger 1.2"),
     ({"swagger": "3.0", "paths": {}}, "Swagger 3.0"),
     ({"openapi": "4.0.0", "paths": {}}, "OpenAPI 4.0.0"),
     ({"openapi": "3.3.0", "paths": {}}, "OpenAPI 3.3.0"),
-    ({"paths": {"/a": {"get": {}}}}, "無法識別規格版本"),
+    ({"paths": {"/a": {"get": {}}}}, "無法辨識規格版本"),
 ])
 async def test_unknown_versions_are_rejected(spec, message):
     with pytest.raises(SafeClientError, match=message):
         await parse(spec)
-
-
 SWAGGER = {
     "swagger": "2.0",
     "info": {"title": "t", "version": "1"},
@@ -67,13 +55,10 @@ SWAGGER = {
         "NewPet": {"allOf": [{"$ref": "#/definitions/Pet"}, {"properties": {"ownerId": {"type": "integer"}}}]},
     },
 }
-
-
 @pytest.mark.anyio
 async def test_swagger_collection_formats_allof_and_host_from_spec_url(monkeypatch):
     async def fake_fetch(url, purpose):
         return json.dumps(SWAGGER)
-
     monkeypatch.setattr(openapi_documents, "fetch_document_text", fake_fetch)
     result = await parse("https://docs.example.com/specs/pets.json")
     endpoints = by_name(result)
@@ -87,8 +72,6 @@ async def test_swagger_collection_formats_allof_and_host_from_spec_url(monkeypat
     body = endpoints["addpet"]["parameters_schema"]
     assert set(body["properties"]) == {"name", "ownerId"}
     assert body["required"] == ["name"]
-
-
 OAS30 = {
     "openapi": "3.0.4",
     "info": {"title": "t", "version": "1"},
@@ -130,13 +113,10 @@ OAS30 = {
         },
     },
 }
-
-
 @pytest.mark.anyio
 async def test_oas30_servers_parameters_bodies_and_methods(monkeypatch):
     async def fake_fetch(url, purpose):
         return json.dumps(OAS30)
-
     monkeypatch.setattr(openapi_documents, "fetch_document_text", fake_fetch)
     result = await parse("https://docs.example.com/openapi.json")
     endpoints = by_name(result)
@@ -160,8 +140,6 @@ async def test_oas30_servers_parameters_bodies_and_methods(monkeypatch):
     assert props["kind"]["enum"] == ["Cat", "Dog"]
     assert "meow" not in put["parameters_schema"]["required"]
     assert "X-Trace" in put["parameters_schema"]["required"]
-
-
 OAS31 = {
     "openapi": "3.1.2",
     "info": {"title": "t", "summary": "簡介", "version": "1"},
@@ -187,8 +165,6 @@ OAS31 = {
                                   "requestBody": {"content": {"application/octet-stream": {"schema": {"type": "string", "contentMediaType": "application/octet-stream"}}}}}},
     },
 }
-
-
 @pytest.mark.anyio
 async def test_oas31_path_item_refs_json_schema_2020_and_webhooks():
     result = await parse(OAS31)
@@ -202,8 +178,6 @@ async def test_oas31_path_item_refs_json_schema_2020_and_webhooks():
     put = endpoints["putfile"]
     assert put["body_content_type"] == "application/octet-stream"
     assert put["param_styles"]["request_body"]["whole"] is True
-
-
 OAS32 = {
     "openapi": "3.2.0",
     "$self": "https://api.example.com/openapi.json",
@@ -219,8 +193,6 @@ OAS32 = {
         },
     },
 }
-
-
 @pytest.mark.anyio
 async def test_oas32_query_method_additional_operations_querystring_and_self():
     result = await parse(OAS32)
@@ -231,8 +203,6 @@ async def test_oas32_query_method_additional_operations_querystring_and_self():
     assert endpoints["searchget"]["param_styles"]["params"] == {
         "name": "params", "in": "querystring", "content_type": "application/x-www-form-urlencoded",
     }
-
-
 @pytest.mark.anyio
 async def test_external_refs_are_fetched_relative_to_the_spec(monkeypatch):
     documents = {
@@ -247,27 +217,21 @@ async def test_external_refs_are_fetched_relative_to_the_spec(monkeypatch):
         "https://specs.example.com/api/paths/owners.json": {"get": {"operationId": "listOwners"}},
     }
     fetched = []
-
     async def fake_fetch(url, purpose):
         fetched.append(url)
         return json.dumps(documents[url])
-
     monkeypatch.setattr(openapi_documents, "fetch_document_text", fake_fetch)
     result = await parse("https://specs.example.com/api/openapi.json")
     endpoints = by_name(result)
     assert endpoints["addpet"]["parameters_schema"]["properties"] == {"name": {"type": "string"}}
     assert "listowners" in endpoints
     assert sorted(fetched) == sorted(documents)
-
-
 @pytest.mark.anyio
 async def test_relative_refs_in_pasted_specs_are_reported():
     spec = {"openapi": "3.0.3", "info": {"title": "t", "version": "1"}, "servers": [{"url": "https://api.example.com"}],
             "paths": {"/pets": {"post": {"operationId": "addPet", "requestBody": {"content": {"application/json": {"schema": {"$ref": "pet.json"}}}}}}}}
     result = await parse(spec)
     assert any("pet.json" in w for w in result["warnings"])
-
-
 @pytest.mark.anyio
 async def test_security_requirements_prefer_usable_schemes_and_report_the_rest():
     spec = {
@@ -290,8 +254,6 @@ async def test_security_requirements_prefer_usable_schemes_and_report_the_rest()
     assert endpoints["b"]["auth_type"] == "none" and "mutualTLS" in endpoints["b"]["warnings"][0]
     assert endpoints["c"]["auth_type"] == "api_key" and endpoints["c"]["headers"] == {"X-App": ""}
     assert endpoints["d"]["auth_type"] == "api_key"
-
-
 @pytest.mark.anyio
 async def test_duplicate_tool_names_get_distinct_suffixes():
     spec = {"openapi": "3.0.3", "info": {"title": "t", "version": "1"}, "servers": [{"url": "https://api.example.com"}],

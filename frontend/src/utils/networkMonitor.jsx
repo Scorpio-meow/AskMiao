@@ -7,12 +7,12 @@ class NetworkMonitor {
     window.addEventListener('offline', this.handleOffline.bind(this));
   }
   handleOnline() {
-    console.log('[Network] 網絡已連接');
+    console.log('[Network] 網路已連線');
     this.isOnline = true;
     this.notifyListeners('online');
   }
   handleOffline() {
-    console.log('[Network] 網絡已斷開');
+    console.log('[Network] 網路已斷線');
     this.isOnline = false;
     this.notifyListeners('offline');
   }

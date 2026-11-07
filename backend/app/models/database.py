@@ -31,7 +31,6 @@ else:
     )
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
-# 既有資料庫缺少的欄位：(資料表, 欄位, 型別, 補值 SQL)。create_all 不會替已存在的資料表加欄位
 COLUMN_UPGRADES = (
     (
         "custom_api_tools",
@@ -51,23 +50,18 @@ COLUMN_UPGRADES = (
     ("agent_skills", "allowed_user_ids", "TEXT", "UPDATE agent_skills SET allowed_user_ids = NULL"),
     ("custom_api_tools", "param_styles", "TEXT", "UPDATE custom_api_tools SET param_styles = NULL"),
     ("custom_api_tools", "workflow_definition", "TEXT", "UPDATE custom_api_tools SET workflow_definition = NULL"),
-    # 既有帳號沿用原本「權杖不得早於帳號建立時間」的規則
     ("users", "tokens_valid_after", "TIMESTAMP", "UPDATE users SET tokens_valid_after = created_at"),
     ("system_models", "reasoning_effort", "VARCHAR", "UPDATE system_models SET reasoning_effort = 'none'"),
 )
-# 每次啟動都執行的補值：回退到舊版期間建立的帳號沒有 tokens_valid_after（舊版不寫入此欄位），
-# 再升級時欄位已存在、不會重跑上面的補值，而值為 NULL 的帳號所有權杖都會被拒絕
 ROW_BACKFILLS = (
     ("users", "UPDATE users SET tokens_valid_after = created_at WHERE tokens_valid_after IS NULL"),
 )
-# 含憑證的欄位：寫入時以 TOOL_SECRETS_KEY 加密（見 app/core/tool_secrets.py）
 ENCRYPTED_TOOL_SECRET_COLUMNS = (
     ("custom_api_tools", ("headers", "auth_config")),
     ("mcp_servers", ("env_vars", "headers", "oauth_config", "oauth_tokens")),
 )
 logger = logging.getLogger(__name__)
 def encrypt_stored_tool_secrets(conn, inspector, tables) -> None:
-    """把舊版以明文 JSON 存放的工具憑證改存為加密內容；已加密的不變"""
     from app.core.tool_secrets import encrypt_json, is_encrypted
     for table, columns in ENCRYPTED_TOOL_SECRET_COLUMNS:
         if table not in tables:

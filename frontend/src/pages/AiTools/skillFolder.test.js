@@ -1,8 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { readFolderSelection } from './skillFolder';
-
 const fileAt = (path) => ({ webkitRelativePath: path });
-
 describe('skill folder selection', () => {
   it('keeps relative paths and skips repository and macOS metadata', () => {
     const selection = readFolderSelection([
@@ -18,7 +16,6 @@ describe('skill folder selection', () => {
       'pdf-processing/references/REFERENCE.md',
     ]);
   });
-
   it('returns null when nothing is left to upload', () => {
     expect(readFolderSelection([fileAt('skill/.git/HEAD')])).toBeNull();
     expect(readFolderSelection([])).toBeNull();

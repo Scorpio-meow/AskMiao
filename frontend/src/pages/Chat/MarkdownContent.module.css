@@ -6,11 +6,11 @@
   word-break: break-word;
 }
 
-.markdownBody > :first-child {
+.markdownBody> :first-child {
   margin-top: 0;
 }
 
-.markdownBody > :last-child {
+.markdownBody> :last-child {
   margin-bottom: 0;
 }
 
@@ -69,7 +69,7 @@
   margin-bottom: var(--space-1);
 }
 
-.markdownBody li > p {
+.markdownBody li>p {
   margin-bottom: var(--space-1);
 }
 

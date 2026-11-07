@@ -1,5 +1,5 @@
 name: 無障礙問題 / Accessibility issue
-description: 回報使用鍵盤、讀螢幕軟體或其他輔助科技時遇到的障礙 / Report a barrier you hit with a keyboard, screen reader, or other assistive technology
+description: 回報使用鍵盤、螢幕報讀軟體或其他輔助科技時遇到的障礙 / Report a barrier you hit with a keyboard, screen reader, or other assistive technology
 labels: ["accessibility"]
 body:
   - type: markdown
@@ -34,7 +34,7 @@ body:
     id: assistive-technology
     attributes:
       label: 輔助科技與版本 / Assistive technology and version
-      description: 例如讀螢幕軟體、放大鏡、語音控制，或只用鍵盤 / For example a screen reader, magnifier, voice control, or keyboard only
+      description: 例如螢幕報讀軟體、放大鏡、語音控制，或只用鍵盤 / For example a screen reader, magnifier, voice control, or keyboard only
     validations:
       required: true
   - type: input
@@ -47,4 +47,4 @@ body:
     id: version
     attributes:
       label: AskMiao 版本 / AskMiao version
-      placeholder: "8.2.0"
+      placeholder: "8.2.1"

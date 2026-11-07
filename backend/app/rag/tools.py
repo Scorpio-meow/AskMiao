@@ -38,26 +38,19 @@ def _tool_kind(name: str) -> str:
 def _elapsed_ms(started: float) -> int:
     return round((time.perf_counter() - started) * 1000)
 def is_web_fetch_domain_allowed(url: str) -> bool:
-    """WEB_FETCH_ALLOWED_DOMAINS 為 * 時不限制；否則主機須為清單中的網域或其子網域"""
     allowed = settings.web_fetch_allowed_domains
     if allowed == ["*"]:
         return True
     host = (urlparse(url).hostname or "").rstrip(".")
     return any(host == domain or host.endswith(f".{domain}") for domain in allowed)
-# 知識庫工具描述的快取：每次聊天與工具清單都會用到，重算需要讀出所有文件
 KB_DESCRIPTION_CACHE_SECONDS = 60.0
 _kb_description_lock = threading.Lock()
 _kb_description_cache: Optional[Tuple[float, Tuple[str, List[str]]]] = None
-
-
 def _url_host(url: str) -> str:
-    """只取主機與連接埠，不帶路徑、查詢字串或帳號資訊"""
     parsed = urlparse(url)
     if parsed.hostname is None:
         return ""
     return f"{parsed.hostname}:{parsed.port}" if parsed.port else parsed.hostname
-
-
 def _without_label_and_link_fields(content: str, label: Optional[str], links: List[str]) -> str:
     duplicates = set(links) | ({label} if label else set())
     if not duplicates:
@@ -66,45 +59,26 @@ def _without_label_and_link_fields(content: str, label: Optional[str], links: Li
     if lines and RENDERED_HEADER_PATTERN.match(lines[0]):
         lines = lines[1:]
     return "\n".join(line for line in lines if line.partition(": ")[2].strip() not in duplicates)
-
-
 def invalidate_knowledge_base_description() -> None:
     global _kb_description_cache
     with _kb_description_lock:
         _kb_description_cache = None
-
-
-# filter_and_count_records 的參數上限：date_range 由模型提供，展開出的日期字串數決定掃描成本
 MAX_DATE_RANGE_CHARS = 200
 MAX_TARGET_DATES = 93
 MAX_FILTER_RECORDS = 50
-
-
 def extract_html_text(html_content: str) -> Tuple[str, str]:
-    """回傳 (title, 內文文字)。以線性掃描取代回溯正規式：未閉合的標籤會讓那些正規式呈二次時間"""
     title, text, _ = extract_text_and_title((html_content or "")[:MAX_TEXT_CLEANUP_CHARS])
     return title, text
-
-
 def clean_html(html_content: str) -> str:
-    """清理 HTML 標籤並擷取核心文字內容"""
     return extract_html_text(html_content)[1][:4000]
-
-
 def extract_page_text(html_content: str) -> Tuple[str, str]:
     return extract_readable_text((html_content or "")[:MAX_TEXT_CLEANUP_CHARS])
-
-
 DUCKDUCKGO_LINK_CLASS = 'class="result__a"'
 DUCKDUCKGO_SNIPPET_CLASS = 'class="result__snippet"'
 HTML_HREF_PATTERN = re.compile(r'\bhref="([^"]*)"', re.IGNORECASE)
-
-
 def _is_duckduckgo_host(host: Optional[str]) -> bool:
     host = (host or "").lower()
     return host == "duckduckgo.com" or host.endswith(".duckduckgo.com")
-
-
 def _duckduckgo_target(href: str) -> Optional[str]:
     link = html.unescape(href)
     if link.startswith("//"):
@@ -116,8 +90,6 @@ def _duckduckgo_target(href: str) -> Optional[str]:
     if parsed.scheme not in ("http", "https") or not parsed.hostname or _is_duckduckgo_host(parsed.hostname):
         return None
     return link
-
-
 def _duckduckgo_snippet(page: str, position: int, block_end: int) -> str:
     snippet_class = page.find(DUCKDUCKGO_SNIPPET_CLASS, position, block_end)
     if snippet_class < 0:
@@ -129,8 +101,6 @@ def _duckduckgo_snippet(page: str, position: int, block_end: int) -> str:
     name = page[tag_start + 1:snippet_class].split()[0].lower()
     close = page.find(f"</{name}>", tag_end, block_end)
     return clean_html(page[tag_end + 1:close]) if close >= 0 else ""
-
-
 def parse_duckduckgo_results(page: str, max_results: int) -> List[Dict[str, str]]:
     results: List[Dict[str, str]] = []
     block_start = 0
@@ -150,8 +120,6 @@ def parse_duckduckgo_results(page: str, max_results: int) -> List[Dict[str, str]
         block_start = link_class + len(DUCKDUCKGO_LINK_CLASS)
         link_class = next_link_class
     return results
-
-
 def _expand_target_dates(date_range: str) -> List[str]:
     target_dates: List[str] = []
     for m in re.finditer(r'(\d{4})[-/](\d{1,2})(?:[-/](\d{1,2}))?', date_range):
@@ -172,16 +140,13 @@ def _expand_target_dates(date_range: str) -> List[str]:
             target_dates.extend([f"{y}-{mth:02d}", f"{y}年{mth}月", f"{y}年{mth:02d}月"])
     return list(dict.fromkeys(target_dates))
 class ResearchToolRegistry:
-    """研究工具註冊中心：提供知識庫檢索、聯網搜尋與網頁深入閱讀工具"""
     def __init__(self, retriever=None):
         self.retriever = retriever
     def set_retriever(self, retriever):
         self.retriever = retriever
     async def search_knowledge_base(self, query: str, top_k: int = 3, target_document: Optional[str] = None) -> Dict[str, Any]:
-        """檢索本機與企業內部知識庫（向量與 BM25 以 RRF 融合後重排，只回傳通過相關性門檻的片段，可選限定特定文件）"""
         if not self.retriever:
             return {"error": "知識庫檢索器尚未初始化", "documents": []}
-
         try:
             results = await asyncio.to_thread(self.retriever.smart_search, query, target_document)
             if not results:
@@ -194,8 +159,6 @@ class ResearchToolRegistry:
                     "documents": [],
                     "message": message
                 }
-
-            # 精確比對到網址、貼文 ID、日期的片段全部回傳，其餘依 top_k
             effective_k = max(top_k, sum(1 for r in results if r.pinned))
             docs_info = []
             for result in results[:effective_k]:
@@ -209,7 +172,6 @@ class ResearchToolRegistry:
                     "links": doc.metadata.get("links", []),
                     "content": doc.page_content.strip()
                 })
-
             return {
                 "query": query,
                 "target_document": target_document,
@@ -228,11 +190,6 @@ class ResearchToolRegistry:
         target_document: Optional[str] = None,
         limit: int = 50
     ) -> Dict[str, Any]:
-        """
-        精準統計與條件篩選知識庫中的結構化記錄/貼文/文件。
-        計算特定發布月份/日期（如 2026年8月、2025-10-22）、特定作者、關鍵字或特定文件的總筆數（精確 count），
-        並回傳符合條件的記錄清單。
-        """
         if not self.retriever or not hasattr(self.retriever, "vector_store") or not self.retriever.vector_store.documents:
             return {"error": "知識庫尚未載入", "total_count": 0, "records": []}
         if date_range and len(date_range) > MAX_DATE_RANGE_CHARS:
@@ -242,7 +199,6 @@ class ResearchToolRegistry:
         except (TypeError, ValueError):
             limit = MAX_FILTER_RECORDS
         try:
-            # 逐筆掃描整個語料，移到執行緒以免阻塞事件迴圈
             return await asyncio.to_thread(
                 self._filter_records_sync, date_range, author, keyword, target_document, limit
             )
@@ -262,7 +218,6 @@ class ResearchToolRegistry:
         keywords = [k.strip() for k in re.split(r"[,，、]", (keyword or "").lower()) if k.strip()]
         if len(target_dates) > MAX_TARGET_DATES:
             return {"error": "date_range 包含的日期過多，請縮小範圍", "total_count": 0, "records": []}
-        # 所有日期合併成一個正規式，每筆記錄只掃描一次
         dates_alternation = "|".join(re.escape(td) for td in target_dates)
         field_patterns: Dict[str, "re.Pattern[str]"] = {}
         matched_records = []
@@ -281,9 +236,7 @@ class ResearchToolRegistry:
             first = parts[0]
             content = first.page_content if len(parts) == 1 else merge_record_parts([part.page_content for part in parts])
             c_lower = content.lower()
-
             if target_dates:
-                # 記錄有發布日期欄位時只比對該欄位，避免內文提到的其他日期被算進去
                 date_fields = tuple(f for f in domain_profile.record_date_fields if f"{f}:" in content)
                 if date_fields:
                     pattern = field_patterns.get(date_fields)
@@ -296,12 +249,10 @@ class ResearchToolRegistry:
                     has_date = any(td in content for td in target_dates)
                 if not has_date:
                     continue
-
             if author:
                 auth_clean = author.lstrip("@").lower()
                 if auth_clean not in c_lower:
                     continue
-
             if keywords and not any(k in c_lower for k in keywords):
                 continue
             label = first.metadata.get("label")
@@ -329,10 +280,8 @@ class ResearchToolRegistry:
             "records": returned_records
         }
     async def web_search(self, query: str, max_results: int = 5) -> Dict[str, Any]:
-        """執行聯網搜尋以獲取外部即時資訊（優先調用 Ollama 官方搜尋 API，失敗時自動調用 DuckDuckGo 備援）"""
         ollama_key = settings.OLLAMA_API_KEY or ''
         
-
         if ollama_key:
             try:
                 search_endpoint = settings.OLLAMA_SEARCH_ENDPOINT
@@ -352,10 +301,9 @@ class ResearchToolRegistry:
                             "results": results
                         }
                     else:
-                        logger.warning(f"Ollama Web Search API 返回狀態碼 {resp.status_code}，切換至備援引擎")
+                        logger.warning(f"Ollama Web Search API 回傳狀態碼 {resp.status_code}，切換至備援引擎")
             except Exception as e:
                 logger.warning(f"Ollama Web Search 失敗: {e}，切換至備援引擎")
-
         try:
             headers = {
                 "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
@@ -388,22 +336,16 @@ class ResearchToolRegistry:
             error_id = log_and_get_error_id(logger, "DuckDuckGo 搜尋失敗", e)
             return {"query": query, "error": f"外部搜尋發生錯誤（錯誤代碼：{error_id}）", "results": []}
     async def web_fetch(self, url: str) -> Dict[str, Any]:
-        """深入讀取指定網頁全文（優先使用 Ollama Web Fetch，失敗時使用具備 SSRF 防護之 HTTP 抓取並解析 HTML）"""
         from app.core.ssrf_protection import DnsPool, safe_fetch_text, validate_url_ssrf, SSRFProtectionError
-
         if not is_web_fetch_domain_allowed(url):
             return {"url": url, "error": "該網址的網域不在 WEB_FETCH_ALLOWED_DOMAINS 允許清單內", "content": ""}
-
         is_safe, error_msg, _ = await validate_url_ssrf(url, DnsPool.USER_URL)
         if not is_safe:
-            # 拒絕原因可能含伺服器端 DNS 解析結果，只寫入日誌
             error_id = log_and_get_error_id(
                 logger, f"web_fetch 網址被 SSRF 防護拒絕: {error_msg}", SSRFProtectionError(error_msg), logging.WARNING
             )
             return {"url": url, "error": format_ssrf_rejection(error_id), "content": ""}
-
         ollama_key = settings.OLLAMA_API_KEY or ''
-
         if ollama_key and settings.web_fetch_allowed_domains == ["*"]:
             try:
                 fetch_endpoint = settings.OLLAMA_FETCH_ENDPOINT
@@ -422,7 +364,6 @@ class ResearchToolRegistry:
                         }
             except Exception as e:
                 logger.warning(f"Ollama Web Fetch 失敗: {e}，切換為直接安全連線讀取")
-
         try:
             raw_html = await safe_fetch_text(
                 url=url,
@@ -432,7 +373,6 @@ class ResearchToolRegistry:
                 max_size_bytes=5 * 1024 * 1024,
                 is_url_allowed=is_web_fetch_domain_allowed
             )
-            # HTML 解析是 CPU 密集工作，移到執行緒以免阻塞事件迴圈
             title, clean_text = await asyncio.to_thread(extract_page_text, raw_html)
             return {
                 "url": url,
@@ -446,8 +386,6 @@ class ResearchToolRegistry:
             error_id = log_and_get_error_id(logger, f"web_fetch 失敗 ({url})", e)
             return {"url": url, "error": f"無法存取該網址（錯誤代碼：{error_id}）", "content": ""}
     def _generate_knowledge_base_description(self) -> Tuple[str, List[str]]:
-        """根據知識庫收錄的每一份文件內容結構，純動態生成互不相同且專屬之主題描述；
-        結果快取 KB_DESCRIPTION_CACHE_SECONDS 秒，同時只有一個執行緒重算"""
         global _kb_description_cache
         with _kb_description_lock:
             now = time.monotonic()
@@ -464,7 +402,6 @@ class ResearchToolRegistry:
             from app.models import Document
             db = SessionLocal()
             try:
-                # 只讀需要的欄位；全文只在缺少描述、必須即時產生摘要時才載入
                 rows = db.query(Document.id, Document.filename, Document.description, Document.file_type).all()
                 for row in rows:
                     desc = row.description
@@ -477,7 +414,6 @@ class ResearchToolRegistry:
                 db.close()
         except Exception as e:
             logger.warning(f"從資料庫讀取文件描述失敗: {e}")
-
         if not doc_items and self.retriever and hasattr(self.retriever, "vector_store") and hasattr(self.retriever.vector_store, "documents"):
             seen = set()
             for d in self.retriever.vector_store.documents:
@@ -487,7 +423,7 @@ class ResearchToolRegistry:
                     desc = DocumentProcessor.generate_document_summary(src, d.page_content)
                     doc_items.append((src, desc))
         if not doc_items:
-            return "檢索已上傳之內部知識庫與專業文件資料。當使用者提供特定網址連結、作者帳號或查詢內部檔案時必須優先調用。", []
+            return "檢索已上傳之內部知識庫與專業文件資料。當使用者提供特定網址連結、作者帳號或查詢內部檔案時必須優先呼叫。", []
         doc_descriptions = []
         filenames: List[str] = []
         catalog_chars = 0
@@ -504,12 +440,11 @@ class ResearchToolRegistry:
             filenames.append(filename)
         catalog_text = "\n".join(doc_descriptions)
         return (
-            "檢索內部知識庫。目前知識庫收錄以下各具不同主題之專屬文件庫，調用時請針對相應主題檢索：\n"
+            "檢索內部知識庫。目前知識庫收錄以下各具不同主題之專屬文件庫，呼叫時請針對相應主題檢索：\n"
             f"{catalog_text}\n"
-            "當使用者提問涉及上述任一文件的專屬領域時，必須優先調用此工具。"
+            "當使用者提問涉及上述任一文件的專屬領域時，必須優先呼叫此工具。"
         ), filenames
     def get_tool_definitions(self, user_id: Optional[int] = None) -> List[Dict[str, Any]]:
-        """回傳 OpenAI / Ollama / Microsoft Foundry 相容之 Function Calling 工具規格清單（包含內部預設工具與已啟用的自訂 API Tools）"""
         kb_desc, doc_names = self._generate_knowledge_base_description()
         target_document_schema: Dict[str, Any] = {
             "type": "string",
@@ -533,7 +468,7 @@ class ResearchToolRegistry:
                             "target_document": target_document_schema,
                             "top_k": {
                                 "type": "integer",
-                                "description": "返回的最相關文件片段數量（預設 3，最大 5）",
+                                "description": "回傳的最相關文件片段數量（預設 3，最大 5）",
                                 "default": 3
                             }
                         },
@@ -545,13 +480,13 @@ class ResearchToolRegistry:
                 "type": "function",
                 "function": {
                     "name": "filter_and_count_records",
-                    "description": "精準統計與條件篩選知識庫中的結構化貼文/記錄/文件。可用於計算特定發布月份/日期（如 '2026年8月'、'2025-10-22'）、特定作者（如 '@example_user'）、特定關鍵字或特定文件的總筆數（精確 count），並可取得符合條件的完整或批次清單。當使用者詢問『總共有幾則』、『統計』、『列出某年某月所有貼文』或『某作者的全部記錄』時[必須優先調用此工具]。",
+                    "description": "精準統計與條件篩選知識庫中的結構化貼文/記錄/文件。可用於計算特定發布月份/日期（如 '2026年8月'、'2025-10-22'）、特定作者（如 '@example_user'）、特定關鍵字或特定文件的總筆數（精確 count），並可取得符合條件的完整或批次清單。當使用者詢問『總共有幾則』、『統計』、『列出某年某月所有貼文』或『某作者的全部記錄』時[必須優先呼叫此工具]。",
                     "parameters": {
                         "type": "object",
                         "properties": {
                             "date_range": {
                                 "type": "string",
-                                "description": "篩選發布日期或月份（如 '2026-08', '2026年8月', '2025-10-22', '2025年10月22日'）。優先匹配發布時間。"
+                                "description": "篩選發布日期或月份（如 '2026-08', '2026年8月', '2025-10-22', '2025年10月22日'）。優先比對發布時間。"
                             },
                             "author": {
                                 "type": "string",
@@ -564,7 +499,7 @@ class ResearchToolRegistry:
                             "target_document": target_document_schema,
                             "limit": {
                                 "type": "integer",
-                                "description": "返回清單筆數上限（預設 50，最大 200）",
+                                "description": "回傳清單筆數上限（預設 50，最大 200）",
                                 "default": 50
                             }
                         }
@@ -575,7 +510,7 @@ class ResearchToolRegistry:
                 "type": "function",
                 "function": {
                     "name": "web_search",
-                    "description": "執行外部網路搜尋，獲取最新公開即時資訊、時事新聞或內部知識庫未涵蓋的外部公開資料。",
+                    "description": "執行外部網路搜尋，取得最新公開即時資訊、時事新聞或內部知識庫未涵蓋的外部公開資料。",
                     "parameters": {
                         "type": "object",
                         "properties": {
@@ -597,7 +532,7 @@ class ResearchToolRegistry:
                 "type": "function",
                 "function": {
                     "name": "web_fetch",
-                    "description": "深入閱讀與抓取指定公開網頁的全文內容。當 web_search 返回的摘要不足以完整回答時，可調用此工具深入閱讀特定網址。",
+                    "description": "深入閱讀與抓取指定公開網頁的全文內容。當 web_search 回傳的摘要不足以完整回答時，可呼叫此工具深入閱讀特定網址。",
                     "parameters": {
                         "type": "object",
                         "properties": {
@@ -617,7 +552,6 @@ class ResearchToolRegistry:
             base_tools.extend(self._skill_tool_definitions(user_id))
         except Exception as e:
             logger.warning(f"載入 Agent Skills 失敗: {e}")
-
         try:
             from app.models.database import SessionLocal
             from app.models import CustomApiTool, McpServer
@@ -642,7 +576,6 @@ class ResearchToolRegistry:
                         "parameters": p_schema
                     }
                 })
-
             mcp_servers = db.query(McpServer).filter(McpServer.is_enabled == True).all()
             for ms in mcp_servers:
                 if ms.discovered_tools:
@@ -840,7 +773,6 @@ class ResearchToolRegistry:
             return {"error": f"執行技能腳本失敗（錯誤代碼：{error_id}）"}
     @staticmethod
     def _find_mcp_tool(db, name: str):
-        """依 Agent 看到的函式名稱找出啟用中的 MCP 伺服器與其工具原名"""
         from app.models import McpServer
         from app.services.mcp_service import mcp_function_name
         for ms in db.query(McpServer).filter(McpServer.is_enabled == True).all():
@@ -863,8 +795,6 @@ class ResearchToolRegistry:
                 return tool
         return None
     def approval_requirement(self, name: str, arguments: Optional[Dict[str, Any]] = None) -> Optional[Dict[str, str]]:
-        """需要使用者核准的工具回傳顯示資訊，其餘（含內建工具與找不到的工具）回傳 None。
-        target 說明實際送出的位置（HTTP 方法與主機、MCP 的傳輸方式與主機或指令），讓核准者知道資料會送到哪裡"""
         if name in BUILTIN_TOOL_NAMES:
             return None
         if name == SKILL_SCRIPT_TOOL_NAME:
@@ -923,7 +853,6 @@ class ResearchToolRegistry:
             error_id = log_and_get_error_id(logger, f"執行 {name} 時發生異常", e)
             return {"error": f"執行 MCP 請求失敗（錯誤代碼：{error_id}）"}
     async def execute_tool(self, name: str, arguments: Dict[str, Any], user_id: Optional[int] = None) -> Any:
-        """執行指定名稱之工具並回傳結果"""
         fields = {"tool": name, "kind": _tool_kind(name), "arg_keys": ",".join(map(str, arguments)) or None}
         started = time.perf_counter()
         try:
@@ -978,7 +907,6 @@ class ResearchToolRegistry:
         elif name in MCP_CATALOG_TOOL_NAMES:
             return await self._execute_mcp_catalog_tool(name, arguments)
         elif name.startswith(MCP_TOOL_PREFIX):
-
             try:
                 from app.models.database import SessionLocal
                 from app.models import McpServer
@@ -997,7 +925,6 @@ class ResearchToolRegistry:
                 error_id = log_and_get_error_id(logger, f"執行 MCP 工具 {name} 時發生異常", e)
                 return {"error": f"執行 MCP 工具失敗（錯誤代碼：{error_id}）"}
         else:
-
             try:
                 from app.models.database import SessionLocal
                 from app.api.api_tools import execute_api_tool, _serialize_tool_model

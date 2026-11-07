@@ -296,7 +296,6 @@ function Documents() {
       setSuccess(`文件上傳完成：成功 ${successCount} 個`);
       return;
     }
-    // 有失敗或取消時保留對話框，讓使用者看到每個檔案的結果與原因，也能重試未完成的檔案
     setUploadFinished(true);
   };
   const cancelAllUploads = () => {
@@ -444,7 +443,6 @@ function Documents() {
     }
   };
   const requestRegenerateSummary = (doc) => {
-    // 已有大綱（可能是手動編輯過的）時先確認，避免被直接覆蓋
     if (doc.description) {
       setPendingRegenerate(doc);
     } else {
@@ -472,7 +470,6 @@ function Documents() {
   const failedItems = uploadItems.filter((it) => it.status === 'failed');
   const pendingUploadCount = uploadItems.filter((it) => it.status !== 'success').length;
   const warnedItems = uploadItems.filter((it) => it.status === 'success' && it.warning);
-  // 只有第一次載入時顯示整頁載入；之後重新整理保留目前內容與捲動位置
   if (!loaded) {
     return (
       <div className={styles.loadingState}>
@@ -653,7 +650,6 @@ function Documents() {
           </ul>
         )}
       </div>
-      {/* 上傳文件 Dialog */}
       <Dialog
         open={uploadDialog}
         onClose={uploadLoading ? undefined : closeUploadDialog}
@@ -666,7 +662,7 @@ function Documents() {
               <Icon name="upload" size={20} />
             </div>
           }
-          subtitle="支援將多種格式檔案分塊、向量化並存入 RAG 檢索庫"
+          subtitle="支援將多種格式檔案切塊、向量化並存入 RAG 檢索庫"
           onClose={closeUploadDialog}
           closeDisabled={uploadLoading}
         >
@@ -681,7 +677,6 @@ function Documents() {
             multiple
             onChange={handleFileSelect}
           />
-          {/* 拖曳上傳放置區，也可以用鍵盤開啟檔案選擇 */}
           <button
             type="button"
             className={`${styles.dropZone} ${isDragging ? styles.dropZoneActive : ''}`}
@@ -724,7 +719,6 @@ function Documents() {
               {`檔案都已入庫，但有 ${warnedItems.length} 個檔案未能以結構化資料切分，原因列在各檔案下方。`}
             </Alert>
           )}
-          {/* 已選擇檔案佇列 */}
           {selectedFiles && selectedFiles.length > 0 && (
             <div className={styles.selectedFilesBox}>
               <div className={styles.fileQueueHeader}>
@@ -797,7 +791,6 @@ function Documents() {
                       {item.status === 'success' && item.warning && (
                         <p className={styles.fileWarning}>{item.warning}</p>
                       )}
-                      {/* 進度條 */}
                       {item.status === 'uploading' && (
                         <div>
                           <div
@@ -811,7 +804,7 @@ function Documents() {
                             <div className={styles.progressFill} style={{ width: `${item.progress}%` }} />
                           </div>
                           <div className={styles.progressMeta}>
-                            <span>{item.progress < 100 ? '上傳中...' : '正在分塊與建立向量索引...'}</span>
+                            <span>{item.progress < 100 ? '上傳中...' : '正在切塊與建立向量索引...'}</span>
                             <span>{item.progress}%</span>
                           </div>
                         </div>
@@ -855,7 +848,6 @@ function Documents() {
           </div>
         </DialogActions>
       </Dialog>
-      {/* 清除確認 Dialog */}
       <ConfirmDialog
         open={confirmRemoveOpen}
         title="確認清空待上傳清單？"
@@ -865,7 +857,6 @@ function Documents() {
         onConfirm={confirmRemoveSelectedFiles}
         onCancel={() => setConfirmRemoveOpen(false)}
       />
-      {/* 刪除文件確認 */}
       <ConfirmDialog
         open={Boolean(pendingDelete)}
         title="刪除這份文件？"
@@ -875,7 +866,6 @@ function Documents() {
         onConfirm={handleConfirmDelete}
         onCancel={() => setPendingDelete(null)}
       />
-      {/* 重新生成大綱確認 */}
       <ConfirmDialog
         open={Boolean(pendingRegenerate)}
         title="重新生成 AI 大綱？"
@@ -884,7 +874,6 @@ function Documents() {
         onConfirm={() => handleRegenerateSummary(pendingRegenerate.id, pendingRegenerate.filename)}
         onCancel={() => setPendingRegenerate(null)}
       />
-      {/* 重建索引 Dialog */}
       <Dialog
         open={rebuildDialog}
         onClose={rebuildLoading ? undefined : () => setRebuildDialog(false)}

@@ -2,7 +2,7 @@
 
 [繁體中文](llms.txt) | [English](llms_en.txt)
 
-> 會自己查證、答案附出處的企業知識庫對話系統（版本 8.2.0）。FastAPI 後端以混合檢索（FAISS + BM25 + Cross-Encoder）與 ReAct 研究 Agent 回答問題，答案以 `[n]` 對應實際引用的片段或網頁；React 前端以 SSE 串流顯示研究歷程與引用來源。
+> 會自己查證、答案附出處的企業知識庫對話系統（版本 8.2.1）。FastAPI 後端以混合檢索（FAISS + BM25 + Cross-Encoder）與 ReAct 研究 Agent 回答問題，答案以 `[n]` 對應實際引用的片段或網頁；React 前端以 SSE 串流顯示研究歷程與引用來源。
 
 本檔給 AI Agent 使用：修改程式前先讀「系統約束」，修改後依「驗證」執行檢查。
 
@@ -34,19 +34,23 @@
 - [backend/app/core/limits.py](backend/app/core/limits.py): 資源上限常數與 `ExtractionLimits`（管理員上傳與聊天附件各一組解析預算）；[backend/app/core/body_limit.py](backend/app/core/body_limit.py): 請求本文上限中介層
 - [backend/app/core/html_text.py](backend/app/core/html_text.py): 線性時間的 HTML 文字抽取
 - [backend/app/core/error_response.py](backend/app/core/error_response.py): 對外錯誤代碼與 `SafeClientError`
-- [backend/app/core/security_logging.py](backend/app/core/security_logging.py): 日誌雙層脫敏
+- [backend/app/core/security_logging.py](backend/app/core/security_logging.py): 日誌雙層遮蔽
 - [backend/app/services/mcp_service.py](backend/app/services/mcp_service.py): MCP stdio / HTTP 用戶端、`build_stdio_env`、`INHERITED_ENV_VARS`、內建範本與子行程樹終止
 - [backend/app/models/database.py](backend/app/models/database.py): 引擎與 `upgrade_schema()`（替既有資料表補欄位並回填，再加密明文的工具憑證）
 - [backend/app/services/openapi_parser.py](backend/app/services/openapi_parser.py): Swagger 2.0、OpenAPI 3.0～3.2 解析與工具名稱產生；`openapi_documents.py`（載入、外部 `$ref`、拒絕 YAML 別名）、`openapi_schema.py`（schema 正規化）、`openapi_overlay.py`（Overlay）、`jsonpath.py`（RFC 9535）、`arazzo.py`（Arazzo 工作流程匯入與執行）、`api_tool_request.py`（依 style 序列化參數與本文）
 - [backend/app/services/document_processor.py](backend/app/services/document_processor.py) 與 [backend/app/services/pdf_service.py](backend/app/services/pdf_service.py): 文字擷取、PDF OCR、AI 摘要
-- [backend/app/services/system_models.py](backend/app/services/system_models.py): 文件摘要與 PDF OCR 的系統模型（管理員指定的共用連線與模型，存於 `system_models` 資料表）；`page_ocr()` 讓文件執行緒經主事件迴圈呼叫模型
-- [backend/app/api/](backend/app/api/): 路由；`documents`、`api_tools`、`mcp`、`admin` 需要管理員
+- [backend/app/api/skills.py](backend/app/api/skills.py) 與 [backend/app/services/agent_skills.py](backend/app/services/agent_skills.py): Agent Skills 的上傳（zip、`SKILL.md` 或資料夾，資料夾中每個含 `SKILL.md` 的目錄各裝成一個技能）、路徑檢查、安裝與 `run_skill_script`（在主機上以後端帳號執行腳本，不是沙箱）
+- [backend/app/api/llm_connections.py](backend/app/api/llm_connections.py) 與 [backend/app/services/llm_connections.py](backend/app/services/llm_connections.py): 各帳號的 API 連線與管理員的共用連線；金鑰以 `TOOL_SECRETS_KEY` 加密，非管理員的連線位址經 SSRF 驗證並固定 IP
+- [backend/app/services/mcp_oauth.py](backend/app/services/mcp_oauth.py): 遠端 MCP 伺服器的 OAuth（中繼資料探索、PKCE、動態註冊與 Client ID Metadata Document）
+- [backend/app/services/system_models.py](backend/app/services/system_models.py): 文件摘要與 PDF OCR 的系統模型（管理員指定的共用連線與模型，存放在 `system_models` 資料表）；`page_ocr()` 讓文件執行緒經主事件迴圈呼叫模型
+- [backend/app/api/](backend/app/api/): 路由；`documents`、`api_tools`、`mcp`、`skills`、`admin` 需要管理員（例外見系統約束 8）
 - [backend/app/api/auth.py](backend/app/api/auth.py): 登入（失敗節流）、註冊（`ALLOW_REGISTRATION=false` 時回傳 `403`）、`GET /api/auth/registration`（不需登入，回傳 `{"enabled": bool}`）、改密碼（清除重新整理權杖 Cookie）、登出（只驗簽章）
 - [backend/app/api/api_tools.py](backend/app/api/api_tools.py): 自訂 API 工具的管理端點與 `execute_http_api_tool()`（只接受 `parameters_schema` 宣告的參數，工具網址中固定的查詢參數不可覆寫）
 - [backend/scripts/create_user.py](backend/scripts/create_user.py): 建立帳號（含第一位管理員），`--username`、`--email` 必填，`--admin` 建立管理員，密碼以互動方式輸入；在 `backend/` 執行
 - [backend/requirements.in](backend/requirements.in): 後端的直接依賴；`requirements.txt` 由它以 `uv pip compile` 產生並鎖定版本與雜湊
 - [backend/docker-compose.yml](backend/docker-compose.yml) 與 [backend/init-app-role.sh](backend/init-app-role.sh): 選用的 PostgreSQL 17；需要 `POSTGRES_PASSWORD`、`POSTGRES_APP_USER`、`POSTGRES_APP_PASSWORD`，後端以非超級使用者連線
 - [backend/app/__init__.py](backend/app/__init__.py): 後端版本號 `__version__`
+- [deploy/](deploy/): Docker Compose 部署（PostgreSQL、後端、nginx 前端）；`gen-env.sh` 產生 `deploy/.env`，步驟見 [docs/deployment.md](docs/deployment.md)
 
 ### 前端
 
@@ -58,7 +62,7 @@
 - [frontend/src/pages/Chat/](frontend/src/pages/Chat/): 聊天頁、研究歷程（`ResearchTraceBlock`）、引用來源（`SourceBadges`）、工具核准卡片（`ToolApprovalCard`）與 `remarkGfmSafe`（自動連結轉換有掃描量上限的 remark-gfm）
 - [frontend/vite.config.js](frontend/vite.config.js): 開發與預覽伺服器只監聽 `localhost`、反框架標頭、`/__open-in-editor` 只限本機；`bun run build` 時把 CSP `<meta>` 寫入 `index.html`（內嵌腳本以雜湊列入，`connect-src` 依 `VITE_API_BASE`／`VITE_API_URL`）
 - [frontend/bun.lock](frontend/bun.lock): 鎖定的前端相依套件；`frontend/bunfig.toml` 設定 `frozenLockfile = true`
-- [frontend/src/pages/AiTools/](frontend/src/pages/AiTools/): 自訂 API 工具、OpenAPI 匯入與 MCP 伺服器管理；`index.jsx` 是工具清單，五個對話框各自一個元件（開啟時才掛載），表單與 API 資料的轉換在 `forms.js`
+- [frontend/src/pages/AiTools/](frontend/src/pages/AiTools/): 自訂 API 工具、OpenAPI 匯入、MCP 伺服器與 Agent Skills 管理；`index.jsx` 是工具清單，每個對話框各自一個元件（開啟時才掛載），表單與 API 資料的轉換在 `forms.js`
 - [frontend/src/components/ui/](frontend/src/components/ui/): 以原生 `<dialog>` 與 ARIA 實作的元件庫
 
 ### 介紹頁
@@ -67,18 +71,18 @@
 
 ## 系統約束
 
-1. **chunk_id 是片段唯一的鍵**：`rag_chunks`、FAISS 與 BM25 一律以 chunk_id 對應。新增、刪除片段都經由 `HybridContextualRAG` 的方法，在 `vector_store.lock` 內同步更新三者；計算向量在鎖外進行，不要在持鎖時做耗時的工作；檢索與寫入以 `asyncio.to_thread` 在背景執行緒執行。
+1. **chunk_id 是片段唯一的鍵**：`rag_chunks`、FAISS 與 BM25 一律以 chunk_id 對應。新增、刪除片段都經由 `HybridContextualRAG` 的方法，在 `vector_store.lock` 內同步更新三者；向量在鎖外計算，不要在持鎖時做耗時的工作；檢索與寫入以 `asyncio.to_thread` 在背景執行緒執行。
 2. **斷詞規則改變時遞增 `TOKENIZER_RULES_VERSION`**：簽章不符會觸發 BM25 自動重建，唯讀評估則拒絕執行。
-3. **新設定沒有寫死的預設值**：新增的設定以必填為原則，範例值寫在 `backend/.env.example`，並同步更新 `docs/configuration.md`（中英）、README 設定表與下方「驗證」的環境變數清單。
+3. **新設定沒有寫死的預設值**：新增的設定以必填為原則，範例值寫在 `backend/.env.example`，並同步更新 `docs/configuration.md`（中英）、README 的必填設定清單與下方「驗證」的環境變數清單。
 4. **工具結果是不可信資料**：交給模型前一律經 `ResearchSession.wrap_tool_output()` 包裝；新增內建工具時，在 `ResearchSession.record_tool_output()` 決定是否配引用編號、是否記為網址來源。
 5. **聯網工具的三道限制**：`web_fetch` 先經 `ResearchSession.refuse_tool_call()`（網址來源、`BLOCK_WEB_TOOLS_AFTER_KB`），再經 `is_web_fetch_domain_allowed()` 與 SSRF 驗證。
 6. **出站請求先驗證並固定 IP**：使用者輸入驅動的外部請求以 `httpx.AsyncClient(transport=SSRFSafeTransport(<DnsPool>), follow_redirects=False)` 送出並以 `send_following_redirects()` 跟隨轉址（不讀取轉址回應的本文），或使用 `safe_fetch_text()`；使用者提供的網址用 `DnsPool.USER_URL`，管理員設定的端點用 `DnsPool.CONFIGURED_ENDPOINT`。只呼叫 `validate_url_ssrf()` 後自行連線會被 DNS rebinding 繞過。SSRF 拒絕原因只寫日誌，對外以 `format_ssrf_rejection()` 回傳錯誤代碼。
-7. **錯誤只回傳錯誤代碼**：未預期例外經 `log_and_get_error_id()` 或 `build_error_payload()` 轉為代碼，REST、SSE 與工具結果皆同；只描述使用者輸入的驗證錯誤以 `SafeClientError` 原樣回傳。
-8. **管理端點依賴 `get_current_admin_user`**：`/api/documents`、`/api/admin`、`/api/api-tools`、`/api/mcp` 的每個端點（含查詢）；`backend/tests/test_tool_admin_permissions.py` 會逐一列舉工具路由檢查。身分與權限一律取自 `resolve_token_user()` 讀到的資料庫帳號，不讀權杖內的 `is_admin`、`role` 聲明。
-9. **MCP 子行程環境由 `build_stdio_env()` 組成**：只繼承 `INHERITED_ENV_VARS` 與伺服器的 `env_vars`；子行程在每次新建的空暫存目錄執行，自成程序群組，關閉時終止整棵樹。
+7. **錯誤只回傳錯誤代碼**：未預期例外經 `log_and_get_error_id()` 或 `build_error_payload()` 轉為代碼，REST、SSE 與工具結果都一樣；只描述使用者輸入的驗證錯誤以 `SafeClientError` 原樣回傳。
+8. **管理端點依賴 `get_current_admin_user`**：`/api/documents`、`/api/admin`、`/api/api-tools`、`/api/mcp`、`/api/skills` 的每個端點（含查詢），例外只有 `GET /api/skills/enabled`（需要登入）與 MCP OAuth 的 `GET /api/mcp/oauth/callback`、`GET /api/mcp/oauth/client-metadata.json`（公開，掛在 `oauth_callback_router`）；`backend/tests/test_tool_admin_permissions.py` 會逐一列舉工具路由檢查。身分與權限一律取自 `resolve_token_user()` 讀到的資料庫帳號，不讀權杖內的 `is_admin`、`role` 聲明。
+9. **MCP 子行程環境由 `build_stdio_env()` 組成**：只繼承 `INHERITED_ENV_VARS` 與伺服器的 `env_vars`；子行程在每次新建的空暫存目錄執行，自成行程群組，關閉時終止整棵樹。
 10. **來源只列被引用的條目**：`sources_detail` 由 `ResearchSession.cited_sources()` 依答案中的 `[n]` 產生。
 11. **SSE 事件約定**：`start` → `step_start` /（需要核准時 `approval_required` / `approval_resolved`）/ `step_end` → `token` → `sources` → `done`，例外時 `error`。後端 `app/api/chat.py` 與前端 `useChat.ts`、`sse.ts` 依此約定，修改事件名稱或欄位時三處一起改。
-12. **介紹頁同步**：修改 `rag/research_session.py`、`rag/retrievers/hybrid.py`、`rag/tools.py` 與 `core/config.py` 的 `WEB_FETCH_ALLOWED_DOMAINS`、`core/ssrf_protection.py`、`services/mcp_service.py` 的 `INHERITED_ENV_VARS`、`core/login_throttle.py`、`core/jwt_auth.py` 的 `tokens_valid_after` 比對與 `core/tool_secrets.py` 的遮蔽規則時，同步更新 `site/index.html` 與 `site/main.js`。
+12. **介紹頁同步**：修改 `rag/research_session.py`、`rag/retrievers/hybrid.py`、`rag/tools.py` 與 `core/config.py` 的 `WEB_FETCH_ALLOWED_DOMAINS`、`core/ssrf_protection.py`、`services/mcp_service.py` 的 `INHERITED_ENV_VARS`、`rag/tool_approval.py` 與 `rag/agent.py` 的核准規則與逾時、`core/limits.py` 的上限、`core/login_throttle.py` 與 `api/auth.py` 的登入節流、`core/jwt_auth.py` 的 `tokens_valid_after` 比對與 `core/tool_secrets.py` 的遮蔽規則時，同步更新 `site/index.html` 與 `site/main.js`（清單與 `.github/CONTRIBUTING.md` 相同）。
 13. **文件中英雙語**：README、CHANGELOG、`docs/`、ADR 與 `.github/` 的社群檔案（`CONTRIBUTING`、`CODE_OF_CONDUCT`、`SECURITY`、`ACCESSIBILITY`）都有 `_en` 版本，兩份一起更新；變更記在 `CHANGELOG.md` 的 `[Unreleased]`。
 14. **版本號一起更新**：`backend/app/__init__.py` 的 `__version__`、`frontend/package.json` 的 `version` 與 `CHANGELOG.md`；新增必填設定、改變 API 權限或索引格式屬於破壞性變更，升主版號。
 15. **臺灣用語**：使用者看得到的文字使用臺灣繁體中文用語，例如使用者名稱、電子郵件、權杖、字元。
@@ -86,23 +90,25 @@
 17. **資源上限集中在 `app/core/limits.py`**：新增或調整上限時改這裡，並同步更新 `docs/configuration.md`（中英）的「資源上限」一節；不要在各模組另寫魔術數字。文件文字抽取一律傳入 `ExtractionLimits`：管理員上傳用 `ADMIN_UPLOAD_EXTRACTION_LIMITS`，聊天附件用 `CHAT_ATTACHMENT_EXTRACTION_LIMITS`。
 18. **工具憑證一律加密存放**：`custom_api_tools.headers`、`auth_config` 與 `mcp_servers.env_vars`、`headers` 以 `tool_secrets.encrypt_json()` 寫入、`decrypt_json()` 讀出；管理 API 的回應經 `mask()` 遮蔽，更新經 `merge_masked()` 沿用遮蔽欄位的原值。新增含憑證的欄位時，一併加進 `database.py` 的 `ENCRYPTED_TOOL_SECRET_COLUMNS`。
 19. **權杖有效性看 `users.tokens_valid_after`**：變更密碼一律經 `crud_user.update_user_password()`（把此欄位更新為當下，先前簽發的權杖全部失效）；建立帳號一律經 `crud_user.create_user()`，它把此欄位設為建立時間；`upgrade_schema()` 每次啟動時替此欄位為 NULL 的帳號補值。
-20. **相依套件鎖定**：後端新增或升級套件時修改 `backend/requirements.in`，再於 `backend/` 執行 `uv pip compile requirements.in --universal --python-version 3.12 --generate-hashes -o requirements.txt`，不要手改 `requirements.txt`；前端的 `package.json` 與 `bun.lock` 一起更新並提交（`frozenLockfile = true`）。
-21. **Markdown 一律經 `remarkGfmSafe`**：渲染模型回答等 Markdown 時使用 `frontend/src/pages/Chat/remarkGfmSafe.ts`，不要直接使用 `remark-gfm`；後者的自動連結轉換在一長串「.」「-」「_」或重複的「www.」上耗時隨長度平方成長。升級 remark-gfm 後執行 `remarkGfmSafe.test.tsx`，它比對一般內容的輸出並檢查病態輸入的耗時。
+20. **相依套件鎖定**：後端新增或升級套件時修改 `backend/requirements.in`，再到 `backend/` 執行 `uv pip compile requirements.in --universal --python-version 3.12 --generate-hashes -o requirements.txt`，不要手改 `requirements.txt`；前端的 `package.json` 與 `bun.lock` 一起更新並提交（`frozenLockfile = true`）。
+21. **Markdown 一律經 `remarkGfmSafe`**：顯示模型回答等 Markdown 時使用 `frontend/src/pages/Chat/remarkGfmSafe.ts`，不要直接使用 `remark-gfm`；後者的自動連結轉換在一長串「.」「-」「_」或重複的「www.」上耗時隨長度平方成長。升級 remark-gfm 後執行 `remarkGfmSafe.test.tsx`，它比對一般內容的輸出並檢查病態輸入的耗時。
 
 ## 驗證
 
-- **後端測試**：在 `backend/` 執行 `python -m pytest`。版本庫沒有 `backend/.env`，必填設定需以環境變數提供：`ENABLE_WEB_SEARCH=true`、`CONVERSATION_HISTORY_MESSAGES=6`、`DATABASE_URL`（SQLite，Windows 請用 `sqlite:///C:/...` 形式）、`RRF_K=60`、`RERANK_RELEVANCE_THRESHOLD=0.2`、`WEB_FETCH_ALLOWED_DOMAINS=*`、`BLOCK_WEB_TOOLS_AFTER_KB=true`、`DOMAIN_PROFILE_PATH=config/domain_profile.json`、`ALLOW_REGISTRATION=false`、`LOGIN_MAX_FAILURES_PER_ACCOUNT=5`、`LOGIN_MAX_FAILURES_PER_ADDRESS=20`、`LOGIN_FAILURE_WINDOW_SECONDS=900`、`LOGIN_LOCKOUT_SECONDS=900`、`HOST=127.0.0.1`、`RELOAD=false`、`COOKIE_SECURE=false`、`ENABLE_API_DOCS=false`，以及有效的 Fernet 金鑰 `TOOL_SECRETS_KEY`（以 `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"` 產生）。匯入 `jwt_auth.py` 時會載入 `backend/keys/` 的 RSA 金鑰（不存在時自動產生），該目錄必須可寫入。以舊版結構建立的 SQLite 測試資料庫請先刪除，避免缺少新欄位。部分測試會載入實際的嵌入與重排模型；Windows 使用者目錄含非 ASCII 字元時加上 `--basetemp=<ASCII 路徑>`，否則 FAISS 寫檔失敗。
+- **後端測試**：在 `backend/` 執行 `python -m pytest`。版本庫沒有 `backend/.env`，必填設定需以環境變數提供：`ENABLE_WEB_SEARCH=true`、`CONVERSATION_HISTORY_MESSAGES=6`、`DATABASE_URL`（拋棄式的 SQLite，Windows 請用 `sqlite:///C:/...` 形式；測試會清空 `agent_skills` 等資料表，不要指向開發或正式資料庫）、`LOG_DIR=logs`、`SKILLS_DIR=data/skills`、`RRF_K=60`、`RERANK_RELEVANCE_THRESHOLD=0.2`、`WEB_FETCH_ALLOWED_DOMAINS=*`、`BLOCK_WEB_TOOLS_AFTER_KB=true`、`DOMAIN_PROFILE_PATH=config/domain_profile.json`、`ALLOW_REGISTRATION=false`、`LOGIN_MAX_FAILURES_PER_ACCOUNT=5`、`LOGIN_MAX_FAILURES_PER_ADDRESS=20`、`LOGIN_FAILURE_WINDOW_SECONDS=900`、`LOGIN_LOCKOUT_SECONDS=900`、`HOST=127.0.0.1`、`RELOAD=false`、`COOKIE_SECURE=false`、`ENABLE_API_DOCS=false`，以及有效的 Fernet 金鑰 `TOOL_SECRETS_KEY`（以 `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"` 產生）。匯入 `jwt_auth.py` 時會載入 `backend/keys/` 的 RSA 金鑰（不存在時自動產生），該目錄必須可寫入。以舊版結構建立的 SQLite 測試資料庫請先刪除，避免缺少新欄位。部分測試會載入實際的嵌入與重排模型；Windows 使用者目錄含非 ASCII 字元時加上 `--basetemp=<ASCII 路徑>`，否則 FAISS 寫檔失敗。
 - **前端檢查**：在 `frontend/` 執行 `bun run test --run`（Vitest）、`bun run lint`（只涵蓋 JS / JSX）與 `bun x tsc --noEmit`。
 - **檢索品質**：`python scripts/evaluate_retrieval.py --golden <問答集> --k 1 3 5 --relevance-thresholds 0.1 0.2 0.3`（唯讀，可與後端同時執行）；改動檢索程式時以 `--corpus eval/corpus --golden eval/corpus_golden.jsonl` 跑內建基準比較前後的片段層級 nDCG 與候選召回。
 
 ## 詳細文件
 
-- [README](README.md): 功能、快速開始、建立第一位管理員、疑難排解
+- [README](README.md): 功能、快速開始、建立第一位管理員
 - [API 參考](docs/api.md): 端點權限、請求與回應格式、SSE 事件、已知限制
 - [系統架構](docs/architecture.md): 啟動流程、資料模型、檢索管線、Agent 迴圈、LLM 呼叫層、安全設計
 - [設定參考](docs/configuration.md): 每個環境變數的預設值與作用、供應商路由、門檻校準、資源上限
-- [升級指南](docs/upgrading.md): 2.x 升級到 3.0.0、3.0.0 升級到 4.0.0、4.0.0 升級到 5.0.0、5.0.0 升級到 6.0.0、6.0.0 升級到 7.0.0、7.0.0 升級到 8.0.0、8.0.x 升級到 8.1.0、8.1.0 升級到 8.2.0 的步驟與回退
-- [架構決策紀錄](docs/adr/README.md): ADR-0001 至 ADR-0006
+- [部署指南](docs/deployment.md): Docker Compose 部署、HTTPS、備份與更新
+- [疑難排解](docs/troubleshooting.md): 啟動、登入、前端與工具的常見錯誤
+- [升級指南](docs/upgrading.md): 2.x 升級到 3.0.0、3.0.0 升級到 4.0.0、4.0.0 升級到 5.0.0、5.0.0 升級到 6.0.0、6.0.0 升級到 7.0.0、7.0.0 升級到 8.0.0、8.0.x 升級到 8.1.0、8.1.0 升級到 8.2.0、8.2.0 升級到 8.2.1 的步驟與回退
+- [架構決策紀錄](docs/adr/README.md): ADR-0001 至 ADR-0007
 - [版本變更紀錄](CHANGELOG.md): 各版本變更
 - [貢獻指南](.github/CONTRIBUTING.md): 分支與 Commit 訊息、測試、相依套件、文件雙語與介紹頁同步
 - [安全政策](.github/SECURITY.md): 支援的版本、私人漏洞通報與範圍

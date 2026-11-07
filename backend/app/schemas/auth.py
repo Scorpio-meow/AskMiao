@@ -10,14 +10,12 @@ def validate_username(value: str) -> str:
         raise ValueError('使用者名稱只能包含中文、英文字母、數字、底線和連字號')
     return value
 class UserRegister(BaseModel):
-    username: str = Field(..., min_length=3, max_length=50, description="用戶名")
+    username: str = Field(..., min_length=3, max_length=50, description="使用者名稱")
     email: EmailStr = Field(..., description="電子郵件地址")
     password: str = Field(..., min_length=8, max_length=MAX_PASSWORD_CHARS, description="密碼")
-
     @validator('username')
     def username_alphanumeric(cls, v):
         return validate_username(v)
-
     class Config:
         json_schema_extra = {
             "example": {
@@ -27,7 +25,7 @@ class UserRegister(BaseModel):
             }
         }
 class UserLogin(BaseModel):
-    username: str = Field(..., max_length=MAX_LOGIN_IDENTIFIER_CHARS, description="用戶名或電子郵件")
+    username: str = Field(..., max_length=MAX_LOGIN_IDENTIFIER_CHARS, description="使用者名稱或電子郵件")
     password: str = Field(..., max_length=MAX_PASSWORD_CHARS, description="密碼")
     
     class Config:
@@ -38,9 +36,9 @@ class UserLogin(BaseModel):
             }
         }
 class Token(BaseModel):
-    access_token: str = Field(..., description="訪問令牌")
-    refresh_token: str = Field(..., description="刷新令牌")
-    token_type: str = Field(default="bearer", description="令牌類型")
+    access_token: str = Field(..., description="存取權杖")
+    refresh_token: str = Field(..., description="重新整理權杖")
+    token_type: str = Field(default="bearer", description="權杖類型")
     expires_in: Optional[int] = Field(default=1800, description="過期時間(秒)")
     
     class Config:
@@ -73,7 +71,7 @@ class UserUpdate(BaseModel):
             }
         }
 class PasswordChange(BaseModel):
-    current_password: str = Field(..., max_length=MAX_PASSWORD_CHARS, description="當前密碼")
+    current_password: str = Field(..., max_length=MAX_PASSWORD_CHARS, description="目前的密碼")
     new_password: str = Field(..., min_length=8, max_length=MAX_PASSWORD_CHARS, description="新密碼")
     confirm_password: str = Field(..., max_length=MAX_PASSWORD_CHARS, description="確認新密碼")
     

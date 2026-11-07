@@ -4,6 +4,7 @@
 
 > 本文件說明如何把既有部署升級到新版本，並附上回退步驟與常見問題。每個版本的完整變更見 [CHANGELOG](../CHANGELOG.md)。
 
+- [從 8.2.0 升級到 8.2.1](#從-820-升級到-821)
 - [從 8.1.0 升級到 8.2.0](#從-810-升級到-820)
 - [從 8.0.x 升級到 8.1.0](#從-80x-升級到-810)
 - [從 7.0.0 升級到 8.0.0](#從-700-升級到-800)
@@ -41,6 +42,12 @@
 
 ---
 
+## 從 8.2.0 升級到 8.2.1
+
+適用於從 8.2.0 升級到 8.2.1（2026-11-07），完整變更見 [CHANGELOG](../CHANGELOG.md#821---2026-11-07)。這一版只修正 Claude 輸出 token 上限的錯誤訊息並整理文件：不需要修改 `.env`，資料庫與 API 都沒有變更，換成新版程式即可。回退到 8.2.0 時換回舊版程式即可。
+
+---
+
 ## 從 8.1.0 升級到 8.2.0
 
 適用於從 8.1.0 升級到 8.2.0（2026-11-07），完整變更見 [CHANGELOG](../CHANGELOG.md#820---2026-11-07)。這一版不需要修改 `.env`，資料庫也沒有變更。
@@ -72,7 +79,7 @@
 
 ## 從 7.0.0 升級到 8.0.0
 
-適用於從 7.0.0 升級到 8.0.0（2026-11-02），完整變更見 [CHANGELOG](../CHANGELOG.md#800---2026-11-02)；`.env` 不再設定模型商的遷移步驟也列在那裡。本節列出 `.env` 新增的必填設定。
+適用於從 7.0.0 升級到 8.0.0（2026-11-02），完整變更見 [CHANGELOG](../CHANGELOG.md#800---2026-11-02)；`.env` 不再設定模型供應商後的遷移步驟也列在那裡。
 
 ### `.env` 的新必填設定
 
@@ -80,13 +87,13 @@
 |---|---|---|---|
 | `LOG_DIR` | 無；`app.log` 寫在 `backend/logs/`，`security.log` 寫在啟動目錄下的 `logs/` | 必填，`app.log` 與 `security.log` 的目錄，相對路徑以 `backend/` 為基準 | 在 `.env` 加上 `LOG_DIR=logs`，否則後端無法啟動 |
 
-以 Docker 部署時，在 `deploy/.env` 加上同一行：容器內的位置是 `/app/logs`，與 `deploy/docker-compose.yml` 的 `backend_logs` 資料卷相同。
+以 Docker 部署時，在 `deploy/.env` 加上同一行：容器內的位置是 `/app/logs`，與 `deploy/docker-compose.yml` 的 `backend_logs` volume 相同。
 
 ---
 
 ## 從 6.0.0 升級到 7.0.0
 
-適用於從 6.0.0 升級到 7.0.0（2026-10-31），變更見 [CHANGELOG](../CHANGELOG.md#700---2026-10-31)。這一版把聊天改為使用各帳號的 API 連線，資料庫新增 `llm_connections` 資料表（啟動時自動建立）；後端與前端的相依套件與 6.0.0 相同，`.env` 也沒有新的必填設定。需要動手的是替每個帳號準備 API 連線、調整自行串接 API 的客戶端，以及重新建置前端；建議升級後執行一次重建索引，讓既有文件套用這一版的擷取與切塊修正。
+適用於從 6.0.0 升級到 7.0.0（2026-10-31），變更見 [CHANGELOG](../CHANGELOG.md#700---2026-10-31)。這一版把聊天改為使用各帳號的 API 連線，資料庫新增 `llm_connections` 資料表（啟動時自動建立）；後端與前端的相依套件與 6.0.0 相同，`.env` 也沒有新的必填設定。需要動手的是替每個帳號準備 API 連線、調整自行串接 API 的用戶端，以及重新建置前端；建議升級後執行一次重建索引，讓既有文件套用這一版的擷取與切塊修正。
 
 ### 7.0.0 的變更與需要的動作
 
@@ -96,11 +103,11 @@
 | `.env` 的 LLM 設定 | 聊天、AI 摘要、`GET /api/tags` 與 PDF 掃描頁 OCR 共用 | 只用於 AI 摘要、`GET /api/tags` 與 PDF 掃描頁 OCR | 需要這些功能時保留，不必刪除 |
 | Claude 的輸出 token 上限 | `.env` 的 `ANTHROPIC_MAX_TOKENS` | 每個 Claude 連線（`anthropic`，或 Foundry 上的 Claude 部署）必填「輸出 token 上限」，與模型的輸出上限取較小值；`ANTHROPIC_MAX_TOKENS` 只用於系統模型 | 建立 Claude 連線時填入，可沿用 `ANTHROPIC_MAX_TOKENS` 的值 |
 | 個人連線的 API 位址 | 無 | 一般帳號的個人連線只能指向公開位址；管理員的個人連線與共用連線不受限制 | 內部網路的服務（例如本機 Ollama）由管理員建成共用連線 |
-| `POST /api/chat/send` 與 `GET /api/chat/models` | `model_name` 選填，未帶時用 `MODEL_NAME`；`GET /api/chat/models` 回傳 `.env` 的模型清單 | `connection_id` 與 `model_name` 必填，連線不屬於自己、未開放給自己或模型不在清單內時回傳 `400`；`GET /api/chat/models` 需要登入，回傳 `{"connections": [{id, name, provider, scope, models}]}` | 自行串接的客戶端先取得可用的連線與模型，送出時一併帶入 |
-| `PUT /api/auth/me` | 可更新電子郵件，或帶 `current_password`、`new_password` 變更密碼 | 只更新電子郵件；密碼欄位會被忽略，不會報錯，密碼也不會變更 | 變更密碼改用 `POST /api/auth/change-password` |
+| `POST /api/chat/send` 與 `GET /api/chat/models` | `model_name` 選填，未帶時用 `MODEL_NAME`；`GET /api/chat/models` 回傳 `.env` 的模型清單 | `connection_id` 與 `model_name` 必填，連線不屬於自己、未開放給自己或模型不在清單內時回傳 `400`；`GET /api/chat/models` 需要登入，回傳 `{"connections": [{id, name, provider, scope, models}]}` | 自行串接的用戶端先取得可用的連線與模型，送出時一併帶入 |
+| `PUT /api/auth/me` | 可更新電子郵件，或帶 `current_password`、`new_password` 變更密碼 | 只更新電子郵件；密碼欄位會被忽略且不回報錯誤，密碼不會變更 | 變更密碼改用 `POST /api/auth/change-password` |
 | 對話端點 | `GET /api/chat/conversations` 每段附最近 5 則訊息，`GET /api/chat/conversations/{conversation_id}` 附最新 500 則 | 兩者的 `messages` 一律為空陣列 | 訊息改以 `GET /api/chat/conversations/{conversation_id}/messages`（`limit`、`offset`）讀取 |
 | 重建索引 | 先清空整個索引再逐份寫回，期間知識庫查不到資料 | 逐份以新片段取代舊片段，其他文件照常可查；回應新增 `failed_documents` | 讀取回應的整合依需要處理 `failed_documents` |
-| 索引寫入失敗 | BM25 寫入失敗只寫入錯誤日誌；刪除文件時移除索引失敗仍回報成功 | 上傳、刪除、重建該文件或啟動會失敗，刪除回傳 `500` | 出現時檢查 `BM25_INDEX_DIR` 的權限與磁碟空間 |
+| 索引寫入失敗 | BM25 寫入失敗只記在錯誤日誌；刪除文件時移除索引失敗仍回報成功 | 上傳、刪除、重建該文件或啟動會失敗，刪除回傳 `500` | 出現時檢查 `BM25_INDEX_DIR` 的權限與磁碟空間 |
 | 文件擷取與切塊 | 中間有一段 FAQ 的文件只收錄第一個「Q：」行之後的內容；過長的問答整段成為一個片段；DOCX 的表格排在文末；PPTX 不含群組內的圖形與備忘稿；部分 PDF 的數字擷取成「俸」這類字 | 已修正 | 執行一次重建索引，讓原始檔仍在的文件重新擷取 |
 | 沒有文字的 PDF | 擷取不到文字的頁面以佔位文字入庫 | 沒有任何一頁擷取到文字時回傳 `400` | 需要收錄掃描檔時，先設定 PDF 掃描頁 OCR 使用的視覺模型（見 [設定參考](configuration.md#llm-供應商與模型)） |
 | 使用者名稱 | `\w` 規則，接受各語系文字、全形字母與結尾的換行 | 只接受中文、英文字母、數字、`_`、`-` | 既有帳號照常登入；在管理後台編輯名稱不符合規則的帳號時，要一併改成符合規則的名稱 |
@@ -108,7 +115,7 @@
 | 工具名稱長度 | 由 OpenAPI `operationId` 與 MCP 產生的名稱不限長度 | 交給模型的名稱最多 64 字元，過長的截斷為前 55 字元加上 `_` 與 8 碼雜湊；手動建立或匯入時超過回傳 `400` | 技能的 `allowed-tools` 列出過長的工具名稱時，改用 `GET /api/chat/tools` 列出的新名稱 |
 | 自訂 API 工具的轉址 | 所有方法都跟隨跨來源轉址（不轉送憑證標頭） | `GET`、`HEAD`、`OPTIONS` 以外的方法只跟隨同一來源的轉址；被擋下或超過 5 次時回傳 `400` | 會轉址到其他網域的 `POST` 等工具，把網址改成最終的網址 |
 | `web_fetch` 的網域白名單 | 只檢查初始網址；設定 `OLLAMA_API_KEY` 時優先使用 Ollama Web Fetch | 每次轉址都檢查；白名單不是 `*` 時不使用 Ollama Web Fetch | 需要的轉址目標網域加入 `WEB_FETCH_ALLOWED_DOMAINS` |
-| Docker 映像 | 沒有提供應用程式的 Dockerfile | 新增 `deploy/`（Docker Compose）與根目錄的 `.dockerignore`，建置內容排除 `.env`、`backend/keys`、`backend/data`、`backend/logs`、`node_modules` 等 | 以 repo 根目錄自建映像、並依賴映像內 `.env`、金鑰或資料的部署，改以 `env_file` 與資料卷提供（`deploy/docker-compose.yml` 的做法） |
+| Docker 映像 | 沒有提供應用程式的 Dockerfile | 新增 `deploy/`（Docker Compose）與根目錄的 `.dockerignore`，建置內容排除 `.env`、`backend/keys`、`backend/data`、`backend/logs`、`node_modules` 等 | 以 repo 根目錄自建映像、並依賴映像內 `.env`、金鑰或資料的部署，改以 `env_file` 與 volume 提供（`deploy/docker-compose.yml` 的做法） |
 | `deploy/gen-env.sh` 的 `COOKIE_SECURE` | 無 | `PUBLIC_ORIGIN` 以 `https://` 開頭時寫入 `true` | 以 7.0.0 發行前的 `gen-env.sh` 產生 `deploy/.env`、又以 HTTPS 提供服務時，把 `COOKIE_SECURE` 改為 `true` |
 | `rag_chunks` 的 id | SQLite 可能重用刪除後的 id | 新建立的 SQLite 資料庫以 `AUTOINCREMENT` 建立 | 無；既有的 SQLite 資料表不會改寫 |
 | 相依套件 | — | `backend/requirements.txt`、`requirements.in` 與 `frontend/bun.lock` 與 6.0.0 相同 | 不需要重新安裝；前端仍要重新建置 |
@@ -117,16 +124,16 @@
 
 1. **停機並備份**：停止後端，備份資料庫、`backend/data/` 與 `backend/.env`。API 連線的金鑰以 `TOOL_SECRETS_KEY` 加密存放，這把金鑰要與資料庫備份一起保存。
 2. **更新程式碼並重新建置前端**：後端與前端的相依套件與 6.0.0 相同，不需要執行 `pip install` 或 `bun install`；在 `frontend/` 執行 `bun run build`。`.env` 不需要新增設定，原本的 LLM 設定保留給 AI 摘要、`GET /api/tags` 與 PDF OCR 使用。
-3. **啟動後端**：`python main.py`。`llm_connections` 資料表在啟動時自動建立；上傳時中斷、沒有任何片段的文件也會在這時補建索引，日誌會出現「上傳時未完成索引，已補建 N 個分塊」。
+3. **啟動後端**：`python main.py`。`llm_connections` 資料表在啟動時自動建立；上傳時中斷、沒有任何片段的文件也會在這時補建索引，日誌會出現「上傳時未完成索引，已補建 N 個切塊」。
 4. **建立 API 連線**：以管理員登入，在「管理後台 → 共用 API 連線」新增連線，填入原本 `.env` 的供應商、API 位址與金鑰；模型可以按「從 API 取得模型」勾選（Foundry 需手動填寫部署名稱），Claude 連線要填「輸出 token 上限」。「可使用的帳號」選所有帳號（包含之後自行註冊的帳號）或勾選特定帳號，也可以在編輯帳號時直接勾選它能用的共用連線。儲存後在連線上按「測試」確認。不想共用金鑰時，改請各帳號在「個人資料 → 我的 API 連線」自行新增；欄位說明見 [設定參考：API 連線](configuration.md#api-連線)。
-5. **自行串接 API 的客戶端**：
+5. **自行串接 API 的用戶端**：
    - `POST /api/chat/send` 帶 `connection_id` 與 `model_name`，可用的值由 `GET /api/chat/models` 取得（需要登入）。
-   - 變更密碼改用 `POST /api/auth/change-password`；送到 `PUT /api/auth/me` 的密碼欄位會被忽略，不會報錯。
+   - 變更密碼改用 `POST /api/auth/change-password`；送到 `PUT /api/auth/me` 的密碼欄位會被忽略，不會回報錯誤。
    - 對話的訊息改由 `GET /api/chat/conversations/{conversation_id}/messages` 分頁讀取；使用者訊息的 `attachments` 會帶出附件抽出的文字 `content`。
    - `POST /api/documents/rebuild-index` 的回應多了 `failed_documents`。
    - 以名稱比對工具的設定（例如技能的 `allowed-tools`）：名稱超過 64 字元的自訂 API 工具或 MCP 工具，交給模型的名稱改為前 55 字元加上 `_` 與 8 碼雜湊，請改用 `GET /api/chat/tools` 列出的名稱。
 6. **以 Docker 部署時**：
-   - 根目錄的 `.dockerignore` 讓映像不再包含 `.env`、`backend/keys`、`backend/data`、`backend/logs`。以 repo 根目錄自建映像的部署，改以 `env_file` 提供 `.env`、以資料卷保存 `data`、`keys`、`logs`，與 `deploy/docker-compose.yml` 相同；`keys` 沒有保存時，每次重建容器都會產生新的 RSA 金鑰，所有人都要重新登入。
+   - 根目錄的 `.dockerignore` 讓映像不再包含 `.env`、`backend/keys`、`backend/data`、`backend/logs`。以 repo 根目錄自建映像的部署，改以 `env_file` 提供 `.env`、以 volume 保存 `data`、`keys`、`logs`，與 `deploy/docker-compose.yml` 相同；`keys` 沒有保存時，每次重建容器都會產生新的 RSA 金鑰，所有人都要重新登入。
    - 以 HTTPS 提供服務時，確認 `deploy/.env` 的 `COOKIE_SECURE` 為 `true`。7.0.0 的 `gen-env.sh` 依 `PUBLIC_ORIGIN` 自動設定，7.0.0 發行前的版本一律寫入 `false`，需要手動改正後重建後端容器。
 7. **重建索引（建議）**：以管理員在知識庫頁面執行「重建索引」，原始檔仍在 `UPLOAD_DIR` 的文件會以這一版的擷取與切塊方式重新收錄（FAQ 判斷、過長問答的切塊、DOCX 表格順序、PPTX 群組與備忘稿、PDF 替代字形）。重建期間其他文件照常可查；完成的訊息列出失敗的文件時，查看後端日誌後再重建一次。
 8. **驗證**：
@@ -144,7 +151,7 @@
 3. `llm_connections` 資料表可以保留：6.0.0 不會讀取它，再次升級時連線仍在。但 6.0.0 刪除帳號時不會處理這張表：PostgreSQL 會因外鍵拒絕刪除擁有個人連線的帳號，請先刪除 `llm_connections` 中 `owner_id` 為該帳號 id 的列；SQLite 則會留下沒有主人的連線。被刪除的帳號也會留在共用連線的 `allowed_user_ids` 中，再次升級後請在「管理後台 → 共用 API 連線」檢查名單。
 4. 7.0.0 存回 `messages.context_used` 的附件文字可以保留：6.0.0 不會讀取，但它仍計入每位使用者的附件配額。
 5. 資料庫與索引不需要還原或重建：新建立的 SQLite 資料庫中以 `AUTOINCREMENT` 建立的 `rag_chunks` 在 6.0.0 照常運作，停用帳號時更新的 `users.tokens_valid_after` 6.0.0 也照常比對。
-6. 自行串接 API 的客戶端改回 6.0.0 的用法：`POST /api/chat/send` 的 `connection_id` 會被忽略，`model_name` 可以省略（使用 `MODEL_NAME`），帶入時必須在 `.env` 的模型清單中。
+6. 自行串接 API 的用戶端改回 6.0.0 的用法：`POST /api/chat/send` 的 `connection_id` 會被忽略，`model_name` 可以省略（使用 `MODEL_NAME`），帶入時必須在 `.env` 的模型清單中。
 
 ### 升級到 7.0.0 後的常見狀況
 
@@ -158,7 +165,7 @@
 <details>
 <summary><b>送出訊息回傳 <code>400</code>：「找不到這個 API 連線，或你沒有使用權限」或「這個 API 連線沒有提供此模型」</b></summary>
 
-送出的 `connection_id` 不屬於自己或沒有開放給自己（例如管理員剛把帳號移出共用連線的名單），或 `model_name` 不在該連線的模型清單中。重新整理聊天頁再選一次模型；自行串接的客戶端重新以 `GET /api/chat/models` 取得。沒有帶 `connection_id` 或 `model_name` 時回傳 `422`。
+送出的 `connection_id` 不屬於自己或沒有開放給自己（例如管理員剛把帳號移出共用連線的名單），或 `model_name` 不在該連線的模型清單中。重新整理聊天頁再選一次模型；自行串接的用戶端重新以 `GET /api/chat/models` 取得。沒有帶 `connection_id` 或 `model_name` 時回傳 `422`。
 
 </details>
 
@@ -172,19 +179,19 @@
 <details>
 <summary><b>編輯連線時要求重新輸入金鑰</b></summary>
 
-訊息為「這個供應商需要 API 金鑰；變更供應商或 API 位址後不會沿用原本的金鑰，請重新輸入」：改了供應商或 API 位址時，已儲存的金鑰不會沿用，這是預期行為。輸入金鑰後再儲存。
+訊息為「這個供應商需要 API 金鑰；變更供應商或 API 位址後不會沿用原本的金鑰，請重新輸入」。這是預期行為，輸入金鑰後再儲存。
 
 </details>
 
 <details>
 <summary><b>管理後台編輯帳號時回傳 <code>422</code>，錯誤提到使用者名稱</b></summary>
 
-帳號在 7.0.0 之前建立，名稱含現在不接受的字元（例如西里爾字母或全形字母）。帳號照常登入；但編輯對話框會一併送出使用者名稱，請把名稱改成只含中文、英文字母、數字、`_`、`-` 的名稱再儲存，或以 `PUT /api/admin/users/{user_id}` 只送要變更的欄位。
+帳號在 7.0.0 之前建立，名稱含現在不接受的字元（例如西里爾字母或全形字母）。帳號仍可登入，但編輯對話框會一併送出使用者名稱：請把名稱改成只含中文、英文字母、數字、`_`、`-` 後再儲存，或以 `PUT /api/admin/users/{user_id}` 只送要變更的欄位。
 
 </details>
 
 <details>
-<summary><b>上傳 PDF 回傳 <code>400</code>：「PDF 文件中沒有可提取的文字…」</b></summary>
+<summary><b>上傳 PDF 回傳 <code>400</code>：「PDF 文件中沒有可擷取的文字…」</b></summary>
 
 每一頁都是圖片或無法辨識的文字，而且 OCR 未設定或辨識失敗。在 `.env` 設定 PDF 掃描頁 OCR 使用的視覺模型（依序使用 Microsoft Foundry、OpenAI 或 Gemini，見 [設定參考](configuration.md#llm-供應商與模型)）後重新上傳。6.0.0 收錄的這類 PDF 只存了佔位文字，重建索引時重新擷取失敗會沿用資料庫中的內容；請刪除這些文件，設定 OCR 後重新上傳。
 
@@ -193,7 +200,7 @@
 <details>
 <summary><b>重建索引後出現「以下文件重建索引失敗，請查看後端日誌後再重建一次」</b></summary>
 
-後端日誌有「處理文檔 &lt;id&gt; (&lt;檔名&gt;) 失敗」與原因。重新擷取或切塊失敗的文件保留原本的片段，其他文件不受影響；排除原因後再重建一次。
+後端日誌有「處理文件 &lt;id&gt; (&lt;檔名&gt;) 失敗」與原因。重新擷取或切塊失敗的文件保留原本的片段，其他文件不受影響；排除原因後再重建一次。
 
 </details>
 
@@ -225,7 +232,7 @@ BM25 索引寫入重試 3 次仍失敗。6.0.0 會忽略這個錯誤，讓 BM25 
 
 ## 從 5.0.0 升級到 6.0.0
 
-適用於從 5.0.0 升級到 6.0.0（2026-10-26），變更見 [CHANGELOG](../CHANGELOG.md#600---2026-10-26)。這一版重做結構化資料的解析與切塊並支援 Agent Skills，資料庫新增 `agent_skills` 資料表，`custom_api_tools` 與 `mcp_servers` 新增幾個欄位（都在啟動時自動建立），後端相依套件移除 `passlib`；需要動手的是領域設定檔的兩個新必填欄位、`.env` 的一個新必填設定 `SKILLS_DIR`、依新的 `requirements.txt` 重新安裝後端套件，以及升級後執行一次重建索引。索引中繼資料改以 JSON 保存，建議一併更新 `METADATA_PATH`。
+適用於從 5.0.0 升級到 6.0.0（2026-10-26），變更見 [CHANGELOG](../CHANGELOG.md#600---2026-10-26)。這一版重做結構化資料的解析與切塊並支援 Agent Skills，資料庫新增 `agent_skills` 資料表，`custom_api_tools` 與 `mcp_servers` 新增幾個欄位（都在啟動時自動建立），後端相依套件移除 `passlib`；需要動手的是領域設定檔的兩個新必填欄位、`.env` 的新必填設定 `SKILLS_DIR`、依新的 `requirements.txt` 重新安裝後端套件，以及升級後執行一次重建索引。索引中繼資料改以 JSON 保存，建議一併更新 `METADATA_PATH`。
 
 ### 6.0.0 的變更與需要的動作
 
@@ -258,8 +265,8 @@ BM25 索引寫入重試 3 次仍失敗。6.0.0 會忽略這個錯誤，讓 BM25 
 ### 升級到 6.0.0 的步驟
 
 1. 停止後端，備份資料庫與 `backend/data/`。
-2. 更新程式碼，在 `backend/` 執行 `pip install -r requirements.txt` 重新安裝後端套件（`passlib` 已不再需要，可以 `pip uninstall passlib` 移除），前端重新執行 `bun run build`。在 `.env` 加上 `SKILLS_DIR=data/skills`（相對路徑以 `backend/` 為基準）；`ADMIN_API_KEY`、`ENABLE_BATCH_ACCUMULATION`、`BATCH_ACCUMULATOR_SIZE`、`BASE_URL` 可以刪除。
-3. 在 `DOMAIN_PROFILE_PATH` 指向的領域設定檔補上兩個欄位。內建的 `backend/config/domain_profile.json` 已經包含；使用自己設定檔的部署請加上，例如：
+2. 更新程式碼，在 `backend/` 執行 `pip install -r requirements.txt` 重新安裝後端套件（`passlib` 不再需要，可以用 `pip uninstall passlib` 移除），前端重新執行 `bun run build`。在 `.env` 加上 `SKILLS_DIR=data/skills`（相對路徑以 `backend/` 為基準）；`ADMIN_API_KEY`、`ENABLE_BATCH_ACCUMULATION`、`BATCH_ACCUMULATOR_SIZE`、`BASE_URL` 可以刪除。
+3. 在 `DOMAIN_PROFILE_PATH` 指向的領域設定檔補上兩個欄位。內建的 `backend/config/domain_profile.json` 已包含；使用自己設定檔的部署請加上，例如：
 
    ```json
    "record_label_fields": ["title", "name", "author", "id"],
@@ -300,7 +307,7 @@ BM25 索引寫入重試 3 次仍失敗。6.0.0 會忽略這個錯誤，讓 BM25 
 <details>
 <summary><b>重新上傳同一個檔案沒有被判定為重複</b></summary>
 
-重建索引之前，既有文件的 `documents.content` 仍是 5.0.0 的格式，與新格式不同，因此不會被判定為重複。執行重建索引後即恢復正常。
+重建索引之前，既有文件的 `documents.content` 仍是 5.0.0 的格式，與新格式不同，因此不會被判定為重複。重建索引後即恢復正常。
 
 </details>
 
@@ -340,7 +347,7 @@ BM25 索引寫入重試 3 次仍失敗。6.0.0 會忽略這個錯誤，讓 BM25 
 | PostgreSQL 容器 | 後端以超級使用者 `postgres` 連線 | 後端以非超級使用者 `POSTGRES_APP_USER` 連線 | 設定帳號、執行一次 `20-app-role.sh`、更新 `DATABASE_URL` |
 | 相依套件 | 未鎖定版本，每次安裝取得當下最新版 | `requirements.txt` 鎖定版本與雜湊；`bun.lock` 納入版本控制且安裝時不可變更 | 建議建立新的虛擬環境；新增後端套件改為修改 `requirements.in` |
 | 前端建置 | `index.html` 沒有 CSP | 建置時寫入 CSP `<meta>` | 重新建置；API 位於其他來源時在建置時設定 `VITE_API_BASE` |
-| API 端點與回應 | 含 `GET /api/external-tags` 與 WebSocket `/api/chat/ws/{user_id}`；管理員使用者 API 回傳 `hashed_password` | 兩個端點移除；回應不再含密碼雜湊與工具憑證，登入可能回傳 `429` | 自行串接的客戶端依 [升級步驟](#升級到-500-的步驟) 第 9 點調整 |
+| API 端點與回應 | 含 `GET /api/external-tags` 與 WebSocket `/api/chat/ws/{user_id}`；管理員使用者 API 回傳 `hashed_password` | 兩個端點移除；回應不再含密碼雜湊與工具憑證，登入可能回傳 `429` | 自行串接的用戶端依 [升級步驟](#升級到-500-的步驟) 第 9 點調整 |
 | 聊天附件解析 | 與管理員上傳共用同一套解析上限 | 另有較小的記憶體預算，超過時告知模型附件未被讀取 | 無；需要時參考 [資源上限](configuration.md#資源上限) |
 
 ### 升級到 5.0.0 的步驟
@@ -361,7 +368,7 @@ BM25 索引寫入重試 3 次仍失敗。6.0.0 會忽略這個錯誤，讓 BM25 
    bun install
    ```
 
-   之後新增或升級後端套件時，不要手動編輯 `requirements.txt`：修改 `backend/requirements.in`（只列直接依賴），再於 `backend/` 重新產生：
+   之後新增或升級後端套件時，不要手動編輯 `requirements.txt`：修改 `backend/requirements.in`（只列直接相依套件），然後在 `backend/` 重新產生：
 
    ```bash
    uv pip compile requirements.in --universal --python-version 3.12 --generate-hashes -o requirements.txt
@@ -406,7 +413,7 @@ BM25 索引寫入重試 3 次仍失敗。6.0.0 會忽略這個錯誤，讓 BM25 
 
    **`TOOL_SECRETS_KEY` 要與資料庫備份一起保存**：金鑰遺失或更換後，已儲存的工具憑證都無法解密（管理 API 的回應以 `credentials_unreadable` 標示），只能逐一重新輸入。
 4. **PostgreSQL**：
-   - **使用 `backend/docker-compose.yml` 時**，在 `backend/.env` 加上 `POSTGRES_APP_USER`（例如 `askmiao_app`）與 `POSTGRES_APP_PASSWORD`（與 `POSTGRES_PASSWORD` 不同的隨機字串），新的 compose 檔缺少這兩項時會拒絕啟動。既有的資料卷不會再執行初始化腳本，所以先以新設定重新建立容器（資料卷會保留），讓容器取得這兩個環境變數與 `20-app-role.sh` 的掛載，再手動執行一次腳本：
+   - **使用 `backend/docker-compose.yml` 時**，在 `backend/.env` 加上 `POSTGRES_APP_USER`（例如 `askmiao_app`）與 `POSTGRES_APP_PASSWORD`（與 `POSTGRES_PASSWORD` 不同的隨機字串），新的 compose 檔缺少這兩項時會拒絕啟動。既有的 volume 不會再執行初始化腳本，所以先以新設定重新建立容器（volume 會保留），讓容器取得這兩個環境變數與 `20-app-role.sh` 的掛載，再手動執行一次腳本：
 
      ```bash
      cd backend
@@ -443,7 +450,7 @@ BM25 索引寫入重試 3 次仍失敗。6.0.0 會忽略這個錯誤，讓 BM25 
    - 前端與 API 不同來源時，`VITE_API_BASE`（或 `VITE_API_URL`）必須在建置時設定（`frontend/.env` 或建置時的環境變數），這個來源會加入 `connect-src`；之後更換 API 位址需要重新建置。
    - `<meta>` 無法設定 `frame-ancestors`，網頁伺服器仍要送出 `X-Frame-Options: DENY` 或 `Content-Security-Policy: frame-ancestors 'none'`。
    - 腳本與樣式只允許同源與 `index.html` 內嵌內容的雜湊，圖片只允許同源與 `data:`、`blob:`；自行在 `index.html` 加入其他網站資源的部署，這些資源會被擋下。
-9. **自行串接 API 的客戶端**：
+9. **自行串接 API 的用戶端**：
    - `GET /api/external-tags` 與 WebSocket `/api/chat/ws/{user_id}` 已移除。
    - `POST /api/api-tools/parse-spec` 的回應不再包含 `raw_spec`；使用 YAML 別名的規格回傳 `400`。
    - `GET /api/admin/users` 與 `PUT /api/admin/users/{user_id}` 中的使用者只含 `id`、`username`、`email`、`role`、`is_active`、`is_admin`、`created_at`、`last_login`，不再有 `hashed_password`；`PUT` 回傳 `{message, user}`。
@@ -468,7 +475,7 @@ BM25 索引寫入重試 3 次仍失敗。6.0.0 會忽略這個錯誤，讓 BM25 
 3. 資料庫二擇一：
    - **還原備份**（建議）：最乾淨，但會遺失升級後新增的對話、文件與帳號。工具憑證已改為加密存放，4.0.0 無法解讀，會當成沒有設定。
    - **保留現有資料庫**：在 4.0.0 重新輸入每個自訂 API 工具與 MCP 伺服器的憑證。4.0.0 會忽略 `users.tokens_valid_after` 欄位；但由新版建立的全新資料庫中，這個欄位是 `NOT NULL` 且沒有預設值，4.0.0 建立帳號時會失敗，請先移除此欄位或給定預設值。日後再次升級時，回退期間建立的帳號此欄位為空值，新版每次啟動都會以 `created_at` 補上，不需要手動處理。
-4. PostgreSQL 容器：4.0.0 的 `backend/docker-compose.yml` 不需要 `POSTGRES_APP_USER`、`POSTGRES_APP_PASSWORD`，以 `docker compose up -d` 重新建立容器即可，留在資料卷中的應用程式帳號不影響 4.0.0。以 `postgres` 還原 `pg_dump` 備份後資料表屬於 `postgres`，請沿用備份 `.env` 中以 `postgres` 連線的 `DATABASE_URL`；保留現有資料庫時資料表屬於應用程式帳號，4.0.0 可以繼續用它連線。
+4. PostgreSQL 容器：4.0.0 的 `backend/docker-compose.yml` 不需要 `POSTGRES_APP_USER`、`POSTGRES_APP_PASSWORD`，以 `docker compose up -d` 重新建立容器即可，留在 volume 中的應用程式帳號不影響 4.0.0。以 `postgres` 還原 `pg_dump` 備份後資料表屬於 `postgres`，請沿用備份 `.env` 中以 `postgres` 連線的 `DATABASE_URL`；保留現有資料庫時資料表屬於應用程式帳號，4.0.0 可以繼續用它連線。
 
 ### 升級到 5.0.0 後的常見狀況
 
@@ -482,7 +489,7 @@ BM25 索引寫入重試 3 次仍失敗。6.0.0 會忽略這個錯誤，讓 BM25 
 <details>
 <summary><b>後端啟動失敗，訊息為「TOOL_SECRETS_KEY 必須是 Fernet 金鑰」</b></summary>
 
-`TOOL_SECRETS_KEY` 仍是範本值或不是有效的 Fernet 金鑰，請以 `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"` 產生。若已經用某把金鑰加密過憑證，請改回那把金鑰，新的金鑰無法解密既有的憑證。
+`TOOL_SECRETS_KEY` 仍是範本值或不是有效的 Fernet 金鑰，請以 `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"` 產生。若已用某把金鑰加密過憑證，請改回那把金鑰，新的金鑰無法解密既有的憑證。
 
 </details>
 
@@ -513,7 +520,7 @@ BM25 索引寫入重試 3 次仍失敗。6.0.0 會忽略這個錯誤，讓 BM25 
 <details>
 <summary><b>註冊回傳 <code>403</code></b></summary>
 
-這是 `ALLOW_REGISTRATION=false` 時的預期行為，回應訊息為「目前不開放註冊，請聯繫管理員建立帳號」。請由管理員以 `scripts/create_user.py` 建立帳號，見 [升級步驟](#升級到-500-的步驟) 第 6 點；確定要開放註冊時，才把 `ALLOW_REGISTRATION` 設為 `true` 並重新啟動後端。
+這是 `ALLOW_REGISTRATION=false` 時的預期行為，回應訊息為「目前不開放註冊，請聯絡管理員建立帳號」。請由管理員以 `scripts/create_user.py` 建立帳號，見 [升級步驟](#升級到-500-的步驟) 第 6 點；確定要開放註冊時，才把 `ALLOW_REGISTRATION` 設為 `true` 並重新啟動後端。
 
 </details>
 
@@ -530,7 +537,7 @@ BM25 索引寫入重試 3 次仍失敗。6.0.0 會忽略這個錯誤，讓 BM25 
 <details>
 <summary><b><code>bun install</code> 失敗：<code>lockfile had changes, but lockfile is frozen</code></b></summary>
 
-`package.json` 與 `bun.lock` 不一致。沒有打算變更前端套件時，把這兩個檔案還原成版本庫中的內容再安裝。要變更套件時，訊息建議的「不加 `--frozen-lockfile` 重新執行」並不適用，因為這個設定來自 `frontend/bunfig.toml`：先把其中的 `frozenLockfile` 暫時改為 `false`，以 `bun add` 或 `bun remove` 更新後改回 `true`，並一併提交 `package.json` 與 `bun.lock`。
+`package.json` 與 `bun.lock` 不一致。沒有打算變更前端套件時，把這兩個檔案還原成儲存庫中的內容再安裝。要變更套件時，訊息建議的「不加 `--frozen-lockfile` 重新執行」並不適用，因為這個設定來自 `frontend/bunfig.toml`：先把其中的 `frozenLockfile` 暫時改為 `false`，以 `bun add` 或 `bun remove` 更新後改回 `true`，並一併提交 `package.json` 與 `bun.lock`。
 
 </details>
 
@@ -556,7 +563,7 @@ BM25 索引寫入重試 3 次仍失敗。6.0.0 會忽略這個錯誤，讓 BM25 
 |---|---|---|---|
 | JWT 簽署 | RSA 金鑰無法載入時，開發環境退回 HS256（`JWT_SECRET_KEY`） | 一律 RS256，金鑰無法載入或產生時拒絕啟動 | 確認 `backend/keys/` 存在且後端帳號可寫入；`JWT_SECRET_KEY`、`JWT_ALGORITHM` 可從 `.env` 刪除 |
 | 權杖驗證 | 身分與 `is_admin` 取自權杖內容 | 每次請求依 `sub` 讀取資料庫帳號，停用或刪除的帳號立即失效 | 無；既有權杖在帳號仍存在且啟用時繼續有效 |
-| 重新整理權杖 | `POST /api/auth/refresh` 讀取不存在的聲明而一律失敗 | 可以正常換發，且每個重新整理權杖只能使用一次 | 自行呼叫此端點的客戶端需改用每次回應的新 Cookie |
+| 重新整理權杖 | `POST /api/auth/refresh` 讀取不存在的聲明而一律失敗 | 可以正常換發，且每個重新整理權杖只能使用一次 | 自行呼叫此端點的用戶端需改用每次回應的新 Cookie |
 | PostgreSQL 容器 | 內建密碼 `postgres`，埠號對所有介面開放 | 必須設定 `POSTGRES_PASSWORD`，只綁定 `127.0.0.1:7690` | 設定 `POSTGRES_PASSWORD` 並更新 `DATABASE_URL` |
 | 前端開發伺服器 | 監聽所有介面，區網可連 | 只監聽 `localhost`，並送出反框架標頭 | 區網使用者改用建置產物與正式網頁伺服器 |
 | 速率限制的來源 IP | uvicorn 預設可能採信 `X-Forwarded-For` | 只採信 `FORWARDED_ALLOW_IPS` 指定的代理 | 前方有會覆寫該標頭的反向代理時設定 `FORWARDED_ALLOW_IPS` |
@@ -576,7 +583,7 @@ BM25 索引寫入重試 3 次仍失敗。6.0.0 會忽略這個錯誤，讓 BM25 
 4. **確認 RSA 金鑰**：`backend/keys/jwt_private.pem` 與 `jwt_public.pem` 必須存在且可讀；沒有金鑰時後端會在首次啟動產生，因此目錄需要能讓後端帳號寫入。沿用原本的金鑰，既有的權杖就不會失效。
 5. **PostgreSQL 容器（使用 `backend/docker-compose.yml` 時）**：
    - 在 `backend/.env` 加上 `POSTGRES_PASSWORD=<隨機字串>`，未設定時 `docker compose` 會拒絕啟動。
-   - 既有的資料卷已以舊密碼 `postgres` 初始化，`POSTGRES_PASSWORD` 只在第一次初始化時生效。請先以舊設定啟動容器並改掉密碼，再更新 `DATABASE_URL`：
+   - 既有的 volume 已以舊密碼 `postgres` 初始化，`POSTGRES_PASSWORD` 只在第一次初始化時生效。請先以舊設定啟動容器並改掉密碼，再更新 `DATABASE_URL`：
 
      ```bash
      cd backend
@@ -593,8 +600,8 @@ BM25 索引寫入重試 3 次仍失敗。6.0.0 會忽略這個錯誤，讓 BM25 
 9. **驗證**：
    - [ ] 登入後閒置超過存取權杖效期，前端能自動換發並繼續使用。
    - [ ] 停用某位測試帳號後，該帳號下一個請求立即回傳 `401`。
-   - [ ] 呼叫一個需要核准的工具時，聊天畫面出現確認卡片，拒絕後 Agent 改以既有資料回答。
-   - [ ] 自行串接 API 的客戶端已改讀解析後的訊息欄位，不再依賴 `context_used`，並能處理 `approval_required` 事件。
+   - [ ] 呼叫需要核准的工具時，聊天畫面出現確認卡片，拒絕後 Agent 改以既有資料回答。
+   - [ ] 自行串接 API 的用戶端已改讀解析後的訊息欄位，不再依賴 `context_used`，並能處理 `approval_required` 事件。
 
 ### 回退方式
 
@@ -607,14 +614,14 @@ BM25 索引寫入重試 3 次仍失敗。6.0.0 會忽略這個錯誤，讓 BM25 
 <details>
 <summary><b>後端啟動失敗，錯誤與 <code>backend/keys</code> 或 RSA 金鑰有關</b></summary>
 
-新版不再退回 HS256。請確認 `backend/keys/` 存在、後端帳號可以寫入（首次產生金鑰時需要），且 `jwt_private.pem`、`jwt_public.pem` 沒有損毀。以容器或唯讀檔案系統部署時，請把事先產生好的金鑰掛載進去。
+新版不再退回 HS256。請確認 `backend/keys/` 存在、後端帳號可以寫入（首次產生金鑰時需要），且 `jwt_private.pem`、`jwt_public.pem` 沒有損毀。以容器或唯讀檔案系統部署時，請掛載事先產生的金鑰。
 
 </details>
 
 <details>
 <summary><b><code>docker compose up</code> 回報需要設定 <code>POSTGRES_PASSWORD</code></b></summary>
 
-compose 檔已不含內建密碼。請在 `backend/.env`（或殼層環境）設定 `POSTGRES_PASSWORD`，既有資料卷的密碼需另外以 `ALTER USER` 修改，見 [升級步驟](#升級步驟) 第 5 點。
+compose 檔已不含內建密碼。請在 `backend/.env`（或殼層環境）設定 `POSTGRES_PASSWORD`，既有 volume 的密碼需另外以 `ALTER USER` 修改，見 [升級步驟](#升級步驟) 第 5 點。
 
 </details>
 
@@ -825,7 +832,7 @@ curl -X POST http://localhost:8001/api/documents/rebuild-index \
 
 查看該伺服器的 `last_error`：
 
-- 提到 SSRF：網址或其轉址目標未通過 SSRF 驗證，多半是伺服器位於本機或內網，請改用 `stdio` 傳輸；確切原因可依錯誤代碼在伺服器日誌查到。
+- 提到 SSRF：網址或轉址目標未通過 SSRF 驗證，多半是伺服器位於本機或內網，請改用 `stdio` 傳輸；確切原因可依錯誤代碼在伺服器日誌查到。
 - 只顯示錯誤代碼：多半是 `stdio` 子行程少了原本從後端繼承的環境變數，請把需要的變數寫進 `env_vars` 後重新探索；錯誤代碼可在伺服器日誌中對應到完整例外。
 
 </details>

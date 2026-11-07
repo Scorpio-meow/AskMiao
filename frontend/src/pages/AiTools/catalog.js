@@ -37,10 +37,10 @@ export const describeCustomTool = (tool) => ({
   categoryName: '自訂 API',
   icon: 'code',
   executionMode: '外部 RESTful API',
-  priority: '自主按需調用',
-  triggerTiming: `當使用者提問與「${tool.display_name}」相關之業務或資料時自主調用。`,
+  priority: '自主按需呼叫',
+  triggerTiming: `當使用者提問與「${tool.display_name}」相關之業務或資料時自主呼叫。`,
   summary: tool.description || '外部自訂 API 服務端點。',
-  examples: [`請調用 ${tool.display_name} 查詢相關資料`, `查詢 ${tool.name} 的即時結果`],
+  examples: [`請呼叫 ${tool.display_name} 查詢相關資料`, `查詢 ${tool.name} 的即時結果`],
 });
 export const toolParameters = (tool) => (tool.isCustom
   ? Object.entries(tool.parameters_schema?.properties || {}).map(([name, schema]) => ({

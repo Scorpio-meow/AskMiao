@@ -3,10 +3,8 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import remarkGfmSafe, { isAutolinkWorkBounded } from './remarkGfmSafe';
-
 const render = (markdown: string, plugin: typeof remarkGfm | typeof remarkGfmSafe): string =>
   renderToStaticMarkup(<ReactMarkdown remarkPlugins={[plugin]}>{markdown}</ReactMarkdown>);
-
 const ORDINARY_MARKDOWN = [
   '請參考 https://example.com/docs?a=1&b=2 與 www.example.org。',
   '聯絡 support@example.com 或 a.b-c+tag@sub.example.co.uk，結尾的 x@y. 不算',
@@ -21,8 +19,6 @@ const ORDINARY_MARKDOWN = [
   'a-b-c-d-e-f-g-h-i-j-k-l-m-n-o-p-q-r-s-t-u-v-w-x-y-z@example.com 與 awww.example.com',
   `${'很長的段落'.repeat(400)} https://long.example.com/${'x'.repeat(300)} ${'結尾'.repeat(200)}`,
 ];
-
-// 每一種都會讓 GFM 自動連結的轉換耗時隨長度平方成長
 const adversarial = (length: number): Record<string, string> => ({
   dots: `1${'.'.repeat(length)}!`,
   hyphens: `a${'-'.repeat(length)}!`,
@@ -31,7 +27,6 @@ const adversarial = (length: number): Record<string, string> => ({
   repeatedWww: 'awww.'.repeat(length / 5),
   wwwWithInvalidDomain: `${'www.'.repeat(length / 4)}x_y`,
 });
-
 describe('remarkGfmSafe', () => {
   it('renders ordinary markdown exactly like remark-gfm', () => {
     for (const markdown of ORDINARY_MARKDOWN) {
@@ -39,13 +34,11 @@ describe('remarkGfmSafe', () => {
       expect(render(markdown, remarkGfmSafe)).toBe(render(markdown, remarkGfm));
     }
   });
-
   it('still turns plain URLs and email addresses into links', () => {
     const html = render('看 https://example.com/a 或寫信到 someone@example.com', remarkGfmSafe);
     expect(html).toContain('<a href="https://example.com/a">');
     expect(html).toContain('<a href="mailto:someone@example.com">');
   });
-
   it('skips autolinking only in text whose scan cost is quadratic', () => {
     for (const [name, text] of Object.entries(adversarial(20_000))) {
       expect(isAutolinkWorkBounded(text), name).toBe(false);
@@ -55,9 +48,7 @@ describe('remarkGfmSafe', () => {
     expect(html).toContain('<a href="https://kept.example.com">');
     expect(html).toContain(adversarial(20_000).dots);
   });
-
   it('renders adversarial answers in roughly linear time', () => {
-    // 未加上限時，10 萬字元的任一種輸入都要數秒到數十秒
     for (const [name, text] of Object.entries(adversarial(100_000))) {
       const started = performance.now();
       const html = render(text, remarkGfmSafe);

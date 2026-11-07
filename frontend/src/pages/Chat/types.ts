@@ -6,7 +6,6 @@ export interface SourceDetail {
   snippet?: string;
   url?: string;
   label?: string;
-  // 答案中 [n] 引用對應的編號；舊訊息沒有此欄位
   citation?: number;
 }
 export interface ResearchTraceStep {
@@ -21,7 +20,6 @@ export interface SnackbarState {
   open: boolean;
   message: string;
   severity: 'success' | 'info' | 'warning' | 'error';
-  /** 每則通知的序號，讓新通知重新開始自動關閉的計時 */
   key: number;
 }
 export type ReasoningEffort = 'none' | 'low' | 'medium' | 'high' | 'xhigh' | 'max';
@@ -82,9 +80,7 @@ export interface ChatInputAreaProps {
   onChange: (val: string) => void;
   onSend: () => void;
   onStop: () => void;
-  /** 有任何回答正在產生 */
   sending: boolean;
-  /** 正在產生的回答就在目前這段對話裡 */
   streamingHere: boolean;
   disabled?: boolean;
   attachments?: ChatAttachment[];

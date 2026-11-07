@@ -1,13 +1,6 @@
-"""以單次線性掃描從 HTML 取出文字。
-
-回溯型正規式（例如 `<[^>]+>`、`<script[\\s\\S]*?</script>`）與標準函式庫的 html.parser
-遇到大量未閉合的 `<` 或 `<script` 時都會呈二次時間；這裡只用 str.find 前進，
-每個位置最多被掃描常數次。輸出只供檢索與模型閱讀，不追求完整的 HTML 語意。
-"""
 import html
 import string
 from typing import List, Optional, Set, Tuple
-
 SKIPPED_TAGS = ("script", "style", "noscript")
 BLOCK_TAGS = {"p", "div", "h1", "h2", "h3", "h4", "h5", "h6", "li", "tr", "br", "section", "article"}
 PAGE_CHROME_TAGS = ("nav", "aside", "header", "footer")
@@ -15,18 +8,13 @@ PAGE_CHROME_ROLES = ("navigation", "complementary", "banner", "contentinfo")
 MAIN_CONTENT_CHROME_TAGS = ("nav", "aside")
 MAIN_CONTENT_CHROME_ROLES = ("navigation", "complementary")
 ASCII_LOWER = str.maketrans(string.ascii_uppercase, string.ascii_lowercase)
-
-
 def _tag_name(tag_body: str) -> Tuple[str, bool]:
-    """回傳 (小寫標籤名稱, 是否為結尾標籤)"""
     closing = tag_body.startswith("/")
     body = tag_body[1:] if closing else tag_body
     end = 0
     while end < len(body) and (body[end].isalnum() or body[end] in "-:"):
         end += 1
     return body[:end].lower(), closing
-
-
 def _find_tag(lowered: str, prefix: str, position: int) -> int:
     while True:
         index = lowered.find(prefix, position)
@@ -36,8 +24,6 @@ def _find_tag(lowered: str, prefix: str, position: int) -> int:
         if after >= len(lowered) or not (lowered[after].isalnum() or lowered[after] in "-:"):
             return index
         position = after
-
-
 def _element_end(lowered: str, name: str, position: int) -> int:
     depth = 1
     next_open = _find_tag(lowered, f"<{name}", position)
@@ -53,12 +39,8 @@ def _element_end(lowered: str, name: str, position: int) -> int:
         if depth == 0:
             end = lowered.find(">", position)
             return -1 if end < 0 else end + 1
-
-
 def _has_role(tag_body: str, roles: Tuple[str, ...]) -> bool:
     return any(f'role="{role}"' in tag_body or f"role='{role}'" in tag_body for role in roles)
-
-
 def _element_range(lowered: str, start: int) -> Optional[Tuple[int, int]]:
     open_end = lowered.find(">", start)
     if open_end < 0:
@@ -66,8 +48,6 @@ def _element_range(lowered: str, start: int) -> Optional[Tuple[int, int]]:
     name, _ = _tag_name(lowered[start + 1:open_end])
     end = _element_end(lowered, name, open_end + 1) if name else -1
     return (start, end) if end >= 0 else None
-
-
 def _main_content_range(lowered: str) -> Optional[Tuple[int, int]]:
     main_start = _find_tag(lowered, "<main", 0)
     main_range = _element_range(lowered, main_start) if main_start >= 0 else None
@@ -84,8 +64,6 @@ def _main_content_range(lowered: str) -> Optional[Tuple[int, int]]:
     if article_end >= 0:
         return article_start, article_end + 1
     return None
-
-
 def _first_title(document: str, lowered: str) -> str:
     start = _find_tag(lowered, "<title", 0)
     open_end = lowered.find(">", start) if start >= 0 else -1
@@ -93,13 +71,8 @@ def _first_title(document: str, lowered: str) -> str:
     if close < 0:
         return ""
     return " ".join(html.unescape(document[open_end + 1:close]).split())
-
-
 def extract_text_and_title(document: str) -> Tuple[str, str, List[str]]:
-    """回傳 (title, 以空白串接的文字, 以區塊標籤分段的文字片段)"""
     return _extract(document, (), ())
-
-
 def extract_readable_text(document: str) -> Tuple[str, str]:
     if not document:
         return "", ""
@@ -112,8 +85,6 @@ def extract_readable_text(document: str) -> Tuple[str, str]:
             return _first_title(document, lowered), text
     title, text, _ = _extract(document, PAGE_CHROME_TAGS, PAGE_CHROME_ROLES)
     return title, text
-
-
 def _extract(document: str, chrome_tags: Tuple[str, ...], chrome_roles: Tuple[str, ...]) -> Tuple[str, str, List[str]]:
     if not document:
         return "", "", []

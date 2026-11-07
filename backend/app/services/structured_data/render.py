@@ -1,44 +1,27 @@
 import re
 from typing import Any, Dict, List, Optional, Sequence, Tuple
-
 from langchain_text_splitters import RecursiveCharacterTextSplitter
-
 from .models import StructuredRecord
-
 RECORD_SEPARATOR = "\n\n---\n\n"
 CONTEXT_HEADER = "[上下文]"
 RENDERED_HEADER_PATTERN = re.compile(r"[\[【](?:上下文|(?:[^\]】\n]+ )?(?:記錄 \d+|第 \d+ 列))[\]】]")
 PART_SUFFIX_PATTERN = re.compile(r"（\d+/\d+）$")
 PIECE_SEPARATORS = ["\n\n", "\n", "。", "！", "？", "；", "：", "，", ". ", "! ", "? ", ", ", " ", ""]
-
-
 def array_header(position: int, group: Optional[str]) -> str:
     return f"[{group} 記錄 {position}]" if group else f"[記錄 {position}]"
-
-
 def row_header(row: int, sheet: Optional[str]) -> str:
     return f"[{sheet} 第 {row} 列]" if sheet else f"[第 {row} 列]"
-
-
 def field_line(path: Optional[str], value: str) -> str:
     return f"{path}: {value}" if path else value
-
-
 def header_line(record: StructuredRecord, part: int, part_count: int) -> str:
     line = record.header + (record.label or "")
     if part_count > 1:
         line += f"（{part}/{part_count}）"
     return line
-
-
 def render_record(record: StructuredRecord) -> str:
     return "\n".join([header_line(record, 1, 1), *(field_line(path, value) for path, value in record.fields)])
-
-
 def render_records(records: Sequence[StructuredRecord]) -> str:
     return RECORD_SEPARATOR.join(render_record(record) for record in records)
-
-
 def count_rendered_records(text: str) -> int:
     count = 0
     for block in text.split(RECORD_SEPARATOR):
@@ -46,8 +29,6 @@ def count_rendered_records(text: str) -> int:
         if RENDERED_HEADER_PATTERN.match(first_line):
             count += 1
     return count
-
-
 def _pack(units: List[str], budget: int) -> List[List[str]]:
     parts: List[List[str]] = []
     current: List[str] = []
@@ -64,8 +45,6 @@ def _pack(units: List[str], budget: int) -> List[List[str]]:
     if current:
         parts.append(current)
     return parts
-
-
 def split_record(record: StructuredRecord, chunk_size: int) -> List[str]:
     whole = render_record(record)
     if len(whole) <= chunk_size:
@@ -93,8 +72,6 @@ def split_record(record: StructuredRecord, chunk_size: int) -> List[str]:
         digits = len(str(len(parts)))
     total = len(parts)
     return [header_line(record, index, total) + "\n" + "\n".join(part) for index, part in enumerate(parts, start=1)]
-
-
 def record_metadata(record: StructuredRecord, part: int, part_count: int) -> Dict[str, Any]:
     metadata: Dict[str, Any] = {
         "record_index": record.record_index,
@@ -113,13 +90,9 @@ def record_metadata(record: StructuredRecord, part: int, part_count: int) -> Dic
     if record.row is not None:
         metadata["row"] = record.row
     return metadata
-
-
 def record_chunks(record: StructuredRecord, chunk_size: int) -> List[Tuple[str, Dict[str, Any]]]:
     texts = split_record(record, chunk_size)
     return [(text, record_metadata(record, index, len(texts))) for index, text in enumerate(texts, start=1)]
-
-
 def merge_record_parts(texts: Sequence[str]) -> str:
     first_line, _, first_body = texts[0].partition("\n")
     merged = [PART_SUFFIX_PATTERN.sub("", first_line)]

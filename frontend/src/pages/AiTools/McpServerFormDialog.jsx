@@ -18,7 +18,7 @@ export default function McpServerFormDialog({ server, presets, onClose, onSaved 
       setSaving(true);
       if (server) {
         await mcpService.updateServer(server.id, payload);
-        onSaved('MCP 伺服器配置更新成功');
+        onSaved('MCP 伺服器設定更新成功');
       } else {
         await mcpService.createServer(payload);
         onSaved('MCP 伺服器建立成功並已嘗試自動連線');
@@ -105,7 +105,7 @@ export default function McpServerFormDialog({ server, presets, onClose, onSaved 
                   value={form.transport_type}
                   onChange={(e) => setForm({ ...form, transport_type: e.target.value })}
                 >
-                  <option value="stdio">Stdio (子進程)</option>
+                  <option value="stdio">Stdio (子行程)</option>
                   <option value="http">HTTP（Streamable HTTP，舊版 SSE 自動相容）</option>
                   <option value="sse">SSE（舊版 HTTP+SSE）</option>
                 </select>
@@ -151,7 +151,7 @@ export default function McpServerFormDialog({ server, presets, onClose, onSaved 
                     aria-describedby="mcp-args-hint"
                   />
                 </Field>
-                <Field id="mcp-env" label="環境變數配置" hint={`JSON 物件格式。${SECRET_FIELD_HINT}`}>
+                <Field id="mcp-env" label="環境變數設定" hint={`JSON 物件格式。${SECRET_FIELD_HINT}`}>
                   <textarea
                     id="mcp-env"
                     className={`${styles.input} ${styles.codeInput} ${styles.textareaSm}`}

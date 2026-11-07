@@ -6,7 +6,7 @@
 
 已通過 (Accepted) - 2026-09-24
 
-補充 [ADR-0001](./0001-hybrid-rag-and-security.md)：保留 FAISS 與 BM25 的混合檢索，改變片段的保存位置與索引的對應鍵。本紀錄於 3.0.0 發行時（2026-09-25）依當時的實作補記。
+補充 [ADR-0001](./0001-hybrid-rag-and-security.md)：保留 FAISS 與 BM25 的混合檢索，改變片段的保存位置與索引的對應鍵。本紀錄在 3.0.0 發行時（2026-09-25）依當時的實作補記。
 
 ---
 
@@ -31,7 +31,7 @@
 
 ### 1. 資料庫是片段的唯一來源
 
-- 新增 `rag_chunks` 資料表（`id`、`document_id`、`chunk_index`、`content`、`chunk_metadata`），`id` 即 chunk_id。
+- 新增 `rag_chunks` 資料表（`id`、`document_id`、`chunk_index`、`content`、`chunk_metadata`），`id` 就是 chunk_id。
 - 移除 `documents.pkl` 與 `DOCUMENTS_PATH` 設定。
 
 ### 2. 索引以 chunk_id 為鍵

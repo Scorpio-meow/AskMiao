@@ -2,7 +2,7 @@
 
 [繁體中文](README.md) | [English](README_en.md)
 
-This directory records the major architectural decisions made while building AskMiao: the problems at the time, the chosen solutions, and the trade-offs accepted. Code shows *how* the system works; ADRs explain *why*, so a deliberate design is not "fixed" later as if it were a bug.
+This directory records the major architectural decisions behind AskMiao: the problems at the time, the chosen solutions, and the trade-offs accepted. Code shows *how* the system works; ADRs explain *why*, so a deliberate design is not "fixed" later as if it were a bug.
 
 ---
 

@@ -4,6 +4,7 @@
 
 > How to upgrade an existing deployment to a new release, with rollback steps and troubleshooting. See the [CHANGELOG](../CHANGELOG_en.md) for the full list of changes in each version.
 
+- [Upgrading from 8.2.0 to 8.2.1](#upgrading-from-820-to-821)
 - [Upgrading from 8.1.0 to 8.2.0](#upgrading-from-810-to-820)
 - [Upgrading from 8.0.x to 8.1.0](#upgrading-from-80x-to-810)
 - [Upgrading from 7.0.0 to 8.0.0](#upgrading-from-700-to-800)
@@ -41,6 +42,12 @@
 
 ---
 
+## Upgrading from 8.2.0 to 8.2.1
+
+For upgrading from 8.2.0 to 8.2.1 (2026-11-07); see the [CHANGELOG](../CHANGELOG_en.md#821---2026-11-07) for the full list of changes. This release only fixes the Claude output token limit error messages and reorganizes the documentation: no `.env` changes, and the database and API are unchanged, so switching to the new code is enough. To roll back to 8.2.0, switch back to the older code.
+
+---
+
 ## Upgrading from 8.1.0 to 8.2.0
 
 For upgrading from 8.1.0 to 8.2.0 (2026-11-07); see the [CHANGELOG](../CHANGELOG_en.md#820---2026-11-07) for the full list of changes. This release needs no `.env` changes and does not change the database.
@@ -72,7 +79,7 @@ To roll back to 8.0.x, switch back to the older code; the extra `protocol_versio
 
 ## Upgrading from 7.0.0 to 8.0.0
 
-For upgrading from 7.0.0 to 8.0.0 (2026-11-02); see the [CHANGELOG](../CHANGELOG_en.md#800---2026-11-02) for the full list of changes, including the migration steps now that `.env` no longer configures model providers. This section lists the new required `.env` settings.
+For upgrading from 7.0.0 to 8.0.0 (2026-11-02); see the [CHANGELOG](../CHANGELOG_en.md#800---2026-11-02) for the full list of changes, including the migration steps now that `.env` no longer configures model providers.
 
 ### New required `.env` settings
 
@@ -117,7 +124,7 @@ For upgrading from 6.0.0 to 7.0.0 (2026-10-31); see the [CHANGELOG](../CHANGELOG
 
 1. **Stop and back up**: stop the backend and back up the database, `backend/data/`, and `backend/.env`. API connection keys are encrypted with `TOOL_SECRETS_KEY`, so keep that key with your database backups.
 2. **Update the code and rebuild the frontend**: the backend and frontend dependencies are the same as in 6.0.0, so there is no need to run `pip install` or `bun install`; run `bun run build` in `frontend/`. `.env` needs no new settings, and the existing LLM settings stay for AI summaries, `GET /api/tags`, and PDF OCR.
-3. **Start the backend**: `python main.py`. The `llm_connections` table is created automatically at startup; documents left without any chunks by an interrupted upload are indexed at this point too, and the log says 「上傳時未完成索引，已補建 N 個分塊」 (not indexed during upload, N chunks added).
+3. **Start the backend**: `python main.py`. The `llm_connections` table is created automatically at startup; documents left without any chunks by an interrupted upload are indexed at this point too, and the log says 「上傳時未完成索引，已補建 N 個切塊」 (not indexed during upload, N chunks added).
 4. **Create API connections**: sign in as an admin, add connections under "Admin → Shared API connections", and enter the provider, API address, and key from `.env`; check off models with "從 API 取得模型" (fetch models from the API), except on Foundry, where deployment names are typed in, and fill in the output token limit for Claude connections. Under the accounts that may use it, pick all accounts (including accounts that register later) or check specific ones; you can also check the shared connections an account may use when editing that account. After saving, click "測試" (test) on the connection to confirm it works. If you would rather not share keys, have each account add its own under "Profile → My API connections"; see [Configuration: API connections](configuration_en.md#api-connections) for the fields.
 5. **API clients**:
    - `POST /api/chat/send` sends `connection_id` and `model_name`, taken from `GET /api/chat/models` (sign-in required).
@@ -172,7 +179,7 @@ A member's personal connection cannot point at an internal or local service, suc
 <details>
 <summary><b>Editing a connection asks for the key again</b></summary>
 
-The message is 「這個供應商需要 API 金鑰；變更供應商或 API 位址後不會沿用原本的金鑰，請重新輸入」 (this provider needs an API key; the stored key is not kept after the provider or API address changes): when the provider or API address changes, the stored key is not reused, as intended. Enter the key and save again.
+The message is 「這個供應商需要 API 金鑰；變更供應商或 API 位址後不會沿用原本的金鑰，請重新輸入」 (this provider needs an API key; the stored key is not kept after the provider or API address changes). This is expected; enter the key and save again.
 
 </details>
 
@@ -184,7 +191,7 @@ The account was created before 7.0.0 with characters that are no longer accepted
 </details>
 
 <details>
-<summary><b>Uploading a PDF returns <code>400</code>: 「PDF 文件中沒有可提取的文字…」 (the PDF has no extractable text)</b></summary>
+<summary><b>Uploading a PDF returns <code>400</code>: 「PDF 文件中沒有可擷取的文字…」 (the PDF has no extractable text)</b></summary>
 
 Every page is an image or unreadable text, and OCR is not configured or failed. Set up the vision model for OCR of scanned PDF pages in `.env` (Microsoft Foundry, OpenAI, or Gemini, in that order; see the [configuration reference](configuration_en.md#llm-providers-and-models)) and upload the file again. Such PDFs stored by 6.0.0 hold only placeholder text, and a rebuild falls back to the stored content when re-extraction fails; delete those documents, set up OCR, and upload them again.
 
@@ -193,7 +200,7 @@ Every page is an image or unreadable text, and OCR is not configured or failed. 
 <details>
 <summary><b>After a rebuild: 「以下文件重建索引失敗，請查看後端日誌後再重建一次」 (these documents failed to rebuild; check the backend log and rebuild again)</b></summary>
 
-The backend log has 「處理文檔 &lt;id&gt; (&lt;file name&gt;) 失敗」 (processing document failed) with the reason. Documents whose re-extraction or chunking failed keep their old chunks, and other documents are unaffected; fix the cause and rebuild again.
+The backend log has 「處理文件 &lt;id&gt; (&lt;file name&gt;) 失敗」 (processing document failed) with the reason. Documents whose re-extraction or chunking failed keep their old chunks, and other documents are unaffected; fix the cause and rebuild again.
 
 </details>
 
@@ -225,7 +232,7 @@ The URL redirects to a domain that is not in `WEB_FETCH_ALLOWED_DOMAINS`. If it 
 
 ## Upgrading from 5.0.0 to 6.0.0
 
-For upgrading from 5.0.0 to 6.0.0 (2026-10-26); see the [CHANGELOG](../CHANGELOG_en.md#600---2026-10-26) for the changes. This release reworks how structured data is parsed and chunked and adds Agent Skills support. The database gains an `agent_skills` table and a few columns in `custom_api_tools` and `mcp_servers`, all created automatically at startup, and the backend drops the `passlib` dependency; what you need to do is add two new required fields to the domain profile, add one new required setting, `SKILLS_DIR`, to `.env`, reinstall the backend packages from the new `requirements.txt`, and rebuild the index once after upgrading. Index metadata is now stored as JSON, so update `METADATA_PATH` as well.
+For upgrading from 5.0.0 to 6.0.0 (2026-10-26); see the [CHANGELOG](../CHANGELOG_en.md#600---2026-10-26) for the changes. This release reworks how structured data is parsed and chunked and adds Agent Skills support. The database gains an `agent_skills` table and a few columns in `custom_api_tools` and `mcp_servers`, all created automatically at startup, and the backend drops the `passlib` dependency; what you need to do is add two new required fields to the domain profile, add the new required setting `SKILLS_DIR` to `.env`, reinstall the backend packages from the new `requirements.txt`, and rebuild the index once after upgrading. Index metadata is now stored as JSON, so update `METADATA_PATH` as well.
 
 ### 6.0.0 changes and required actions
 
@@ -513,7 +520,7 @@ Admin API responses show `credentials_unreadable` as `true` with the credential 
 <details>
 <summary><b>Registration returns <code>403</code></b></summary>
 
-This is expected with `ALLOW_REGISTRATION=false`; the response says registration is closed and asks the user to contact an admin (目前不開放註冊，請聯繫管理員建立帳號). Have an admin create the account with `scripts/create_user.py`, as in step 6 of the [upgrade steps](#upgrade-steps-for-500); set `ALLOW_REGISTRATION` to `true` and restart the backend only if you do want open registration.
+This is expected with `ALLOW_REGISTRATION=false`; the response says registration is closed and asks the user to contact an admin (目前不開放註冊，請聯絡管理員建立帳號). Have an admin create the account with `scripts/create_user.py`, as in step 6 of the [upgrade steps](#upgrade-steps-for-500); set `ALLOW_REGISTRATION` to `true` and restart the backend only if you do want open registration.
 
 </details>
 

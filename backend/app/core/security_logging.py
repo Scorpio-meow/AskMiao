@@ -32,7 +32,6 @@ def rotating_log_file_handler(filename: str) -> RotatingFileHandler:
     )
 security_logger = logging.getLogger("security")
 security_logger.setLevel(logging.INFO)
-# 安全事件只寫 security.log，不再重複落地到 app.log
 security_logger.propagate = False
 _security_handler_lock = threading.Lock()
 def security_file_handlers() -> list[RotatingFileHandler]:
@@ -70,7 +69,6 @@ SENSITIVE_JSON_RE = re.compile(
     r'(?i)("(?:password|passwd|pass|secret|token|access_token|refresh_token|api_key|apikey|authorization|auth|credentials|cred|private_key)"\s*:\s*)"[^"]*"',
 )
 def truncate_log_value(value: Any) -> Any:
-    """日誌中的字串欄位（含匿名請求可控的帳號名稱、User-Agent）限制長度"""
     if isinstance(value, str) and len(value) > MAX_LOG_FIELD_CHARS:
         return value[:MAX_LOG_FIELD_CHARS] + f"…(+{len(value) - MAX_LOG_FIELD_CHARS})"
     if isinstance(value, dict):
@@ -133,7 +131,6 @@ def log_security_event(
     sanitized_entry = truncate_log_value(sanitize_sensitive_data(log_entry))
     log_message = json.dumps(sanitized_entry, ensure_ascii=False)
     log_message = SENSITIVE_JSON_RE.sub(r'\1"[REDACTED]"', log_message)
-
     ensure_security_log_handler()
     if severity == "CRITICAL":
         security_logger.critical(log_message)

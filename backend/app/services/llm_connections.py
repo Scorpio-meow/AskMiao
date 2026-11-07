@@ -2,10 +2,8 @@ import json
 import logging
 from typing import Any, Dict, List, Optional
 from urllib.parse import urlparse
-
 import httpx
 from sqlalchemy.orm import Session
-
 from app.core.error_response import SafeClientError
 from app.core.llm_client import (
     DEFAULT_CLAUDE_MODELS,
@@ -18,9 +16,7 @@ from app.core.llm_client import (
 from app.core.ssrf_protection import DnsPool, SSRFProtectionError, validate_url_ssrf
 from app.core.tool_secrets import decrypt_json, encrypt_json
 from app.models import LlmConnection, User
-
 logger = logging.getLogger(__name__)
-
 PROVIDERS_REQUIRING_API_KEY = ("anthropic", "gemini", "foundry")
 OPENAI_API_BASE = "https://api.openai.com/v1"
 ANTHROPIC_API_BASE = "https://api.anthropic.com"
@@ -28,8 +24,6 @@ GEMINI_API_BASE = "https://generativelanguage.googleapis.com"
 PRIVATE_ADDRESS_MESSAGE = "API 位址無法使用：個人連線只能連到可從網際網路解析的公開位址，內部網路的服務請管理員設為共用連線"
 CONNECTION_TEST_PROMPT = [{"role": "user", "content": "請只回覆「OK」。"}]
 CONNECTION_TEST_REPLY_CHARS = 200
-
-
 def provider_presets() -> List[Dict[str, Any]]:
     return [
         {"provider": "openai", "label": "OpenAI 或相容的 API", "api_base": OPENAI_API_BASE,
@@ -43,8 +37,6 @@ def provider_presets() -> List[Dict[str, Any]]:
         {"provider": "ollama", "label": "Ollama", "api_base": f"https://{OLLAMA_CLOUD_HOST}",
          "models": [], "requires_api_key": False, "uses_max_output_tokens": False},
     ]
-
-
 def _user_ids(stored: Optional[str]) -> Optional[List[int]]:
     if stored is None:
         return None
@@ -53,19 +45,13 @@ def _user_ids(stored: Optional[str]) -> Optional[List[int]]:
     except json.JSONDecodeError:
         return []
     return ids if isinstance(ids, list) else []
-
-
 def models_of(connection: LlmConnection) -> List[str]:
     return json.loads(connection.models)
-
-
 def visible_to(connection: LlmConnection, user_id: int) -> bool:
     if connection.owner_id is not None:
         return connection.owner_id == user_id
     allowed = _user_ids(connection.allowed_user_ids)
     return allowed is None or user_id in allowed
-
-
 def connections_for_user(db: Session, user_id: int) -> List[LlmConnection]:
     rows = (
         db.query(LlmConnection)
@@ -74,15 +60,11 @@ def connections_for_user(db: Session, user_id: int) -> List[LlmConnection]:
         .all()
     )
     return [connection for connection in rows if visible_to(connection, user_id)]
-
-
 def requires_public_address(db: Session, connection: LlmConnection) -> bool:
     if connection.owner_id is None:
         return False
     owner = db.get(User, connection.owner_id)
     return not (owner and owner.is_admin)
-
-
 def endpoint_of(db: Session, connection: LlmConnection) -> LlmEndpoint:
     secrets = decrypt_json(connection.api_key) or {}
     return LlmEndpoint(
@@ -92,8 +74,6 @@ def endpoint_of(db: Session, connection: LlmConnection) -> LlmEndpoint:
         max_output_tokens=connection.max_output_tokens,
         public_only=requires_public_address(db, connection),
     )
-
-
 def resolve_chat_endpoint(db: Session, user_id: int, connection_id: int, model_name: str) -> LlmEndpoint:
     connection = db.get(LlmConnection, connection_id)
     if connection is None or not visible_to(connection, user_id):
@@ -101,12 +81,8 @@ def resolve_chat_endpoint(db: Session, user_id: int, connection_id: int, model_n
     if model_name not in models_of(connection):
         raise SafeClientError("這個 API 連線沒有提供此模型")
     return endpoint_of(db, connection)
-
-
 def _is_claude_connection(provider: str, models: List[str]) -> bool:
     return provider == "anthropic" or (provider == "foundry" and any(m.startswith("claude-") for m in models))
-
-
 async def validate_connection(
     provider: str,
     api_base: str,
@@ -127,12 +103,8 @@ async def validate_connection(
         if not is_valid:
             logger.info("拒絕個人 API 連線位址 %s: %s", api_base, reason)
             raise SafeClientError(PRIVATE_ADDRESS_MESSAGE)
-
-
 def encrypt_api_key(api_key: Optional[str]) -> Optional[str]:
     return encrypt_json({"api_key": api_key}) if api_key else None
-
-
 def connection_response(connection: LlmConnection, include_access: bool) -> Dict[str, Any]:
     response = {
         "id": connection.id,
@@ -149,8 +121,6 @@ def connection_response(connection: LlmConnection, include_access: bool) -> Dict
     if include_access:
         response["allowed_user_ids"] = _user_ids(connection.allowed_user_ids)
     return response
-
-
 def chat_option(connection: LlmConnection) -> Dict[str, Any]:
     return {
         "id": connection.id,
@@ -159,8 +129,6 @@ def chat_option(connection: LlmConnection) -> Dict[str, Any]:
         "scope": "shared" if connection.owner_id is None else "personal",
         "models": models_of(connection),
     }
-
-
 def validated_user_ids(db: Session, user_ids: List[int]) -> Optional[str]:
     unique_ids = sorted(set(user_ids))
     existing = {row.id for row in db.query(User.id).filter(User.id.in_(unique_ids)).all()} if unique_ids else set()
@@ -168,8 +136,6 @@ def validated_user_ids(db: Session, user_ids: List[int]) -> Optional[str]:
     if missing:
         raise SafeClientError(f"找不到使用者：{', '.join(map(str, missing))}")
     return json.dumps(unique_ids) if unique_ids else None
-
-
 def user_connection_access(db: Session, user_id: int) -> Dict[str, Any]:
     connections = db.query(LlmConnection).filter(
         (LlmConnection.owner_id == user_id) | LlmConnection.owner_id.is_(None)
@@ -181,8 +147,6 @@ def user_connection_access(db: Session, user_id: int) -> Dict[str, Any]:
             for c in connections if c.owner_id is None
         ],
     }
-
-
 def set_user_shared_access(db: Session, user_id: int, connection_ids: List[int]) -> None:
     shared = db.query(LlmConnection).filter(LlmConnection.owner_id.is_(None)).all()
     unknown = sorted(set(connection_ids) - {c.id for c in shared})
@@ -198,8 +162,6 @@ def set_user_shared_access(db: Session, user_id: int, connection_ids: List[int])
             ids.append(user_id)
         if sorted(ids) != sorted(current):
             connection.allowed_user_ids = json.dumps(sorted(ids))
-
-
 def remove_user_connections(db: Session, user_id: int) -> None:
     db.query(LlmConnection).filter(LlmConnection.owner_id == user_id).delete(synchronize_session=False)
     for connection in db.query(LlmConnection).filter(LlmConnection.allowed_user_ids.isnot(None)).all():
@@ -207,8 +169,6 @@ def remove_user_connections(db: Session, user_id: int) -> None:
         remaining = [uid for uid in current if uid != user_id]
         if remaining != current:
             connection.allowed_user_ids = json.dumps(remaining)
-
-
 def describe_connection_error(error: BaseException) -> str:
     cause: Optional[BaseException] = error
     while cause is not None:

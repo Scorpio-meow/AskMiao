@@ -21,13 +21,10 @@ from app.core.security_logging import log_security_event
 from app.core.error_response import SafeClientError, log_and_get_error_id, format_client_error
 from app.core.tool_secrets import decrypt_for_display, decrypt_json, encrypt_json, is_any_key, is_secret_header, mask, merge_masked
 logger = logging.getLogger(__name__)
-# MCP 伺服器是所有使用者的 Agent 共用的全域設定：stdio 模式會在主機上執行指定的指令，
-# 回應中也含環境變數與標頭等憑證，因此整個模組（含查詢）只開放管理員
 router = APIRouter()
 oauth_callback_router = APIRouter()
 OAUTH_CLIENT_KEYS = ("client_id", "client_secret", "scope")
 def _serialize_mcp_server(server: McpServer) -> Dict[str, Any]:
-    """序列化 McpServer 模型為 Dict（含解密後的環境變數與標頭，只供連線與執行使用，不可直接回傳給用戶端）"""
     fields = _server_fields(server, decrypt_json(server.env_vars), decrypt_json(server.headers))
     fields["oauth_authorized"] = bool(server.oauth_tokens)
     return fields
@@ -50,7 +47,6 @@ def _apply_oauth_client(server: McpServer, incoming: Dict[str, str]) -> None:
     server.oauth_config = encrypt_json({**client, "client_source": "admin"})
     server.oauth_tokens = None
 def _server_response(server: McpServer) -> Dict[str, Any]:
-    """管理 API 回應用：環境變數與標頭中的憑證以遮蔽字樣取代；更新時送回遮蔽字樣的欄位沿用原值"""
     env_vars, env_unreadable = decrypt_for_display(server.env_vars)
     headers, headers_unreadable = decrypt_for_display(server.headers)
     fields = _server_fields(server, mask(env_vars, is_any_key), mask(headers, is_secret_header))
@@ -112,14 +108,12 @@ def _discovery_error_message(e: Exception, error_id: str) -> str:
         return f"{OAUTH_SCOPE_MESSAGE}（錯誤代碼：{error_id}）"
     return format_client_error(error_id)
 def _format_ssrf_rejection(error_id: str) -> str:
-    """SSRF 拒絕原因可能含伺服器端 DNS 解析出的內網 IP 或轉址目標，只寫入日誌；對外只說明遭拒並附錯誤代碼"""
     return (
         "SSRF 防護拒絕連線：網址或其轉址目標未通過安全檢查，完整原因記錄於伺服器日誌；"
         f"本機的 MCP 伺服器請改用 stdio 傳輸（錯誤代碼：{error_id}）"
     )
 @router.get("/presets")
 async def get_preset_servers(current_user: dict = Depends(get_current_admin_user)):
-    """獲取常用官方與社群 MCP 伺服器範本"""
     return {
         "status": "success",
         "presets": McpManager.get_preset_servers()
@@ -130,7 +124,6 @@ async def get_all_servers(
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_admin_user)
 ):
-    """獲取所有已配置的 MCP 伺服器清單"""
     query = db.query(McpServer)
     if is_enabled is not None:
         query = query.filter(McpServer.is_enabled == is_enabled)
@@ -146,7 +139,6 @@ async def create_server(
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_admin_user)
 ):
-    """新增 MCP 伺服器配置"""
     clean_name = server_data.name.strip().lower()
     existing = db.query(McpServer).filter(McpServer.name == clean_name).first()
     if existing:
@@ -203,7 +195,6 @@ async def get_server_detail(
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_admin_user)
 ):
-    """獲取單一 MCP 伺服器詳情"""
     server = db.query(McpServer).filter(McpServer.id == server_id).first()
     if not server:
         raise HTTPException(status_code=404, detail="找不到該 MCP 伺服器")
@@ -218,7 +209,6 @@ async def update_server(
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_admin_user)
 ):
-    """更新 MCP 伺服器配置"""
     server = db.query(McpServer).filter(McpServer.id == server_id).first()
     if not server:
         raise HTTPException(status_code=404, detail="找不到該 MCP 伺服器")
@@ -262,7 +252,7 @@ async def update_server(
     db.refresh(server)
     return {
         "status": "success",
-        "message": "MCP 伺服器配置更新成功",
+        "message": "MCP 伺服器設定更新成功",
         "server": _server_response(server)
     }
 @router.delete("/servers/{server_id}")
@@ -271,7 +261,6 @@ async def delete_server(
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_admin_user)
 ):
-    """刪除 MCP 伺服器配置"""
     server = db.query(McpServer).filter(McpServer.id == server_id).first()
     if not server:
         raise HTTPException(status_code=404, detail="找不到該 MCP 伺服器")
@@ -295,7 +284,6 @@ async def start_oauth(
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_admin_user)
 ):
-    """以授權碼流程（PKCE）向遠端 MCP 伺服器的授權伺服器取得權杖；回傳讓管理員在瀏覽器開啟的授權網址"""
     server = db.query(McpServer).filter(McpServer.id == server_id).first()
     if not server:
         raise HTTPException(status_code=404, detail="找不到該 MCP 伺服器")
@@ -340,7 +328,6 @@ async def revoke_oauth(
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_admin_user)
 ):
-    """清除已保存的 OAuth 權杖"""
     server = db.query(McpServer).filter(McpServer.id == server_id).first()
     if not server:
         raise HTTPException(status_code=404, detail="找不到該 MCP 伺服器")
@@ -349,7 +336,6 @@ async def revoke_oauth(
     return {"status": "success", "message": "已清除 OAuth 授權", "server": _server_response(server)}
 @oauth_callback_router.get("/oauth/client-metadata.json", name="mcp_oauth_client_metadata")
 async def oauth_client_metadata(request: Request):
-    """OAuth Client ID Metadata Document：授權伺服器以這個網址作為 client_id 取得 AskMiao 的用戶端資料"""
     return mcp_oauth.client_metadata_document(
         str(request.url_for("mcp_oauth_client_metadata")), str(request.url_for("mcp_oauth_callback"))
     )
@@ -362,7 +348,6 @@ async def oauth_callback(
     iss: Optional[str] = Query(None),
     db: Session = Depends(get_db),
 ):
-    """授權伺服器導回的位址：不需登入，以一次性的 state 對應發起授權的管理員與伺服器"""
     pending = mcp_oauth.take_pending(state)
     if pending is None:
         return _oauth_page("授權失敗", "授權連結無效或已過期，請回到 AskMiao 重新按「OAuth 授權」。", 400)
@@ -394,7 +379,6 @@ async def discover_server_tools(
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_admin_user)
 ):
-    """即時連線並探索 MCP 伺服器提供的所有工具 (tools/list)"""
     server = db.query(McpServer).filter(McpServer.id == server_id).first()
     if not server:
         raise HTTPException(status_code=404, detail="找不到該 MCP 伺服器")
@@ -438,7 +422,6 @@ async def toggle_server(
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_admin_user)
 ):
-    """切換 MCP 伺服器啟用狀態"""
     server = db.query(McpServer).filter(McpServer.id == server_id).first()
     if not server:
         raise HTTPException(status_code=404, detail="找不到該 MCP 伺服器")
@@ -458,7 +441,6 @@ async def test_mcp_tool(
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_admin_user)
 ):
-    """即時線上測試特定 MCP 工具調用 (tools/call)"""
     server = db.query(McpServer).filter(McpServer.id == server_id).first()
     if not server:
         raise HTTPException(status_code=404, detail="找不到該 MCP 伺服器")

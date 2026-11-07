@@ -1,25 +1,17 @@
 import copy
 import re
 from typing import Any, Dict, List
-
 from app.core.error_response import SafeClientError
 from app.services import jsonpath
-
 OVERLAY_VERSION_PATTERN = re.compile(r"^1\.[0-2](\.\d+)?$")
 MAX_OVERLAY_ACTIONS = 500
-
-
 def is_overlay(document: Any) -> bool:
     return isinstance(document, dict) and "overlay" in document
-
-
 def overlay_version(document: Dict[str, Any]) -> str:
     version = str(document.get("overlay", "")).strip()
     if not OVERLAY_VERSION_PATTERN.match(version):
         raise SafeClientError(f"不支援 Overlay {version or '（未標示版本）'}，目前支援 1.0、1.1、1.2")
     return version
-
-
 def _actions(overlay: Dict[str, Any]) -> List[Dict[str, Any]]:
     actions = overlay.get("actions")
     if not isinstance(actions, list) or not actions:
@@ -41,16 +33,12 @@ def _actions(overlay: Dict[str, Any]) -> List[Dict[str, Any]]:
             raise SafeClientError(f"Overlay 第 {index} 個 action 缺少 target")
         resolved.append(action)
     return resolved
-
-
 def _kind(value: Any) -> str:
     if isinstance(value, dict):
         return "object"
     if isinstance(value, list):
         return "array"
     return "primitive"
-
-
 def _merge(target: Any, update: Any, where: str) -> Any:
     if isinstance(target, dict):
         if not isinstance(update, dict):
@@ -73,22 +61,16 @@ def _merge(target: Any, update: Any, where: str) -> Any:
     if isinstance(update, (dict, list)):
         raise SafeClientError(f"Overlay 不能把物件或陣列寫入純量 {where}")
     return copy.deepcopy(update)
-
-
 def _parent(document: Any, location: jsonpath.Location) -> Any:
     parent = document
     for key in location[:-1]:
         parent = parent[key]
     return parent
-
-
 def _write(document: Dict[str, Any], node: jsonpath.Node, value: Any) -> Dict[str, Any]:
     if not node.location:
         return value
     _parent(document, node.location)[node.location[-1]] = value
     return document
-
-
 def _remove(document: Dict[str, Any], nodes: List[jsonpath.Node]) -> None:
     if any(not node.location for node in nodes):
         raise SafeClientError("Overlay 不能移除整份文件")
@@ -100,8 +82,6 @@ def _remove(document: Dict[str, Any], nodes: List[jsonpath.Node]) -> None:
                 del parent[key]
         elif isinstance(parent, dict):
             parent.pop(key, None)
-
-
 def apply_overlay(document: Dict[str, Any], overlay: Dict[str, Any]) -> Dict[str, Any]:
     overlay_version(overlay)
     result = copy.deepcopy(document)

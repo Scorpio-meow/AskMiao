@@ -43,7 +43,7 @@
     "license": "https://opensource.org/licenses/MIT",
     "programmingLanguage": ["Python", "TypeScript"],
     "runtimePlatform": ["FastAPI", "React"],
-    "version": "8.2.0",
+    "version": "8.2.1",
     "dateModified": "2026-11-07"
   }
   </script>
@@ -663,7 +663,7 @@
           <li class="guard reveal" style="--i: 2"><svg class="icon" aria-hidden="true"><use href="#i-key"></use></svg><h3>工具憑證加密存放</h3><p>API 工具與 MCP 的標頭、金鑰以 Fernet 加密寫入資料庫，管理 API 只回 ••••••••。</p></li>
           <li class="guard reveal" style="--i: 3"><svg class="icon" aria-hidden="true"><use href="#i-detective"></use></svg><h3>工具結果是不可信資料</h3><p>每次提問以不同 id 的 untrusted_tool_result 標記包住結果，文件或網頁夾帶的指令不會被執行。</p></li>
           <li class="guard reveal" style="--i: 4"><svg class="icon" aria-hidden="true"><use href="#i-gauge"></use></svg><h3>每個入口都有上限</h3><p>單則訊息 20,000 字、附件 5 個、每人同時 2 個回答串流，超過就回 413、422 或 429。</p></li>
-          <li class="guard reveal" style="--i: 5"><svg class="icon" aria-hidden="true"><use href="#i-seal-check"></use></svg><h3>錯誤只回代碼</h3><p>未預期的例外只對外回隨機錯誤代碼，堆疊寫進伺服器日誌；日誌雙層脫敏，權杖顯示為 [REDACTED]。</p></li>
+          <li class="guard reveal" style="--i: 5"><svg class="icon" aria-hidden="true"><use href="#i-seal-check"></use></svg><h3>錯誤只回代碼</h3><p>未預期的例外只對外回隨機錯誤代碼，堆疊寫進伺服器日誌；日誌雙層遮蔽，權杖顯示為 [REDACTED]。</p></li>
         </ul>
       </div>
     </section>
@@ -812,7 +812,7 @@ bun run dev</code></pre>
           </ul>
         </nav>
         <div class="closing__meta">
-          <p><span class="mono">AskMiao 8.2.0</span> · MIT 授權</p>
+          <p><span class="mono">AskMiao 8.2.1</span> · MIT 授權</p>
           <p>產品名稱與標誌屬於各自的所有者。</p>
         </div>
       </div>

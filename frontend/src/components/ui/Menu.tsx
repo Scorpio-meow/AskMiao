@@ -45,7 +45,6 @@ function useAnchoredPosition(
 }
 const getMenuItems = (menu: HTMLElement | null) =>
   Array.from(menu?.querySelectorAll<HTMLElement>('[role^="menuitem"]:not([disabled])') ?? []);
-// 觸發元素位於模態 <dialog> 內時必須渲染在該 dialog 裡，否則會被頂層 (top layer) 蓋住且無法操作
 const getPortalTarget = (anchorEl: HTMLElement) => anchorEl.closest('dialog') ?? document.body;
 export interface MenuProps {
   open: boolean;
@@ -114,7 +113,6 @@ export const Menu: React.FC<MenuProps> = ({
 export interface MenuItemProps extends React.ButtonHTMLAttributes<HTMLButtonElement> {
   icon?: React.ReactNode;
   danger?: boolean;
-  /** 提供時成為單選項目（menuitemradio） */
   checked?: boolean;
 }
 export const MenuItem: React.FC<MenuItemProps> = ({
@@ -161,7 +159,6 @@ export interface PopoverProps {
   placement?: Placement;
   'aria-label': string;
 }
-/** 非模態的資訊浮層：焦點移入、Esc 關閉並把焦點還給觸發元素 */
 export const Popover: React.FC<PopoverProps> = ({
   open,
   anchorEl,

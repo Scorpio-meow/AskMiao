@@ -25,7 +25,6 @@ router = APIRouter()
 MAX_FILE_SIZE_MB = settings.MAX_FILE_SIZE_MB
 UPLOAD_DIR = settings.UPLOAD_DIR
 ALLOWED_EXTENSIONS = DocumentProcessor.SUPPORTED_EXTENSIONS
-# 逐行判斷 Q／A 開頭；舊的跨行 DOTALL 正規式遇到大量沒有對應 A： 的 Q： 會呈超線性回溯
 Q_LINE_PATTERN = re.compile(r"\s*[QＱ]\s*[：:]\s*(.*)")
 A_LINE_PATTERN = re.compile(r"\s*[AＡ]\s*[：:]\s*(.*)")
 def validate_filename(filename: str) -> str:
@@ -41,19 +40,15 @@ def validate_filename(filename: str) -> str:
         raise ValueError("檔名過長")
     return filename.replace(" ", "_")
 def split_faq(text: str):
-    """把「Q：…／A：…」格式的文字切成問答對。問題延續到第一個 A： 行，答案延續到下一個 Q： 行；線性時間。
-    第一個 Q： 行之前有空白以外的文字時不是 FAQ，回傳空清單"""
     pairs = []
     question = None
     answer = None
-
     def flush():
         if question is not None and answer is not None:
             q = "\n".join(question).strip()
             a = "\n".join(answer).strip()
             if q and a:
                 pairs.append((q, a))
-
     for line in text.splitlines():
         q_match = Q_LINE_PATTERN.match(line)
         if q_match and (question is None or answer is not None):
@@ -126,7 +121,7 @@ async def reextract_or_stored(
             DocumentProcessor.extract_document, file_path, doc.file_type or "text/plain", ADMIN_UPLOAD_EXTRACTION_LIMITS, ocr
         )
     except Exception as e:
-        logger.warning(f"重新提取檔案 {doc.filename} 失敗，使用資料庫快取: {e}")
+        logger.warning(f"重新擷取檔案 {doc.filename} 失敗，使用資料庫快取: {e}")
         return DocumentProcessor.stored_text_extraction(doc.filename, doc.content)
     if not extraction.text or not extraction.text.strip():
         return DocumentProcessor.stored_text_extraction(doc.filename, doc.content)
@@ -162,7 +157,7 @@ async def index_unprocessed_documents(db: Session) -> None:
             added_chunks = await asyncio.to_thread(rag_system.add_documents, langchain_docs)
             doc.is_processed = True
             db.commit()
-            logger.warning(f"文件 {doc.id} ({doc.filename}) 上傳時未完成索引，已補建 {added_chunks} 個分塊")
+            logger.warning(f"文件 {doc.id} ({doc.filename}) 上傳時未完成索引，已補建 {added_chunks} 個切塊")
         except Exception:
             db.rollback()
             logger.exception(f"補建文件 {doc.id} ({doc.filename}) 的索引失敗")
@@ -266,7 +261,7 @@ async def upload_document(
                 results.append({
                     "filename": safe_filename,
                     "status": "failed",
-                    "detail": "檔案處理錯誤: 內部錯誤，請聯繫系統管理員",
+                    "detail": "檔案處理錯誤: 內部錯誤，請聯絡系統管理員",
                     "http_status": 500
                 })
                 continue
@@ -322,11 +317,11 @@ async def upload_document(
                 "content_type": up.content_type,
                 "original_filename": up.filename
             }
-            logger.info(f"正在對文件 {safe_filename} ({len(content)} 字元) 進行分塊處理...")
+            logger.info(f"正在對文件 {safe_filename} ({len(content)} 字元) 進行切塊處理...")
             langchain_docs, qa_count, record_count = await asyncio.to_thread(
                 process_document_for_rag, extraction, base_metadata, rag_system
             )
-            logger.info(f"正在將文件 {safe_filename} 提交至 RAG 引擎進行分塊與向量化...")
+            logger.info(f"正在將文件 {safe_filename} 提交至 RAG 引擎進行切塊與向量化...")
             added_chunks = await asyncio.to_thread(rag_system.add_documents, langchain_docs)
             document.is_processed = True
             db.commit()
@@ -360,11 +355,10 @@ async def upload_document(
             results.append({
                 "filename": up.filename,
                 "status": "failed",
-                "detail": "内部錯誤，處理失敗。請聯繫系統管理員。",
+                "detail": "內部錯誤，處理失敗。請聯絡系統管理員。",
                 "http_status": 500
             })
     return {"results": results}
-# 文件清單只送畫面需要的欄位：全文可能很大，清單頁與管理後台都用不到
 DOCUMENT_LIST_COLUMNS = (
     DBDocument.id,
     DBDocument.filename,
@@ -388,7 +382,6 @@ async def regenerate_document_summary(
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_admin_user)
 ):
-    """手動或一鍵重新生成該文件的 AI 智慧大綱與摘要"""
     document = db.query(DBDocument).filter(DBDocument.id == document_id).first()
     if not document:
         raise HTTPException(status_code=404, detail="文件不存在")
@@ -413,7 +406,6 @@ async def update_document_summary(
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_admin_user)
 ):
-    """手動編輯儲存該文件的大綱描述"""
     document = db.query(DBDocument).filter(DBDocument.id == document_id).first()
     if not document:
         raise HTTPException(status_code=404, detail="文件不存在")
@@ -438,7 +430,6 @@ async def delete_document(
         raise HTTPException(status_code=404, detail="文件不存在")
     await remove_document(db, document)
     return {"message": "文件刪除成功"}
-# 重建逐份移除並寫回文件的片段，同時跑兩次會讓同一份文件的片段寫進兩份
 _rebuild_lock = asyncio.Lock()
 @router.post("/rebuild-index")
 async def rebuild_index(
@@ -451,12 +442,12 @@ async def rebuild_index(
         return await _rebuild_all_documents(db, current_user)
 async def _rebuild_all_documents(db: Session, current_user: dict):
     try:
-        logger.info(f"管理員 {current_user.get('username', 'unknown')} 觸發完整索引重建（含重新分塊與補齊摘要）")
+        logger.info(f"管理員 {current_user.get('username', 'unknown')} 觸發完整索引重建（含重新切塊與補齊摘要）")
         rag_system = get_rag_system()
-        logger.info("從數據庫重新載入文檔...")
+        logger.info("從資料庫重新載入文件...")
         documents_from_db = db.query(DBDocument).all()
         if not documents_from_db:
-            logger.warning("數據庫中沒有文檔")
+            logger.warning("資料庫中沒有文件")
             return {
                 "message": "索引重建完成（沒有文件）",
                 "document_count": 0,
@@ -467,7 +458,7 @@ async def _rebuild_all_documents(db: Session, current_user: dict):
                 "failed_documents": [],
                 "timestamp": datetime.now().isoformat()
             }
-        logger.info(f"用新配置重新處理 {len(documents_from_db)} 個文檔（chunk_size={rag_system.chunk_size}, chunk_overlap={rag_system.chunk_overlap}）...")
+        logger.info(f"用新設定重新處理 {len(documents_from_db)} 份文件（chunk_size={rag_system.chunk_size}, chunk_overlap={rag_system.chunk_overlap}）...")
         total_chunks = 0
         total_qa_pairs = 0
         total_records = 0
@@ -478,7 +469,6 @@ async def _rebuild_all_documents(db: Session, current_user: dict):
         for doc in documents_from_db:
             try:
                 extraction = await reextract_or_stored(doc, missing_source_files, ocr)
-                # 只替沒有摘要的文件產生摘要：管理員手動修訂過的摘要不能被覆蓋
                 if not (doc.description or "").strip():
                     doc.description = await DocumentProcessor.generate_document_summary_async(
                         doc.filename, extraction.text, doc.file_type or "text/plain", extraction, summary_model
@@ -498,21 +488,20 @@ async def _rebuild_all_documents(db: Session, current_user: dict):
                 )
                 await asyncio.to_thread(rag_system.remove_document_by_id, doc.id)
                 chunks_added = await asyncio.to_thread(rag_system.add_documents, langchain_docs)
-
                 total_chunks += chunks_added or 0
                 total_qa_pairs += qa_count
                 total_records += record_count
                 logger.info(
-                    f"處理文檔 {doc.id} ({doc.filename}): {chunks_added} 個分塊（{qa_count} 個 Q&A 對、{record_count} 筆記錄）"
+                    f"處理文件 {doc.id} ({doc.filename}): {chunks_added} 個切塊（{qa_count} 個 Q&A 對、{record_count} 筆記錄）"
                 )
             except Exception as e:
-                logger.exception(f"處理文檔 {doc.id} ({doc.filename}) 失敗")
+                logger.exception(f"處理文件 {doc.id} ({doc.filename}) 失敗")
                 failed_documents.append({"document_id": doc.id, "filename": doc.filename})
                 continue
         doc_count = len(documents_from_db)
         vector_count = rag_system.index.ntotal
         logger.info(
-            f"索引重建完成: {doc_count} 個文檔 -> {vector_count} 個向量塊 "
+            f"索引重建完成: {doc_count} 份文件 -> {vector_count} 個向量塊 "
             f"(含 {total_qa_pairs} 個 Q&A 對、{total_records} 筆結構化記錄)"
         )
         if missing_source_files:
@@ -523,7 +512,7 @@ async def _rebuild_all_documents(db: Session, current_user: dict):
             "message": (
                 f"索引重建完成，但有 {len(failed_documents)} 份文件處理失敗"
                 if failed_documents
-                else "索引重建成功（已用新配置重新分塊，並替缺少摘要的文件生成 AI 智慧大綱）"
+                else "索引重建成功（已用新設定重新切塊，並替缺少摘要的文件生成 AI 智慧大綱）"
             ),
             "document_count": doc_count,
             "chunk_count": vector_count,
@@ -537,4 +526,4 @@ async def _rebuild_all_documents(db: Session, current_user: dict):
         }
     except Exception as e:
         logger.exception("索引重建失敗")
-        raise HTTPException(status_code=500, detail="索引重建失敗: 內部錯誤，請聯繫系統管理員")
+        raise HTTPException(status_code=500, detail="索引重建失敗: 內部錯誤，請聯絡系統管理員")

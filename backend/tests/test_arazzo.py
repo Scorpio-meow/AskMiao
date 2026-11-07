@@ -1,15 +1,12 @@
 import ipaddress
 import json
 from unittest.mock import AsyncMock, patch
-
 import httpx
 import pytest
-
 from app.api.api_tools import execute_api_tool
 from app.core.error_response import SafeClientError
 from app.services import arazzo, oauth_client, openapi_documents
 from app.services.openapi_parser import OpenApiParser
-
 PUBLIC_IP = ipaddress.ip_address("93.184.216.34")
 PETSTORE_URL = "https://specs.example.com/petstore.json"
 PETSTORE = {
@@ -76,22 +73,15 @@ ARAZZO = {
         },
     ],
 }
-
-
 @pytest.fixture
 def sources(monkeypatch):
     documents = {PETSTORE_URL: PETSTORE, "https://specs.example.com/adoption.arazzo.json": ARAZZO}
-
     async def fake_fetch(url, purpose):
         return json.dumps(documents[url])
-
     monkeypatch.setattr(openapi_documents, "fetch_document_text", fake_fetch)
-
-
 @pytest.fixture
 def upstream(monkeypatch):
     state = {"sent": [], "responses": {}}
-
     async def fake_send(self, request):
         await request.aread()
         state["sent"].append(request)
@@ -99,14 +89,11 @@ def upstream(monkeypatch):
         queue = state["responses"][key]
         status, body = queue.pop(0) if len(queue) > 1 else queue[0]
         return httpx.Response(status, json=body, request=request)
-
     monkeypatch.setattr(httpx.AsyncHTTPTransport, "handle_async_request", fake_send)
     oauth_client._token_cache.clear()
     with patch("app.core.ssrf_protection.resolve_hostname", new_callable=AsyncMock) as mock_dns:
         mock_dns.return_value = [PUBLIC_IP]
         yield state
-
-
 async def imported(name):
     result = await OpenApiParser.parse("https://specs.example.com/adoption.arazzo.json", None, [])
     endpoint = next(e for e in result["endpoints"] if e["name"] == name)
@@ -116,8 +103,6 @@ async def imported(name):
         "auth_type": endpoint["auth_type"], "auth_config": {"key_name": "X-Key", "key_in": "header", "key_value": "k-secret"},
         "headers": {}, "timeout": 5,
     }
-
-
 @pytest.mark.anyio
 async def test_arazzo_document_becomes_one_tool_per_workflow(sources):
     result, tool = await imported("workflow_adoptfirstpet")
@@ -130,8 +115,6 @@ async def test_arazzo_document_becomes_one_tool_per_workflow(sources):
     assert names["workflow_checkhealth"]["requires_approval"] is False
     assert adopt["workflow_definition"]["step_targets"] == ["GET api.example.com", "POST api.example.com"]
     assert adopt["auth_type"] == "api_key"
-
-
 @pytest.mark.anyio
 async def test_workflow_runs_steps_passes_outputs_and_retries(sources, upstream):
     upstream["responses"] = {
@@ -149,8 +132,6 @@ async def test_workflow_runs_steps_passes_outputs_and_retries(sources, upstream)
     assert find.headers["x-key"] == "k-secret"
     assert json.loads(adopt.content) == {"owner": "小明", "note": "領養 Mimi", "source": "askmiao"}
     assert "k-secret" not in json.dumps(result, ensure_ascii=False)
-
-
 @pytest.mark.anyio
 async def test_failed_criteria_stop_the_workflow(sources, upstream):
     upstream["responses"] = {
@@ -162,24 +143,18 @@ async def test_failed_criteria_stop_the_workflow(sources, upstream):
     assert result["is_success"] is False
     assert "find" in result["error"]
     assert [r.url.path for r in upstream["sent"]] == ["/health", "/pets"]
-
-
 @pytest.mark.anyio
 async def test_loops_are_stopped_by_the_step_budget(sources, upstream):
     upstream["responses"] = {"GET /health": [(200, {"status": "ok"})]}
     _, tool = await imported("workflow_loopforever")
     result = await execute_api_tool(tool, {}, tool["name"])
     assert result["is_success"] is False and "上限" in result["error"]
-
-
 @pytest.mark.anyio
 async def test_workflow_inputs_are_checked(sources, upstream):
     _, tool = await imported("workflow_adoptfirstpet")
     result = await execute_api_tool(tool, {"owner": "小明", "admin": True}, tool["name"])
     assert result["status_code"] == 400 and "admin" in result["error"]
     assert upstream["sent"] == []
-
-
 def test_simple_conditions_follow_the_arazzo_rules():
     run = arazzo._Run({"workflow_definition": {"workflows": {}}}, "t")
     scope = {"exchange": {"status_code": 200, "response": {"body": {"items": [{"name": "Mimi"}], "count": 3}, "header": {}}}}
@@ -187,8 +162,6 @@ def test_simple_conditions_follow_the_arazzo_rules():
     assert run.simple("$response.body#/items[0].name == 'mimi'", scope)
     assert run.simple("$response.body#/missing == null", scope)
     assert not run.simple("$statusCode != 200 || $response.body#/count > 5", scope)
-
-
 @pytest.mark.anyio
 async def test_unsupported_arazzo_versions_and_sources_are_reported(sources):
     with pytest.raises(SafeClientError, match="Arazzo 2.0"):

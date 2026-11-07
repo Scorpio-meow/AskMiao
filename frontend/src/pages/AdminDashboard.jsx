@@ -127,7 +127,6 @@ function AdminDashboard() {
       setPendingDelete(null);
     }
   };
-  // 只有第一次載入時顯示整頁載入；之後重新整理保留目前內容與捲動位置
   if (loading && !statistics) {
     return (
       <div className={styles.loadingState}>
@@ -151,7 +150,6 @@ function AdminDashboard() {
           {error}
         </Alert>
       )}
-      {/* 統計卡片 */}
       <div className={styles.statsGrid}>
         <div className={styles.statCard}>
           <div className={styles.statIcon}>
@@ -202,7 +200,6 @@ function AdminDashboard() {
         onConnectionsChanged={() => setConnectionsVersion((version) => version + 1)}
       />
       <SystemModelsCard refreshKey={connectionsVersion} />
-      {/* 文件管理表格 */}
       <div className={styles.card}>
         <h2 className={styles.cardTitle} id="admin-documents-title">文件管理</h2>
         <div className={styles.tableWrapper}>

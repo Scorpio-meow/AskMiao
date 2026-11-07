@@ -22,7 +22,6 @@ export const Snackbar: React.FC<SnackbarProps> = ({
   anchorOrigin = { vertical: 'bottom', horizontal: 'center' },
   className = '',
 }) => {
-  // 以 ref 保存 onClose，父層每次重新渲染都傳新函式時計時器才不會一直被重設
   const onCloseRef = useRef(onClose);
   useEffect(() => {
     onCloseRef.current = onClose;

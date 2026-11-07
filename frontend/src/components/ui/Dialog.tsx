@@ -7,13 +7,11 @@ import styles from './Dialog.module.css';
 const DialogTitleIdContext = createContext<string | undefined>(undefined);
 export interface DialogProps {
   open: boolean;
-  /** 未提供時無法以 Esc 或點擊背景關閉（例如處理中） */
   onClose?: () => void;
   maxWidth?: 'xs' | 'sm' | 'md' | 'lg' | 'xl';
   fullWidth?: boolean;
   children: React.ReactNode;
   className?: string;
-  /** 沒有 DialogTitle 時用來命名對話框 */
   'aria-label'?: string;
 }
 export const Dialog: React.FC<DialogProps> = ({
@@ -55,7 +53,6 @@ export const Dialog: React.FC<DialogProps> = ({
 export interface DialogTitleProps extends React.HTMLAttributes<HTMLHeadingElement> {
   icon?: React.ReactNode;
   subtitle?: React.ReactNode;
-  /** 提供時在標題列右側顯示關閉按鈕 */
   onClose?: () => void;
   closeDisabled?: boolean;
 }
@@ -110,7 +107,6 @@ export const DialogActions: React.FC<React.HTMLAttributes<HTMLDivElement>> = ({
     </div>
   );
 };
-/** 讓 <form> 包住 DialogContent 與 DialogActions 時仍維持內容區可捲動 */
 export const DialogForm: React.FC<React.FormHTMLAttributes<HTMLFormElement>> = ({
   children,
   className = '',

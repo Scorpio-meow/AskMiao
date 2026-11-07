@@ -3,14 +3,9 @@ import hashlib
 import logging
 import os
 import re
-
 from app.core.config import settings
-
 logger = logging.getLogger(__name__)
-# jieba 預設把前綴詞典快取（marshal 格式）以可預測的檔名放在系統暫存目錄並直接載入；
-# 改放在只有後端帳號可存取的資料目錄子目錄，避免其他本機帳號預先放入竄改過的快取
 JIEBA_CACHE_DIR = os.path.join(settings.DATA_DIR, "jieba_cache")
-
 try:
     from whoosh.analysis import StandardAnalyzer, Analyzer, Tokenizer, Token
     HAS_WHOOSH = True
@@ -20,24 +15,17 @@ except ImportError:
     Tokenizer = object
     Token = None
     StandardAnalyzer = None
-
 try:
     import jieba
     HAS_JIEBA = True
 except Exception:
     HAS_JIEBA = False
-
-# 斷詞規則版本：規則改變時遞增，BM25 索引會因簽章不符而自動重建（2：斷詞結果一律轉小寫；3：另建漢字單字與雙字欄位）
 TOKENIZER_RULES_VERSION = 3
 HAN_RUN = re.compile(r"[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]+")
-
 _jieba_tokenizer = None
 _configured_with = None
 _signature: Optional[Dict[str, object]] = None
-
-
 def configure_tokenizer(dictionary_path: Optional[str], domain_words: Sequence[str]) -> None:
-    """設定 BM25 使用的 jieba 主詞典與領域詞，並計算斷詞簽章（規則版本、主詞典雜湊、領域詞雜湊）"""
     global _jieba_tokenizer, _configured_with, _signature
     words = list(dict.fromkeys(domain_words))
     if _configured_with == (dictionary_path, tuple(words)):
@@ -48,7 +36,6 @@ def configure_tokenizer(dictionary_path: Optional[str], domain_words: Sequence[s
         return
     if dictionary_path is not None and not os.path.isfile(dictionary_path):
         raise FileNotFoundError(f"找不到 JIEBA_DICTIONARY 指定的詞典檔：{dictionary_path}")
-
     tokenizer = jieba.Tokenizer(dictionary_path) if dictionary_path else jieba.Tokenizer()
     os.makedirs(JIEBA_CACHE_DIR, mode=0o700, exist_ok=True)
     tokenizer.tmp_dir = JIEBA_CACHE_DIR
@@ -57,31 +44,23 @@ def configure_tokenizer(dictionary_path: Optional[str], domain_words: Sequence[s
         tokenizer.add_word(word)
     with tokenizer.get_dict_file() as f:
         dictionary_sha256 = hashlib.sha256(f.read()).hexdigest()
-
     _jieba_tokenizer = tokenizer
     _configured_with = (dictionary_path, tuple(words))
     _signature = {
         "rules_version": TOKENIZER_RULES_VERSION,
         "analyzer": "jieba",
         "dictionary_sha256": dictionary_sha256,
-        # 領域詞的加入順序會影響 jieba 的建議詞頻，因此雜湊保留順序
         "domain_words_sha256": hashlib.sha256("\n".join(words).encode("utf-8")).hexdigest(),
     }
     logger.info(f"jieba 斷詞器已設定：主詞典 {dictionary_path or 'jieba 內建詞典'}，領域詞 {len(words)} 個")
-
-
 def tokenizer_signature() -> Dict[str, object]:
     if _signature is None:
         raise RuntimeError("斷詞器尚未設定，請先呼叫 configure_tokenizer")
     return _signature
-
-
 def _cut(text: str):
     if _jieba_tokenizer is None:
         raise RuntimeError("斷詞器尚未設定，請先呼叫 configure_tokenizer")
     return _jieba_tokenizer.cut(text, cut_all=False)
-
-
 if HAS_WHOOSH and HAS_JIEBA:
     class JiebaTokenizer(Tokenizer):
         def __call__(
@@ -125,23 +104,18 @@ if HAS_WHOOSH and HAS_JIEBA:
                     t.endchar = idx + len(w)
                     char_pos = t.endchar
                 yield t
-
     class JiebaAnalyzer(Analyzer):
         def __init__(self):
             self._tokenizer = JiebaTokenizer()
-
         def __call__(self, value, **kwargs):
             return self._tokenizer(value, **kwargs)
 else:
     JiebaTokenizer = None
     JiebaAnalyzer = None
-
-
 if HAS_WHOOSH:
     class HanNgramTokenizer(Tokenizer):
         def __init__(self, size: int):
             self.size = size
-
         def __call__(
             self,
             value,
@@ -172,26 +146,20 @@ if HAS_WHOOSH:
                         t.startchar = start_char + start
                         t.endchar = start_char + start + self.size
                     yield t
-
     class HanNgramAnalyzer(Analyzer):
         def __init__(self, size: int):
             self._tokenizer = HanNgramTokenizer(size)
-
         def __call__(self, value, **kwargs):
             return self._tokenizer(value, **kwargs)
 else:
     HanNgramTokenizer = None
     HanNgramAnalyzer = None
-
-
 def get_chinese_analyzer():
     if not HAS_WHOOSH:
         return None
     if HAS_JIEBA:
         return JiebaAnalyzer()
     return StandardAnalyzer()
-
-
 def get_han_ngram_analyzer(size: int):
     if not HAS_WHOOSH:
         return None

@@ -39,11 +39,8 @@ export interface Message {
   think?: string | null;
   role?: string;
   isUser?: boolean;
-  /** 僅前端使用：串流失敗時的錯誤訊息 */
   error?: string;
-  /** 僅前端使用：使用者手動停止產生 */
   stopped?: boolean;
-  /** 僅前端使用：Agent 暫停等待使用者核准的工具呼叫 */
   pending_approval?: PendingToolApproval | null;
 }
 export interface PendingToolApproval {
@@ -51,7 +48,6 @@ export interface PendingToolApproval {
   step: number;
   tool: string;
   tool_display_name: string;
-  // 實際送出的位置：自訂 API 工具為「方法 主機」，MCP 為傳輸方式與主機或指令
   target: string;
   arguments?: unknown;
 }
@@ -106,7 +102,6 @@ const api: AxiosInstance = axios.create({
   },
   withCredentials: true,
 });
-// 同一時間只送一個換發請求：重新整理權杖只能用一次，同時送出的第二個請求會被拒絕並把使用者登出
 let refreshPromise: Promise<string> | null = null;
 const refreshAccessToken = (): Promise<string> => {
   refreshPromise ??= axios
@@ -120,14 +115,13 @@ const refreshAccessToken = (): Promise<string> => {
     });
   return refreshPromise;
 };
-// 存取權杖已過期或 5 分鐘內到期時先換發；換發被拒（401）代表重新整理權杖也已失效
 const currentAccessToken = async (): Promise<string | null> => {
   const token = localStorage.getItem('access_token');
   if (!token || !isTokenExpired(token, 300)) return token;
   try {
     return await refreshAccessToken();
   } catch (error: any) {
-    devWarn('[Token] 靜默刷新失敗:', error.response?.status);
+    devWarn('[Token] 靜默重新整理失敗:', error.response?.status);
     if (error.response?.status === 401) {
       clearAuth();
       return null;
@@ -139,7 +133,7 @@ const refreshOrSignOut = async (): Promise<string> => {
   try {
     return await refreshAccessToken();
   } catch (refreshError: any) {
-    console.warn('[Token] Token 刷新失敗，清除認證信息:', refreshError.response?.status);
+    console.warn('[Token] Token 重新整理失敗，清除認證資訊:', refreshError.response?.status);
     clearAuth();
     const currentPath = window.location.pathname;
     if (currentPath !== '/login' && currentPath !== '/register') {
@@ -162,7 +156,6 @@ api.interceptors.request.use(
     return Promise.reject(error);
   }
 );
-// 這些端點回 401 代表帳密或 refresh token 本身無效，不應再觸發 refresh，否則原本的錯誤訊息會被蓋掉
 const AUTH_PATHS_WITHOUT_REFRESH = ['/auth/login', '/auth/register', '/auth/refresh'];
 const isAuthPathWithoutRefresh = (url?: string): boolean => {
   if (!url) return false;
@@ -225,7 +218,6 @@ export const chatService = {
       reasoning_effort,
       attachments: payloadAttachments
     });
-    // fetch 不經過 axios 攔截器，換發權杖要自己處理：過期的權杖連同附件送出只會換來 401 或 413
     const send = (token: string | null) => fetch(`${API_BASE_URL}/chat/send`, {
       method: 'POST',
       headers: {
@@ -237,7 +229,6 @@ export const chatService = {
     });
     let response = await send(await currentAccessToken());
     if (response.status === 401) {
-      // 權杖在送出途中到期或已被撤銷：換發一次再重送
       response = await send(await refreshOrSignOut());
     }
     if (!response.ok) {
@@ -245,7 +236,6 @@ export const chatService = {
       let detail = errText;
       try {
         const parsed = JSON.parse(errText);
-        // 欄位驗證失敗（例如附件過大或數量過多）時 detail 是錯誤清單，取出每一項的說明
         detail = Array.isArray(parsed.detail)
           ? parsed.detail.map((item: { msg?: string }) => (item.msg || '').replace(/^Value error, /, '')).filter(Boolean).join('；')
           : parsed.detail || errText;

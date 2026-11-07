@@ -2,7 +2,7 @@
 
 [繁體中文](architecture.md) | [English](architecture_en.md)
 
-> The architecture of AskMiao **6.0.0**: layers, startup, data model, document processing and retrieval, the agentic RAG research loop, the LLM layer, external tool integration, authentication and security, and the frontend (see the [changelog](../CHANGELOG_en.md#600---2026-10-26) for the differences from 5.0.0). The trade-offs behind these designs are recorded in the [Architecture Decision Records](adr/README_en.md).
+> The architecture of AskMiao **8.2.1**: layers, startup, data model, document processing and retrieval, the agentic RAG research loop, the LLM layer, external tool integration, authentication and security, and the frontend (see the [changelog](../CHANGELOG_en.md#821---2026-11-07) for this release's changes). The trade-offs behind these designs are recorded in the [Architecture Decision Records](adr/README_en.md).
 
 ## Contents
 
@@ -36,20 +36,22 @@ flowchart TB
         AdminUI["Admin dashboard (admin)"]
     end
 
-    subgraph Gateway ["Middleware"]
+    subgraph Gateway ["Middleware (outermost first)"]
         AccessLog["AccessLogMiddleware<br/>request ID and access log"]
         BodyLimit["RequestBodyLimitMiddleware<br/>request body limit"]
-        SecHeaders["SecurityHeadersMiddleware<br/>security response headers"]
-        RateLimit["RateLimitMiddleware<br/>per-IP rate limit"]
         CORS["CORSMiddleware<br/>origin allowlist"]
+        RateLimit["RateLimitMiddleware<br/>per-IP rate limit (when RATE_LIMIT_ENABLED)"]
+        SecHeaders["SecurityHeadersMiddleware<br/>security response headers"]
     end
 
     subgraph Backend ["FastAPI routers and services"]
         AuthAPI["/api/auth<br/>jwt_auth.py"]
         ChatAPI["/api/chat<br/>SSE streaming"]
         DocAPI["/api/documents<br/>document_processor.py"]
-        ToolAPI["/api/api-tools, /api/mcp<br/>openapi_parser.py, mcp_service.py"]
+        ToolAPI["/api/api-tools, /api/mcp<br/>openapi_parser.py, arazzo.py, mcp_service.py, mcp_oauth.py"]
         AdminAPI["/api/admin"]
+        LlmConnAPI["/api/llm-connections, /api/admin/llm-connections, /api/admin/system-models<br/>llm_connections.py, system_models.py"]
+        SkillAPI["/api/skills<br/>agent_skills.py"]
         RAG["HybridContextualRAG<br/>reconciliation, writes, and search"]
         Agent["ResearchAgent + ResearchSession"]
         Approval["ToolApprovalBroker<br/>tool call approval"]
@@ -64,18 +66,23 @@ flowchart TB
         FAISS["FAISS IndexIDMap2"]
         BM25["Whoosh BM25"]
         Files["data/uploads"]
+        Skills["SKILLS_DIR<br/>skill files"]
         Mem[("Process memory<br/>revocation list, rate and login failure counters, pending approvals, cache")]
     end
 
-    Client --> AccessLog --> BodyLimit --> SecHeaders --> RateLimit --> CORS
-    CORS --> AuthAPI & ChatAPI & DocAPI & ToolAPI & AdminAPI
+    Client --> AccessLog --> BodyLimit --> CORS --> RateLimit --> SecHeaders
+    SecHeaders --> AuthAPI & ChatAPI & DocAPI & ToolAPI & AdminAPI & LlmConnAPI & SkillAPI
     ChatAPI --> Agent --> Registry
     Agent --> Approval
     ChatAPI --> Approval
     Agent --> LLM
+    DocAPI --> LLM
+    LLM --> SSRF
     Registry --> RAG
     Registry --> SSRF
+    Registry --> Skills
     ToolAPI --> SSRF
+    LlmConnAPI --> SSRF
     DocAPI --> RAG
     AdminAPI --> RAG
     RAG --> FAISS & BM25
@@ -84,6 +91,9 @@ flowchart TB
     AuthAPI --> DB
     AuthAPI --> Mem
     ToolAPI --> DB
+    LlmConnAPI --> DB
+    SkillAPI --> DB
+    SkillAPI --> Skills
     ChatAPI -.-> Err
     ToolAPI -.-> Err
 ```
@@ -93,7 +103,7 @@ flowchart TB
 | Routers | `app/api/*.py` | Request validation, permission checks, response shape |
 | Core | `app/core/*.py` | Settings, authentication and login throttling, LLM calls, SSRF, tool credential encryption, error codes, log redaction |
 | RAG | `app/rag/` | Chunk storage, indexes, hybrid retrieval, the research agent and tools |
-| Services | `app/services/` | Conversation persistence, document extraction and summaries, OpenAPI parsing, MCP client |
+| Services | `app/services/` | Conversation persistence, document extraction and summaries, OpenAPI and Arazzo parsing, MCP client and remote OAuth, LLM API connections and system models (`llm_connections.py`, `system_models.py`), Agent Skills (`agent_skills.py`) |
 | Background task | `app/tasks/uploads_watcher.py` | Periodically checks for missing uploads (warnings only) |
 
 ---
@@ -117,11 +127,13 @@ sequenceDiagram
     Main->>Main: Configure logging, register middleware and routers (/docs only with ENABLE_API_DOCS=true)
     Main->>Life: uvicorn starts with HOST, PORT, and RELOAD
     Life->>Life: Create tables (create_all), add missing columns, and encrypt plaintext tool credentials (upgrade_schema)
+    Life->>Life: Delete skill staging directories left in SKILLS_DIR by unfinished uploads (cleanup_staging_directories)
     Life->>RAG: Initialize
     RAG->>RAG: Configure the jieba dictionary and compute the tokenizer signature
     RAG->>RAG: Load the embedding model and FAISS (legacy format renamed .legacy.bak, dimension mismatch renamed .mismatch.bak)
     RAG->>RAG: Load BM25 and the reranker (a reranker failure aborts startup)
     RAG->>RAG: Reconcile FAISS and BM25 against rag_chunks
+    Life->>RAG: Index documents whose indexing never finished (index_unprocessed_documents, PDFs may call the OCR system model)
     Life->>Life: Start the uploads watcher task
 ```
 
@@ -146,6 +158,8 @@ erDiagram
     conversations ||--o{ messages : "contains"
     users ||--o{ documents : "uploads"
     documents ||--o{ rag_chunks : "split into"
+    users ||--o{ llm_connections : "owns (personal connections)"
+    llm_connections ||--o{ system_models : "serves"
 
     users {
         int id PK
@@ -224,16 +238,44 @@ erDiagram
         bool is_enabled
         bool requires_approval
     }
+    agent_skills {
+        int id PK
+        string name UK
+        text description
+        text allowed_tools
+        bool is_enabled
+        bool allow_scripts
+        text allowed_user_ids "JSON, empty means everyone"
+    }
+    llm_connections {
+        int id PK
+        string name
+        string provider
+        string api_base
+        text api_key "encrypted JSON"
+        text models "JSON"
+        int max_output_tokens
+        int owner_id FK "empty for a shared connection"
+        text allowed_user_ids "JSON, users of a shared connection"
+    }
+    system_models {
+        string purpose PK "document_summary, pdf_ocr"
+        int connection_id FK
+        string model_name
+        string reasoning_effort
+    }
 ```
 
 - **`rag_chunks` is the source of truth for chunks**: its `id` is the chunk_id that keys both FAISS and BM25. `chunk_metadata` holds `source`, `document_id`, `chunk_index`, `original_filename`, and `content_type`, plus `question` for Q&A chunks and, for structured records, `record_index`, `part`, and `part_count`, along with `label`, `links`, `group`, `sheet`, and `row` depending on the source (see section 4).
 - **`messages.context_used`**: assistant messages store `sources`, `sources_detail`, and `research_trace`; user messages store `attachments` (including the attachments' base64, capped at 200 MiB per user; up to 50,000 characters of each attachment's extracted text go into that attachment's `content` so later questions can carry it in the history). `/api/chat` responses carry only the parsed fields, and `context_used` is always `null`.
 - **`requires_approval`**: the approval-before-call flag of custom API tools and MCP servers; see section 9.
-- **`users.tokens_valid_after`**: access and refresh tokens issued before this moment are rejected. It equals `created_at` when the account is created (so old tokens never map to a new account that reuses a deleted account's id) and is set to the current time on a password change; see section 10.
-- **Tool credential columns**: `headers` and `auth_config` of `custom_api_tools` and `env_vars`, `headers`, `oauth_config`, and `oauth_tokens` of `mcp_servers` are stored encrypted with `TOOL_SECRETS_KEY` (Fernet), starting with `fernet:`; see section 9.
-- **Files outside the database**: `backend/data/` (`faiss_index.bin`, `index_metadata.json`, `bm25_index/`, `uploads/`, `jieba_cache/`), `backend/keys/` (the JWT key pair), `backend/mcp_filesystem_sandbox/` (the root of the filesystem MCP preset), and `backend/logs/` (logs, located by `LOG_DIR`).
+- **`users.tokens_valid_after`**: access and refresh tokens issued before this moment are rejected. It equals `created_at` when the account is created (so old tokens never map to a new account that reuses a deleted account's id) and is set to the current time on a password change or an admin password reset; see section 10.
+- **Tool credential columns**: `headers` and `auth_config` of `custom_api_tools` and `env_vars`, `headers`, `oauth_config`, and `oauth_tokens` of `mcp_servers` are stored encrypted with `TOOL_SECRETS_KEY` (Fernet), starting with `fernet:`; see section 9. LLM API connection keys (`llm_connections.api_key`) are encrypted with the same key.
+- **LLM API connections and system models**: an `llm_connections` row with an `owner_id` is that user's personal connection, and one without is a shared connection an admin created (`allowed_user_ids` limits which accounts may use it, empty meaning everyone); `system_models` assigns a model and reasoning effort from a shared connection to document summaries (`document_summary`) and PDF OCR (`pdf_ocr`).
+- **`agent_skills`**: holds only skill metadata and settings; the skill files live in `SKILLS_DIR`, and the database has no copy of them.
+- **Files outside the database**: `backend/data/` (`faiss_index.bin`, `index_metadata.json`, `bm25_index/`, `uploads/`, `jieba_cache/`, plus `openvino_cache/`, the compiled reranker cache, when `RERANKER_OPENVINO_DEVICE` is set), `SKILLS_DIR` (Agent Skills files, template value `data/skills`), `backend/keys/` (the JWT key pair), `backend/mcp_filesystem_sandbox/` (the root of the filesystem MCP preset), and `backend/logs/` (logs, located by `LOG_DIR`).
 
-Tables are created at startup with SQLAlchemy `create_all`, after which `upgrade_schema()` adds columns introduced later to existing tables and backfills them (currently the two `requires_approval` columns: API tools are backfilled from their method, `true` for anything other than `GET`, `HEAD`, and `OPTIONS`; MCP servers are always `true`; `custom_api_tools.body_content_type`, backfilled with `application/json`; `discovered_resources`, `discovered_prompts`, `oauth_config`, and `oauth_tokens` of `mcp_servers` and `allow_scripts` and `allowed_user_ids` of `agent_skills`; and `users.tokens_valid_after`, backfilled from `created_at`; accounts with no value in it, such as those created while an older version was running, are backfilled on every start), then encrypts tool credentials still stored in plaintext (values that are not valid JSON are cleared with a warning). New SQLite databases create `users`, `documents`, and `rag_chunks` with `AUTOINCREMENT`, so deleted ids are never reused. `backend/init.sql` is the schema bootstrap for the PostgreSQL container, after which `backend/init-app-role.sh` creates the non-superuser account the backend connects with and hands it ownership of the tables (see section 13).
+Tables are created at startup with SQLAlchemy `create_all`, after which `upgrade_schema()` adds columns introduced later to existing tables and backfills them (currently the two `requires_approval` columns: API tools are backfilled from their method, `true` for anything other than `GET`, `HEAD`, and `OPTIONS`; MCP servers are always `true`; `custom_api_tools.body_content_type`, backfilled with `application/json`; `param_styles` and `workflow_definition` of `custom_api_tools`, `discovered_resources`, `discovered_prompts`, `protocol_version`, `oauth_config`, and `oauth_tokens` of `mcp_servers`, and `allow_scripts` and `allowed_user_ids` of `agent_skills`; `system_models.reasoning_effort`, backfilled with `none`; and `users.tokens_valid_after`, backfilled from `created_at`; accounts with no value in it, such as those created while an older version was running, are backfilled on every start), then encrypts tool credentials still stored in plaintext (values that are not valid JSON are cleared with a warning). New SQLite databases create `users`, `documents`, `rag_chunks`, and `llm_connections` with `AUTOINCREMENT`, so deleted ids are never reused. `backend/init.sql` is the schema bootstrap for the PostgreSQL container, after which `backend/init-app-role.sh` creates the non-superuser account the backend connects with and hands it ownership of the tables (see section 13).
 
 ---
 
@@ -250,7 +292,7 @@ flowchart TB
     Sum --> Save["Save to documents"]
     Save --> Split{"Chunking strategy"}
     Split -->|Structured records parsed| Rec["One chunk per record<br/>long records split with a repeated header"]
-    Split -->|Unstructured format in Q：/A： form| QA["One chunk per Q&A pair"]
+    Split -->|Unstructured format in Q：/A： form| QA["One chunk per Q&A pair<br/>recursive splitting past CHUNK_SIZE"]
     Split -->|Everything else| Rcs["Recursive splitting<br/>CHUNK_SIZE / CHUNK_OVERLAP"]
     QA & Rec & Rcs --> Index["Write rag_chunks, FAISS, BM25"]
 ```
@@ -266,11 +308,11 @@ flowchart TB
 | CSV | The first non-empty row is the header and every later row becomes a structured record; a file with no data rows is joined row by row with `\|` |
 | JSON, JSONL, YAML | Parsed into structured records (see "Structured data" below) |
 | JS, TS, JSX, TSX | A declaration such as `const x = [...]` or `module.exports = {...}` whose right-hand side is strict JSON is parsed into structured records; otherwise read as code |
-| INI, ENV, SQL, and other code | Read as text, with Base64 images and SVGs replaced by placeholders |
+| PY, INI, ENV, SQL | Read as text, with Base64 images and SVGs replaced by placeholders; the same applies to JS, TS, JSX, TSX, JSON, JSONL, and YAML that are not parsed into structured records |
 | HTML | Text left after a single linear scan by `app/core/html_text.py` removes tags, `script`, `style`, and `noscript` |
-| Other text files | Tried as UTF-8, UTF-8 with BOM, Big5, GBK, GB2312, and Latin-1 in order |
+| JAVA, CPP, C, SH, and other text files | Tried as UTF-8, UTF-8 with BOM, Big5, GBK, GB2312, and Latin-1 in order, without replacing Base64 images and SVGs |
 
-Before extraction the file header is checked against the declared type. Admin uploads and chat attachments each use their own resource budget (`ExtractionLimits` in `app/core/limits.py`, which every caller must pass): OOXML files (DOCX, PPTX, XLSX) first have their ZIP member count (≤ 10,000), the total of their members' declared uncompressed sizes (≤ 200 MiB for admin uploads, ≤ 64 MiB for chat attachments), and their compression ratio (≤ 100 for any member, or the whole file, over 10 MiB uncompressed) checked to stop zip bombs; for chat attachments, the XML parts of a DOCX or PPTX that are built into a DOM (counted from `[Content_Types].xml`, plus `.rels`, so renaming does not bypass the check) are capped at 8 MiB. Chat attachment JSON, JSONL, YAML, and JS declarations over 2,000,000 characters are not parsed; they are handled as plain text and only get linear noise cleanup; at most 2 chat attachments are parsed at a time per process, and an attachment that is over budget or cannot be read (for example an invalid Office file, or a PDF that is password-protected or has no extractable text) is not read, with a note telling the model so. Admin uploads that yield no text are reported as failures and removed. SVG stripping, JSON declaration extraction, Q&A splitting, and table-of-contents cleanup now run in linear time, so crafted input cannot trigger quadratic regex backtracking.
+Before extraction the file header is checked against the declared type. Admin uploads and chat attachments each use their own resource budget (`ExtractionLimits` in `app/core/limits.py`, which every caller must pass): OOXML files (DOCX, PPTX, XLSX) first have their ZIP member count (≤ 10,000), the total of their members' declared uncompressed sizes (≤ 200 MiB for admin uploads, ≤ 64 MiB for chat attachments), and their compression ratio (≤ 100 for any member, or the whole file, over 10 MiB uncompressed) checked to stop zip bombs; for chat attachments, the XML parts of a DOCX or PPTX that are built into a DOM (counted from `[Content_Types].xml`, plus `.rels`, so renaming does not bypass the check) are capped at 8 MiB. Chat attachment JSON, JSONL, YAML, and JS declarations over 2,000,000 characters are not parsed; they are handled as plain text and only get linear noise cleanup; at most 2 chat attachments are parsed at a time per process, and an attachment that is over budget or cannot be read (for example an invalid Office file, or a PDF that is password-protected or has no extractable text) is not read, with a note telling the model so. Admin uploads that yield no text are reported as failures and removed. SVG stripping, JSON declaration extraction, Q&A splitting, and table-of-contents cleanup run in linear time, so crafted input cannot trigger quadratic regex backtracking.
 
 ### Structured data
 
@@ -289,9 +331,9 @@ On upload, on summary regeneration, and during index rebuilds for documents with
 
 ### Chunking strategy
 
-Ordinary documents are split with `RecursiveCharacterTextSplitter`, whose separators are, in order: section rules, blank lines, line breaks, Chinese sentence and clause punctuation (`。！？；：，`), English punctuation, and spaces. Q&A pairs (detected only in unstructured formats) get one chunk each. A structured record that fits in `CHUNK_SIZE` is one chunk; a longer record is split on whole field lines, a single field value that is itself too long is split further with the splitter above, and every part repeats the header with a `（2/3）` suffix, with no overlap between parts. Both are marked `preserve_whole` and never go through ordinary splitting.
+Ordinary documents are split with `RecursiveCharacterTextSplitter`, whose separators are, in order: section rules, blank lines, line breaks, Chinese sentence and clause punctuation (`。！？；：，`), English punctuation, and spaces. Q&A pairs (detected only in unstructured formats) get one chunk each; a pair longer than `CHUNK_SIZE` is split with the splitter above instead, with `CHUNK_OVERLAP` overlap between parts. A structured record that fits in `CHUNK_SIZE` is one chunk; a longer record is split on whole field lines, a single field value that is itself too long is split further with the splitter above, and every part repeats the header with a `（2/3）` suffix, with no overlap between parts. Q&A pairs within `CHUNK_SIZE` and every part of a structured record are marked `preserve_whole` and never go through ordinary splitting.
 
-During an index rebuild, documents whose original file is still in `UPLOAD_DIR` are re-extracted and `documents.content` is overwritten; documents whose original file is gone are chunked from the stored content as plain text and listed in the response's `missing_source_files`. Existing summaries, including ones an admin edited by hand, are kept; only documents without a summary get a new one. A rebuild replaces each document's chunks one document at a time, so other documents stay searchable; a document that fails keeps its old chunks and is listed in `failed_documents`. A second call while one is running returns `409`.
+During an index rebuild, documents whose original file is still in `UPLOAD_DIR` are re-extracted and `documents.content` is overwritten; documents whose original file is gone are chunked from the stored content as plain text and listed in the response's `missing_source_files`. Existing summaries, including ones an admin edited by hand, are kept; only documents without a summary get a new one. A rebuild works one document at a time, so other documents stay searchable: each document is extracted, summarized, and chunked before its old chunks are removed and the new ones written. A document that fails during extraction, summarization, or chunking keeps its old chunks; one that fails while the index is being written has already lost its old chunks, is left with none, and needs another rebuild. Both are listed in `failed_documents`. A second call while one is running returns `409`.
 
 ---
 
@@ -322,12 +364,13 @@ Searches and writes hold the same lock and run in worker threads, so they never 
 | The BM25 tokenizer signature (rules version, main dictionary hash, domain word hash) differs from the current settings | Rebuild BM25 from the database |
 | FAISS uses the position-aligned 2.x format | Rename it to `*.legacy.bak`; a full rebuild is needed once |
 | The FAISS dimension differs from the current embedding model | Rename it to `*.mismatch.bak` and re-embed every chunk from the database |
+| Documents whose `is_processed` is not true and that have no chunks (indexing never finished after upload) | Re-extract them (from the stored content when the original file is gone), chunk and index them, then mark them processed; blank or garbled PDF pages may call the PDF OCR system model |
 
 ### Three ways to rebuild
 
 | Operation | Scope | Calls the LLM again | When to use |
 |---|---|---|---|
-| Restart the backend | Only fills the differences | No | Index files missing or out of sync |
+| Restart the backend | Only fills the differences and indexes documents whose indexing never finished | No summaries; those PDFs may call the OCR system model | Index files missing or out of sync |
 | `POST /api/admin/vector-store/reindex` | Re-embed all existing chunks and rebuild BM25 | No | Suspected vector corruption |
 | `POST /api/documents/rebuild-index` | Re-extract, re-chunk, and re-index each document, summarizing documents without a summary | Only for documents without a summary | Upgrading from 2.x, changing chunk settings |
 
@@ -353,10 +396,10 @@ flowchart LR
 
 1. **Two tracks**: vector search (`BAAI/bge-small-zh-v1.5` on an inner-product index with L2-normalized vectors) and BM25 (Whoosh BM25F) always both run, each returning `TOP_K` candidates. The BM25 index has three fields: jieba words, single Han characters, and pairs of adjacent Han characters (taken only from runs of Han characters, never across punctuation, Latin letters, or digits). The query's terms from all three fields are combined with OR and scored together by BM25F. When jieba mis-segments a word (for example, Traditional Chinese 「大眾捷運系統」 split into 「大眾捷／運系統」), the unigram and bigram fields still match, and the bigram field ranks chunks with the characters in sequence above chunks where they are scattered. Word tokens are always lowercased (searching `mes` finds `MES`), the main dictionary can be replaced with `JIEBA_DICTIONARY`, and domain words come from the domain profile. See [ADR-0007](adr/0007-han-ngram-bm25-and-passage-level-evaluation_en.md) for the rationale and measurements.
 2. **RRF fusion**: score = Σ 1 / (`RRF_K` + rank), ranks starting at 1, unweighted, with chunk_id identifying the same chunk; the top `RERANK_TOP_K` continue. Chunks found by only one track still become candidates.
-3. **Exact matches**: when the query contains a URL, `/post/<ID>`, a date (`2025-10-22`, `2025年10月22日`), or an `@account`, every chunk is scanned as well. URL, post ID, and date matches are `pinned`: ranked first and exempt from the relevance threshold. `@account` matches only join the candidates and are still sorted by score and subject to the threshold.
-4. **Reranking**: the Cross-Encoder produces a relevance probability per candidate (a sigmoid is applied only when the model has no sigmoid output layer). The sort score = `RERANK_WEIGHT` × reranker probability + (1 − `RERANK_WEIGHT`) × candidate base score, where the base score of a fused candidate is its RRF score divided by the top RRF score and that of an exact match is its match score.
+3. **Exact matches**: when the query contains a URL, `/post/<ID>`, a date (`2025-10-22`, `2025年10月22日`), or an `@account`, every chunk is scanned as well, and the top `RERANK_TOP_K` matches by score go on to reranking. URL, post ID, and date matches are `pinned`: ranked first and exempt from the relevance threshold. `@account` matches only join the candidates and are still sorted by score and subject to the threshold.
+4. **Reranking**: the Cross-Encoder produces a relevance probability per candidate (a sigmoid is applied only when the model has no sigmoid output layer; with `RERANKER_OPENVINO_DEVICE` set, the OpenVINO-compiled model always gets a sigmoid, and `RERANKER_OPENVINO_MAX_LENGTH` must be set too or startup fails). The sort score = `RERANK_WEIGHT` × reranker probability + (1 − `RERANK_WEIGHT`) × candidate base score, where the base score of a fused candidate is its RRF score divided by the top RRF score and that of an exact match is its match score.
 5. **Relevance threshold**: `RERANK_RELEVANCE_THRESHOLD` looks only at the reranker probability; the top `FINAL_K` passing chunks are returned. When none passes, `search_knowledge_base` reports that the knowledge base has nothing relevant.
-6. **Restricting to a document**: with `target_document`, candidates are filtered before reranking: exact matching scans only that document, and fused results keep only chunks whose file name contains the string (case-insensitive). The filter applies after each track has returned its `TOP_K`; when nothing matches the tool reports that the document has nothing relevant, never falling back to the whole library.
+6. **Restricting to a document**: with `target_document`, the chunks whose `source` or `original_filename` contains the string (case-insensitive) are found before retrieval, and all three searches run only over them: vector search scores only those chunk_ids (a CPU index limits them with `IDSelectorBatch`), BM25 filters on `doc_id`, and exact matching scans only those chunks, so each track takes its `TOP_K` from within that document. When nothing matches the tool reports 「指定文件《<target_document>》中查無相關資料」 ("nothing relevant in the specified document"), never falling back to the whole library.
 7. **Failures**: if reranking fails, the exception propagates and the tool returns an error code, never unfiltered chunks.
 
 **Retrieval evaluation**: `evaluator.py` runs the same path as production (rerank, then threshold) and computes document-level hit@k, recall@k, and MRR, plus the rejection rate for negatives (`"relevant_sources": []`). Cases labelled with `relevant_passages` (short verbatim snippets) also get chunk-level precision@k, nDCG@k, snippet recall@k, MRR, and candidate recall (whether the candidates before reranking already contain the answer, which separates recall problems from ranking problems). By default `scripts/evaluate_retrieval.py` runs read-only on a copy of the index and refuses to run if the index disagrees with the database or the tokenizer signature differs; `--corpus` instead builds a knowledge base from the files in a directory on a temporary SQLite database and temporary indexes, without touching production data; `--relevance-thresholds` compares several thresholds over one rerank pass. The built-in benchmark is `backend/eval/corpus/` with `backend/eval/corpus_golden.jsonl`. See [configuration reference: calibrating the relevance threshold](configuration_en.md#calibrating-the-relevance-threshold).
@@ -387,8 +430,8 @@ flowchart TB
 
 | Tool | Behavior |
 |---|---|
-| `search_knowledge_base` | Searches as in section 6 and returns `chunk_id`, `source`, `chunk_index`, `score`, and the full chunk text; all exact matches are returned, the rest limited by `top_k` (default 3) |
-| `filter_and_count_records` | Scans every chunk in a worker thread, merging the parts of each structured record by `(document_id, record_index)` before filtering so every record counts once; filters precisely by date (checking the domain profile's date fields first), author, keyword, and document, returning the total count and the first `limit` records (default 50, also the maximum), each with `label` and `links`; `date_range` is at most 200 characters and may expand to at most 93 days |
+| `search_knowledge_base` | Searches as in section 6 and returns `chunk_id`, `source`, `chunk_index`, `score`, and the full chunk text; URL, post ID, and date exact matches are not limited by `top_k` and are returned up to `FINAL_K`, the rest limited by `top_k` (default 3) |
+| `filter_and_count_records` | Scans every chunk in a worker thread, merging the parts of each structured record by `(document_id, record_index)` before filtering so every record counts once; filters precisely by date (checking the domain profile's date fields first), author, keyword, and document, returning the total count and the first `limit` records (default 50, also the maximum), each with `label` and `links`; `date_range` is at most 200 characters, and only the dates or months written out in it are matched (ranges are not expanded day by day); each date or month yields 2 or 3 spellings, at most 93 in total (about 31 dates) |
 | `web_search` | Uses Ollama Web Search when `OLLAMA_API_KEY` is set, falling back to DuckDuckGo; the DuckDuckGo results page is parsed result by result for title, URL, and snippet, ads are skipped, and a page with no parsable result returns an error instead of an empty list |
 | `web_fetch` | Checks the domain allowlist and SSRF first; with `OLLAMA_API_KEY` it tries Ollama Web Fetch, otherwise it fetches the HTML safely and converts it to plain text with a linear scan in a worker thread (first 3500 characters). When the page has `<main>`, `role="main"`, or `<article>`, only that content is kept, minus its `nav`, `aside`, and navigation or complementary roles; without one, `nav`, `aside`, `header`, `footer`, and the matching ARIA roles are skipped across the page |
 | Custom API tools | Build an HTTP request from the tool settings; see section 9. When `requires_approval` is `true`, the user approves first |
@@ -427,6 +470,7 @@ Results from custom API and MCP tools are wrapped as untrusted too, but they are
 - `step_start` / `step_end` are pushed around each tool call, with `approval_required` / `approval_resolved` in between when approval is needed; the final answer is pushed as `token` events, followed by `sources` and `done`. See [API reference 2.1](api_en.md#21-post-apichatsend) for the event format.
 - The user message is saved before streaming starts, and the text extracted from its attachments is written back to each attachment's `content` before the model is called; the assistant message is saved only after the stream completes, so an answer stopped midway is not stored, and neither is an answer whose conversation was deleted during the stream (`done` then has a `null` `message_id`). During the stream the database connection goes back to the pool, and database access plus attachment decoding and parsing run in worker threads without blocking the event loop.
 - Each user may have at most 2 answer streams at once (more get `429`); before sending, the backend checks that `model_name` is in the available model list and that the user's attachment storage stays within 200 MiB.
+- History is the latest `CONVERSATION_HISTORY_MESSAGES` messages from the database, always starting with a user message, with `[n]` markers removed from earlier answers (code blocks and inline code are left alone) so the model does not reuse stale numbers. The attachment text of earlier user messages (the attachments' `content`) is carried along too, at most 50,000 characters in total counted from the newest message back (`MAX_HISTORY_ATTACHMENT_CHARS`).
 
 ### Tool call approval
 
@@ -439,7 +483,6 @@ Results from custom API and MCP tools are wrapped as untrusted too, but they are
 5. When no user can approve (`approval_user_id` is `None`, for example in a non-interactive run), tools that need approval never run.
 
 Pending items live only in process memory; when the user interrupts the stream, the waiting item is cancelled with it.
-- History is the latest `CONVERSATION_HISTORY_MESSAGES` messages from the database, always starting with a user message, with `[n]` markers removed from earlier answers (code blocks and inline code are left alone) so the model does not reuse stale numbers. The attachment text of earlier user messages (the attachments' `content`) is carried along too, at most 50,000 characters in total counted from the newest message back (`MAX_HISTORY_ATTACHMENT_CHARS`).
 
 ---
 
@@ -449,14 +492,14 @@ Pending items live only in process memory; when the user interrupts the stream, 
 
 | Provider | Endpoint | Conversion notes |
 |---|---|---|
-| Microsoft Foundry | `{API address}/openai/v1/responses` (`gpt-` / `o` series) or `/openai/v1/chat/completions` (other models); deployments starting with `claude-` use `{API address}/anthropic` | Sends both the `api-key` and `Authorization` headers; the model name is the deployment name |
+| Microsoft Foundry | `{API address}/openai/v1/responses` (names starting with `gpt-`, `o3`, or `o4`, except `gpt-oss` and `o3-mini`) or `/openai/v1/chat/completions` (other models, such as `o1`, `gpt-oss`, and `o3-mini`); deployments starting with `claude-` use `{API address}/anthropic` | Sends both the `api-key` and `Authorization` headers; the model name is the deployment name |
 | OpenAI | `{API address}/chat/completions`; `gpt-6*` uses `{API address}/responses` | Native format |
 | Google Gemini | `{API address}/v1beta/openai/chat/completions` | OpenAI-compatible endpoint |
 | Anthropic Claude | Official `anthropic` SDK | The system message is extracted; consecutive tool results merge into one `tool_result` message; tool-call turns send `response.content` back verbatim (including thinking blocks); requires the connection's output token limit; refusals and truncated tool arguments raise errors |
 | Ollama | `{API address}/api/chat` | Images move to the `images` field; tool-call arguments become objects; `OLLAMA_TEMPERATURE`, `OLLAMA_NUM_PREDICT`, and `OLLAMA_NUM_CTX` are optional and apply to every Ollama connection |
 
 - **Routing**: every call goes through one API connection: chat uses the personal or shared connection the user picked, and document summaries and PDF OCR use the system models an admin chose. The endpoint follows the connection's provider and the model name; see [configuration reference: provider routing](configuration_en.md#provider-routing) for the full rules. `.env` configures no provider.
-- **Reasoning effort**: `reasoning_effort` is mapped per provider before it is sent (see the [API reference](api_en.md) for the rules); `gpt-5.x` models on Chat Completions (names containing `gpt-5.`) always get `none` when tools are attached, the original `gpt-5`, `gpt-5-mini`, and `gpt-5-nano` do not accept `none`, `xhigh`, or `max`: `none` becomes `minimal` and `xhigh` and `max` become `high`, and otherwise the user's choice is sent; `gpt-6*` and GPT models on Foundry use the Responses API so tools and reasoning work together.
+- **Reasoning effort**: `reasoning_effort` is mapped per provider before it is sent (see the [API reference](api_en.md) for the rules); `gpt-5.x` models on Chat Completions (names containing `gpt-5.`) always get `none` when tools are attached, the original `gpt-5`, `gpt-5-mini`, and `gpt-5-nano` do not accept `none`, `xhigh`, or `max`: `none` becomes `minimal` and `xhigh` and `max` become `high`, and otherwise the user's choice is sent; `gpt-6*` and the Foundry models routed to the Responses API (see the table above) use it so tools and reasoning work together.
 - **Two call types**: `chat_completion` serves each research round (non-streaming, returning `content` and `tool_calls`); `stream_completion` is used only to regenerate a final answer, and Claude streams with `tool_choice: none` so no further tools fire.
 - **Timeouts**: the shared httpx client uses `LLM_TIMEOUT`, and waiting for a connection pool slot has its own 15-second limit so a saturated pool fails fast, which per-request timeouts keep as well.
 - **Logging**: every call writes one line when it starts and one when it ends; the closing line records the duration, success or failure, and the token usage the provider returned. A timeout records the exception class (`ConnectTimeout`, `ReadTimeout`, and `PoolTimeout` mean connecting, waiting for the response, and waiting for a pool slot) and the timeout in seconds for that call, and streams also record when the first text arrived. See [Logging and request tracing](#logging-and-request-tracing) for the fields.
@@ -510,12 +553,12 @@ flowchart TB
 5. **Subprocess isolation**: `build_stdio_env()` inherits only the system variables on the MCP SDK's default list, skips shell function definitions starting with `()`, and adds the server's `env_vars`; the backend's database URL and model keys never reach third-party MCP servers. A subprocess's working directory is a fresh empty temporary directory, so the backend's `.env` and `keys/` are outside its relative paths (it still runs as the backend's system account and can read whatever that account can). Each subprocess runs in its own process group, and closing it terminates the whole tree, including grandchildren started by `npx` or `uvx`; at most 4 subprocesses run at once, and waiting for a free slot takes no longer than the server's timeout. stderr is drained continuously so a full pipe cannot stall the process, and only its last 2 KiB are kept for log diagnostics.
 6. **Built-in presets**: only `mcp_time` and `mcp_filesystem`. The filesystem preset pins `@modelcontextprotocol/server-filesystem@2026.8.31` and is rooted at the dedicated `backend/mcp_filesystem_sandbox` (an absolute path, kept apart from `DATA_DIR`, whose BM25 index Whoosh loads with pickle). The web-fetch preset was removed because outbound connections from a `stdio` subprocess are not bound by `web_fetch`'s SSRF checks, domain allowlist, or URL provenance rule.
 7. **Approval before calls**: custom API tools and MCP servers each carry a `requires_approval` flag; the asking user must approve before the agent calls such a tool. See "Tool call approval" in section 7 and [ADR-0006](adr/0006-tool-call-approval_en.md).
-8. **Admin only**: tools are shared by every user's agent and `stdio` servers run commands on the host, so every endpoint under `/api/api-tools` and `/api/mcp`, including reads, is admin-only. Regular users can only let the agent use enabled tools in chat. See [ADR-0002](adr/0002-external-tools-and-outbound-safety_en.md) and [ADR-0004](adr/0004-tool-admin-permissions-and-subprocess-isolation_en.md).
-9. **Credential encryption and masking**: `app/core/tool_secrets.py` encrypts custom API tools' `headers` and `auth_config` and MCP servers' `env_vars` and `headers` with `TOOL_SECRETS_KEY` (Fernet) before they reach the database and decrypts them only to run the tool. Admin API responses show `••••••••` in place of secret values: headers other than `accept`, `accept-encoding`, `accept-language`, `cache-control`, `content-type`, and `user-agent`; the `token`, `key_value`, `password`, and `client_secret` keys of `auth_config`; and every MCP environment variable and OAuth `client_secret`. Settings such as `key_name` and `username` are shown as is, and MCP OAuth tokens never appear in responses. On update, fields still holding the mask keep their stored value, and a mask with no stored value gets `400`. When the current key cannot decrypt the stored value (for example after `TOOL_SECRETS_KEY` was changed), the response carries `credentials_unreadable: true` so the admin can enter the credentials again.
+8. **Admin only**: tools are shared by every user's agent and `stdio` servers run commands on the host, so every endpoint under `/api/api-tools` and `/api/mcp`, including reads, is admin-only; the exceptions are `GET /api/mcp/oauth/callback` and `GET /api/mcp/oauth/client-metadata.json`, which OAuth authorization servers reach and which need no sign-in (see item 12). Regular users can only let the agent use enabled tools in chat. See [ADR-0002](adr/0002-external-tools-and-outbound-safety_en.md) and [ADR-0004](adr/0004-tool-admin-permissions-and-subprocess-isolation_en.md).
+9. **Credential encryption and masking**: `app/core/tool_secrets.py` encrypts custom API tools' `headers` and `auth_config` and MCP servers' `env_vars` and `headers` with `TOOL_SECRETS_KEY` (Fernet) before they reach the database and decrypts them only to run the tool; the API keys of personal and shared LLM API connections are encrypted with the same key (`app/services/llm_connections.py`). Admin API responses show `••••••••` in place of secret values: headers other than `accept`, `accept-encoding`, `accept-language`, `cache-control`, `content-type`, and `user-agent`; the `token`, `key_value`, `password`, and `client_secret` keys of `auth_config`; and every MCP environment variable and OAuth `client_secret`. Settings such as `key_name` and `username` are shown as is, and MCP OAuth tokens never appear in responses. On update, fields still holding the mask keep their stored value, and a mask with no stored value gets `400`. When the current key cannot decrypt the stored value (for example after `TOOL_SECRETS_KEY` was changed), the response carries `credentials_unreadable: true` so the admin can enter the credentials again.
 10. **Spec parsing**: `openapi_documents.py` loads documents (rejecting YAML aliases: the event stream is checked first, and only an alias-free document is loaded with `yaml.safe_load`), downloads external `$ref` documents through SSRF validation (at most 20, 30 MB in total), and indexes `$id`/`$anchor`; `openapi_overlay.py` applies Overlays with `jsonpath.py` (RFC 9535); `openapi_parser.py` detects the version (Swagger 2.0, OpenAPI 3.0–3.2, anything else rejected), merges path- and operation-level servers and parameters, expands path item `$ref`s and 3.2's `query` and `additionalOperations`, and maps `security` to `auth_type` and a credential-free `auth_config`; `openapi_schema.py` normalizes `allOf`, `oneOf`/`anyOf` (with `discriminator`), JSON Schema 2020-12 `type` arrays, `const`, `prefixItems`, and `$defs` into parameter schemas every provider accepts, replacing cycles, more than 200 references (`MAX_OPENAPI_SCHEMA_REFS`), or structures deeper than 32 levels with a description-only object. Whatever cannot be imported fully is listed in the response's `warnings`. The `POST /api/api-tools/parse-spec` response never includes the raw spec.
-13. **Arazzo workflows** (`app/services/arazzo.py`): importing downloads the OpenAPI sources in `sourceDescriptions`, resolves each step's `operationId`/`operationPath` to an operation, and stores them with the workflow in `workflow_definition`. A run calls the steps in order, substituting runtime expressions into parameters and bodies, and picks the next step from `successCriteria` (simple, regex, JSONPath) and `onSuccess`/`onFailure` (end, goto, retry); every step goes through `execute_http_request`, with the same SSRF validation and credential redaction as a plain tool. A run is capped at 50 steps and 300 seconds so `goto` or `retry` cannot loop forever.
 11. **MCP resources and prompts**: discovery reads `resources/list` and `prompts/list` when the server declares the capability (failures only go to the log) and stores at most 200 of each in `discovered_resources` and `discovered_prompts`. The descriptions of the agent's `read_mcp_resource` and `get_mcp_prompt` list these items (`MAX_MCP_CATALOG_CHARS`), and calls are checked against the lists first, so a URI or prompt not on them never reaches the server.
 12. **Remote MCP OAuth** (`app/services/mcp_oauth.py`): follows the MCP authorization specification `2026-07-28`. A token-less `server/discover` gets the `401` `WWW-Authenticate` header, whose `resource_metadata` or `/.well-known/oauth-protected-resource` (path first, then root) leads to the authorization server, and OAuth authorization server metadata and OpenID Connect discovery are tried in order; the metadata's `issuer` must be identical to the issuer used to build the URL, `code_challenge_methods_supported` must include `S256`, and the authorization server's endpoints must be HTTPS (loopback excepted), or the metadata is rejected. The client is the admin-entered one, else a Client ID Metadata Document (when the authorization server declares `client_id_metadata_document_supported` and AskMiao is served over HTTPS, the `client_id` is the URL of `GET /api/mcp/oauth/client-metadata.json`), else dynamic registration (with `application_type` `native` when the redirect address is localhost, `web` otherwise); a registered client is bound to the issuer that issued it, so a changed authorization server registers again and clears the tokens, while an admin-entered client asks the admin to update it. The scope comes from the admin setting, else the previous authorization's scope, else the `WWW-Authenticate` `scope`, else `scopes_supported`; a `403` with `error="insufficient_scope"` records the required scopes, which the next authorization adds (step-up). Tokens come from the authorization code flow + PKCE (S256) with `resource`, and the redirect address must be HTTPS or localhost. The single-use `state` and the expected issuer live in process memory for 10 minutes; the callback `GET /api/mcp/oauth/callback` needs no sign-in and first checks `iss` per RFC 9207 (`iss` is required when the authorization server declares support, and a present `iss` is always compared exactly), rejecting a mismatch without exchanging the code. Tokens are stored encrypted in `oauth_tokens`, HTTP requests carry them as Bearer, and they are refreshed with the refresh token when about to expire or when connecting gets `401`. OAuth endpoint requests share `app/services/oauth_client.py` (SSRF validation, same-origin redirects only, 15 seconds, 256 KiB), which custom API tools' client credentials use as well.
+13. **Arazzo workflows** (`app/services/arazzo.py`): importing downloads the OpenAPI sources in `sourceDescriptions`, resolves each step's `operationId`/`operationPath` to an operation, and stores them with the workflow in `workflow_definition`. A run calls the steps in order, substituting runtime expressions into parameters and bodies, and picks the next step from `successCriteria` (simple, regex, JSONPath) and `onSuccess`/`onFailure` (end, goto, retry); every step goes through `execute_http_request`, with the same SSRF validation and credential redaction as a plain tool. A run is capped at 50 steps and 300 seconds so `goto` or `retry` cannot loop forever.
 14. **MCP tool definitions and results** (`app/services/mcp_tools.py`): discovery keeps only tools whose names match `[A-Za-z0-9_.-]{1,128}`; `inputSchema` is normalized by `openapi_schema.py` into a parameter schema every provider accepts (draft-04/06/07 semantics when `$schema` names them, 2020-12 otherwise), resolving only `$ref`s inside the tool definition, while a `$ref` to the network or another document is never downloaded and the tool is skipped; the HTTP transport also checks `x-mcp-header` (allowed only on string, integer, or boolean parameters reachable from the root through `properties` alone, with an HTTP field name unique regardless of case), and tools that break the rules are skipped and logged. A tool's `title` is used in its description and on the admin page; `annotations` are treated as untrusted claims per the specification and only labeled on the admin page as "read-only", "may change data", or "reaches outside", without affecting call approval. Before a tool result reaches the model, binary content in images, audio, and embedded resources is replaced with a note, a `resource_link` keeps only its URI, name, and description, and `structuredContent` is passed along with any JSON text block identical to it dropped; `outputSchema` is not validated. The built-in `mcp_time` preset answers both eras and declares all four tool annotations.
 
 ---
@@ -556,11 +599,11 @@ sequenceDiagram
 | Account binding | On every request `resolve_token_user()` loads the account by `sub`: a missing or deactivated account, or an `iat` earlier than the account's `tokens_valid_after` (equal to `created_at` when the account is created, so a deleted account's reused id gets no old tokens; set to the current time on a password change; `iat` keeps microseconds, so a token issued earlier within the same second is rejected too), gets `401`; `username`, `role`, and `is_admin` come from the database, not the token |
 | Refresh token | Valid for `REFRESH_TOKEN_EXPIRE_DAYS` days; carries only `sub` and `type: refresh`, stored in an HttpOnly cookie (path `/api/auth`, `Secure` per the required `COOKIE_SECURE`, no longer derived from `ENVIRONMENT`, `SameSite` `lax` by default); single-use, so each exchange revokes the old token and resets the cookie |
 | Passwords | Argon2 hashes; legacy bcrypt hashes still verify and are re-hashed with Argon2 on sign-in. Registration and password changes require 8 to 256 characters with upper- and lowercase letters and a digit; hashing and verification run in worker threads, at most 4 at once |
-| Password change | `POST /api/auth/change-password` moves `tokens_valid_after` to the current time and clear the refresh token cookie: every token the account was issued before (on other devices, possibly leaked, and the current one) stops working, and the frontend clears the sign-in state and returns to the login page |
+| Password change | `POST /api/auth/change-password` moves `tokens_valid_after` to the current time and clears the refresh token cookie: every token the account was issued before (on other devices, possibly leaked, and the current one) stops working, and the frontend clears the sign-in state and returns to the login page |
 | Login throttling | `app/core/login_throttle.py` counts failures per login identifier (case-insensitive, surrounding whitespace ignored) and per source address: once `LOGIN_MAX_FAILURES_PER_ACCOUNT` or `LOGIN_MAX_FAILURES_PER_ADDRESS` failures occur within `LOGIN_FAILURE_WINDOW_SECONDS`, logins for that identifier or address pause for `LOGIN_LOCKOUT_SECONDS` seconds, during which passwords are not checked and the API returns `429` with `Retry-After` (logged as `LOGIN_THROTTLED`). The lockout is checked again after a password-hashing slot is acquired, and a failure is recorded before the slot is released, so once locked, a burst of concurrent requests completes at most the 4 already being verified. Unknown and deactivated accounts are counted too and verify the password against a dummy hash, so they get the same response, in the same time, as existing ones; a successful login clears only that identifier's record. The counts live in process memory, with at most 10,000 identifiers and 10,000 addresses tracked, evicting those without a recent failure first |
-| Registration | With `ALLOW_REGISTRATION=false`, `POST /api/auth/register` returns `403` and writes a security log entry (`REGISTER_REJECTED`); `GET /api/auth/registration` (no login needed) returns `{"enabled": bool}`, which the frontend uses to show or hide the sign-up link. Accounts, including the first admin, are created with `backend/scripts/create_user.py`, which applies the same rules as registration, creates an admin with `--admin`, and reads the password interactively |
-| Authorization | Admin endpoints check the account's `is_admin` in the database, so changes apply on the next request. `GET /api/admin/users` and `PUT /api/admin/users/{user_id}` return only `UserProfile` fields, never the password hash; changes to an account's role or status and account deletions are written to the security log (`ADMIN_USER_UPDATED`, `ADMIN_USER_DELETED`) |
-| Revocation | Logout adds the token strings to an in-process revocation list until they expire, pruning expired entries automatically; the list holds at most 100,000 entries and evicts the soonest-expiring ones first. Logout verifies only the access token's signature, so it still revokes the refresh token and clears the cookie after the access token expires, but the `Authorization` header is still required, so a cross-site form cannot trigger a logout |
+| Registration | With `ALLOW_REGISTRATION=false`, `POST /api/auth/register` returns `403` and writes a security log entry (`REGISTER_REJECTED`); `GET /api/auth/registration` (no login needed) returns `{"enabled": bool}`, which the frontend uses to show or hide the sign-up link. Accounts, including the first admin, are created with `backend/scripts/create_user.py`, which applies the same rules as registration, creates an admin with `--admin`, and reads the password interactively; admins can also create accounts from the admin dashboard with `POST /api/admin/users` (security log `ADMIN_USER_CREATED`) |
+| Authorization | Admin endpoints check the account's `is_admin` in the database, so changes apply on the next request. `GET /api/admin/users` and `PUT /api/admin/users/{user_id}` return only `UserProfile` fields, never the password hash; changes to an account's role or status and account deletions are written to the security log (`ADMIN_USER_UPDATED`, `ADMIN_USER_DELETED`). Admins reset another account's password with `PUT /api/admin/users/{user_id}/password` (their own still has to be changed from the profile page), which likewise moves `tokens_valid_after` to the current time and is written to the security log (`ADMIN_PASSWORD_RESET`) |
+| Revocation | Logout adds the SHA-256 hashes of the tokens (not the tokens themselves) to an in-process revocation list until they expire, pruning expired entries automatically; the list holds at most 100,000 entries and evicts the soonest-expiring ones first. Logout verifies only the access token's signature, so it still revokes the refresh token and clears the cookie after the access token expires, but the `Authorization` header is still required, so a cross-site form cannot trigger a logout |
 
 **Known limitations**: the revocation list and the login failure counts are cleared on restart and are not shared across processes. See [API reference: known limitations](api_en.md#11-known-limitations).
 
@@ -591,7 +634,7 @@ REST responses, SSE `error` events, and errors reported inside `token` events du
 
 ### 11.3 SSRF protection
 
-Every outbound request driven by user input (OpenAPI spec URLs, `web_fetch`, custom API tools, the MCP HTTP transport) goes through `app/core/ssrf_protection.py`:
+Every outbound request driven by user input (OpenAPI spec URLs, `web_fetch`, custom API tools, the MCP HTTP transport, and non-admin users' personal LLM API connections) goes through `app/core/ssrf_protection.py`:
 
 ```mermaid
 flowchart LR
@@ -611,7 +654,9 @@ flowchart LR
 | Hostnames | `localhost`, `localhost.localdomain`, `broadcasthost`, `ip6-localhost`, `ip6-loopback`, `local`, `internal`, `metadata.google.internal`, `metadata.internal`, and names ending in `.localhost`, `.local`, `.internal`, `.lan`, `.home.arpa`, `.localdomain`, or `.corp` |
 | Ports | 22, 23, 25, 111, 135, 139, 445, 1433, 1521, 2375, 2376, 3306, 5432, 6379, 11211, 27017 |
 
-The httpx clients of custom API tools and the MCP HTTP transport use `SSRFSafeTransport`: it re-validates before the first request and every redirect and pins the connection to the IP approved during validation (the `Host` header and TLS SNI and certificate checks keep the original hostname), so a second DNS lookup at connect time cannot be steered into the intranet by DNS rebinding; redirects are followed by hand with `send_following_redirects`, and redirect response bodies are never read. `safe_fetch_text` (`web_fetch` and spec URLs) validates each redirect by hand, pins the IP the same way, and caps the download size and the number of redirects. DNS lookups run in two dedicated thread pools by source: user-supplied URLs (`web_fetch`, `DnsPool.USER_URL`, 8 threads) and admin-configured endpoints (custom API tools, MCP HTTP servers, OpenAPI spec URLs, `DnsPool.CONFIGURED_ENDPOINT`, 4 threads). `getaddrinfo` cannot be cancelled, so a user who fills the first pool with slow domains does not stall the checks for tools and spec imports; a lookup that exceeds the 5-second timeout is treated as unresolvable, and neither pool occupies the shared thread pool. These clients ignore the `HTTP_PROXY` and `HTTPS_PROXY` environment variables. `backend/tests/test_ssrf_protection.py` covers this behavior.
+The httpx clients of custom API tools and the MCP HTTP transport use `SSRFSafeTransport`: it re-validates before the first request and every redirect and pins the connection to the IP approved during validation (the `Host` header and TLS SNI and certificate checks keep the original hostname), so a second DNS lookup at connect time cannot be steered into the intranet by DNS rebinding; redirects are followed by hand with `send_following_redirects`, and redirect response bodies are never read. `safe_fetch_text` (`web_fetch` and spec URLs) validates each redirect by hand, pins the IP the same way, and caps the download size and the number of redirects. DNS lookups run in two dedicated thread pools by source: user-supplied URLs (`web_fetch` and non-admin users' personal LLM API connection endpoints, `DnsPool.USER_URL`, 8 threads) and admin-configured endpoints (custom API tools, MCP HTTP servers, OpenAPI spec URLs, `DnsPool.CONFIGURED_ENDPOINT`, 4 threads). `getaddrinfo` cannot be cancelled, so a user who fills the first pool with slow domains does not stall the checks for tools and spec imports; a lookup that exceeds the 5-second timeout is treated as unresolvable, and neither pool occupies the shared thread pool. These clients ignore the `HTTP_PROXY` and `HTTPS_PROXY` environment variables. `backend/tests/test_ssrf_protection.py` covers this behavior.
+
+Whether an LLM API connection is checked depends on its owner: a non-admin user's personal connection has its API address validated against the rules above when it is created or updated, and the requests actually sent (chat, connection tests, model list lookups) also go through `SSRFSafeTransport` (`SSRFSafeHttpx2Transport` for the Claude SDK client), which re-validates before every request and pins the connection to the validated IP, so it cannot reach intranet addresses. Shared connections, admins' personal connections, and system models are configured by admins and are not checked (`public_only=False`), so they may point at model servers on the intranet.
 
 > [!NOTE]
 > The SSRF demo on the intro site (`site/`) reproduces this check order and these block lists in the browser; update `site/index.html` and `site/main.js` whenever the rules change.
@@ -633,7 +678,7 @@ Results from custom API and MCP tools are wrapped as untrusted too, but they are
 | Mechanism | Details |
 |---|---|
 | Security response headers | `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `X-XSS-Protection: 1; mode=block`, `Referrer-Policy: strict-origin-when-cross-origin`, `Permissions-Policy: geolocation=(), microphone=(), camera=()`, with the `Server` header removed |
-| Request body limit | `RequestBodyLimitMiddleware` (pure ASGI, inside only the access log, which never reads bodies) checks bodies before FastAPI reads them: 1 MiB for general requests; chat sends are allowed more only with a validly signed, unrevoked access token, and document uploads additionally require the token to carry the `is_admin` claim (used only to pick the body limit; the route itself still checks admin status in the database); an oversized `Content-Length` gets `413` at once, and chunked bodies are counted as they arrive |
+| Request body limit | `RequestBodyLimitMiddleware` (pure ASGI, inside only the access log, which never reads bodies) checks bodies before FastAPI reads them: 1 MiB for general requests; chat sends are allowed more only with a validly signed, unrevoked access token, and document uploads and skill uploads (`/api/skills/upload`, `/api/skills/upload-folder`) additionally require the token to carry the `is_admin` claim (used only to pick the body limit; the route itself still checks admin status in the database); an oversized `Content-Length` gets `413` at once, and chunked bodies are counted as they arrive |
 | Rate limiting | At most `RATE_LIMIT_PER_MINUTE` requests per client IP in a sliding 60-second window, beyond which the API returns `429` with `Retry-After`; at most 10,000 addresses are tracked, least recently active evicted first. The client IP is the direct peer by default (uvicorn's `proxy_headers` is on only when `FORWARDED_ALLOW_IPS` is set), so a client-supplied `X-Forwarded-For` is never trusted. Within one window an IP gets a single warning when it is first blocked, and a summary of blocked requests and paths when the window ends |
 | Deployment settings | `HOST`, `RELOAD`, `COOKIE_SECURE`, and `ENABLE_API_DOCS` are required settings with no default; the interactive documentation that lists every endpoint and parameter (`/docs`, `/redoc`, `/openapi.json`) is served only with `ENABLE_API_DOCS=true` |
 | Database account | For the compose PostgreSQL, `backend/init-app-role.sh` creates the `POSTGRES_APP_USER` account the backend connects with (`NOSUPERUSER`, `NOCREATEDB`, `NOCREATEROLE`), grants only `CONNECT` on the database and `USAGE` and `CREATE` on the `public` schema, and hands it ownership of the tables; a SQL injection cannot run system commands with `COPY ... TO PROGRAM` or read server files |
@@ -654,19 +699,19 @@ Results from custom API and MCP tools are wrapped as untrusted too, but they are
 | `/login`, `/register` | Sign in, register (the register page only shows an explanation when self-registration is closed) | Signed out (signed-in users are sent home) |
 | `/` | Redirects to `/chat` | — |
 | `/chat` | Chat | Signed in |
-| `/profile` | Profile and password change | Signed in |
+| `/profile` | Profile, password change, and personal API connections (plus the shared connections available to the user) | Signed in |
 | `/documents` | Knowledge base | Admin |
-| `/tools` | AI tools | Admin |
-| `/admin` | Admin dashboard | Admin |
+| `/tools` | AI tools: custom API tools, MCP servers, and Agent Skills | Admin |
+| `/admin` | Admin dashboard: statistics, users, shared API connections, and system models | Admin |
 
 - **Route guards**: `PrivateRoute` sends signed-out users to the login page; `AdminRoute` shows a "no permission" page to non-admins; `PublicRoute` moves signed-in users away from the login and register pages. Pages load lazily with `React.lazy`.
 - **API client** (`services/api.ts`): an Axios instance attaches the access token, refreshes it when less than 5 minutes remain or it has expired, and on a `401` refreshes and retries once; only one refresh request runs at a time (a refresh token works only once), and the chat send `fetch` shares the same refresh, refreshing and resending once on a `401`; `401` responses from the login, register, and refresh endpoints themselves never trigger a refresh. Failed requests log only the status code and error message to the console (`utils/secureLogger.ts`), never the axios error object with passwords, API keys, and access tokens.
 - **Sign-in state**: the login page uses `GET /api/auth/registration` to decide whether to show the sign-up link (a failed lookup counts as closed); a successful password change clears the sign-in state and returns to the login page; when the logout request fails, the login page warns that the server did not revoke the refresh token.
 - **SSE** (`services/sse.ts`, `hooks/useChat.ts`): reads the stream with `fetch` and parses events per the spec (handling events split across reads, CRLF, and multi-line data); supports stopping, retrying, and switching conversations mid-stream. When a send fails with a `422` validation error, each item's message is shown (for example an oversized attachment).
-- **Tool approval card** (`pages/Chat/ToolApprovalCard`): on `approval_required`, the answer shows the tool name, where the request is actually sent (`target`), and every argument, outside any scrolling box, with control and format characters (bidirectional controls, zero-width characters, Unicode tag characters, and so on) marked as `⟦U+…⟧`; the approve or deny button calls `POST /api/chat/approvals/{approval_id}`; the card closes on `approval_resolved` or when the stream stops. On the AI tools page, the custom API tool and MCP server forms each have a "requires user confirmation" checkbox, pre-checked for API tools according to the HTTP method.
+- **Tool approval card** (`pages/Chat/ToolApprovalCard`): on `approval_required`, the answer shows the tool name, where the request is actually sent (`target`), and every argument, outside any scrolling box, with control and format characters (bidirectional controls, zero-width characters, Unicode tag characters, and so on) marked as `⟦U+…⟧`; the approve or deny button calls `POST /api/chat/approvals/{approval_id}`; the card closes on `approval_resolved` or when the stream stops. On the AI tools page, the custom API tool and MCP server forms each have a checkbox requiring the user's confirmation (「AI 呼叫前需使用者在對話中確認」 and 「AI 呼叫此伺服器的工具前需使用者在對話中確認」, "ask the user in the chat before the AI calls it"), pre-checked for API tools according to the HTTP method.
 - **Appearance**: `ThemeContext` offers light, dark, and follow-system, stored in `localStorage` under `askmiao_theme_mode`; an inline script in `index.html` applies it before first paint to avoid a white flash.
 - **Component library** (`components/ui/`): Dialog, Menu, Tooltip, Snackbar, and others built on the native `<dialog>` and ARIA patterns, with keyboard support and focus management; design tokens live in `styles/tokens.css`.
-- **Model list**: the chat page calls `GET /api/chat/models` and caches the result in `localStorage` for 5 minutes.
+- **Model list**: the chat page calls `GET /api/chat/models` for the available connections and models on every load, without caching; `localStorage` keeps only the selected connection and model (`askmiao_selected_model`) and the reasoning effort (`askmiao_reasoning_effort`).
 - **Times**: the backend stores times in UTC and returns them without a time zone; the frontend always parses them as UTC with `parseServerDate()` in `utils/serverDate.ts`, then displays them in the browser's time zone.
 
 ---
@@ -675,8 +720,9 @@ Results from custom API and MCP tools are wrapped as untrusted too, but they are
 
 - **Single process**: the token revocation list, rate limit and login failure counters, per-user concurrent streams, pending tool approvals, and statistics cache live in the backend process's memory. With several workers or hosts these states are not shared (each process throttles logins on its own counts), and the revocation list and login failure counts are cleared on restart.
 - **Serving other devices**: `python main.py` listens on `HOST` (the template has `127.0.0.1`); change it to `0.0.0.0` only when a container or a reverse proxy on another host must connect, and set `COOKIE_SECURE` to `true` when serving over HTTPS. The Vite dev and preview servers listen on `localhost` only. To serve other devices, build with `bun run build` and let a real web server serve `frontend/build/`, send anti-framing headers, and reverse-proxy `/api`; if that proxy overwrites `X-Forwarded-For`, set its address as `FORWARDED_ALLOW_IPS` so rate limiting and per-address login throttling count real client IPs.
+- **Docker Compose deployment**: the Docker Compose setup in `deploy/` runs PostgreSQL, the backend, and nginx on one host; see the [deployment guide](deployment_en.md).
 - **PostgreSQL container**: `backend/docker-compose.yml` requires `POSTGRES_PASSWORD` (the superuser, for administration only) plus `POSTGRES_APP_USER` and `POSTGRES_APP_PASSWORD` (the non-superuser account the backend connects with, used in `DATABASE_URL`), and binds `127.0.0.1:7690` only. A new data volume runs `10-init.sql` (`backend/init.sql`) and then `20-app-role.sh` (`backend/init-app-role.sh`); a volume initialized by an older release needs a one-time `docker compose exec postgres bash /docker-entrypoint-initdb.d/20-app-role.sh` (safe to rerun).
-- **Data and backups**: back up the database and `backend/data/` (indexes, uploads, model cache); indexes can be rebuilt from the database, and the uploaded originals are used to re-extract text. If `backend/keys/` is lost, a new key pair is generated and every existing token becomes invalid; if the directory is not writable or the keys are corrupt, the backend cannot start. If `TOOL_SECRETS_KEY` is lost or changed, the encrypted tool credentials in the database can no longer be decrypted and must be entered again.
+- **Data and backups**: back up the database, `backend/data/` (indexes, uploads, model cache), and `SKILLS_DIR` (skill files, which the database has no copy of; the template value `data/skills` is inside `backend/data/`); indexes can be rebuilt from the database, and the uploaded originals are used to re-extract text. If `backend/keys/` is lost, a new key pair is generated and every existing token becomes invalid; if the directory is not writable or the keys are corrupt, the backend cannot start. If `TOOL_SECRETS_KEY` is lost or changed, the encrypted tool credentials and LLM API connection keys in the database can no longer be decrypted and must be entered again.
 - **Dependencies**: the backend installs `requirements.txt` by hash; to add or upgrade a package, edit `requirements.in` and regenerate the file in `backend/` with `uv pip compile requirements.in --universal --python-version 3.12 --generate-hashes -o requirements.txt`. The frontend's `bun install` installs from the frozen `bun.lock` and fails when it disagrees with `package.json`.
 - **Logs**: application logs go to `LOG_DIR/app.log` and security events only to `LOG_DIR/security.log` (the template value `logs` resolves against `backend/`, giving `backend/logs/`), and both rotate at 10 MiB × 5 files. Security events from the backend tests go to a pytest temporary directory. Search the logs for an error code to find the full exception; the format and request IDs are described in the next section.
 - **Intro site**: `.github/workflows/deploy-pages.yml` deploys the whole `site/` directory to GitHub Pages when it changes on the `New` branch.
@@ -707,7 +753,7 @@ The value in brackets is the request ID. `AccessLogMiddleware` (pure ASGI, outer
 
 The exception class of a model timeout shows where the call got stuck: `ConnectTimeout` means the server could not be reached, `PoolTimeout` that no connection pool slot freed up, and `ReadTimeout` that the request was sent but no response arrived within `timeout_s` (non-streaming) or the gap between two pieces of text was too long (streaming; check whether `first_chunk_ms` has a value). On success, Ollama's `load_ms`, `prompt_eval_ms`, and `eval_ms` are the time spent loading the model, reading the prompt, and generating the answer.
 
-These logs never record passwords, API keys, JWTs, cookies, the `Authorization` header, or query parameter values, nor prompts, conversations, or document content; they record only parameter names, lengths, and usage, the research loop's `[Agent Step n] 調用工具` line likewise records parameter names only, and the retriever's `Retrieval` line records only the query length (`query_chars`) and the chunk counts at each stage. To investigate a problem, find one line by its error code or time, then search for the request ID in its brackets to see everything that request logged.
+These logs never record passwords, API keys, JWTs, cookies, the `Authorization` header, or query parameter values, nor prompts, conversations, or document content; they record only parameter names, lengths, and usage, the research loop's `[Agent Step n] 呼叫工具` line likewise records parameter names only, and the retriever's `Retrieval` line records only the query length (`query_chars`) and the chunk counts at each stage. To investigate a problem, find one line by its error code or time, then search for the request ID in its brackets to see everything that request logged.
 
 ---
 
@@ -721,5 +767,6 @@ These logs never record passwords, API keys, JWTs, cookies, the `Authorization` 
 | [ADR-0004](adr/0004-tool-admin-permissions-and-subprocess-isolation_en.md) | Tool management permissions, MCP subprocess isolation, and per-hop SSRF validation | Accepted; see the follow-up amendments at the end |
 | [ADR-0005](adr/0005-chunk-id-index-and-database-source-of-truth_en.md) | Chunk index keyed by database chunk_id | Accepted |
 | [ADR-0006](adr/0006-tool-call-approval_en.md) | In-chat approval for tools with side effects | Accepted |
+| [ADR-0007](adr/0007-han-ngram-bm25-and-passage-level-evaluation_en.md) | Han unigram and bigram fields in BM25, evaluated with a chunk-level benchmark | Accepted |
 
 See the [ADR index](adr/README_en.md) for the full list and the writing guidelines.

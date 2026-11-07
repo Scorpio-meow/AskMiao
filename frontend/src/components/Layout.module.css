@@ -126,7 +126,6 @@
   }
 }
 
-/* 藍色頂欄上的 hover 改為加深底色，白字才維持足夠對比 */
 .navButton:hover {
   background-color: rgba(15, 23, 42, 0.22);
   color: #ffffff;
@@ -146,7 +145,6 @@
   font-weight: var(--font-weight-bold);
 }
 
-/* 窄螢幕只顯示圖示，文字仍保留給螢幕報讀器 */
 @media (max-width: 599px) {
   .navLabel {
     position: absolute;

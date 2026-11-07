@@ -155,6 +155,7 @@
 }
 
 @media (max-width: 599px) {
+
   .headerActions,
   .searchInput {
     width: 100%;
@@ -229,7 +230,6 @@
   white-space: nowrap;
 }
 
-/* 名稱、信箱等長字串允許換行，讓「操作」欄在一般筆電寬度下不必橫向捲動 */
 .table td.wrapCell {
   white-space: normal;
   overflow-wrap: anywhere;

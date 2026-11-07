@@ -75,12 +75,9 @@ def authenticate_user(
     password: str
 ) -> Optional[User]:
     user = get_user_by_username_or_email(db, username_or_email)
-
     if user is None or not user.is_active:
-        # 帳號不存在或已停用時也驗一次密碼，回應時間才不會透露帳號是否存在
         PasswordManager.verify_password(password, _dummy_password_hash())
         return None
-
     if not PasswordManager.verify_password(password, user.hashed_password):
         return None
     if PasswordManager.needs_rehash(user.hashed_password):
@@ -100,7 +97,6 @@ def update_user_password(
         return None
     
     user.hashed_password = PasswordManager.hash_password(new_password)
-    # 變更密碼後，所有已簽發的存取與重新整理權杖（含其他裝置與可能外洩者）一律失效
     user.tokens_valid_after = datetime.utcnow()
     db.commit()
     db.refresh(user)

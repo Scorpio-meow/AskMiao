@@ -13,7 +13,7 @@ async def reprocess_all():
     finally:
         db.close()
     print(result["message"])
-    print(f"共處理 {result['document_count']} 份文檔，建立 {result['chunk_count']} 個向量塊、{result['records_detected']} 筆結構化記錄")
+    print(f"共處理 {result['document_count']} 份文件，建立 {result['chunk_count']} 個向量塊、{result['records_detected']} 筆結構化記錄")
     if result["missing_source_files"]:
         print(f"以下文件的原始檔已遺失，改以資料庫內容重建，請重新上傳: {', '.join(result['missing_source_files'])}")
     if result["failed_documents"]:

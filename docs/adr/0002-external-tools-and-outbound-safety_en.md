@@ -49,7 +49,7 @@ Once the agentic RAG pipeline was in production, the built-in toolset (knowledge
 ### Positive Consequences
 
 - **Much lower integration cost**: onboarding a system drops from "edit code and deploy" to "paste a spec and pick endpoints".
-- **Ecosystem compatibility**: existing MCP servers can be reused directly.
+- **Ecosystem compatibility**: existing MCP servers can be reused directly, with no need to wrap them again.
 - **Reduced attack surface**: outbound traffic funnels through one guard, so any new call site inherits the same protection by calling the same validator.
 - **Leak prevention**: the error code mechanism covers both REST responses and SSE stream events.
 

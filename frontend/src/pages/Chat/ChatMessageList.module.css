@@ -6,7 +6,6 @@
   min-height: 0;
 }
 
-/* position: relative 讓訊息內絕對定位的 .sr-only 文字以捲動區為基準，不會撐大外層容器 */
 .container {
   position: relative;
   display: flex;
@@ -91,6 +90,7 @@
 }
 
 @keyframes skeletonPulse {
+
   0%,
   100% {
     opacity: 1;
@@ -259,6 +259,7 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
+
   .skeletonBubble,
   .skeletonLine {
     animation: none;

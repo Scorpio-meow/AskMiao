@@ -19,7 +19,6 @@ logger = logging.getLogger(__name__)
 ACCESS_TOKEN_EXPIRE_MINUTES = settings.ACCESS_TOKEN_EXPIRE_MINUTES
 REFRESH_TOKEN_EXPIRE_DAYS = settings.REFRESH_TOKEN_EXPIRE_DAYS
 ALGORITHM = "RS256"
-# RSA 金鑰無法載入時一律拒絕啟動，不退回以共用密鑰簽署的演算法
 from app.core.rsa_keys import rsa_manager
 RSA_PRIVATE_KEY = rsa_manager.get_private_key_pem()
 RSA_PUBLIC_KEY = rsa_manager.get_public_key_pem()
@@ -27,11 +26,6 @@ from app.core.redis_client import TokenBlacklist
 password_hasher = PasswordHasher()
 security = HTTPBearer()
 def _numeric_date(moment: datetime) -> float:
-    """UTC 時刻轉成 JWT 的 NumericDate 並保留微秒（RFC 7519 允許小數）。
-
-    撤銷以 tokens_valid_after 比對簽發時間；只取整秒時，與變更密碼同一秒內稍早簽發的權杖仍然有效，
-    持有外洩重新整理權杖的人每秒換發一次就能一直保住工作階段。
-    """
     return calendar.timegm(moment.utctimetuple()) + moment.microsecond / 1_000_000
 def _normalize_legacy_bcrypt_password(password: str, max_bytes: int = 72) -> str:
     encoded_password = password.encode("utf-8")
@@ -120,7 +114,7 @@ class TokenManager:
                 options={"verify_signature": True, "verify_exp": True}
             )
         except jwt.PyJWTError:
-            logger.exception("無效的認證令牌: 驗證失敗")
+            logger.exception("無效的認證權杖: 驗證失敗")
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="認證權杖無效：驗證失敗",
@@ -129,7 +123,6 @@ class TokenManager:
     
     @staticmethod
     def decode_token_ignoring_expiry(token: str) -> Dict[str, Any]:
-        """只驗簽章、不檢查到期：登出時存取權杖可能已過期，仍要據此確認請求者並撤銷其重新整理權杖"""
         try:
             return jwt.decode(
                 token,
@@ -148,12 +141,6 @@ class TokenManager:
     def verify_token_type(payload: Dict[str, Any], expected_type: str) -> bool:
         return payload.get("type") == expected_type
 def resolve_token_user(db: Session, payload: Dict[str, Any]) -> User:
-    """把已驗簽的權杖綁定到資料庫中的現存帳號。
-
-    帳號不存在、已停用，或權杖簽發早於帳號的 tokens_valid_after（帳號建立時間，
-    防止刪除後 id 被重用；變更密碼時更新為當下）都視為無效；
-    身分與權限一律取自資料庫，不信任權杖內的聲明。
-    """
     invalid = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="認證權杖無效：驗證失敗",
@@ -180,14 +167,12 @@ def get_current_user_from_token(
 ) -> Dict[str, Any]:
     token = credentials.credentials
     payload = TokenManager.decode_token(token)
-
     if not TokenManager.verify_token_type(payload, "access"):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="權杖類型無效",
             headers={"WWW-Authenticate": "Bearer"},
         )
-
     user = resolve_token_user(db, payload)
     return {
         "user_id": user.id,
@@ -256,12 +241,9 @@ def revoke_token(token: str):
         payload = TokenManager.decode_token(token)
         exp = payload.get("exp")
         if exp:
-            # exp 是 epoch 秒數，須與 time.time() 比較；naive 的 datetime.utcnow().timestamp() 會被當成本地時間，
-            # 伺服器在 UTC 負時區時算出 0，撤銷只維持 1 秒，登出的權杖隨即又能使用
             expires_in = max(int(exp - time.time()), 0)
         else:
             expires_in = 86400
-
         return TokenBlacklist.add_token(token, expires_in)
     except Exception as e:
         print(f"撤銷 Token 失敗: {e}")

@@ -1,18 +1,8 @@
-"""
-有副作用的工具需要發問者在對話內核准
-驗證：
-1. 預設政策：會改變狀態的 HTTP 方法與所有 MCP 伺服器需要核准，建立與更新時套用
-2. Agent 遇到需核准的工具先送出 approval_required 並暫停；核准才執行，拒絕、逾時或無人可核准都不執行
-3. 只有發問的使用者能處理自己的核准項目
-4. 既有資料庫升級時補上欄位並依 HTTP 方法回填
-"""
 import asyncio
-
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, text
-
 from app.api import api_tools, chat as chat_api, mcp
 from app.core.jwt_auth import get_current_user_from_token
 from app.models import CustomApiTool
@@ -20,17 +10,12 @@ from app.models.database import SessionLocal, upgrade_schema
 from app.rag import tool_approval
 from app.rag.tool_approval import ToolApprovalBroker, approval_broker, default_requires_approval
 from test_agent_guardrails import ScriptedLLM, answer, collect, research, make_agent, tool_call
-
 ADMIN_USER = {"user_id": 1, "username": "admin", "email": "admin@example.com", "role": "admin", "is_admin": True}
-
-
 def test_default_policy_by_http_method():
     assert not default_requires_approval("GET")
     assert not default_requires_approval("head")
     for method in ("POST", "PUT", "PATCH", "DELETE"):
         assert default_requires_approval(method)
-
-
 @pytest.mark.anyio
 async def test_only_the_requesting_user_can_resolve():
     broker = ToolApprovalBroker()
@@ -40,8 +25,6 @@ async def test_only_the_requesting_user_can_resolve():
     assert broker.resolve(approval_id, user_id=7, approved=True) is True
     assert await broker.wait(approval_id, future) is True
     assert broker.resolve(approval_id, user_id=7, approved=True) is False
-
-
 @pytest.mark.anyio
 async def test_unanswered_approval_times_out_as_denied(monkeypatch):
     monkeypatch.setattr(tool_approval, "APPROVAL_TIMEOUT_SECONDS", 0.05)
@@ -49,16 +32,12 @@ async def test_unanswered_approval_times_out_as_denied(monkeypatch):
     approval_id, future = broker.create(user_id=1)
     assert await broker.wait(approval_id, future) is False
     assert broker.resolve(approval_id, user_id=1, approved=True) is False
-
-
 def approval_agent(monkeypatch):
     agent, registry = make_agent(monkeypatch)
     executed = []
-
     async def fake_execute(name, arguments, user_id=None):
         executed.append((name, dict(arguments)))
         return {"ok": True}
-
     monkeypatch.setattr(
         registry,
         "approval_requirement",
@@ -67,8 +46,6 @@ def approval_agent(monkeypatch):
     monkeypatch.setattr(registry, "execute_tool", fake_execute)
     ScriptedLLM([tool_call("create_order", {"item": "A", "qty": 1}), answer("完成")]).install(monkeypatch)
     return agent, executed
-
-
 async def run_with_decision(agent, decision, user_id=5):
     events = []
     async for event in research(agent, "幫我下單", approval_user_id=user_id):
@@ -76,8 +53,6 @@ async def run_with_decision(agent, decision, user_id=5):
         if event["event"] == "approval_required" and decision is not None:
             assert approval_broker.resolve(event["data"]["approval_id"], user_id, decision)
     return events
-
-
 @pytest.mark.anyio
 @pytest.mark.parametrize("decision", [True, False])
 async def test_agent_waits_for_the_users_decision(monkeypatch, decision):
@@ -89,16 +64,12 @@ async def test_agent_waits_for_the_users_decision(monkeypatch, decision):
     assert required["tool"] == "create_order" and required["arguments"] == {"item": "A", "qty": 1}
     assert required["target"] == "POST api.example.com"
     assert executed == ([("create_order", {"item": "A", "qty": 1})] if decision else [])
-
-
 @pytest.mark.anyio
 async def test_agent_without_an_approver_never_runs_the_tool(monkeypatch):
     agent, executed = approval_agent(monkeypatch)
     events = await collect(research(agent, "幫我下單"))
     assert executed == []
     assert not any(e["event"] == "approval_required" for e in events)
-
-
 @pytest.mark.anyio
 async def test_disconnect_while_waiting_discards_the_approval(monkeypatch):
     agent, executed = approval_agent(monkeypatch)
@@ -116,8 +87,6 @@ async def test_disconnect_while_waiting_discards_the_approval(monkeypatch):
     await stream.aclose()
     assert approval_broker.resolve(approval_id, 5, True) is False
     assert executed == []
-
-
 def admin_client():
     app = FastAPI()
     app.include_router(api_tools.router, prefix="/api/api-tools")
@@ -125,23 +94,17 @@ def admin_client():
     app.include_router(chat_api.router, prefix="/api/chat")
     app.dependency_overrides[get_current_user_from_token] = lambda: ADMIN_USER
     return TestClient(app)
-
-
 @pytest.fixture
 def clean_tools(existing_users):
     existing_users(ADMIN_USER)
     names = ("approval_get_tool", "approval_post_tool")
-
     def remove():
         with SessionLocal() as db:
             db.query(CustomApiTool).filter(CustomApiTool.name.in_(names)).delete(synchronize_session=False)
             db.commit()
-
     remove()
     yield names
     remove()
-
-
 def test_api_tool_creation_applies_policy_and_update_never_loosens_silently(clean_tools):
     client = admin_client()
     created = {}
@@ -153,16 +116,12 @@ def test_api_tool_creation_applies_policy_and_update_never_loosens_silently(clea
         created[method] = response.json()["tool"]
     assert created["GET"]["requires_approval"] is False
     assert created["POST"]["requires_approval"] is True
-
     changed = client.put(f"/api/api-tools/{created['GET']['id']}", json={"method": "DELETE"}).json()["tool"]
     assert changed["requires_approval"] is True
     relaxed = client.put(f"/api/api-tools/{created['POST']['id']}", json={"requires_approval": False}).json()["tool"]
     assert relaxed["requires_approval"] is False
-
-
 def test_approval_requirement_names_the_destination(clean_tools):
     from app.rag.tools import ResearchToolRegistry
-
     client = admin_client()
     name = clean_tools[0]
     client.post("/api/api-tools", json={
@@ -171,8 +130,6 @@ def test_approval_requirement_names_the_destination(clean_tools):
     })
     requirement = ResearchToolRegistry().approval_requirement(name)
     assert requirement == {"kind": "custom_api", "display_name": "建立工單", "target": "POST tickets.example.com:8443"}
-
-
 def test_approval_endpoint_rejects_other_users():
     client = admin_client()
     loop = asyncio.new_event_loop()
@@ -183,12 +140,8 @@ def test_approval_endpoint_rejects_other_users():
     response = client.post(f"/api/chat/approvals/{approval_id}", json={"approved": True})
     assert response.status_code == 404
     approval_broker.discard(approval_id)
-
-
 async def _create_pending(user_id):
     return approval_broker.create(user_id)
-
-
 def test_existing_database_gets_the_column_with_backfill(tmp_path):
     old = create_engine(f"sqlite:///{tmp_path / 'old.db'}")
     with old.begin() as conn:

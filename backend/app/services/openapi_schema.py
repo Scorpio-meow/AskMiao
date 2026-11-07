@@ -1,28 +1,20 @@
 from typing import Any, Dict, List, Optional, Set, Tuple
-
 from app.core.limits import MAX_OPENAPI_SCHEMA_DEPTH, MAX_OPENAPI_SCHEMA_REFS
 from app.services.openapi_documents import SpecDocuments, join_uri
-
 JSON_TYPES = ("string", "number", "integer", "boolean", "array", "object")
 KEPT_KEYWORDS = (
     "format", "minimum", "maximum", "minLength", "maxLength", "pattern", "minItems", "maxItems",
     "uniqueItems", "multipleOf", "minProperties", "maxProperties",
 )
-
-
 class SchemaNormalizer:
-    """把 OpenAPI 2.0～3.2 的 schema（含 JSON Schema 2020-12）轉成各家模型都接受的 function calling 參數 schema"""
-
     def __init__(self, docs: SpecDocuments, json_schema_2020: bool, for_request: bool):
         self.docs = docs
         self.json_schema_2020 = json_schema_2020
         self.for_request = for_request
         self.resolved_refs = 0
         self.warnings: List[str] = []
-
     def normalize(self, schema: Any, base: str) -> Dict[str, Any]:
         return self._normalize(schema, base, frozenset(), 0)
-
     def _deref(self, schema: Dict[str, Any], base: str, stack: frozenset) -> Tuple[Optional[Dict[str, Any]], str, frozenset, Optional[str]]:
         ref = schema.get("$ref") if "$ref" in schema else schema.get("$dynamicRef")
         target_uri = join_uri(base, ref) if isinstance(ref, str) else None
@@ -41,7 +33,6 @@ class SchemaNormalizer:
         if not isinstance(target, dict):
             return None, base, stack, f"無法解析之參照: {ref}"
         return target, target_base, stack | {target_uri}, None
-
     def _normalize(self, schema: Any, base: str, stack: frozenset, depth: int) -> Dict[str, Any]:
         if schema is True or schema is None:
             return {}
@@ -74,11 +65,9 @@ class SchemaNormalizer:
         if not parts:
             return own
         return self._merge_all(parts + ([own] if self._meaningful(own) else []))
-
     @staticmethod
     def _meaningful(schema: Dict[str, Any]) -> bool:
         return any(key != "type" for key in schema) or schema.get("type") not in (None, "string")
-
     def _type_of(self, schema: Dict[str, Any]) -> Tuple[Optional[str], List[str]]:
         raw = schema.get("type")
         if isinstance(raw, list):
@@ -96,7 +85,6 @@ class SchemaNormalizer:
             const = schema["const"]
             return {bool: "boolean", int: "integer", float: "number", str: "string"}.get(type(const)), []
         return None, []
-
     def _own(self, schema: Dict[str, Any], base: str, stack: frozenset, depth: int) -> Dict[str, Any]:
         cleaned: Dict[str, Any] = {}
         primary, others = self._type_of(schema)
@@ -159,7 +147,6 @@ class SchemaNormalizer:
         if notes:
             cleaned["description"] = "；".join(notes)
         return cleaned
-
     def _choice(self, options: List[Any], discriminator: Any, base: str, stack: frozenset, depth: int) -> Dict[str, Any]:
         variants = [self._normalize(option, base, stack, depth + 1) for option in options]
         labels = []
@@ -195,7 +182,6 @@ class SchemaNormalizer:
         if len(types) > 1:
             first["description"] = "；".join(filter(None, [first.get("description"), f"可以是 {', '.join(types)}"]))
         return first
-
     def _merge_all(self, parts: List[Dict[str, Any]]) -> Dict[str, Any]:
         merged: Dict[str, Any] = {}
         descriptions: List[str] = []

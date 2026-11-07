@@ -473,14 +473,39 @@
   letter-spacing: 0.5px;
 }
 
-.fileBadgePdf { background: var(--color-error-bg); color: var(--color-error-text); }
-.fileBadgeDocx { background: var(--color-primary-light); color: var(--color-primary-text); }
-.fileBadgePptx { background: var(--color-warning-bg); color: var(--color-warning-text); }
-.fileBadgeXlsx { background: var(--color-success-bg); color: var(--color-success-text); }
-.fileBadgeCode { background: rgba(139, 92, 246, 0.12); color: #6d28d9; }
-.fileBadgeText { background: var(--bg-surface-secondary); color: var(--text-secondary); }
+.fileBadgePdf {
+  background: var(--color-error-bg);
+  color: var(--color-error-text);
+}
 
-[data-theme="dark"] .fileBadgeCode { color: #c4b5fd; }
+.fileBadgeDocx {
+  background: var(--color-primary-light);
+  color: var(--color-primary-text);
+}
+
+.fileBadgePptx {
+  background: var(--color-warning-bg);
+  color: var(--color-warning-text);
+}
+
+.fileBadgeXlsx {
+  background: var(--color-success-bg);
+  color: var(--color-success-text);
+}
+
+.fileBadgeCode {
+  background: rgba(139, 92, 246, 0.12);
+  color: #6d28d9;
+}
+
+.fileBadgeText {
+  background: var(--bg-surface-secondary);
+  color: var(--text-secondary);
+}
+
+[data-theme="dark"] .fileBadgeCode {
+  color: #c4b5fd;
+}
 
 .fileInfoText {
   display: flex;

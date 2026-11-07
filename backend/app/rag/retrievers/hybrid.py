@@ -10,51 +10,35 @@ import numpy as np
 from ..types import Document
 from ..indices.vector_store import VectorStoreManager
 from ..indices.bm25_store import BM25StoreManager
-
 logger = logging.getLogger(__name__)
-
 CrossEncoder = None
 AutoTokenizer = None
-
 URL_MATCH_SCORE = 1.0
 POST_ID_MATCH_SCORE = 0.98
 DATE_MATCH_SCORE = 0.98
 USER_MATCH_SCORE = 0.90
-# 精確比對分數達此值者（網址、貼文 ID、日期）排在最前面，且不受相關性門檻限制
 PINNED_MATCH_SCORE = 0.95
-
-
 @dataclass(frozen=True)
 class RetrievedChunk:
     document: Document
-    # 排序用的混合分數：RERANK_WEIGHT × 重排機率 + (1 − RERANK_WEIGHT) × 候選原分數
     score: float
-    # 重排模型判定的相關機率，相關性門檻只看這個值
     relevance: float
-    # 精確比對到網址、貼文 ID 或日期
     pinned: bool
-
-
 def matches_target_document(doc: Document, target_document: str) -> bool:
     target = target_document.strip().lower()
     return (
         target in (doc.metadata.get("source", "")).lower()
         or target in (doc.metadata.get("original_filename", "")).lower()
     )
-
-
 def reciprocal_rank_fusion(
     ranked_lists: Sequence[List[Tuple[Document, float]]], rrf_k: int
 ) -> List[Tuple[Document, float]]:
-    """依各軌名次融合：分數 = Σ 1 / (rrf_k + 名次)，名次從 1 起算，以 chunk_id 辨識同一片段"""
     fused: Dict[int, List] = {}
     for ranked in ranked_lists:
         for rank, (doc, _) in enumerate(ranked, start=1):
             entry = fused.setdefault(doc.metadata["chunk_id"], [doc, 0.0])
             entry[1] += 1.0 / (rrf_k + rank)
     return sorted(((doc, score) for doc, score in fused.values()), key=lambda x: x[1], reverse=True)
-
-
 def _query_dates(query: str) -> List[str]:
     target_dates = []
     for m in re.finditer(r'(\d{4})[-/](\d{1,2})[-/](\d{1,2})', query):
@@ -64,10 +48,7 @@ def _query_dates(query: str) -> List[str]:
         y, mth, d = m.group(1), int(m.group(2)), int(m.group(3))
         target_dates.extend([f"{y}-{mth:02d}-{d:02d}", f"{y}年{mth}月{d}日", f"{y}年{mth:02d}月{d:02d}日"])
     return list(set(target_dates))
-
-
 def find_exact_matches(query: str, documents: Iterable[Document]) -> List[Tuple[Document, float]]:
-    """查詢中的網址、貼文 ID、日期與 @帳號，以原文比對片段內容；查詢沒有這些目標時不掃描片段"""
     url_match = re.search(r'https?://[^\s"\'<>]+', query)
     id_match = re.search(r'/post/([A-Za-z0-9_-]+)', query)
     user_match = re.search(r'@[A-Za-z0-9_.-]+', query)
@@ -77,7 +58,6 @@ def find_exact_matches(query: str, documents: Iterable[Document]) -> List[Tuple[
     target_user = user_match.group(0) if user_match else None
     if not (target_url or target_id or target_user or target_dates):
         return []
-
     matches: List[Tuple[Document, float]] = []
     for doc in documents:
         c = doc.page_content
@@ -91,8 +71,6 @@ def find_exact_matches(query: str, documents: Iterable[Document]) -> List[Tuple[
         elif target_user and target_user.lower() in c_lower:
             matches.append((doc, USER_MATCH_SCORE))
     return matches
-
-
 class HybridRetriever:
     def __init__(
         self,
@@ -115,12 +93,10 @@ class HybridRetriever:
         self.top_k = top_k
         self.rrf_k = rrf_k
         self.rerank_top_k = rerank_top_k
-        # 重排模型的 fast tokenizer 不能被多個執行緒同時使用；重排用自己的鎖，不占用索引鎖
         self._rerank_lock = threading.Lock()
         self.final_k = final_k
         self.rerank_weight = rerank_weight
         self.relevance_threshold = relevance_threshold
-
         self.cross_encoder = None
         self.openvino_reranker = None
         if openvino_device:
@@ -142,7 +118,6 @@ class HybridRetriever:
             )
         else:
             self._load_cross_encoder(reranker_model, use_fp16)
-
     def _load_cross_encoder(self, reranker_model: str, use_fp16: bool) -> None:
         global CrossEncoder
         try:
@@ -154,21 +129,18 @@ class HybridRetriever:
             raise RuntimeError(
                 f"無法載入重排模型 ({reranker_model})：{e}。重排模型是必要元件，請檢查 RERANKER_MODEL 設定、模型快取或網路連線"
             ) from e
-
         if use_fp16 and self.vector_store.device == "cuda":
             try:
                 self.cross_encoder.model = self.cross_encoder.model.half()
                 logger.info("Cross-Encoder 已量化為 FP16")
             except Exception as e:
                 logger.warning(f"Cross-Encoder FP16 量化失敗: {e}")
-
         import torch
         activation_fn = getattr(self.cross_encoder, "activation_fn", None)
         if activation_fn is None:
             activation_fn = getattr(self.cross_encoder, "default_activation_function", None)
         self.reranker_outputs_probability = isinstance(activation_fn, torch.nn.Sigmoid)
         logger.info(f"Cross-Encoder 已載入至 {self.vector_store.device.upper()}: {reranker_model} (精度: {'FP16' if use_fp16 else 'FP32'})")
-
     def _load_reranker_tokenizer(self, reranker_model: str):
         global AutoTokenizer
         try:
@@ -180,7 +152,6 @@ class HybridRetriever:
             raise RuntimeError(
                 f"無法載入重排模型 ({reranker_model}) 的 tokenizer：{e}。重排模型是必要元件，請檢查 RERANKER_MODEL 設定、模型快取或網路連線"
             ) from e
-
     @staticmethod
     def _reranker_fingerprint(reranker_model: str) -> str:
         from transformers.utils import cached_file
@@ -190,7 +161,6 @@ class HybridRetriever:
             for entry in os.scandir(model_dir) if entry.is_file()
         )
         return hashlib.sha256(repr(files).encode()).hexdigest()[:16]
-
     def _compile_openvino_reranker(self, reranker_model: str, device: str):
         import openvino as ov
         cache_dir = os.path.join(self.vector_store.data_dir, "openvino_cache")
@@ -206,7 +176,6 @@ class HybridRetriever:
         shape = ov.PartialShape([ov.Dimension(1, self.openvino_batch_size), self.openvino_max_length])
         model.reshape({model_input.get_any_name(): shape for model_input in model.inputs})
         return core.compile_model(model, device)
-
     def _convert_openvino_reranker(self, reranker_model: str, model_path: str) -> None:
         import openvino as ov
         from transformers import AutoModelForSequenceClassification
@@ -218,7 +187,6 @@ class HybridRetriever:
         ov.save_model(converted, f"{temp_stem}.xml")
         os.replace(f"{temp_stem}.bin", f"{stem}.bin")
         os.replace(f"{temp_stem}.xml", model_path)
-
     def _tokenize(self, pairs: Sequence[Tuple[str, str]], tensor_type: str):
         return self.reranker_tokenizer(
             [query for query, _ in pairs],
@@ -228,7 +196,6 @@ class HybridRetriever:
             max_length=self.openvino_max_length,
             return_tensors=tensor_type,
         )
-
     def _openvino_logits(self, pairs: List[Tuple[str, str]]) -> List[float]:
         logits: List[float] = []
         for start in range(0, len(pairs), self.openvino_batch_size):
@@ -236,16 +203,13 @@ class HybridRetriever:
             output = self.openvino_reranker(dict(encoded))[0]
             logits.extend(np.asarray(output, dtype=float).reshape(-1).tolist())
         return logits
-
     def hybrid_search(
         self, query: str, query_embedding: np.ndarray, chunk_ids: Optional[List[int]] = None
     ) -> List[Tuple[Document, float]]:
-        """兩軌必跑：向量與 BM25 各取 TOP_K 筆（指定 chunk_ids 時只在這些片段中取），以 RRF 融合後取前 RERANK_TOP_K 筆（呼叫端須持有 vector_store.lock）"""
         vector_results = self.vector_store.search(query_embedding, self.top_k, apply_threshold=False, chunk_ids=chunk_ids)
         bm25_results = self.bm25_store.search(query, self.vector_store.chunks, self.top_k, chunk_ids=chunk_ids)
         fused = reciprocal_rank_fusion([vector_results, bm25_results], self.rrf_k)
         return fused[: self.rerank_top_k]
-
     def _relevance(self, query: str, documents: List[Document]) -> List[float]:
         pairs = [(query, doc.page_content) for doc in documents]
         with self._rerank_lock:
@@ -257,9 +221,7 @@ class HybridRetriever:
         if self.openvino_reranker is not None or not self.reranker_outputs_probability:
             scores = 1.0 / (1.0 + np.exp(-np.clip(scores, -20.0, 20.0)))
         return scores.tolist()
-
     def rank(self, query: str, target_document: Optional[str] = None) -> List[RetrievedChunk]:
-        """融合並重排後的全部候選，未套用相關性門檻、未截斷；重排失敗時直接拋出例外"""
         query_embedding = self.vector_store.embed_query(query)
         with self.vector_store.lock:
             chunk_ids = None
@@ -273,20 +235,15 @@ class HybridRetriever:
                 self.vector_store.chunks.values() if chunk_ids is None
                 else (self.vector_store.chunks[chunk_id] for chunk_id in chunk_ids)
             )
-            # 精確比對候選與融合軌一樣以 RERANK_TOP_K 為上限（分數高者優先），重排成本不隨語料規模成長
             exact = sorted(exact, key=lambda item: item[1], reverse=True)[: self.rerank_top_k]
             fused = self.hybrid_search(query, query_embedding, chunk_ids)
-
             exact_ids = {doc.metadata["chunk_id"] for doc, _ in exact}
             fused = [(doc, score) for doc, score in fused if doc.metadata["chunk_id"] not in exact_ids]
             max_fused = max((score for _, score in fused), default=0.0)
-            # 精確比對以其比對分數、融合結果以 RRF 分數 / 最高分作為候選原分數，兩者同在 0~1
             candidates = [(doc, score, score >= PINNED_MATCH_SCORE) for doc, score in exact]
             candidates += [(doc, score / max_fused, False) for doc, score in fused]
         if not candidates:
             return []
-
-        # 重排只讀取已取出的候選片段，不需持有索引鎖，避免阻擋其他查詢與索引寫入
         started = time.time()
         relevances = self._relevance(query, [doc for doc, _, _ in candidates])
         w = min(max(self.rerank_weight, 0.0), 1.0)
@@ -300,10 +257,7 @@ class HybridRetriever:
             f"reranked={len(ranked)} in {time.time() - started:.2f}s"
         )
         return ranked
-
     def select(self, ranked: List[RetrievedChunk], relevance_threshold: float) -> List[RetrievedChunk]:
-        """套用相關性門檻（精確比對到網址、貼文 ID、日期者不受限制），取前 FINAL_K 筆"""
         return [r for r in ranked if r.pinned or r.relevance >= relevance_threshold][: self.final_k]
-
     def smart_search(self, query: str, target_document: Optional[str] = None) -> List[RetrievedChunk]:
         return self.select(self.rank(query, target_document), self.relevance_threshold)

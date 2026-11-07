@@ -5,7 +5,7 @@
   width: 100%;
 }
 
-.row + .row {
+.row+.row {
   margin-top: var(--space-6);
 }
 
@@ -267,7 +267,7 @@
 }
 
 @media (max-width: 599px) {
-  .row + .row {
+  .row+.row {
     margin-top: var(--space-5);
   }
 

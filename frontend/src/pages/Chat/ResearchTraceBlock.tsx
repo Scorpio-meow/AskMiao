@@ -25,8 +25,6 @@ const getToolDisplayInfo = (toolName: string): ToolDisplayInfo => {
       return { label: toolName, icon: 'code' };
   }
 };
-// 研究軌跡的參數由模型產生，可能是任何 JSON 型別；物件直接當成 React 子元素會讓整個對話頁面崩潰，
-// 而且軌跡會存進資料庫，之後每次開啟這段對話都會再崩潰一次，因此一律轉成文字再顯示
 const toDisplayText = (value: unknown): string => {
   if (value === undefined || value === null) return '';
   return typeof value === 'string' ? value : JSON.stringify(value);

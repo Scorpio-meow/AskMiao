@@ -2,34 +2,25 @@ import ipaddress
 import json
 from unittest.mock import AsyncMock, patch
 from urllib.parse import parse_qs
-
 import httpx
 import pytest
-
 from app.api.api_tools import _import_auth, execute_http_api_tool
 from app.models import OpenApiImportItem
 from app.services import oauth_client
 from app.services.openapi_parser import OpenApiParser
-
 PUBLIC_IP = ipaddress.ip_address("93.184.216.34")
-
-
 @pytest.fixture
 def upstream(monkeypatch):
     state = {"sent": [], "handler": None}
-
     async def fake_send(self, request):
         await request.aread()
         state["sent"].append(request)
         return state["handler"](request)
-
     monkeypatch.setattr(httpx.AsyncHTTPTransport, "handle_async_request", fake_send)
     oauth_client._token_cache.clear()
     with patch("app.core.ssrf_protection.resolve_hostname", new_callable=AsyncMock) as mock_dns:
         mock_dns.return_value = [PUBLIC_IP]
         yield state
-
-
 def post_tool(content_type):
     return {
         "name": "form_tool",
@@ -39,8 +30,6 @@ def post_tool(content_type):
         "param_locations": {"title": "body", "tags": "body"},
         "parameters_schema": {"type": "object", "properties": {"title": {"type": "string"}, "tags": {"type": "array"}}},
     }
-
-
 @pytest.mark.anyio
 @pytest.mark.parametrize("content_type, expected_header", [
     ("application/json", "application/json"),
@@ -61,8 +50,6 @@ async def test_body_is_encoded_by_declared_content_type(upstream, content_type, 
     else:
         assert 'name="title"' in body and "嗨" in body
         assert body.count('name="tags"') == 2 and "\r\n\r\na\r\n" in body and "\r\n\r\nb\r\n" in body
-
-
 SPEC = {
     "openapi": "3.0.3",
     "info": {"title": "t", "version": "1"},
@@ -84,8 +71,6 @@ SPEC = {
         "/f": {"post": {"operationId": "f", "requestBody": {"content": {"application/xml": {"schema": {"type": "object"}}}}}},
     },
 }
-
-
 @pytest.mark.anyio
 async def test_parser_maps_security_schemes_and_body_types():
     endpoints = {e["name"]: e for e in (await OpenApiParser.parse(json.dumps(SPEC), None, []))["endpoints"]}
@@ -100,8 +85,6 @@ async def test_parser_maps_security_schemes_and_body_types():
     assert endpoints["d"]["auth_config"] == {"key_name": "sid", "key_in": "cookie", "key_value": ""}
     assert endpoints["e"]["auth_type"] == "none"
     assert endpoints["f"]["body_content_type"] == "application/xml"
-
-
 def test_import_merges_global_credentials_only_for_matching_type():
     item = OpenApiImportItem(name="b", display_name="b", description="b", method="GET", path="/b", full_url="https://x/b",
                              auth_type="bearer", auth_config={"token": ""})
@@ -109,8 +92,6 @@ def test_import_merges_global_credentials_only_for_matching_type():
     assert _import_auth(item, "none", {}) == ("bearer", {"token": ""})
     plain = OpenApiImportItem(name="a", display_name="a", description="a", method="GET", path="/a", full_url="https://x/a")
     assert _import_auth(plain, "bearer", {"token": "secret"}) == ("bearer", {"token": "secret"})
-
-
 def test_unknown_options_are_rejected():
     with pytest.raises(ValueError):
         OpenApiImportItem(name="a", display_name="a", description="a", method="GET", path="/a", full_url="https://x/a",
@@ -118,8 +99,6 @@ def test_unknown_options_are_rejected():
     with pytest.raises(ValueError):
         OpenApiImportItem(name="a", display_name="a", description="a", method="GET", path="/a", full_url="https://x/a",
                           auth_type="digest")
-
-
 OAUTH_TOOL = {
     "name": "oauth_tool",
     "method": "GET",
@@ -127,13 +106,10 @@ OAUTH_TOOL = {
     "auth_type": "oauth2_client_credentials",
     "auth_config": {"token_url": "https://auth.example.com/token", "client_id": "cid", "client_secret": "csecret-123", "scope": "read"},
 }
-
-
 @pytest.mark.anyio
 async def test_client_credentials_token_is_cached_and_refreshed_on_401(upstream):
     issued = []
     rejected = {"token-1"}
-
     def handler(request):
         if request.headers["host"] == "auth.example.com":
             token = f"token-{len(issued) + 1}"
@@ -143,7 +119,6 @@ async def test_client_credentials_token_is_cached_and_refreshed_on_401(upstream)
         if token in rejected:
             return httpx.Response(401, json={"error": "expired"}, request=request)
         return httpx.Response(200, json={"echo": f"{token} csecret-123"}, request=request)
-
     upstream["handler"] = handler
     first = await execute_http_api_tool(OAUTH_TOOL, {}, "test_tool")
     assert first["is_success"] is True
@@ -152,12 +127,9 @@ async def test_client_credentials_token_is_cached_and_refreshed_on_401(upstream)
     token_request = next(r for r in upstream["sent"] if r.headers["host"] == "auth.example.com")
     assert parse_qs(token_request.content.decode()) == {"grant_type": ["client_credentials"], "scope": ["read"]}
     assert token_request.headers["authorization"].startswith("Basic ")
-
     second = await execute_http_api_tool(OAUTH_TOOL, {}, "test_tool")
     assert second["is_success"] is True
     assert issued == ["token-1", "token-2"]
-
-
 @pytest.mark.anyio
 async def test_token_endpoint_failure_is_reported_without_details(upstream):
     upstream["handler"] = lambda request: httpx.Response(400, json={"error": "invalid_client", "secret": "x"}, request=request)
@@ -166,8 +138,6 @@ async def test_token_endpoint_failure_is_reported_without_details(upstream):
     assert "錯誤代碼" in result["error"]
     assert "invalid_client" not in result["error"]
     assert all(r.headers["host"] == "auth.example.com" for r in upstream["sent"])
-
-
 USER_SCHEMA = {"type": "object", "properties": {"username": {"type": "string"}}}
 PETSTORE_V2 = {
     "swagger": "2.0",
@@ -196,8 +166,6 @@ PETSTORE_V3 = {
         "application/json": {"schema": {"type": "array", "items": {"$ref": "#/components/schemas/User"}}},
     }}}}},
 }
-
-
 async def parsed_tool(spec, name):
     endpoint = next(e for e in (await OpenApiParser.parse(json.dumps(spec), None, []))["endpoints"] if e["name"] == name)
     return {
@@ -208,8 +176,6 @@ async def parsed_tool(spec, name):
         "param_locations": endpoint["param_locations"],
         "body_content_type": endpoint["body_content_type"],
     }
-
-
 @pytest.mark.anyio
 @pytest.mark.parametrize("spec", [PETSTORE_V2, PETSTORE_V3])
 async def test_array_body_is_sent_as_the_whole_body(upstream, spec):
@@ -221,8 +187,6 @@ async def test_array_body_is_sent_as_the_whole_body(upstream, spec):
     result = await execute_http_api_tool(tool, {"request_body": [{"username": "miao"}]}, "test_tool")
     assert result["is_success"] is True
     assert json.loads(upstream["sent"][0].content) == [{"username": "miao"}]
-
-
 @pytest.mark.anyio
 async def test_array_body_cannot_be_sent_as_a_form(upstream):
     upstream["handler"] = lambda request: httpx.Response(200, json={"ok": True}, request=request)
@@ -232,8 +196,6 @@ async def test_array_body_cannot_be_sent_as_a_form(upstream):
     assert result["is_success"] is False
     assert "請求主體必須是物件" in json.dumps(result, ensure_ascii=False)
     assert upstream["sent"] == []
-
-
 @pytest.mark.anyio
 async def test_swagger_form_data_is_sent_as_a_form(upstream):
     upstream["handler"] = lambda request: httpx.Response(200, json={"ok": True}, request=request)

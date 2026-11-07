@@ -131,8 +131,8 @@ export default function ConnectionFormDialog({ connection, shared, providers, us
     : connection?.has_api_key
       ? '已變更供應商或 API 位址，原本的金鑰不會沿用；需要金鑰請重新輸入'
       : preset.requires_api_key
-      ? '金鑰加密存放，儲存後不會再顯示'
-      : '選填；自架的服務通常不需要';
+        ? '金鑰加密存放，儲存後不會再顯示'
+        : '選填；自架的服務通常不需要';
   const busy = saving || discovering;
   return (
     <Dialog open onClose={busy ? undefined : onClose} maxWidth="md">

@@ -1,10 +1,8 @@
 import json
 import logging
 from typing import Any, Dict
-
 from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.orm import Session
-
 from app.core.config import settings
 from app.core.error_response import SafeClientError
 from app.core.jwt_auth import get_current_active_user, get_current_admin_user
@@ -38,27 +36,20 @@ from app.services.llm_connections import (
     validated_user_ids,
 )
 from app.services.system_models import release_system_models, set_system_models, system_models_response
-
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/llm-connections", tags=["llm_connections"])
 admin_router = APIRouter(prefix="/api/admin/llm-connections", tags=["admin"])
 system_models_router = APIRouter(prefix="/api/admin/system-models", tags=["admin"])
-
-
 def _get_personal(db: Session, connection_id: int, user_id: int) -> LlmConnection:
     connection = db.get(LlmConnection, connection_id)
     if connection is None or connection.owner_id != user_id:
         raise HTTPException(status_code=404, detail="找不到這個 API 連線")
     return connection
-
-
 def _get_shared(db: Session, connection_id: int) -> LlmConnection:
     connection = db.get(LlmConnection, connection_id)
     if connection is None or connection.owner_id is not None:
         raise HTTPException(status_code=404, detail="找不到這個共用 API 連線")
     return connection
-
-
 async def _validate(connection: LlmConnection, public_only: bool) -> None:
     try:
         await validate_connection(
@@ -71,8 +62,6 @@ async def _validate(connection: LlmConnection, public_only: bool) -> None:
         )
     except SafeClientError as e:
         raise HTTPException(status_code=400, detail=str(e))
-
-
 def _apply_update(connection: LlmConnection, changes: Dict[str, Any]) -> None:
     cleared = [field for field in ("name", "provider", "api_base", "models") if field in changes and changes[field] is None]
     if cleared:
@@ -87,8 +76,6 @@ def _apply_update(connection: LlmConnection, changes: Dict[str, Any]) -> None:
         connection.api_key = encrypt_api_key(changes["api_key"])
     elif endpoint_changed:
         connection.api_key = None
-
-
 def _new_connection(data: LlmConnectionCreate, owner_id) -> LlmConnection:
     return LlmConnection(
         name=data.name,
@@ -99,13 +86,9 @@ def _new_connection(data: LlmConnectionCreate, owner_id) -> LlmConnection:
         max_output_tokens=data.max_output_tokens,
         owner_id=owner_id,
     )
-
-
 @router.get("/providers")
 async def get_providers(current_user: dict = Depends(get_current_active_user)):
     return {"providers": provider_presets()}
-
-
 @router.get("")
 def list_my_connections(db: Session = Depends(get_db), current_user: dict = Depends(get_current_active_user)):
     connections = connections_for_user(db, current_user["user_id"])
@@ -113,8 +96,6 @@ def list_my_connections(db: Session = Depends(get_db), current_user: dict = Depe
         "personal": [connection_response(c, include_access=False) for c in connections if c.owner_id is not None],
         "shared": [chat_option(c) for c in connections if c.owner_id is None],
     }
-
-
 @router.post("", status_code=201)
 async def create_my_connection(
     data: LlmConnectionCreate,
@@ -131,8 +112,6 @@ async def create_my_connection(
         "connection_id": connection.id, "provider": connection.provider, "api_base": connection.api_base
     })
     return connection_response(connection, include_access=False)
-
-
 @router.put("/{connection_id}")
 async def update_my_connection(
     connection_id: int,
@@ -154,8 +133,6 @@ async def update_my_connection(
         "connection_id": connection.id, "provider": connection.provider, "api_base": connection.api_base
     })
     return connection_response(connection, include_access=False)
-
-
 @router.delete("/{connection_id}")
 def delete_my_connection(
     connection_id: int,
@@ -170,8 +147,6 @@ def delete_my_connection(
         "connection_id": connection_id
     })
     return {"message": "已刪除 API 連線"}
-
-
 @router.post("/discover-models")
 async def discover_models(
     data: LlmModelDiscoveryRequest,
@@ -199,8 +174,6 @@ async def discover_models(
         logger.info("取得 %s 的模型清單失敗", data.provider, exc_info=True)
         raise HTTPException(status_code=400, detail=describe_connection_error(e))
     return {"models": models}
-
-
 @router.post("/{connection_id}/test")
 async def test_connection(
     connection_id: int,
@@ -230,14 +203,10 @@ async def test_connection(
         logger.info("API 連線 %s 測試失敗", connection_id, exc_info=True)
         return {"ok": False, "error": describe_connection_error(e)}
     return {"ok": True, "reply": reply[:CONNECTION_TEST_REPLY_CHARS]}
-
-
 @admin_router.get("")
 def list_shared_connections(db: Session = Depends(get_db), current_user: dict = Depends(get_current_admin_user)):
     connections = db.query(LlmConnection).filter(LlmConnection.owner_id.is_(None)).order_by(LlmConnection.id).all()
     return {"connections": [connection_response(c, include_access=True) for c in connections]}
-
-
 @admin_router.post("", status_code=201)
 async def create_shared_connection(
     data: SharedLlmConnectionCreate,
@@ -259,8 +228,6 @@ async def create_shared_connection(
         "allowed_user_ids": json.loads(connection.allowed_user_ids) if connection.allowed_user_ids else None
     })
     return connection_response(connection, include_access=True)
-
-
 @admin_router.put("/{connection_id}")
 async def update_shared_connection(
     connection_id: int,
@@ -290,8 +257,6 @@ async def update_shared_connection(
         "allowed_user_ids": json.loads(connection.allowed_user_ids) if connection.allowed_user_ids else None
     })
     return connection_response(connection, include_access=True)
-
-
 @admin_router.delete("/{connection_id}")
 def delete_shared_connection(
     connection_id: int,
@@ -308,13 +273,9 @@ def delete_shared_connection(
         "connection_id": connection_id
     })
     return {"message": "已刪除共用 API 連線"}
-
-
 @system_models_router.get("")
 def get_system_models(db: Session = Depends(get_db), current_user: dict = Depends(get_current_admin_user)):
     return system_models_response(db)
-
-
 @system_models_router.put("")
 def update_system_models(
     data: SystemModelsUpdate,

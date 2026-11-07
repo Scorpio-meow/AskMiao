@@ -43,7 +43,6 @@ export function useAuth() {
       setLoading(false);
     }
   }, []);
-  /** 回傳伺服器是否確認登出；本機的登入狀態一律清除 */
   const logout = useCallback(async (): Promise<boolean> => {
     setLoading(true);
     try {
@@ -61,7 +60,7 @@ export function useAuth() {
       setUser(userData);
       return userData;
     } catch (err: any) {
-      setError(err.message || '獲取使用者資料失敗');
+      setError(err.message || '取得使用者資料失敗');
       return null;
     } finally {
       setLoading(false);

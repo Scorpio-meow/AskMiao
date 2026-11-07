@@ -16,7 +16,6 @@ html {
   scroll-behavior: smooth;
 }
 
-/* 模態 <dialog> 開啟時鎖住背景捲動 */
 html:has(dialog:modal) {
   overflow: hidden;
 }

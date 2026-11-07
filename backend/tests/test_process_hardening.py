@@ -1,26 +1,13 @@
-"""
-行程內狀態、子行程、日誌與背景資源的上限
-驗證：
-1. 權杖撤銷名單以雜湊為鍵、條目數有上限，到期項目不需全表掃描
-2. 入侵偵測的每位址事件與追蹤位址數有上限，持續超量只警報一次
-3. 安全日誌欄位截斷、不重複寫入 app.log 且會輪替；登入欄位長度有上限
-4. Argon2 在執行緒中執行；工具清單需要登入且知識庫描述有快取
-5. stdio MCP 子行程關閉時連同孫行程一起終止
-6. jieba 快取放在資料目錄；已刪除文件的片段不會被寫回索引
-7. 速率限制追蹤的位址數有上限；JWT 私鑰建立時就只有擁有者可讀
-"""
 import asyncio
 import logging
 import sys
 import threading
 import time
 from logging.handlers import RotatingFileHandler
-
 import psutil
 import pytest
 from fastapi.routing import APIRoute
 from pydantic import ValidationError
-
 from app.api import auth as auth_api
 from app.api import chat as chat_api
 from app.core import redis_client
@@ -35,25 +22,18 @@ from app.rag import tools as tools_module
 from app.rag.tools import ResearchToolRegistry
 from app.schemas.auth import UserLogin
 from app.services.mcp_service import McpStdioClient
-
-
 @pytest.fixture
 def empty_blacklist(monkeypatch):
     monkeypatch.setattr(TokenBlacklist, "_blacklist", {})
     monkeypatch.setattr(TokenBlacklist, "_expiry_heap", [])
-
-
 def test_token_blacklist_is_bounded_and_keyed_by_hash(empty_blacklist, monkeypatch):
     monkeypatch.setattr(redis_client, "MAX_REVOKED_TOKENS", 3)
     for index in range(5):
         TokenBlacklist.add_token(f"token-{index}", expires_in=100 + index)
     assert len(TokenBlacklist._blacklist) == 3
     assert all(len(key) == 64 and "token" not in key for key in TokenBlacklist._blacklist)
-    # 最早到期的先被淘汰
     assert not TokenBlacklist.is_blacklisted("token-0")
     assert TokenBlacklist.is_blacklisted("token-4")
-
-
 def test_expired_tokens_leave_the_blacklist(empty_blacklist, monkeypatch):
     now = [1000.0]
     monkeypatch.setattr(redis_client.time, "time", lambda: now[0])
@@ -63,8 +43,6 @@ def test_expired_tokens_leave_the_blacklist(empty_blacklist, monkeypatch):
     assert not TokenBlacklist.is_blacklisted("short")
     assert TokenBlacklist.is_blacklisted("long")
     assert len(TokenBlacklist._blacklist) == 1
-
-
 def test_security_log_fields_are_truncated_and_not_duplicated():
     long_name = "a" * 10_000
     truncated = truncate_log_value({"details": {"username": long_name}})
@@ -74,8 +52,6 @@ def test_security_log_fields_are_truncated_and_not_duplicated():
     assert security_files and all(isinstance(h, RotatingFileHandler) for h in security_files)
     with pytest.raises(ValidationError):
         UserLogin(username="u" * (MAX_LOGIN_IDENTIFIER_CHARS + 1), password="x")
-
-
 def test_log_messages_cannot_forge_extra_lines():
     formatter = SingleLineMessageFormatter("%(levelname)s - %(message)s")
     record = logging.LogRecord("app", logging.INFO, __file__, 1, "model %s", ("gpt\n2026-10-31 - app - ERROR - forged",), None)
@@ -86,30 +62,22 @@ def test_log_messages_cannot_forge_extra_lines():
         record = logging.LogRecord("app", logging.ERROR, __file__, 1, "failed", (), sys.exc_info())
     assert formatter.format(record).splitlines()[0] == "ERROR - failed"
     assert "Traceback" in formatter.format(record)
-
-
 @pytest.mark.anyio
 async def test_password_hashing_runs_off_the_event_loop(monkeypatch):
     loop_thread = threading.get_ident()
     seen = []
-
     def fake_authenticate(db, username, password):
         seen.append(threading.get_ident())
         return None
-
     monkeypatch.setattr(auth_api, "authenticate_user", fake_authenticate)
     request = type("R", (), {"client": None, "method": "POST", "url": type("U", (), {"path": "/api/auth/login"})(), "headers": {}})()
     with pytest.raises(Exception):
         await auth_api.login(UserLogin(username="someone", password="wrong"), request, response=None, db=None)
     assert seen and seen[0] != loop_thread
-
-
 def test_tools_list_requires_login():
     route = next(r for r in chat_api.router.routes if isinstance(r, APIRoute) and r.path == "/tools")
     dependencies = {dependency.call for dependency in route.dependant.dependencies}
     assert get_current_user_id in dependencies
-
-
 def test_knowledge_base_description_is_cached(monkeypatch):
     tools_module.invalidate_knowledge_base_description()
     builds = []
@@ -122,11 +90,8 @@ def test_knowledge_base_description_is_cached(monkeypatch):
     registry._generate_knowledge_base_description()
     assert len(builds) == 2
     tools_module.invalidate_knowledge_base_description()
-
-
 @pytest.mark.anyio
 async def test_stdio_close_terminates_grandchildren():
-    # 模擬 npx／uvx：啟動器再啟動一個長時間執行的孫行程
     launcher = (
         "import subprocess, sys, time;"
         "child = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)']);"
@@ -148,40 +113,30 @@ async def test_stdio_close_terminates_grandchildren():
         await asyncio.sleep(0.1)
     alive = psutil.pid_exists(grandchild_pid) and psutil.Process(grandchild_pid).status() != psutil.STATUS_ZOMBIE
     assert not alive
-
-
 def test_jieba_cache_lives_in_the_data_directory(monkeypatch, tmp_path):
     monkeypatch.setattr(tokenizers, "JIEBA_CACHE_DIR", str(tmp_path / "jieba_cache"))
     monkeypatch.setattr(tokenizers, "_configured_with", None)
     tokenizers.configure_tokenizer(None, ["測試詞"])
     assert tokenizers._jieba_tokenizer.tmp_dir == str(tmp_path / "jieba_cache")
     assert (tmp_path / "jieba_cache").is_dir()
-
-
 @pytest.mark.skipif(sys.platform == "win32", reason="POSIX 權限位元")
 def test_rsa_private_key_is_created_owner_only(tmp_path):
     manager = RSAKeyManager(keys_dir=str(tmp_path / "keys"))
     assert (tmp_path / "keys").stat().st_mode & 0o777 == 0o700
     assert manager.private_key_path.stat().st_mode & 0o777 == 0o600
-    # 只剩私鑰時重新產生整組金鑰
     manager.public_key_path.unlink()
     RSAKeyManager(keys_dir=str(tmp_path / "keys"))
     assert manager.public_key_path.exists()
     assert manager.private_key_path.stat().st_mode & 0o777 == 0o600
-
-
 @pytest.mark.anyio
 async def test_rate_limiter_tracks_a_bounded_number_of_addresses(monkeypatch):
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
-
     monkeypatch.setattr(security_module, "MAX_TRACKED_ADDRESSES", 3)
     app = FastAPI()
-
     @app.get("/ping")
     async def ping():
         return {"ok": True}
-
     limiter = security_module.RateLimitMiddleware(app, calls=2, period=60)
     for index in range(5):
         client = TestClient(limiter, client=(f"198.51.100.{index}", 1234))

@@ -7,13 +7,10 @@ import secrets
 import time
 from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import urlencode
-
 import httpx
-
 from app.core.ssrf_protection import DnsPool, SSRFSafeTransport
 from app.services.mcp_service import MCP_HTTP_ACCEPT, MCP_PROTOCOL_VERSION, _modern_params
 from app.services.oauth_client import OAuthError, oauth_request, token_from_response
-
 AUTHORIZATION_STATE_TTL_SECONDS = 600
 MAX_PENDING_AUTHORIZATIONS = 1000
 TOKEN_REFRESH_MARGIN_SECONDS = 60
@@ -22,23 +19,14 @@ CHALLENGE_PARAM_PATTERN = re.compile(r'([A-Za-z_][A-Za-z0-9_-]*)\s*=\s*(?:"((?:[
 LOOPBACK_HOSTNAMES = ("localhost",)
 CLIENT_NAME = "AskMiao"
 CLIENT_GRANT_TYPES = ["authorization_code", "refresh_token"]
-
 _pending: Dict[str, Dict[str, Any]] = {}
-
-
 class OAuthClientRequired(OAuthError):
     pass
-
-
 class OAuthIssuerChanged(OAuthError):
     pass
 _refresh_locks: Dict[int, asyncio.Lock] = {}
-
-
 def _origin(url: httpx.URL) -> str:
     return f"{url.scheme}://{url.netloc.decode('ascii')}"
-
-
 def is_loopback_host(host: str) -> bool:
     if host.lower() in LOOPBACK_HOSTNAMES:
         return True
@@ -46,8 +34,6 @@ def is_loopback_host(host: str) -> bool:
         return ipaddress.ip_address(host.strip("[]")).is_loopback
     except ValueError:
         return False
-
-
 def _require_secure_url(value: Any, label: str) -> str:
     if not isinstance(value, str):
         raise OAuthError(f"OAuth 中繼資料缺少 {label}")
@@ -60,15 +46,11 @@ def _require_secure_url(value: Any, label: str) -> str:
     if parsed.scheme != "https" and not is_loopback_host(parsed.host):
         raise OAuthError(f"OAuth 中繼資料的 {label} 必須使用 HTTPS")
     return value
-
-
 def bearer_challenge(header: str) -> Dict[str, str]:
     return {
         key.lower(): bare or quoted.replace('\\"', '"')
         for key, quoted, bare in CHALLENGE_PARAM_PATTERN.findall(header or "")
     }
-
-
 async def _probe_challenge(server_url: str, headers: Dict[str, str]) -> Dict[str, str]:
     async with httpx.AsyncClient(
         timeout=PROBE_TIMEOUT_SECONDS,
@@ -83,8 +65,6 @@ async def _probe_challenge(server_url: str, headers: Dict[str, str]) -> Dict[str
         response = await asyncio.wait_for(client.send(request, stream=True), timeout=PROBE_TIMEOUT_SECONDS)
         await response.aclose()
     return bearer_challenge(response.headers.get("www-authenticate", ""))
-
-
 def _authorization_server_metadata_urls(issuer: str) -> List[str]:
     url = httpx.URL(issuer)
     origin = _origin(url)
@@ -96,8 +76,6 @@ def _authorization_server_metadata_urls(issuer: str) -> List[str]:
         f"{origin}/.well-known/openid-configuration{path}",
         f"{origin}{path}/.well-known/openid-configuration",
     ]
-
-
 async def _first_metadata(urls: List[str], issuer: Optional[str] = None) -> Dict[str, Any]:
     for url in urls:
         try:
@@ -107,8 +85,6 @@ async def _first_metadata(urls: List[str], issuer: Optional[str] = None) -> Dict
         if status == 200 and data and (issuer is None or data.get("issuer") == issuer):
             return data
     raise OAuthError("找不到 OAuth 授權伺服器的中繼資料" if issuer is None else "找不到 issuer 相符的 OAuth 授權伺服器中繼資料")
-
-
 async def discover(server_url: str, headers: Dict[str, str]) -> Dict[str, Any]:
     server = httpx.URL(server_url)
     challenge = await _probe_challenge(server_url, headers)
@@ -141,12 +117,8 @@ async def discover(server_url: str, headers: Dict[str, str]) -> Dict[str, Any]:
         "scopes_supported": scopes if isinstance(scopes, list) else [],
         "challenged_scopes": challenge.get("scope", "").split(),
     }
-
-
 def application_type(redirect_uri: str) -> str:
     return "native" if is_loopback_host(httpx.URL(redirect_uri).host) else "web"
-
-
 def client_metadata_document(client_id: str, redirect_uri: str) -> Dict[str, Any]:
     return {
         "client_id": client_id,
@@ -157,12 +129,8 @@ def client_metadata_document(client_id: str, redirect_uri: str) -> Dict[str, Any
         "token_endpoint_auth_method": "none",
         "application_type": application_type(redirect_uri),
     }
-
-
 def can_use_metadata_document(config: Dict[str, Any], client_id: str) -> bool:
     return bool(config.get("client_id_metadata_document_supported")) and httpx.URL(client_id).scheme == "https"
-
-
 async def register_client(registration_endpoint: str, redirect_uri: str) -> Dict[str, Any]:
     status, data = await oauth_request("POST", _require_secure_url(registration_endpoint, "registration_endpoint"), json_body={
         "client_name": CLIENT_NAME,
@@ -175,8 +143,6 @@ async def register_client(registration_endpoint: str, redirect_uri: str) -> Dict
     if status >= 400 or not isinstance(data.get("client_id"), str):
         raise OAuthError(f"OAuth 動態註冊失敗（狀態碼 {status}）")
     return {"client_id": data["client_id"], "client_secret": data.get("client_secret") or "", "redirect_uri": redirect_uri}
-
-
 def prepare_client(stored: Dict[str, Any], discovered: Dict[str, Any], redirect_uri: str, metadata_client_id: str) -> Tuple[Dict[str, Any], bool]:
     config = {**stored, **discovered, "redirect_uri": redirect_uri}
     issuer = discovered["issuer"]
@@ -196,8 +162,6 @@ def prepare_client(stored: Dict[str, Any], discovered: Dict[str, Any], redirect_
     if not discovered.get("registration_endpoint"):
         raise OAuthClientRequired()
     return config, True
-
-
 def requested_scope(config: Dict[str, Any]) -> str:
     if config.get("scope"):
         base = config["scope"].split()
@@ -207,22 +171,16 @@ def requested_scope(config: Dict[str, Any]) -> str:
         base = config.get("challenged_scopes") or config.get("scopes_supported") or []
     scopes = list(dict.fromkeys(base + list(config.get("step_up_scopes") or [])))
     return " ".join(scopes)
-
-
 def _pkce_pair() -> Tuple[str, str]:
     verifier = secrets.token_urlsafe(64)
     challenge = base64.urlsafe_b64encode(hashlib.sha256(verifier.encode("ascii")).digest()).rstrip(b"=").decode("ascii")
     return verifier, challenge
-
-
 def _prune_pending() -> None:
     now = time.time()
     for state in [s for s, entry in _pending.items() if entry["expires_at"] < now]:
         _pending.pop(state, None)
     while len(_pending) >= MAX_PENDING_AUTHORIZATIONS:
         _pending.pop(next(iter(_pending)))
-
-
 def authorization_url(server_id: int, user_id: int, config: Dict[str, Any], redirect_uri: str) -> str:
     _prune_pending()
     verifier, challenge = _pkce_pair()
@@ -251,21 +209,15 @@ def authorization_url(server_id: int, user_id: int, config: Dict[str, Any], redi
         params["scope"] = scope
     separator = "&" if "?" in config["authorization_endpoint"] else "?"
     return f"{config['authorization_endpoint']}{separator}{urlencode(params)}"
-
-
 def take_pending(state: str) -> Optional[Dict[str, Any]]:
     entry = _pending.pop(state or "", None)
     if entry is None or entry["expires_at"] < time.time():
         return None
     return entry
-
-
 def issuer_matches(pending: Dict[str, Any], iss: Optional[str]) -> bool:
     if iss is None:
         return not pending["iss_parameter_supported"]
     return iss == pending["issuer"]
-
-
 def _client_auth(config: Dict[str, Any], form: Dict[str, str]) -> Optional[Tuple[str, str]]:
     form["client_id"] = config["client_id"]
     secret = config.get("client_secret")
@@ -276,8 +228,6 @@ def _client_auth(config: Dict[str, Any], form: Dict[str, str]) -> Optional[Tuple
         form["client_secret"] = secret
         return None
     return config["client_id"], secret
-
-
 def _tokens(data: Dict[str, Any], previous_refresh: Optional[str] = None) -> Dict[str, Any]:
     expires_in = data.get("expires_in")
     lifetime = float(expires_in) if isinstance(expires_in, (int, float)) and expires_in > 0 else None
@@ -286,8 +236,6 @@ def _tokens(data: Dict[str, Any], previous_refresh: Optional[str] = None) -> Dic
         "refresh_token": data.get("refresh_token") or previous_refresh,
         "expires_at": time.time() + lifetime if lifetime else None,
     }
-
-
 async def exchange_code(config: Dict[str, Any], code: str, verifier: str, redirect_uri: str) -> Dict[str, Any]:
     form = {
         "grant_type": "authorization_code",
@@ -298,8 +246,6 @@ async def exchange_code(config: Dict[str, Any], code: str, verifier: str, redire
     }
     auth = _client_auth(config, form)
     return _tokens(token_from_response(*await oauth_request("POST", config["token_endpoint"], form=form, auth=auth)))
-
-
 async def refresh(config: Dict[str, Any], tokens: Dict[str, Any]) -> Dict[str, Any]:
     if not tokens.get("refresh_token"):
         raise OAuthError("OAuth 存取權杖已過期且沒有 refresh token，請重新授權")
@@ -307,13 +253,10 @@ async def refresh(config: Dict[str, Any], tokens: Dict[str, Any]) -> Dict[str, A
     auth = _client_auth(config, form)
     data = token_from_response(*await oauth_request("POST", config["token_endpoint"], form=form, auth=auth))
     return _tokens(data, tokens["refresh_token"])
-
-
 def _load_tokens(server_id: int) -> Tuple[Optional[Dict[str, Any]], Optional[Dict[str, Any]]]:
     from app.core.tool_secrets import decrypt_json
     from app.models import McpServer
     from app.models.database import SessionLocal
-
     db = SessionLocal()
     try:
         server = db.query(McpServer).filter(McpServer.id == server_id).first()
@@ -322,13 +265,10 @@ def _load_tokens(server_id: int) -> Tuple[Optional[Dict[str, Any]], Optional[Dic
         return decrypt_json(server.oauth_config), decrypt_json(server.oauth_tokens)
     finally:
         db.close()
-
-
 def save_tokens(server_id: int, tokens: Optional[Dict[str, Any]]) -> None:
     from app.core.tool_secrets import encrypt_json
     from app.models import McpServer
     from app.models.database import SessionLocal
-
     db = SessionLocal()
     try:
         server = db.query(McpServer).filter(McpServer.id == server_id).first()
@@ -337,13 +277,10 @@ def save_tokens(server_id: int, tokens: Optional[Dict[str, Any]]) -> None:
             db.commit()
     finally:
         db.close()
-
-
 def save_scope_challenge(server_id: int, scopes: List[str]) -> None:
     from app.core.tool_secrets import decrypt_json, encrypt_json
     from app.models import McpServer
     from app.models.database import SessionLocal
-
     db = SessionLocal()
     try:
         server = db.query(McpServer).filter(McpServer.id == server_id).first()
@@ -354,8 +291,6 @@ def save_scope_challenge(server_id: int, scopes: List[str]) -> None:
             db.commit()
     finally:
         db.close()
-
-
 async def access_token(server_id: int, force_refresh: bool = False) -> Optional[str]:
     lock = _refresh_locks.setdefault(server_id, asyncio.Lock())
     async with lock:

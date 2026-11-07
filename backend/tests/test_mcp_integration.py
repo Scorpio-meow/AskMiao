@@ -21,7 +21,7 @@ async def test_mcp_stdio_lifecycle():
     )
     assert call_res["is_success"] is True
     assert len(call_res["content"]) >= 1
-    assert "當前時間" in call_res["content"][0]["text"]
+    assert "目前時間" in call_res["content"][0]["text"]
     db = SessionLocal()
     db.query(McpServer).filter(McpServer.name == "mcp_time_test").delete()
     db.commit()
@@ -47,17 +47,14 @@ async def test_mcp_stdio_lifecycle():
     assert expected_tool_name in tool_names
     exec_res = await registry.execute_tool(expected_tool_name, {"timezone": "UTC"})
     assert exec_res["is_success"] is True
-    assert "當前時間" in exec_res["content"][0]["text"]
+    assert "目前時間" in exec_res["content"][0]["text"]
     db.delete(server)
     db.commit()
     db.close()
-    print("MCP 完整生命週期與調用測試順利通過！")
-
-
+    print("MCP 完整生命週期與呼叫測試順利通過！")
 def test_long_mcp_function_names_are_valid_and_still_dispatch():
     import re
     from app.core.limits import MAX_TOOL_NAME_CHARS
-
     Base.metadata.create_all(bind=engine)
     server_name = "company-knowledge-graph-production-cluster"
     tool_name = "search_entities_by_relationship_and_attribute_filters"

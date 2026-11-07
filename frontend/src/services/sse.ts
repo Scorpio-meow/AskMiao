@@ -2,10 +2,6 @@ export interface SseMessage {
   event: string;
   data: string;
 }
-/**
- * 依 SSE 規格解析串流：event 與 data 可能分散在多次 read 之間，
- * 只有讀到空行才派送事件；串流在事件中途結束時捨棄不完整的事件。
- */
 export function createSseParser(onMessage: (message: SseMessage) => void) {
   let buffer = '';
   let eventName = '';

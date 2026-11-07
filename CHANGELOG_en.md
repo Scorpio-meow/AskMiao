@@ -6,6 +6,7 @@ All notable changes to AskMiao are documented in this file. The format is based 
 
 | Version | Release date | Highlights |
 |---|---|---|
+| [8.2.1](#821---2026-11-07) | 2026-11-07 | Claude output token limit error messages point to the API connection; documentation checked against the code and reorganized, with a new deployment guide and troubleshooting page |
 | [8.2.0](#820---2026-11-07) | 2026-11-07 | Agent Skills uploaded straight from a folder, several skills at once; skill uploads reject paths with a colon; installing skills no longer blocks other requests |
 | [8.1.0](#810---2026-11-03) | 2026-11-03 | MCP 2026-07-28 (stateless requests, `server/discover`, standard and `x-mcp-header` headers) with legacy servers still supported, MCP OAuth hardened to the new authorization specification (`iss` checks, required PKCE, Client ID Metadata Documents, step-up authorization), and binary content in MCP tool results kept from the model |
 | [8.0.2](#802---2026-11-02) | 2026-11-02 | How tests strip HTML tags; no user-visible change |
@@ -24,20 +25,34 @@ All notable changes to AskMiao are documented in this file. The format is based 
 | [1.0.0](#100---2026-08-01) | 2026-08-01 | Hybrid RAG and security foundations |
 
 > [!TIP]
-> Upgrading from 7.0.0 to 8.0.0? Read the [upgrade guide](docs/upgrading_en.md#upgrading-from-700-to-800) first: `.env` gains the required `LOG_DIR` (the backend will not start without it); the provider settings in `.env` are gone, and document summaries and OCR of scanned PDFs use the shared connections an admin chooses under "Admin → System models", both unset after upgrading; `GET /api/tags` is replaced by `GET /api/chat/models`.
-
-> [!TIP]
-> Upgrading from 6.0.0 to 7.0.0? Read the [upgrade guide](docs/upgrading_en.md#upgrading-from-600-to-700) first: chat now uses per-account API connections, so every account (admins included) needs a personal connection or a shared one granted by an admin before it can chat, and `POST /api/chat/send` requires `connection_id` and `model_name`; `PUT /api/auth/me` no longer changes passwords, and the conversation list and single-conversation endpoints no longer include messages. The backend and frontend dependencies are the same as in 6.0.0, so nothing needs reinstalling.
-
-> [!TIP]
-> Upgrading from 5.0.0 to 6.0.0? Read the [upgrade guide](docs/upgrading_en.md#upgrading-from-500-to-600) first: the domain profile has two new required fields, `.env` has a new required `SKILLS_DIR`, and the Azure OpenAI settings are renamed for Microsoft Foundry (the old names are still read).
-
-> [!TIP]
-> Upgrading from 4.0.0 to 5.0.0? Read the [upgrade guide](docs/upgrading_en.md#upgrading-from-400-to-500) first: `.env` has 10 new required settings (including `TOOL_SECRETS_KEY`, a Fernet key each deployment generates itself), the compose PostgreSQL is accessed through a non-superuser account, and the backend packages must be reinstalled from the new `requirements.txt`, which pins versions with hashes. Coming from 3.0.0, first follow [upgrading to 4.0.0](docs/upgrading_en.md#upgrading-from-300-to-400) (RSA keys are now mandatory, compose needs `POSTGRES_PASSWORD`, and the dev server only accepts local connections); coming from 2.x, first follow [upgrading to 3.0.0](docs/upgrading_en.md#upgrading-from-2x-to-300).
+> When upgrading across major versions, follow each release's steps in the [upgrade guide](docs/upgrading_en.md) in order. What needs manual work in each:
+>
+> - [7.0.0 → 8.0.0](docs/upgrading_en.md#upgrading-from-700-to-800): `.env` gains the required `LOG_DIR`; the provider settings are removed from `.env`, and document summaries and OCR of scanned PDFs use the shared connections chosen under "Admin → System models" (both are "not set" after upgrading); `GET /api/tags` is replaced by `GET /api/chat/models`.
+> - [6.0.0 → 7.0.0](docs/upgrading_en.md#upgrading-from-600-to-700): chat uses each account's API connections, so every account (admins included) needs a personal connection or a shared connection opened to it; `POST /api/chat/send` must include `connection_id` and `model_name`; `PUT /api/auth/me` no longer changes passwords.
+> - [5.0.0 → 6.0.0](docs/upgrading_en.md#upgrading-from-500-to-600): `.env` gains the required `SKILLS_DIR`, the domain profile gains two required fields, and the Azure OpenAI settings are renamed to Microsoft Foundry.
+> - [4.0.0 → 5.0.0](docs/upgrading_en.md#upgrading-from-400-to-500): `.env` gains 10 required settings (including `TOOL_SECRETS_KEY`, which each deployment generates), the compose PostgreSQL is accessed through a non-superuser account, and the backend packages are reinstalled from the new `requirements.txt`.
+> - Earlier releases: [3.0.0 → 4.0.0](docs/upgrading_en.md#upgrading-from-300-to-400) (RSA keys become mandatory, compose needs `POSTGRES_PASSWORD`) and [2.x → 3.0.0](docs/upgrading_en.md#upgrading-from-2x-to-300).
 
 ---
 
 ## [Unreleased]
+
+## [8.2.1] - 2026-11-07
+
+### Changed
+
+- **Documentation checked against the current code and reorganized**:
+  - The API reference, architecture, and configuration reference are corrected against the 8.2.0 code where they were wrong or outdated, for example the actual format of error responses and `error_id`, the approval exception for skill scripts, the middleware order, the LLM connection and Agent Skills subsystems, and resource limits that were not listed.
+  - The API reference sections are reordered: API connections become section 3 and the former sections 3–6 move to 4–7; the Agent Skills folder upload follows the regular upload; removed endpoints are listed in section 0.
+  - New [deployment guide](docs/deployment_en.md) (deploying with the Docker Compose setup in `deploy/`, HTTPS, backups, and updates) and [troubleshooting](docs/troubleshooting_en.md) page (moved out of the README and grouped by topic).
+  - The README drops the 4.0.0 and 5.0.0 highlight sections and covers Agent Skills; the four upgrade tips at the top of this file are merged into one.
+  - Every Chinese document is copy-edited line by line into Taiwan terminology with redundant wording removed (for example 用戶端, 金鑰, volume, 行程群組, 螢幕報讀軟體); older ADRs and early changelog entries are rewritten in plain language without changing the recorded facts.
+- **UI text, API messages, and logs use Taiwan terminology**: for example 配置 → 設定, 調用 → 呼叫, 令牌 → 權杖, 聯繫 → 聯絡, 提取 → 擷取, and 分塊 → 切塊, and the Simplified character 内 in an error message is fixed. Some API response messages change as a result (for example `MCP 伺服器設定更新成功` and `目前不開放註冊，請聯絡管理員建立帳號`), so clients that match these messages by text need updating; the `[本頁為圖檔或無可提取純文字]` marker in PDF text and content already in the knowledge base are unchanged.
+- **No more code comments or docstrings**: code comments in the backend and frontend, Python docstrings, and the comments in CSS and `index.html` are removed; tool directives such as `# noqa` and shebangs stay. With `ENABLE_API_DOCS=true`, endpoints in `/docs` no longer show the descriptions that came from docstrings; see the [API reference](docs/api_en.md) for each endpoint.
+
+### Fixed
+
+- **Claude output token limit error messages**: when no limit is set or tool call arguments are cut off, the message no longer asks you to set `ANTHROPIC_MAX_TOKENS` in `.env` (removed in 8.0.0) and points to the API connection's "output token limit" instead; for system models, adjust the shared connection they use.
 
 ## [8.2.0] - 2026-11-07
 
@@ -47,7 +62,7 @@ All notable changes to AskMiao are documented in this file. The format is based 
 
 ### Added
 
-- **Upload Agent Skills from a folder**: "AI Tools → Upload skill" now selects a folder by default, so there is no need to zip it first. When the folder holds several skills (for example `~/.agents/skills`), every directory containing a `SKILL.md` is installed as one skill; other `SKILL.md` files inside a skill directory are that skill's files, and `.git`, `__MACOSX`, and `.DS_Store` are not uploaded. A skill that is invalid, shares its name with another skill in the folder, or has the name of an existing skill (without "replace") is skipped and listed with its reason in the dialog while the others are installed; name conflicts can be resolved with "Replace existing skills with the same name". The new endpoint is `POST /api/skills/upload-folder`, with at most 1000 files (`MAX_SKILL_FOLDER_FILES`) and 50 MiB (`MAX_SKILL_UNCOMPRESSED_BYTES`) per folder and 500 files per skill; see [API reference 6.8](docs/api_en.md#68-post-apiskillsupload-folder).
+- **Upload Agent Skills from a folder**: "AI Tools → Upload skill" now selects a folder by default, so there is no need to zip it first. When the folder holds several skills (for example `~/.agents/skills`), every directory containing a `SKILL.md` is installed as one skill; other `SKILL.md` files inside a skill directory are that skill's files, and `.git`, `__MACOSX`, and `.DS_Store` are not uploaded. A skill that is invalid, shares its name with another skill in the folder, or has the name of an existing skill (without "replace") is skipped and listed with its reason in the dialog while the others are installed; name conflicts can be resolved with "Replace existing skills with the same name". The new endpoint is `POST /api/skills/upload-folder`, with at most 1000 files (`MAX_SKILL_FOLDER_FILES`) and 50 MiB (`MAX_SKILL_UNCOMPRESSED_BYTES`) per folder and 500 files per skill; see [API reference 7.5](docs/api_en.md#75-post-apiskillsupload-folder).
 
 ### Changed
 
@@ -61,7 +76,7 @@ All notable changes to AskMiao are documented in this file. The format is based 
 
 ### Added
 
-- **MCP 2026-07-28**: the MCP client now speaks the latest stateless protocol first: every request carries the protocol version, `clientInfo`, and `clientCapabilities` in `_meta`, and `server/discover` returns the server's supported versions and capabilities; HTTP requests carry `MCP-Protocol-Version`, `Mcp-Method`, and `Mcp-Name`, mirror tool parameters marked `x-mcp-header` into `Mcp-Param-*` headers (encoded as `=?base64?…?=` when needed), and re-read the tool list and retry once on `HeaderMismatch`. Servers that only support the `initialize` handshake (`2025-11-25` through `2024-11-05`) keep working: stdio probes with `server/discover` and falls back to the handshake on an error or no reply within 5 seconds, HTTP decides from the body of a `400`/`404`/`405`, falling back further to the legacy HTTP+SSE transport when needed. The negotiated version is stored in the new `protocol_version` column (added automatically on startup), reused for tool calls, and renegotiated automatically when it stops working. A response asking for more input (`input_required`) is reported as a failure. See [API reference 5](docs/api_en.md#5-mcp-servers-apimcp).
+- **MCP 2026-07-28**: the MCP client now speaks the latest stateless protocol first: every request carries the protocol version, `clientInfo`, and `clientCapabilities` in `_meta`, and `server/discover` returns the server's supported versions and capabilities; HTTP requests carry `MCP-Protocol-Version`, `Mcp-Method`, and `Mcp-Name`, mirror tool parameters marked `x-mcp-header` into `Mcp-Param-*` headers (encoded as `=?base64?…?=` when needed), and re-read the tool list and retry once on `HeaderMismatch`. Servers that only support the `initialize` handshake (`2025-11-25` through `2024-11-05`) keep working: stdio probes with `server/discover` and falls back to the handshake on an error or no reply within 5 seconds, HTTP decides from the body of a `400`/`404`/`405`, falling back further to the legacy HTTP+SSE transport when needed. The negotiated version is stored in the new `protocol_version` column (added automatically on startup), reused for tool calls, and renegotiated automatically when it stops working. A response asking for more input (`input_required`) is reported as a failure. See [API reference 6](docs/api_en.md#6-mcp-servers-apimcp).
 - **Client ID Metadata Documents and step-up authorization for MCP OAuth**: when the authorization server supports Client ID Metadata Documents and AskMiao is served over HTTPS, the public `GET /api/mcp/oauth/client-metadata.json` URL becomes the `client_id` and no dynamic registration is needed; dynamic registration sends `application_type`. Scopes listed in the `401` `WWW-Authenticate` header now come first; a `403 insufficient_scope` while connecting records the required scopes, the admin page asks for re-authorization, and the next authorization adds them to the previous scopes.
 
 ### Changed
@@ -96,7 +111,7 @@ All notable changes to AskMiao are documented in this file. The format is based 
 
 - **System models**: the admin page gains a "System models" card that picks one shared connection, one of its models, and a reasoning effort (the same choices as chat, with levels the model does not support disabled) for document summaries and for OCR of scanned PDFs, stored in the new `system_models` table, which is created on startup. New `GET/PUT /api/admin/system-models` (admins only; changes are written to the security log as `ADMIN_SYSTEM_MODELS_UPDATED`). When the shared connection is deleted, or edited so that it no longer offers the chosen model, that purpose is cleared automatically.
 - **Retrieval benchmark and chunk-level metrics**: golden sets can label short verbatim snippets in `relevant_passages`, and evaluation then also reports chunk-level precision@k, nDCG@k, snippet recall@k, MRR, and candidate recall (whether the candidates before reranking already contain the answer); a snippet missing from the knowledge base fails the evaluation. `scripts/evaluate_retrieval.py` gains `--corpus` (builds the knowledge base the way uploads do, on a temporary SQLite database and temporary indexes, without touching production data) and `--min-passage-ndcg`. Built-in benchmark: `backend/eval/corpus/` (12 fictional company documents and Taiwan's Mass Rapid Transit Act, 119 chunks) with `backend/eval/corpus_golden.jsonl` (103 positive and 15 negative cases); see [ADR-0007](docs/adr/0007-han-ngram-bm25-and-passage-level-evaluation_en.md).
-- **OpenAPI 3.2, Arazzo, and Overlay**: custom API tools can import OpenAPI 3.2 (the `query` method, `additionalOperations`, `in: querystring`, `components.mediaTypes`, `$self`); each Arazzo 1.0/1.1 workflow becomes one tool that runs its steps in order and passes outputs through runtime expressions, with simple, regex, and JSONPath success criteria and end, goto, and retry actions (at most 50 steps and 300 seconds per run); Overlay 1.0–1.2 can be applied before importing (backed by a new RFC 9535 JSONPath implementation), and `POST /api/api-tools/parse-spec` gains an `overlays` field. See [API reference 4.1 and 4.10](docs/api_en.md#41-post-apiapi-toolsparse-spec).
+- **OpenAPI 3.2, Arazzo, and Overlay**: custom API tools can import OpenAPI 3.2 (the `query` method, `additionalOperations`, `in: querystring`, `components.mediaTypes`, `$self`); each Arazzo 1.0/1.1 workflow becomes one tool that runs its steps in order and passes outputs through runtime expressions, with simple, regex, and JSONPath success criteria and end, goto, and retry actions (at most 50 steps and 300 seconds per run); Overlay 1.0–1.2 can be applied before importing (backed by a new RFC 9535 JSONPath implementation), and `POST /api/api-tools/parse-spec` gains an `overlays` field. See [API reference 5.1 and 5.10](docs/api_en.md#51-post-apiapi-toolsparse-spec).
 - **External `$ref` and JSON Schema 2020-12**: importing by URL downloads external reference documents through SSRF validation (at most 20, 30 MB in total), and `$id`, `$anchor`, `$defs`, and path item `$ref`s are resolved; `allOf`, `oneOf`/`anyOf` (with `discriminator`), `type` arrays, `const`, and `prefixItems` become parameter schemas every provider accepts. Parse results gain `warnings` listing what could not be imported fully.
 - **Request IDs and more detailed logs**: every request gets an ID (a well-formed `X-Request-ID` is reused, otherwise one is generated) that appears in the `X-Request-ID` response header, on every log line written during the request, in the `request_id` field of `security.log`, and in the `request_id` of the chat stream's `error` event, so one ID finds everything a request logged. The new entries below contain no passwords, keys, tokens, cookies, or query parameter values, and no prompts or conversation content.
   - Every `/api` request writes one access line when it ends: method, path, status code, duration, response size, client IP, and user id.
@@ -753,8 +768,8 @@ This release turns "where did this answer come from" into a verifiable chain: ch
   - Implemented ReAct research agent (`ResearchAgent`) supporting multi-turn reasoning and Native Tool Calling.
   - Provided native toolset in `ResearchToolRegistry`: internal knowledge base search (`search_knowledge_base`), live web search (`web_search` with Ollama & DuckDuckGo dual fallback), and deep web fetch (`web_fetch`).
 - **Reasoning Effort Multi-Tier Selection**:
-  - Added 5 reasoning depth levels in the top navigation: `None (none)`, `Low (low)`, `Medium (medium)`, `High (high)`, and `Extreme (xhigh)`.
-  - Fully compatible with Azure OpenAI v1 and OpenAI reasoning models, with automated tool-call compatibility handling.
+  - Added 5 reasoning depth levels in the top navigation: `None`, `Low`, `Medium`, `High`, and `X-High`.
+  - Fully compatible with Azure OpenAI v1 and OpenAI reasoning models, with tool-call compatibility handled automatically according to the Microsoft Foundry specification.
 - **Frontend Research Visualization**:
   - Added `ResearchTraceBlock`: Collapsible step-by-step research trace timeline with tool execution logs.
   - Added `SourceBadges`: Clickable external source reference badges that open in new tabs.
@@ -764,8 +779,8 @@ This release turns "where did this answer come from" into a verifiable chain: ch
 ### Changed
 
 - **Zero-Dependency Lightweight Core**:
-  - Defaulted to built-in SQLite relational database and in-memory caching, eliminating mandatory Docker/PostgreSQL/Redis setups for local development.
-  - Streamlined architecture by retiring legacy discussion board and custom agent modules.
+  - Defaulted to the built-in SQLite database and in-memory caching, eliminating mandatory Docker/PostgreSQL/Redis setups for local development.
+  - Retired the legacy discussion board and custom agent modules to focus on knowledge-base Q&A and deep research.
   - Removed cache hits to ensure all queries reflect grounded knowledge and live web data.
 - **Frontend Experience & Layout**:
   - Unified sidebar into a single adaptive instance (docked on desktop, drawer on mobile).
@@ -775,7 +790,7 @@ This release turns "where did this answer come from" into a verifiable chain: ch
 
 - **Azure OpenAI v1 API Compatibility**:
   - Removed legacy `AZURE_OPENAI_API_VERSION` dependency in favor of standard v1 endpoints.
-  - Removed unsupported `max_tokens` and `temperature` parameters for reasoning models.
+  - Removed unsupported `max_tokens` and `temperature` parameters for reasoning models in favor of a compatible payload structure.
 - **Stability & Bug Fixes**:
   - Fixed `NameError` caused by missing `Dict, Any` imports in `MessageResponse`.
   - Fixed `TypeError` in `HybridContextualRAG.generate_response()` missing `reasoning_effort` argument.

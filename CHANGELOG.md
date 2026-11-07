@@ -6,6 +6,7 @@
 
 | 版本 | 發行日期 | 重點 |
 |---|---|---|
+| [8.2.1](#821---2026-11-07) | 2026-11-07 | Claude 輸出 token 上限的錯誤訊息改為指向 API 連線；文件依程式校正並重新編排，新增部署指南與疑難排解 |
 | [8.2.0](#820---2026-11-07) | 2026-11-07 | Agent Skills 可以直接上傳資料夾並一次安裝多個技能、技能上傳拒絕含冒號的路徑、安裝技能不再阻塞其他請求 |
 | [8.1.0](#810---2026-11-03) | 2026-11-03 | MCP 2026-07-28（無狀態請求、`server/discover`、標準與 `x-mcp-header` 標頭）並相容舊版伺服器、MCP OAuth 依新版授權規格加強（`iss` 比對、強制 PKCE、Client ID Metadata Document、追加授權）、MCP 工具結果不再把二進位內容交給模型 |
 | [8.0.2](#802---2026-11-02) | 2026-11-02 | 測試去除 HTML 標籤的寫法調整，沒有使用者可見的變更 |
@@ -24,20 +25,34 @@
 | [1.0.0](#100---2026-08-01) | 2026-08-01 | 混合 RAG 與安全基礎 |
 
 > [!TIP]
-> 從 7.0.0 升級到 8.0.0 前，請先閱讀 [升級指南](docs/upgrading.md#從-700-升級到-800)：`.env` 新增必填的 `LOG_DIR`（缺少時後端無法啟動）；`.env` 的模型商設定已移除，文件摘要與掃描 PDF 的 OCR 改用管理員在「管理後台 → 系統模型」指定的共用連線，升級後兩者都是「未指定」；`GET /api/tags` 改用 `GET /api/chat/models`。
-
-> [!TIP]
-> 從 6.0.0 升級到 7.0.0 前，請先閱讀 [升級指南](docs/upgrading.md#從-600-升級到-700)：聊天改用各帳號的 API 連線，每個帳號（含管理員）都要有個人連線或管理員開放的共用連線才能對話，`POST /api/chat/send` 必須帶 `connection_id` 與 `model_name`；`PUT /api/auth/me` 不再變更密碼，對話清單與單一對話不再附帶訊息。後端與前端的相依套件與 6.0.0 相同，不需要重新安裝。
-
-> [!TIP]
-> 從 5.0.0 升級到 6.0.0 前，請先閱讀 [升級指南](docs/upgrading.md#從-500-升級到-600)：領域設定檔新增兩個必填欄位、`.env` 新增必填的 `SKILLS_DIR`、Azure OpenAI 設定改名為 Microsoft Foundry（舊名稱仍可讀取）。
-
-> [!TIP]
-> 從 4.0.0 升級到 5.0.0 前，請先閱讀 [升級指南](docs/upgrading.md#從-400-升級到-500)：`.env` 新增 10 個必填設定（含每個部署自行產生的 Fernet 金鑰 `TOOL_SECRETS_KEY`），compose 的 PostgreSQL 改以非超級使用者帳號連線，後端套件要依新的 `requirements.txt`（鎖定版本與雜湊）重新安裝。從 3.0.0 升級請先完成 [升級到 4.0.0](docs/upgrading.md#從-300-升級到-400) 的步驟（RSA 金鑰改為必要、compose 需設定 `POSTGRES_PASSWORD`，開發伺服器只接受本機連線），從 2.x 升級則先完成 [升級到 3.0.0](docs/upgrading.md#從-2x-升級到-300) 的步驟。
+> 跨主版本升級時，請依序完成 [升級指南](docs/upgrading.md) 中每一版的步驟。各版需要手動處理的重點：
+>
+> - [7.0.0 → 8.0.0](docs/upgrading.md#從-700-升級到-800)：`.env` 新增必填的 `LOG_DIR`；`.env` 的模型商設定移除，文件摘要與掃描 PDF 的 OCR 改用「管理後台 → 系統模型」指定的共用連線（升級後兩者都是「未指定」）；`GET /api/tags` 改用 `GET /api/chat/models`。
+> - [6.0.0 → 7.0.0](docs/upgrading.md#從-600-升級到-700)：聊天改用各帳號的 API 連線，每個帳號（含管理員）都要有個人連線或管理員開放的共用連線；`POST /api/chat/send` 必須帶 `connection_id` 與 `model_name`；`PUT /api/auth/me` 不再變更密碼。
+> - [5.0.0 → 6.0.0](docs/upgrading.md#從-500-升級到-600)：`.env` 新增必填的 `SKILLS_DIR`，領域設定檔新增兩個必填欄位，Azure OpenAI 設定改名為 Microsoft Foundry。
+> - [4.0.0 → 5.0.0](docs/upgrading.md#從-400-升級到-500)：`.env` 新增 10 個必填設定（含每個部署自行產生的 `TOOL_SECRETS_KEY`），compose 的 PostgreSQL 改以非超級使用者連線，後端套件依新的 `requirements.txt` 重新安裝。
+> - 更早的版本：[3.0.0 → 4.0.0](docs/upgrading.md#從-300-升級到-400)（RSA 金鑰改為必要、compose 需設定 `POSTGRES_PASSWORD`）、[2.x → 3.0.0](docs/upgrading.md#從-2x-升級到-300)。
 
 ---
 
 ## [Unreleased]
+
+## [8.2.1] - 2026-11-07
+
+### 變更 (Changed)
+
+- **文件依目前的程式校正並重新編排**：
+  - API 參考、系統架構與設定參考對照 8.2.0 的程式修正錯誤或過時的內容，例如錯誤回應與 `error_id` 的實際格式、技能腳本的核准例外、中介軟體的順序、LLM 連線與 Agent Skills 子系統、未列出的資源上限。
+  - API 參考重新編排章節：API 連線獨立成第 3 節，原本的第 3～6 節順延為第 4～7 節；Agent Skills 的資料夾上傳緊接在上傳之後；已移除的端點改列在第 0 節。
+  - 新增 [部署指南](docs/deployment.md)（以 `deploy/` 的 Docker Compose 部署、HTTPS、備份與更新）與 [疑難排解](docs/troubleshooting.md)（由 README 移出並依類別分組）。
+  - README 移除 4.0.0、5.0.0 的重點段落並補上 Agent Skills；本檔開頭的四則升級提示合併成一則。
+  - 所有文件逐行改為台灣用語並刪去冗詞，例如用戶端、金鑰、volume、行程群組、螢幕報讀軟體；舊版 ADR 與早期變更紀錄改寫成白話，記錄的事實不變。
+- **介面、API 訊息與日誌改用台灣用語**：例如「配置」改為「設定」、「調用」改為「呼叫」、「令牌」改為「權杖」、「聯繫」改為「聯絡」、「提取」改為「擷取」、「分塊」改為「切塊」，並修正錯誤訊息中的簡體字「内」。部分 API 回應的訊息文字因此改變（例如 `MCP 伺服器設定更新成功`、`目前不開放註冊，請聯絡管理員建立帳號`），以文字比對這些訊息的用戶端需要跟著調整；PDF 內文的 `[本頁為圖檔或無可提取純文字]` 標記與已存入知識庫的內容維持不變。
+- **程式碼不再保留註解與 docstring**：後端與前端的程式碼註解、Python docstring，以及 CSS 與 `index.html` 的註解全部移除，`# noqa` 這類工具指令與 shebang 保留。`ENABLE_API_DOCS=true` 時，`/docs` 的端點不再顯示原本取自 docstring 的說明文字，各端點的說明請見 [API 參考](docs/api.md)。
+
+### 修正 (Fixed)
+
+- **Claude 輸出 token 上限的錯誤訊息**：未設定上限或工具呼叫參數被截斷時，訊息不再要使用者到 `.env` 設定 8.0.0 已移除的 `ANTHROPIC_MAX_TOKENS`，改為指向 API 連線的「輸出 token 上限」；系統模型則調整指定的共用連線。
 
 ## [8.2.0] - 2026-11-07
 
@@ -47,7 +62,7 @@
 
 ### 新增 (Added)
 
-- **以資料夾上傳 Agent Skills**：「AI 工具 → 上傳技能」預設改為選擇資料夾，不必先壓成 zip。選內含多個技能的資料夾（例如 `~/.agents/skills`）時，每個含 `SKILL.md` 的目錄各安裝成一個技能；技能目錄內的其他 `SKILL.md` 視為該技能的檔案，`.git`、`__MACOSX`、`.DS_Store` 不會上傳。不合規、與資料夾中其他技能同名、或已有同名技能（未勾選取代）的技能會略過並在對話框列出原因，其他照常安裝；有同名衝突時可直接按「取代同名的既有技能」。新端點 `POST /api/skills/upload-folder`，整個資料夾最多 1000 個檔案（`MAX_SKILL_FOLDER_FILES`）、50 MiB（`MAX_SKILL_UNCOMPRESSED_BYTES`），每個技能最多 500 個檔案，詳見 [API 參考 6.8](docs/api.md#68-post-apiskillsupload-folder)。
+- **以資料夾上傳 Agent Skills**：「AI 工具 → 上傳技能」預設改為選擇資料夾，不必先壓成 zip。選內含多個技能的資料夾（例如 `~/.agents/skills`）時，每個含 `SKILL.md` 的目錄各安裝成一個技能；技能目錄內的其他 `SKILL.md` 視為該技能的檔案，`.git`、`__MACOSX`、`.DS_Store` 不會上傳。不合規、與資料夾中其他技能同名、或已有同名技能（未勾選取代）的技能會略過並在對話框列出原因，其他照常安裝；有同名衝突時可直接按「取代同名的既有技能」。新端點 `POST /api/skills/upload-folder`，整個資料夾最多 1000 個檔案（`MAX_SKILL_FOLDER_FILES`）、50 MiB（`MAX_SKILL_UNCOMPRESSED_BYTES`），每個技能最多 500 個檔案，詳見 [API 參考 7.5](docs/api.md#75-post-apiskillsupload-folder)。
 
 ### 變更 (Changed)
 
@@ -61,8 +76,8 @@
 
 ### 新增 (Added)
 
-- **MCP 2026-07-28**：MCP 用戶端改以最新的無狀態協定為主，每個請求的 `_meta` 帶協定版本、`clientInfo` 與 `clientCapabilities`，以 `server/discover` 取得伺服器支援的版本與 capabilities；HTTP 請求帶 `MCP-Protocol-Version`、`Mcp-Method`、`Mcp-Name`，並把工具標了 `x-mcp-header` 的參數以 `Mcp-Param-*` 標頭送出（需要時以 `=?base64?…?=` 編碼），收到 `HeaderMismatch` 時重新讀取工具清單再試一次。只支援 `initialize` 交握的舊版伺服器（`2025-11-25`～`2024-11-05`）自動相容：stdio 以 `server/discover` 探測、5 秒內沒有回應或回錯誤就改用交握，HTTP 依 `400`／`404`／`405` 的本文判斷，必要時再退回舊版 HTTP+SSE。協商到的版本存入新的 `protocol_version` 欄位（啟動時自動補上），呼叫工具時直接沿用，失效時自動重新協商。回應要求額外輸入（`input_required`）時回報失敗。詳見 [API 參考 5](docs/api.md#5-mcp-伺服器-apimcp)。
-- **MCP OAuth 的 Client ID Metadata Document 與追加授權**：授權伺服器支援 Client ID Metadata Document、且 AskMiao 以 HTTPS 提供時，改以公開的 `GET /api/mcp/oauth/client-metadata.json` 網址當作 `client_id`，不必動態註冊；動態註冊帶 `application_type`。scope 改為優先使用 `401` 的 `WWW-Authenticate` 所列的 scope；連線收到 `403 insufficient_scope` 時記下所需 scope，管理頁提示重新授權，下次授權時與先前的 scope 合併。
+- **MCP 2026-07-28**：MCP 用戶端改以最新的無狀態協定為主，每個請求的 `_meta` 帶協定版本、`clientInfo` 與 `clientCapabilities`，以 `server/discover` 取得伺服器支援的版本與 capabilities；HTTP 請求帶 `MCP-Protocol-Version`、`Mcp-Method`、`Mcp-Name`，並把工具標了 `x-mcp-header` 的參數以 `Mcp-Param-*` 標頭送出（需要時以 `=?base64?…?=` 編碼），收到 `HeaderMismatch` 時重新讀取工具清單再試一次。只支援 `initialize` 交握的舊版伺服器（`2025-11-25`～`2024-11-05`）自動相容：stdio 以 `server/discover` 探測、5 秒內沒有回應或回錯誤就改用交握，HTTP 依 `400`／`404`／`405` 的本文判斷，必要時再退回舊版 HTTP+SSE。協商到的版本存入新的 `protocol_version` 欄位（啟動時自動補上），呼叫工具時直接沿用，失效時自動重新協商。回應要求額外輸入（`input_required`）時回報失敗。詳見 [API 參考 6](docs/api.md#6-mcp-伺服器-apimcp)。
+- **MCP OAuth 的 Client ID Metadata Document 與追加授權**：授權伺服器支援 Client ID Metadata Document、且 AskMiao 以 HTTPS 提供時，改以公開的 `GET /api/mcp/oauth/client-metadata.json` 網址當作 `client_id`，不必動態註冊；動態註冊帶 `application_type`。scope 改為優先使用 `401` 的 `WWW-Authenticate` 列出的 scope；連線收到 `403 insufficient_scope` 時記下所需 scope，管理頁提示重新授權，下次授權時與先前的 scope 合併。
 
 ### 變更 (Changed)
 
@@ -94,9 +109,9 @@
 
 ### 新增 (Added)
 
-- **系統模型**：管理後台新增「系統模型」卡片，替文件摘要與掃描 PDF 的 OCR 各指定一條共用連線、其中一個模型與思考程度（選項同聊天，介面停用模型不支援的檔位），存放在新的 `system_models` 資料表，啟動時自動建立。新增 `GET/PUT /api/admin/system-models`（只限管理員，變更以 `ADMIN_SYSTEM_MODELS_UPDATED` 寫入安全日誌）。共用連線被刪除，或編輯後不再提供所指定的模型時，該用途自動取消指定。
-- **檢索基準與片段層級指標**：標準問答集可用 `relevant_passages` 標註短原文片段，評估另計片段層級的 precision@k、nDCG@k、原文片段 recall@k、MRR 與候選召回（重排前的候選是否已包含正解）；片段在知識庫中找不到時評估直接報錯。`scripts/evaluate_retrieval.py` 新增 `--corpus`（以上傳流程在暫存 SQLite 與暫存索引上建立知識庫，不碰正式資料）與 `--min-passage-ndcg`。內建基準 `backend/eval/corpus/`（12 份虛構企業文件與《大眾捷運法》，119 個片段）與 `backend/eval/corpus_golden.jsonl`（103 個正例、15 個反例），詳見 [ADR-0007](docs/adr/0007-han-ngram-bm25-and-passage-level-evaluation.md)。
-- **OpenAPI 3.2、Arazzo 與 Overlay**：自訂 API 工具可匯入 OpenAPI 3.2（`query` 方法、`additionalOperations`、`in: querystring`、`components.mediaTypes`、`$self`）；Arazzo 1.0／1.1 的每個工作流程匯入成一個工具，依序呼叫步驟並以執行期運算式傳遞輸出，支援 simple、regex、JSONPath 成功條件與 end、goto、retry 動作（一次最多 50 步、300 秒）；Overlay 1.0～1.2 可在匯入前套用（新的 RFC 9535 JSONPath 實作），`POST /api/api-tools/parse-spec` 新增 `overlays` 欄位。詳見 [API 參考 4.1 與 4.10](docs/api.md#41-post-apiapi-toolsparse-spec)。
+- **系統模型**：管理後台新增「系統模型」卡片，替文件摘要與掃描 PDF 的 OCR 各指定一條共用連線、其中一個模型與思考程度（選項同聊天，介面停用模型不支援的檔位），存放在新的 `system_models` 資料表，啟動時自動建立。新增 `GET/PUT /api/admin/system-models`（只限管理員，變更以 `ADMIN_SYSTEM_MODELS_UPDATED` 寫入安全日誌）。共用連線被刪除，或編輯後不再提供指定的模型時，該用途自動取消指定。
+- **檢索基準與片段層級指標**：標準問答集可用 `relevant_passages` 標註短原文片段，評估另計片段層級的 precision@k、nDCG@k、原文片段 recall@k、MRR 與候選召回（重排前的候選是否已包含正解）；片段在知識庫中找不到時評估直接失敗。`scripts/evaluate_retrieval.py` 新增 `--corpus`（以上傳流程在暫存 SQLite 與暫存索引上建立知識庫，不碰正式資料）與 `--min-passage-ndcg`。內建基準 `backend/eval/corpus/`（12 份虛構企業文件與《大眾捷運法》，119 個片段）與 `backend/eval/corpus_golden.jsonl`（103 個正例、15 個反例），詳見 [ADR-0007](docs/adr/0007-han-ngram-bm25-and-passage-level-evaluation.md)。
+- **OpenAPI 3.2、Arazzo 與 Overlay**：自訂 API 工具可匯入 OpenAPI 3.2（`query` 方法、`additionalOperations`、`in: querystring`、`components.mediaTypes`、`$self`）；Arazzo 1.0／1.1 的每個工作流程匯入成一個工具，依序呼叫步驟並以執行期運算式傳遞輸出，支援 simple、regex、JSONPath 成功條件與 end、goto、retry 動作（一次最多 50 步、300 秒）；Overlay 1.0～1.2 可在匯入前套用（新的 RFC 9535 JSONPath 實作），`POST /api/api-tools/parse-spec` 新增 `overlays` 欄位。詳見 [API 參考 5.1 與 5.10](docs/api.md#51-post-apiapi-toolsparse-spec)。
 - **外部 `$ref` 與 JSON Schema 2020-12**：以網址匯入時，外部參照文件經 SSRF 驗證下載（最多 20 份、合計 30 MB），`$id`、`$anchor`、`$defs` 與路徑項目的 `$ref` 都會解析；`allOf`、`oneOf`／`anyOf`（含 `discriminator`）、`type` 陣列、`const`、`prefixItems` 轉成各家模型都接受的參數 schema。解析結果新增 `warnings`，列出無法完整匯入的部分。
 - **請求 ID 與更完整的日誌**：每個請求有一個 ID（沿用格式正確的 `X-Request-ID`，否則自動產生），寫在回應的 `X-Request-ID` 標頭、該請求期間的每一行日誌、`security.log` 的 `request_id` 欄位，以及聊天串流 `error` 事件的 `request_id`，用一個 ID 就能找出同一個請求的所有紀錄。以下新增的紀錄不含密碼、金鑰、權杖、Cookie 與查詢參數的值，也不含提示與對話內容。
   - 每個 `/api` 請求結束時記一行存取紀錄：方法、路徑、狀態碼、耗時、回應大小、來源 IP 與使用者 id。
@@ -107,7 +122,7 @@
 
 ### 變更 (Changed)
 
-- **文件摘要使用指定的系統模型**：上傳、重新產生摘要與重建索引時以「文件摘要」系統模型與其思考程度產生摘要，逾時為 `LLM_TIMEOUT`；未指定時不呼叫模型，直接使用規則摘要，也不再於每次上傳時查詢 `LLM_API_BASE` 的模型清單。
+- **文件摘要使用指定的系統模型**：上傳、重新產生摘要與重建索引時以「文件摘要」系統模型與它的思考程度產生摘要，逾時為 `LLM_TIMEOUT`；未指定時不呼叫模型，直接使用規則摘要；每次上傳時也不再查詢 `LLM_API_BASE` 的模型清單。
 - **掃描 PDF 的 OCR 支援五家供應商**：知識庫上傳、重建索引與聊天附件中沒有文字層的 PDF 頁面，改送「掃描 PDF 辨識」系統模型，經與聊天相同的呼叫層送出，OpenAI、Anthropic、Gemini、Microsoft Foundry、Ollama 的視覺模型都可以使用（先前只支援 Foundry、OpenAI、Gemini 的 Chat Completions）。
 - **新增連線時預先帶入的官方 API 位址改為固定值**：不再讀取 `OPENAI_API_BASE`、`ANTHROPIC_API_BASE`、`GEMINI_API_BASE`。
 - **BM25 加入漢字單字與雙字欄位**：jieba 內建詞典偏簡體，繁體詞常被切錯（「大眾捷運系統」→「大眾捷／運系統」），查詢與文件切法不同時 BM25 整個漏掉。BM25 另建 `han_unigrams` 與 `han_bigrams` 欄位，查詢以 OR 組合三個欄位的詞項。內建基準的候選召回 0.971 → 1.000、nDCG@5 0.898 → 0.907，2,437 筆貼文語料 nDCG@5 0.893 → 0.901；BM25 索引約大七成，查詢中位數 1.0 → 2.6 毫秒。斷詞規則版本升為 3，首次啟動時自動依資料庫片段重建 BM25，向量不需重算；沒有新增設定。
@@ -115,17 +130,17 @@
 - **請求本文保留宣告的媒體型別**：`body_content_type` 接受任何媒體型別，`application/merge-patch+json` 等 JSON 家族、XML、純文字與其他型別依宣告送出（先前一律改用 `application/json`）。
 - **匯入規格更嚴格也更完整**：Swagger 1.x、OpenAPI 3.3 以上與未標示版本的文件改為拒絕（先前會猜成 3.0）；路徑與操作層級的 `servers`、相對的伺服器位址、Swagger 2.0 沒有 `host` 或 `schemes` 時都依文件網址補齊；參數以「名稱＋位置」合併，同名的不同位置參數不再互相覆蓋；同一份規格中重複的工具名稱自動加上編號。標頭參數不能設定 `Authorization`、`Content-Type`、`Cookie` 與管理員設定的標頭。需要使用者授權的 OAuth 流程與 OpenID Connect 改為 Bearer 並提醒自行填入權杖。
 - **「AI 工具」頁重新設計**：頁首只留前往對話、重新整理與「新增工具」選單；自訂 API 工具、MCP 伺服器、Agent Skills 與內建工具各成一個區塊，標題旁列出數量與啟用、連線情形，每個項目收成一列（名稱、識別碼、端點、狀態開關與常用動作），參數、觸發時機、MCP 工具清單與技能的腳本設定改為按「詳細資訊」展開。連線錯誤、憑證無法解密與找不到技能檔案的項目集中列在頁首；區塊載入時顯示佔位列，載入失敗時在區塊內說明並提供重試。匯入 API 規格對話框分成「提供規格」與「選擇端點並匯入」兩步，Overlay 收進可展開的選填區，端點清單改用可半選的全選核取方塊；新增與編輯表單分成基本資訊、請求、認證、參數等段落。手機寬度不再橫向捲動，深淺色主題沿用既有的設計 token。API 呼叫、欄位與送出的資料格式都沒有改變。
-- **「聊天」頁重新設計**：對話內容改成置中的閱讀欄，AI 回答不再包在卡片裡，使用者的訊息以淺色泡泡靠右；研究過程、思考過程、工具核准與參考來源統一成同一套樣式，參考來源標上與回答中 [n] 對應的編號，點開可看段落、相關度與摘錄。側欄的歷史對話依今天、昨天、過去 7 天與更早分組，載入時顯示佔位列；空白對話列出建議問題，載入對話時顯示訊息佔位。輸入框在桌面分成輸入與按鈕兩列，拖曳檔案時顯示放開提示，技能建議改為浮在輸入框上方，不再推動版面。串流時只重新渲染正在產生的那則回答，較早的訊息延後排版，長對話捲動更順；AI 要求核准外部工具時會由螢幕報讀器播報。手機寬度不再橫向捲動，深淺色主題沿用既有的設計 token。API 呼叫、送出的資料格式、輸入法組字時按 Enter 不送出等既有行為都沒有改變。
-- **OpenVINO 重排依實際候選數送出，不再載入 PyTorch 模型**：設定 `RERANKER_OPENVINO_DEVICE` 時，批次改為 1～`RERANK_TOP_K` 依候選數變動，不再補空白湊滿。Intel Core Ultra 7 155U 內顯在同一程序交錯實測：10 筆候選 2.83 → 0.51 秒；內建基準的 118 次重排（每次 30～50 筆）中位數 2.73 → 2.46 秒。每種新的候選數第一次出現時，要多花約 0.3 秒編譯。前 1 名與相關性門檻判定和 PyTorch 完全相同。
+- **「聊天」頁重新設計**：對話內容改成置中的閱讀欄，AI 回答不再包在卡片裡，使用者的訊息以淺色泡泡靠右；研究過程、思考過程、工具核准與參考來源統一成同一套樣式，參考來源標上與回答中 [n] 對應的編號，點開可看段落、相關度與摘錄。側欄的歷史對話依今天、昨天、過去 7 天與更早分組，載入時顯示佔位列；空白對話列出建議問題，載入對話時顯示訊息佔位。輸入框在桌機上分成輸入與按鈕兩列，拖曳檔案時顯示放開提示，技能建議改為浮在輸入框上方，不再推動版面。串流時只重新渲染正在產生的那則回答，較早的訊息延後排版，長對話捲動更順；AI 要求核准外部工具時會由螢幕報讀軟體播報。手機寬度不再橫向捲動，深淺色主題沿用既有的設計 token。API 呼叫、送出的資料格式、輸入法組字時按 Enter 不送出等既有行為都沒有改變。
+- **OpenVINO 重排依實際候選數送出，不再載入 PyTorch 模型**：設定 `RERANKER_OPENVINO_DEVICE` 時，批次改為 1～`RERANK_TOP_K` 依候選數變動，不再補空白湊滿。Intel Core Ultra 7 155U 內顯在同一行程交錯實測：10 筆候選 2.83 → 0.51 秒；內建基準的 118 次重排（每次 30～50 筆）中位數 2.73 → 2.46 秒。每種新的候選數第一次出現時，要多花約 0.3 秒編譯。前 1 名與相關性門檻判定和 PyTorch 完全相同。
   - 啟用時只載入 tokenizer，常駐記憶體少約 0.8 GB。
   - IR 改存一份動態形狀檔，檔名含模型檔案指紋：模型更新後自動重轉，改 `RERANK_TOP_K` 或長度不必重轉。轉換先寫暫存檔再改名，中斷時不會留下損壞的 IR。
-  - `RERANKER_OPENVINO_MAX_LENGTH` 超過模型上限時，啟動即報錯。
+  - `RERANKER_OPENVINO_MAX_LENGTH` 超過模型上限時，啟動就會回報錯誤。
   - 升級後第一次啟動會重新轉換一次；`DATA_DIR/openvino_cache` 中舊的 `*_50x256.xml`、`*_50x256.bin` 可以刪除。
 - **日誌目錄改由必填的 `LOG_DIR` 決定，後端測試不再寫進正式日誌**：`app.log` 與 `security.log` 都寫到 `LOG_DIR`（相對路徑以 `backend/` 為基準；先前 `security.log` 寫在啟動目錄下的 `logs/`）。`security.log` 改在第一筆安全事件寫入時才開啟，pytest 整個測試階段改寫到暫存目錄，Starlette TestClient 產生的假事件（`client_ip` 為 `testclient`）不再混進稽核日誌。升級時請在 `.env` 加上 `LOG_DIR=logs`，日誌維持在 `backend/logs/`；缺少這個設定時後端無法啟動，見 [升級指南](docs/upgrading.md#從-700-升級到-800)。
 
 ### 修正 (Fixed)
 
-- **聯網搜尋恢復運作**：沒有設定 `OLLAMA_API_KEY` 時改用的 DuckDuckGo 備援一直回傳 0 筆結果，也不報錯。原因是 DuckDuckGo 的結果連結現在把 `rel` 寫在 `class` 前面，舊的解析規則對不上。現在改成逐筆解析標題、網址與摘要，不再因為某筆缺摘要而錯位，也會略過廣告；結果頁解析不到任何結果時回傳錯誤，讓模型知道搜尋失敗、改用其他資料，而不是當成查無資料。
+- **聯網搜尋恢復運作**：沒有設定 `OLLAMA_API_KEY` 時改用的 DuckDuckGo 備援一直回傳 0 筆結果，也不回報錯誤。原因是 DuckDuckGo 的結果連結現在把 `rel` 寫在 `class` 前面，舊的解析規則對不上。現在改成逐筆解析標題、網址與摘要，不再因為某筆缺摘要而錯位，也會略過廣告；結果頁解析不到任何結果時回傳錯誤，讓模型知道搜尋失敗、改用其他資料，而不是當成查無資料。
 - **網頁閱讀只取正文**：`web_fetch` 先前把導覽列、側欄、頁首、頁尾一起轉成文字，而內容只留前 3500 字，文件網站常常整段都是側欄目錄（例如 OpenVINO 文件的正文要到第 128,338 字才出現）。現在有 `<main>`、`role="main"` 或 `<article>` 時只取正文區塊，並略過其中的 `nav`、`aside` 與導覽、側欄角色；沒有正文區塊時略過整頁的 `nav`、`aside`、`header`、`footer` 與對應的 ARIA 角色。掃描維持線性時間。
 - **回答不再留下指不到來源的 `[n]`**：模型沒有查資料卻照格式寫出引用編號（例如小型本機模型關閉推理時），或用了本次工具結果裡沒有的編號時，這些標記會在送出與儲存前移除；對得到來源的編號保留，程式碼區塊與行內程式碼不受影響。先前這些編號只是不列進參考來源，內文仍顯示 [1]。已儲存的舊訊息不會改寫。
 - **Windows 上 `app.log` 到達輪替大小後不再停止寫入**：後端啟動時會載入 `main.py` 兩次，多出來的那份與 `RELOAD=true` 的監看行程都開著 `app.log`，到達 10 MiB 時無法改名輪替，之後的紀錄全部遺失。現在日誌檔在第一筆紀錄寫入時才開啟，監看行程也不再開著它。
@@ -143,16 +158,16 @@
 > [!IMPORTANT]
 > 聊天不再使用 `.env` 的模型與金鑰。升級後每個帳號（含管理員）都要有 API 連線才能對話：管理員在「管理後台 → 共用 API 連線」把原本 `.env` 的供應商建成共用連線並指定可使用的帳號，或請各帳號在「個人資料 → 我的 API 連線」設定自己的金鑰。`POST /api/chat/send` 必須帶 `connection_id` 與 `model_name`。
 >
-> 自行串接 API 的客戶端另需調整：`PUT /api/auth/me` 只更新電子郵件，變更密碼改用 `POST /api/auth/change-password`；`GET /api/chat/conversations` 與 `GET /api/chat/conversations/{conversation_id}` 的 `messages` 一律為空陣列，訊息改由 `GET /api/chat/conversations/{conversation_id}/messages` 讀取。後端與前端的相依套件與 6.0.0 相同，詳見 [升級指南](docs/upgrading.md#從-600-升級到-700)。
+> 自行串接 API 的用戶端另需調整：`PUT /api/auth/me` 只更新電子郵件，變更密碼改用 `POST /api/auth/change-password`；`GET /api/chat/conversations` 與 `GET /api/chat/conversations/{conversation_id}` 的 `messages` 一律為空陣列，訊息改由 `GET /api/chat/conversations/{conversation_id}/messages` 讀取。後端與前端的相依套件與 6.0.0 相同，詳見 [升級指南](docs/upgrading.md#從-600-升級到-700)。
 
 ### 安全性 (Security)
 
-- **一般帳號的個人連線只能連到公開位址**：建立或修改時檢查 API 位址，每次呼叫模型也經 SSRF 檢查並把連線固定到核可的 IP（Anthropic SDK 使用的 httpx2 也一樣），無法藉由自己的連線讓後端連到內部網路或雲端中繼資料服務；錯誤訊息不透露解析出的內部位址。管理員的個人連線與共用連線可以指向內部網路（例如本機 Ollama）。
+- **一般帳號的個人連線只能連到公開位址**：建立或修改時檢查 API 位址，每次呼叫模型也經 SSRF 檢查並把連線固定到核可的 IP（Anthropic SDK 使用的 httpx2 也一樣），無法經由自己的連線讓後端連到內部網路或雲端中繼資料服務；錯誤訊息不透露解析出的內部位址。管理員的個人連線與共用連線可以指向內部網路（例如本機 Ollama）。
 - **停用帳號時撤銷它的權杖**：管理員停用帳號時把 `users.tokens_valid_after` 更新為當下。停用期間權杖原本就無法使用，現在重新啟用後，停用前簽發的存取與重新整理權杖也不會恢復，該帳號必須重新登入。
 - **變更連線的供應商或 API 位址時不沿用已儲存的金鑰**：更新個人或共用連線時改了 `provider` 或 `api_base` 而沒有帶新的金鑰，已儲存的金鑰會被清除，需要金鑰的供應商回傳 `400` 要求重新輸入；`POST /api/llm-connections/discover-models` 只在供應商與 API 位址都與已儲存的連線相同時才使用它的金鑰。已儲存的金鑰不會被送到另一個供應商或位址。
 - **使用者名稱只接受中文、英文字母、數字、`_` 與 `-`**：註冊、管理員新增與編輯帳號、`scripts/create_user.py` 都套用同一個規則。先前的 `\w` 規則也接受西里爾字母等外觀相近的字母、全形字母，以及結尾的換行，可以建立與既有帳號看起來相同的名稱；既有帳號不受影響，照常登入。
 - **技能的 `allowed-tools` 列出 `run_skill_script` 時，只預先核准該技能自己的腳本**：先前啟用這樣的技能後，同一次提問中執行其他技能的腳本也不再要求核准。
-- **對話取消時終止技能腳本**：使用者停止回答或連線中斷時，執行中的 `run_skill_script` 腳本連同其子行程一併結束，不會在背景繼續執行。
+- **對話取消時終止技能腳本**：使用者停止回答或連線中斷時，執行中的 `run_skill_script` 腳本連同它的子行程一併結束，不會在背景繼續執行。
 - **`web_fetch` 的網域白名單檢查每一次轉址**：`WEB_FETCH_ALLOWED_DOMAINS` 不是 `*` 時，轉址的目標也必須在白名單內（先前只檢查初始網址，白名單內的網站可以把請求轉到任何網域），也不再使用 Ollama Web Fetch（轉址由 Ollama 端追蹤，無法逐跳檢查）。
 - **會改變狀態的自訂 API 工具不跟隨跨來源轉址**：`GET`、`HEAD`、`OPTIONS` 以外的方法只跟隨同一來源的轉址，請求主體不會被送到其他網域；轉址被拒絕或超過 5 次時，結果的 `status_code` 為 `400`，`error` 以「上游轉址未跟隨：…」說明原因，遭 SSRF 防護拒絕時仍為 `403`。
 - **新增根目錄的 `.dockerignore`**：以 repo 根目錄建置映像時排除各層的 `.env`、`backend/keys`、`backend/data`、`backend/logs`、`node_modules`、`.git`、`.venv` 等，金鑰、資料與本機設定不會被打包進映像。
@@ -163,7 +178,7 @@
 ### 新增 (Added)
 
 - **每個帳號各自的 API 連線**：「個人資料 → 我的 API 連線」可新增 OpenAI（或相容 API）、Anthropic Claude、Google Gemini、Microsoft Foundry、Ollama 的連線，設定 API 位址、金鑰、模型清單與 Claude 的輸出 token 上限；只有本人看得到、用得到。金鑰以 `TOOL_SECRETS_KEY` 加密存放，API 回應只告知是否已設定（`has_api_key`）。新增 `GET/POST /api/llm-connections`、`PUT/DELETE /api/llm-connections/{id}`、`GET /api/llm-connections/providers`。
-- **管理員開放的共用連線**：「管理後台 → 共用 API 連線」建立共用連線，並指定可使用的帳號（所有帳號，或只限勾選的帳號）；沒被指定的帳號在模型清單裡看不到它。新增 `GET/POST /api/admin/llm-connections`、`PUT/DELETE /api/admin/llm-connections/{id}`。刪除帳號時一併刪除其個人連線，並從共用連線的名單移除。
+- **管理員開放的共用連線**：「管理後台 → 共用 API 連線」建立共用連線，並指定可使用的帳號（所有帳號，或只限勾選的帳號）；沒被指定的帳號在模型清單裡看不到它。新增 `GET/POST /api/admin/llm-connections`、`PUT/DELETE /api/admin/llm-connections/{id}`。刪除帳號時一併刪除它的個人連線，並從共用連線的名單移除。
 - **測試連線**：`POST /api/llm-connections/{id}/test` 以指定模型送出一則很短的訊息，回傳模型回覆或錯誤原因；個人連線由本人測試，共用連線只限管理員。
 - 聊天頁的模型選單依連線分組（個人／共用）；帳號沒有任何可用模型時提示到「個人資料」新增。
 - **從 API 取得模型**：新增或編輯連線時按一下即列出供應商回報的模型（OpenAI 相容的 `/models`、Gemini、Claude 的 Models API、Ollama 的 `/api/tags`），勾選加入；編輯時沿用已儲存的金鑰。新增 `POST /api/llm-connections/discover-models`。Foundry 無法列出部署，仍需手動填寫。
@@ -173,7 +188,7 @@
   - 可替其他帳號重設密碼（`PUT /api/admin/users/{id}/password`），該帳號所有裝置的登入隨即失效。
   - 編輯帳號時可直接勾選它能用的共用連線（`GET/PUT /api/admin/users/{id}/llm-connections`），也能看到它自己設定的個人連線。
   - 使用者清單可搜尋，並顯示最後登入時間。
-- **VM 用的 Docker Compose 部署**（`deploy/`）：`docker-compose.yml` 啟動 PostgreSQL 17、後端與 nginx 前端，資料庫與後端的 `data`、`keys`、`logs` 存在具名資料卷。後端映像只安裝 CPU 版 torch，並略過 `nvidia-`、`triton`、`cuda-` 套件；nginx 提供前端建置結果並反向代理 `/api`，以 Docker 內建 DNS 動態解析後端位址，後端容器重建後不會回傳 `502`；前端建置前把 `index.html` 轉成 LF。`deploy/gen-env.sh` 在目標主機產生 `deploy/.env`（PostgreSQL 與應用程式帳號的密碼、`TOOL_SECRETS_KEY` 等），需要 `PUBLIC_ORIGIN`、`WEB_PORT`、`NETWORK_SUBNET`、`WEB_CONTAINER_IP`，密鑰不進版本庫。
+- **VM 用的 Docker Compose 部署**（`deploy/`）：`docker-compose.yml` 啟動 PostgreSQL 17、後端與 nginx 前端，資料庫與後端的 `data`、`keys`、`logs` 存在具名 volume。後端映像只安裝 CPU 版 torch，並略過 `nvidia-`、`triton`、`cuda-` 套件；nginx 提供前端建置結果並反向代理 `/api`，以 Docker 內建 DNS 動態解析後端位址，後端容器重建後不會回傳 `502`；前端建置前把 `index.html` 轉成 LF。`deploy/gen-env.sh` 在目標主機產生 `deploy/.env`（PostgreSQL 與應用程式帳號的密碼、`TOOL_SECRETS_KEY` 等），需要 `PUBLIC_ORIGIN`、`WEB_PORT`、`NETWORK_SUBNET`、`WEB_CONTAINER_IP`，密碼與金鑰都不進版本庫。
 
 ### 變更 (Changed)
 
@@ -262,17 +277,17 @@
 - **登入回應時間不再透露帳號是否存在**：帳號不存在或已停用時也對假雜湊驗一次密碼。先前存在的帳號約需 76 毫秒、不存在的只要 0.3 毫秒，關閉註冊時仍可藉此列出帳號。
 - **附件配額不再能以同時送出繞過**：含附件的訊息逐一檢查配額並寫入資料庫。先前同時送出的請求都看到同一個舊用量，任何登入的帳號都能超過 200 MiB 的上限。
 - **Agent Skills 的信任邊界**：技能由管理員安裝，內容當作指示交給模型，不包上 `<untrusted_tool_result>`，但系統提示詞規定技能不能推翻資料安全與引用規則。技能中的腳本預設不會執行，模型只能讀取。上傳的 zip 拒絕絕對路徑、`..`、磁碟代號與符號連結，以實際解壓縮的位元組數計算上限（`MAX_SKILL_UNCOMPRESSED_BYTES`，50 MiB）；`read_skill_resource` 只接受技能目錄內的相對路徑與 UTF-8 文字檔。
-- **技能腳本只在管理員開啟後、經使用者核准才執行，且不是沙箱**：技能的 `allow_scripts` 預設關閉；開啟後 `run_skill_script` 每次執行都要發問的使用者在對話中核准（除非技能的 `allowed-tools` 列出此工具）。腳本在技能目錄的暫存複本中執行，只繼承與 `stdio` MCP 相同的最小環境變數（後端的設定與金鑰不會傳入），逾時整個程序群組終止；但腳本仍以後端的系統帳號執行，能讀取該帳號可讀的檔案並連上網路，只對信任的技能開啟。
+- **技能腳本只在管理員開啟後、經使用者核准才執行，且不是沙箱**：技能的 `allow_scripts` 預設關閉；開啟後 `run_skill_script` 每次執行都要發問的使用者在對話中核准（除非技能的 `allowed-tools` 列出此工具）。腳本在技能目錄的暫存複本中執行，只繼承與 `stdio` MCP 相同的最小環境變數（後端的設定與金鑰不會傳入），逾時整個行程群組終止；但腳本仍以後端的系統帳號執行，能讀取該帳號可讀的檔案並連上網路，只對信任的技能開啟。
 - **MCP OAuth 的授權狀態與權杖**：`state` 為一次性、10 分鐘內有效，以 PKCE（S256）換取權杖；MCP 伺服器的 OAuth 設定與權杖和其他工具憑證一樣以 `TOOL_SECRETS_KEY` 加密存放，`client_secret` 在回應中遮蔽。自訂 API 工具的 OAuth2 `client_secret` 同樣遮蔽，取得的存取權杖與 `client_secret` 出現在工具結果中時換成 `[已遮蔽]`。
 
 ### 新增 (Added)
 
 - **Responses API**：`gpt-6*`（OpenAI）與 Foundry 上名稱以 `gpt-`、`o3`、`o4` 開頭的部署改走 Responses API，工具呼叫可搭配推理強度，並把 reasoning 項目隨工具結果送回；其餘 Foundry 模型（Kimi、Mistral、Grok、DeepSeek、Llama、`gpt-oss`）維持 Chat Completions，且不送 `reasoning_effort`。
-- **Foundry 上的 Claude**：`FOUNDRY_DEPLOYMENT` 中以 `claude-` 開頭的部署走 `{FOUNDRY_ENDPOINT}/anthropic`（`x-api-key` 驗證），`FOUNDRY_ENDPOINT` 不是 `*.services.ai.azure.com` 時明確報錯。
+- **Foundry 上的 Claude**：`FOUNDRY_DEPLOYMENT` 中以 `claude-` 開頭的部署走 `{FOUNDRY_ENDPOINT}/anthropic`（`x-api-key` 驗證），`FOUNDRY_ENDPOINT` 不是 `*.services.ai.azure.com` 時明確回報錯誤。
 - 前端推理強度新增 `max`（最大）；各供應商不支援的強度會停用，實際送出時自動降級（Claude 與 Gemini 的 `xhigh`、`max` 降為 `high`，Gemini 3 以上的 `none` 降為 `low`）。
 - Claude 啟用 prompt caching（system 與最後一個工具定義），並支援 `output_config.effort`。
 - Ollama：新增選填的 `OLLAMA_NUM_CTX`；`LLM_API_BASE` 指向 `ollama.com` 時以 `OLLAMA_API_KEY` 帶 `Authorization: Bearer`（含模型清單查詢）。
-- 社群檔案：[貢獻指南](.github/CONTRIBUTING.md)、[行為準則](.github/CODE_OF_CONDUCT.md)、[安全政策](.github/SECURITY.md) 與 [無障礙聲明](.github/ACCESSIBILITY.md)，皆附 `_en` 英文版。安全漏洞以 GitHub 私下回報或 Email 回報，14 天內首次回覆、最晚在回報後 90 天公開，只有最新主版本收到安全修正。
+- 社群檔案：[貢獻指南](.github/CONTRIBUTING.md)、[行為準則](.github/CODE_OF_CONDUCT.md)、[安全政策](.github/SECURITY.md) 與 [無障礙聲明](.github/ACCESSIBILITY.md)，都附 `_en` 英文版。安全漏洞以 GitHub 私下回報或 Email 回報，14 天內首次回覆、最晚在回報後 90 天公開，只有最新主版本收到安全修正。
 - `.github/ISSUE_TEMPLATE/` 新增錯誤回報、功能建議、文件問題與無障礙問題的 Issue 表單，以及安全通報與疑難排解的連結；`.github/pull_request_template.md` 新增 Pull Request 範本，列出驗證方式與文件、CHANGELOG、介紹頁同步的檢查項目。
 - 結構化資料改由新的 `app/services/structured_data/` 解析一次，產生渲染後的文字與記錄清單，切塊直接使用記錄，不再以正規式從文字解析回來。
   - 支援上傳 `.jsonl`（每行一筆記錄）；YAML 改以 `yaml.safe_load` 真正解析；CSV 與 XLSX 以第一個非空列為表頭，每列成為一筆記錄，列號與試算表一致。
@@ -283,7 +298,7 @@
 - `MAX_KB_CATALOG_CHARS`（4,000 字）：`search_knowledge_base` 工具說明中的文件目錄（檔名與摘要）以此為上限，超過時只列出前面的文件並告知其餘份數。
 - `POST /api/documents/rebuild-index` 在重建進行中再次呼叫時回傳 `409`。
 - 支援 [Agent Skills](https://agentskills.io)：管理員在「AI 工具」頁上傳技能，模型依問題自行載入技能的說明與參考檔案。
-  - 上傳技能目錄的 `.zip`（`SKILL.md` 在根目錄或唯一的頂層目錄中）或單一 `SKILL.md`；安裝先寫到暫存目錄再改名，啟動時清除殘留的暫存目錄。`name` 不符規格或缺少 `description` 時拒絕（`400`），其餘問題（`name` 與目錄名不同、欄位過長、未知的 frontmatter 欄位、內文為空等）列為警告顯示在卡片上，技能照常載入。
+  - 上傳技能目錄的 `.zip`（`SKILL.md` 在根目錄或唯一的頂層目錄中；副檔名 `.skill` 也視為 zip）或單一 `SKILL.md`；安裝先寫到暫存目錄再改名，啟動時清除殘留的暫存目錄。`name` 不符規格或缺少 `description` 時拒絕（`400`），其餘問題（`name` 與目錄名不同、欄位過長、未知的 frontmatter 欄位、內文為空等）列為警告顯示在卡片上，技能照常載入。
   - 有啟用的技能時，模型多出 `activate_skill` 與 `read_skill_resource` 兩個內建工具：工具說明只列技能名稱與描述（`MAX_SKILL_CATALOG_CHARS`，8,000 字），模型啟用技能後才拿到 `SKILL.md` 內文與檔案清單，需要時再逐一讀取技能內的文字檔；系統提示詞同時加上【技能規則】。沒有啟用的技能時，兩個工具與規則都不會出現。
   - 訊息以 `/技能名稱` 開頭時，送出前先載入該技能並去掉前綴，研究過程記錄一個 `activate_skill` 步驟；輸入框打 `/` 時列出符合的技能（↑/↓ 選擇、Enter 或 Tab 插入、Esc 關閉）。
   - 新增 `/api/skills` 端點：列出啟用的技能（所有登入使用者）、列出與檢視、上傳、啟用 / 停用、刪除（限管理員）；`GET /api/chat/tools` 在有啟用的技能時包含兩個技能工具。
@@ -314,7 +329,7 @@
 - 結構化資料的 AI 摘要附上記錄數、格式與欄位名稱；規則摘要不再依賴中文欄位標籤。
 - 值中的 Base64 圖片與 SVG 換成佔位字但保留欄位；依欄位名略過的雜訊清單從程式碼移到 `record_ignore_fields`。
 - 重建索引只替沒有摘要的文件生成 AI 摘要，既有摘要（含手動修訂的）保留；確認視窗補充重建期間知識庫暫時查不到資料。
-- `GET /api/documents/` 與 `GET /api/admin/documents` 只回傳清單需要的欄位（不含 `content`），改為同步路由交給執行緒池，也不再於請求中替缺少摘要的文件呼叫模型。
+- `GET /api/documents/` 與 `GET /api/admin/documents` 只回傳清單需要的欄位（不含 `content`），改為同步路由交給執行緒池，請求中也不再替缺少摘要的文件呼叫模型。
 - 新增文件與 `POST /api/admin/vector-store/reindex` 改在索引鎖外計算向量，上傳大檔或重算向量時其他人的檢索不必等待。
 - `/api/tags` 與 `/api/chat/models` 共用同一套模型清單與預設模型規則（`MODEL_NAME`、第一個 Azure 部署、遠端清單的預設模型）；遠端清單改以 httpx 查詢。
 - 刪除帳號時，該帳號上傳的文件與建立的工具保留，`uploaded_by`、`created_by` 改為空值。
@@ -343,9 +358,9 @@
 - 模型給錯工具參數（例如 `top_k` 為 `null` 或文字、參數不是物件）時不再中斷整個回答，改把錯誤代碼交給模型。
 - 重建索引不再覆蓋手動修訂的摘要；兩個分頁同時重建不再讓片段寫進兩份。
 - 文件數多時，知識庫目錄不再讓每次呼叫模型多出數萬字、甚至超過模型的上下文上限。
-- 聊天開始時組工具清單改在執行緒中進行；同步版文件摘要不再於持鎖時呼叫模型，避免整個後端在等這把鎖時停住。
+- 聊天開始時組工具清單改在執行緒中進行；同步版文件摘要持鎖時不再呼叫模型，避免整個後端在等這把鎖時停住。
 - 自訂 API 工具與 MCP 伺服器的 `created_by` 先前一律為空值，現在記錄建立的管理員；刪除建立過工具或上傳過文件的帳號，在 PostgreSQL 上不再因外鍵失敗。
-- 呼叫模型時，每次請求自帶的逾時不再把等待連線池名額的上限從 15 秒拉長到 18～120 秒。
+- 呼叫模型時，每次請求各自設定的逾時不再把等待連線池名額的上限從 15 秒拉長到 18～120 秒。
 - `requirements.txt` 依 CONTRIBUTING 的指令重新產生：Dependabot 更新時移除了平台與 Python 版本標記，Windows 與 macOS 會嘗試安裝 Linux 專用的 nvidia 套件，Python 3.10、3.11 也裝不起鎖定的 numpy。
 - API 參考中 `DELETE /api/admin/documents/{document_id}` 的說明改為與實際行為一致：上傳原檔也會一併刪除。
 
@@ -373,7 +388,7 @@
 >
 > - `.env` 新增 10 個必填設定：`ALLOW_REGISTRATION`、`LOGIN_MAX_FAILURES_PER_ACCOUNT`、`LOGIN_MAX_FAILURES_PER_ADDRESS`、`LOGIN_FAILURE_WINDOW_SECONDS`、`LOGIN_LOCKOUT_SECONDS`、`TOOL_SECRETS_KEY`、`HOST`、`RELOAD`、`COOKIE_SECURE`、`ENABLE_API_DOCS`，缺少任一項後端就無法啟動；`TOOL_SECRETS_KEY` 必須是各部署自行產生的 Fernet 金鑰。
 > - `HOST` 與 `RELOAD` 不再預設 `0.0.0.0` 與 `true`，`COOKIE_SECURE` 不再依 `ENVIRONMENT` 推導；`/docs`、`/redoc`、`/openapi.json` 只在 `ENABLE_API_DOCS=true` 時提供。
-> - 使用 `backend/docker-compose.yml` 時必須設定 `POSTGRES_APP_USER`、`POSTGRES_APP_PASSWORD`，`DATABASE_URL` 改用這組非超級使用者帳號；既有資料卷要先以新設定重建容器，再執行一次 `20-app-role.sh`。
+> - 使用 `backend/docker-compose.yml` 時必須設定 `POSTGRES_APP_USER`、`POSTGRES_APP_PASSWORD`，`DATABASE_URL` 改用這組非超級使用者帳號；既有 volume 要先以新設定重建容器，再執行一次 `20-app-role.sh`。
 > - stdio MCP 子行程改在每次新建的空暫存目錄執行，`command`、`args` 中相對於後端工作目錄的路徑要改為絕對路徑。
 > - 沒有在 `parameters_schema` 宣告的工具參數一律回傳 `400`；`GET /api/external-tags`、WebSocket `/api/chat/ws/{user_id}` 已移除；`POST /api/api-tools/parse-spec` 的回應不再包含 `raw_spec`。
 > - 新增或升級後端套件改為修改 `requirements.in` 再重新產生 `requirements.txt`；JWT 改用 PyJWT 取代 python-jose，請依新的 `requirements.txt` 重新安裝後端套件；`bun install` 在 `bun.lock` 與 `package.json` 不一致時會失敗。
@@ -387,7 +402,7 @@
 - **變更密碼撤銷所有權杖**：`users` 新增 `tokens_valid_after`，變更密碼時更新為當下，簽發時間早於它的存取與重新整理權杖一律無效；權杖的 `iat` 保留微秒，同一秒內稍早簽發的權杖也會失效，被盜的重新整理權杖不能在受害者改密碼後繼續換發。`POST /api/auth/change-password` 與帶新密碼的 `PUT /api/auth/me` 會清除重新整理權杖 Cookie；回退到舊版期間建立、此欄位為空的帳號會在每次啟動時以 `created_at` 補值（CWE-613）。
 - **可以關閉自行註冊**：新增必填設定 `ALLOW_REGISTRATION`，關閉時 `POST /api/auth/register` 回傳 `403` 並寫入安全日誌；帳號（含第一位管理員）改以 `scripts/create_user.py` 建立。原本任何能連到 API 的人都能註冊，查詢整個知識庫並以營運者的憑證呼叫已啟用的工具（CWE-284）。
 - **管理員使用者 API 不再回傳密碼雜湊**：`GET /api/admin/users` 與 `PUT /api/admin/users/{user_id}` 改以 `UserProfile` 篩選欄位，回應不再帶有 `hashed_password`（CWE-200）。
-- **以 PyJWT 取代 python-jose**：python-jose 3.5.0 以前會把不含 PEM 外框的 DER 公鑰當成 HMAC 密鑰，驗證端沒有限制演算法時可用伺服器公鑰偽造 HS256 權杖（CVE-2024-33663 的修正不完整）；它依賴的 ecdsa 在 P-256 上有 Minerva 時序攻擊（CVE-2024-23342）。兩者都沒有修補版本；本專案解碼時固定只接受 RS256、也不使用 ECDSA，無法實際利用，但套件會隨安裝帶入。改用 PyJWT 後，python-jose、ecdsa 與只有它們使用的 rsa、pyasn1、six 都不再安裝；以共用字串、PEM 或 DER 公鑰自行簽出的 HS256 權杖一律被拒絕。PyJWT 另會拒絕簽發時間在未來的權杖（CWE-347、CWE-208）。
+- **以 PyJWT 取代 python-jose**：python-jose 3.5.0 以前會把不含 PEM 外框的 DER 公鑰當成 HMAC 金鑰，驗證端沒有限制演算法時可用伺服器公鑰偽造 HS256 權杖（CVE-2024-33663 的修正不完整）；它依賴的 ecdsa 在 P-256 上有 Minerva 時序攻擊（CVE-2024-23342）。兩者都沒有修補版本；本專案解碼時固定只接受 RS256、也不使用 ECDSA，無法實際利用，但套件會隨安裝帶入。改用 PyJWT 後，python-jose、ecdsa 與只有它們使用的 rsa、pyasn1、six 都不再安裝；以共用字串、PEM 或 DER 公鑰自行簽出的 HS256 權杖一律被拒絕。PyJWT 另會拒絕簽發時間在未來的權杖（CWE-347、CWE-208）。
 - **撤銷的權杖保留到原本的到期時間**：`revoke_token` 以 `exp - datetime.utcnow().timestamp()` 計算撤銷名單的保留秒數，naive datetime 的 `timestamp()` 會被當成本地時間：伺服器在 UTC 負時區（例如美洲）時算出 0，撤銷只維持 1 秒，登出或換發後撤銷的存取權杖隨即又能使用；在 UTC+8 時則多保留 8 小時。改以 `time.time()` 計算（CWE-613）。
 - **權杖過期也能登出**：`POST /api/auth/logout` 只驗存取權杖的簽章，權杖過期時仍會撤銷重新整理權杖並清除 Cookie；仍要求 `Authorization` 標頭，跨站表單無法觸發登出（CWE-613）。
 - 管理員變更帳號權限、狀態與刪除帳號時寫入安全日誌（`ADMIN_USER_UPDATED`、`ADMIN_USER_DELETED`），記錄操作者與變更內容（CWE-778）。
@@ -436,16 +451,16 @@
 - README 與介紹頁的快速開始改為產生 `TOOL_SECRETS_KEY`、以 `scripts/create_user.py` 建立第一位管理員，並列出 20 項必填設定；[升級指南](docs/upgrading.md#從-400-升級到-500) 新增本版的升級步驟。
 - 新增後端測試 `test_admin_user_api.py`、`test_login_throttle.py`、`test_registration.py`、`test_tool_secrets.py`，以及前端測試 `remarkGfmSafe.test.tsx`。
 - **介紹頁「工具核准」區段**：可操作的核准卡片示範（核准、拒絕、模擬逾時），同步顯示 `approval_required`、`approval_resolved` 等 SSE 事件；另依 HTTP 方法切換自訂 API 工具的預設核准規則，規則與 `tool_approval.py` 相同。
-- 介紹頁新增 4.0.0 版本標籤與數據列、安全區段的「每個入口都有上限」資源上限表，文件導覽補上 ADR-0006。
+- 介紹頁新增 4.0.0 版本標籤與統計數字列、安全區段的「每個入口都有上限」資源上限表，文件導覽補上 ADR-0006。
 - README 新增「4.0.0 重點」、「工具呼叫核准」、「防護對照」與「主要資源上限」各節，疑難排解新增核准逾時與唯讀工具要求核准兩項。
 - **介紹頁「5.0.0」發行區段**：登入失敗節流的互動示範（錯誤密碼、大小寫不同的識別、不存在的帳號與多個帳號輪流嘗試，計數、鎖定與 `429`／`Retry-After` 回應與 `login_throttle.py` 相同）、變更密碼撤銷權杖的示範（逐一比對 `iat` 與 `tokens_valid_after`，含同一秒內稍早簽發的權杖），以及同一組工具憑證在資料庫、管理 API 與實際請求中的樣子；另列其他修正與從 4.0.0 升級的六個步驟。導覽列、Hero 版本標籤與版本時間軸都指向 5.0.0。
 - README 新增「5.0.0 重點」一節。
 
 ### 變更 (Changed)
 
-- 介紹頁視覺更新：Hero 加上緩慢移動的品牌藍光暈，桌面版截圖隨游標輕微傾斜；導覽列底部顯示捲動進度；功能、防線與發行區段的卡片加上隨游標移動的光暈邊框。動態效果全部尊重 `prefers-reduced-motion`，不支援捲動驅動動畫的瀏覽器直接顯示靜態畫面。`site/styles.css` 的深色色票集中為 `--night-*` 一處定義，深色主題與兩種主題下都是深色的發行面板共用。
+- 介紹頁視覺更新：Hero 加上緩慢移動的品牌藍光暈，桌機版截圖隨游標輕微傾斜；導覽列底部顯示捲動進度；功能、防線與發行區段的卡片加上隨游標移動的光暈邊框。動態效果全部尊重 `prefers-reduced-motion`，不支援捲動驅動動畫的瀏覽器直接顯示靜態畫面。`site/styles.css` 的深色色票集中為 `--night-*` 一處定義，深色主題與兩種主題下都是深色的發行面板共用。
 - 變更密碼後目前的工作階段也會登出，前端清除登入狀態並導回登入頁。
-- 存取與重新整理權杖的 `iat` 改為含微秒的小數（RFC 7519 的 NumericDate 允許小數）；自行解析權杖的客戶端不要假設它是整數。
+- 存取與重新整理權杖的 `iat` 改為含微秒的小數（RFC 7519 的 NumericDate 允許小數）；自行解析權杖的用戶端不要假設它是整數。
 - 未宣告任何參數的自訂 API 工具不再接受參數；`POST /api/api-tools/parse-spec` 的回應不再包含 `raw_spec`。
 - 管理 API 回應中的工具與 MCP 憑證以 `••••••••` 顯示；`Accept`、`Content-Type` 等一般標頭與 `key_name`、`username` 等設定照常顯示。更換 `TOOL_SECRETS_KEY` 後已儲存的憑證需要重新輸入。
 - 入侵偵測只保留警報；`RateLimitMiddleware` 不再有回傳 `403` 的封鎖分支。
@@ -478,16 +493,16 @@
 > **本版含需要手動處理的變更**，升級前請依 [升級指南](docs/upgrading.md#從-300-升級到-400) 逐項確認：
 >
 > - `JWT_SECRET_KEY` 與 `JWT_ALGORITHM` 已移除；`backend/keys/` 的 RSA 金鑰在任何環境都是必要的，無法載入或產生時後端拒絕啟動。
-> - `backend/docker-compose.yml` 必須設定 `POSTGRES_PASSWORD`，且只綁定 `127.0.0.1:7690`；既有資料卷的密碼需另外修改。
+> - `backend/docker-compose.yml` 必須設定 `POSTGRES_PASSWORD`，且只綁定 `127.0.0.1:7690`；既有 volume 的密碼需另外修改。
 > - Vite 開發與預覽伺服器只監聽 `localhost`，區網裝置請改用建置產物與正式網頁伺服器。
 > - `/api/chat` 的訊息回應不再包含原始 `context_used`（一律為 `null`）；`GET /api/chat/tools` 需要登入；`model_name` 必須在可用模型清單內。
-> - 自訂 API 工具與 MCP 伺服器新增 `requires_approval`（啟動時自動加入並回填），既有 MCP 伺服器的工具呼叫起會先要求使用者核准。
+> - 自訂 API 工具與 MCP 伺服器新增 `requires_approval`（啟動時自動加入並回填），呼叫既有 MCP 伺服器的工具前會先要求使用者核准。
 
 ### 安全性 (Security)
 
 #### 認證
 
-- **移除 HS256 退路**：RSA 金鑰無法載入時，開發環境不再改用 `.env` 中的共用密鑰簽署權杖；金鑰在任何環境都必須可用，否則拒絕啟動（CWE-1188）。
+- **移除 HS256 退路**：RSA 金鑰無法載入時，開發環境不再改用 `.env` 中的共用金鑰簽署權杖；金鑰在任何環境都必須可用，否則拒絕啟動（CWE-1188）。
 - **權杖綁定資料庫帳號**：每次請求依 `sub` 讀取帳號，帳號必須存在且啟用，`is_admin` 與角色取自資料庫而非權杖內容，簽發時間早於帳號建立時間的權杖（刪除後 id 被重用）一律拒絕；停用、刪除或降權即時生效（CWE-613、CWE-285）。新建立的 SQLite 資料庫中 `users` 與 `documents` 改用 `AUTOINCREMENT`，id 不再重用。
 - **重新整理權杖只能使用一次**：換發後立即撤銷舊權杖（CWE-294）。
 - 密碼最多 256 字元、登入識別最多 254 字元，Argon2 雜湊與驗證移到執行緒並限制同時 4 個；撤銷名單最多 100,000 筆（CWE-400）。
@@ -506,7 +521,7 @@
 - **SSRF 拒絕只回錯誤代碼**：自訂 API 工具、`web_fetch` 與 `POST /api/api-tools/parse-spec` 遭拒時不再回傳可能含內網 IP 的原因；MCP HTTP 錯誤不再夾帶對端回應本文，單次回應上限 4 MiB（CWE-209、CWE-400）。
 - **`web_fetch` 網址來源比對更嚴格**：只接受以完整網址出現過的網址，兩邊以 httpx 正規化後逐字比對，實際送出比對到的網址（CWE-918）。
 - **MCP 範本**：移除繞過 `web_fetch` 出站防護的 `mcp_fetch`；`mcp_filesystem` 改以專屬的 `backend/mcp_filesystem_sandbox` 為根目錄（原本是含 pickle 索引中繼資料的 `./data`），並釘選 `@modelcontextprotocol/server-filesystem@2026.8.31`（CWE-918、CWE-552、CWE-829）。
-- **MCP 子行程**：自成程序群組，關閉時終止整個子行程樹，同時最多 4 個（CWE-404、CWE-400）。
+- **MCP 子行程**：自成行程群組，關閉時終止整個子行程樹，同時最多 4 個（CWE-404、CWE-400）。
 - **聊天附件只接受 base64 `data:` URL**，遠端網址不再交給模型供應商擷取（CWE-918）；回答中的 Markdown 圖片改為點擊才開啟的連結，不再自動向外部主機載入（CWE-201）。
 - `httpx` 與 `httpcore` 日誌層級固定為 `WARNING`，含查詢字串金鑰的完整網址不再寫進日誌（CWE-532）。
 
@@ -574,7 +589,7 @@
 
 #### 檢索與索引
 
-- **以資料庫為準的片段索引**：新增 `rag_chunks` 資料表作為片段的唯一來源；FAISS 改用 `IndexIDMap2(IndexFlatIP)`，FAISS 與 BM25 皆以 chunk_id 對應。後端啟動時依資料庫校正索引：刪除孤立片段、移除多餘向量、補算缺少的向量，BM25 與資料庫不一致時自動重建。詳見 [ADR-0005](docs/adr/0005-chunk-id-index-and-database-source-of-truth.md)。
+- **以資料庫為準的片段索引**：新增 `rag_chunks` 資料表作為片段的唯一來源；FAISS 改用 `IndexIDMap2(IndexFlatIP)`，FAISS 與 BM25 都以 chunk_id 對應。後端啟動時依資料庫校正索引：刪除孤立片段、移除多餘向量、補算缺少的向量，BM25 與資料庫不一致時自動重建。詳見 [ADR-0005](docs/adr/0005-chunk-id-index-and-database-source-of-truth.md)。
 - **RRF 融合與相關性門檻**：向量與 BM25 每次必跑，以標準 RRF（`RRF_K`）依名次融合；`RERANK_RELEVANCE_THRESHOLD` 直接套在重排機率上，精確比對到網址、貼文 ID、日期的片段不受限制，全部未通過時回報「知識庫中查無相關資料」。詳見 [ADR-0003](docs/adr/0003-rrf-relevance-citations-and-tool-trust.md)。
 - **領域設定檔**：新增 `backend/config/domain_profile.json` 與 `DOMAIN_PROFILE_PATH`，收納領域詞、記錄日期欄位與摘要備援規則，啟動時驗證格式；選填的 `JIEBA_DICTIONARY` 可替換 jieba 主詞典。
 - **檢索評估工具**：`scripts/evaluate_retrieval.py` 在索引副本上唯讀計算 hit@k、recall@k 與 MRR，`--min-mrr` 可當作 CI 門檻；問答集允許 `"relevant_sources": []` 的反例，`--relevance-thresholds` 以同一次重排結果比較多個門檻的正例命中率與反例拒絕率。
@@ -590,7 +605,7 @@
 - **停止產生與重新傳送**：串流中可停止回答（已停止的回答不會儲存），串流時仍可繼續輸入；失敗的回答顯示原因與「重新傳送」，送出前就失敗時把文字與附件放回輸入框。
 - **外觀切換**：帳號選單新增淺色、深色與跟隨系統，預設跟隨系統，並在第一次繪製前套用，深色模式不再先閃白。
 - **刪除前確認**：刪除對話、使用者、文件、自訂 API 工具與 MCP 伺服器，以及清空上傳清單、覆寫已編輯的摘要前都會先確認（`ConfirmDialog`）。
-- 聊天頁新增「回到最新訊息」按鈕，並以讀螢幕軟體播報回答完成、失敗或停止；新增網路離線與恢復提示、「跳到主要內容」連結，非管理員進入管理頁時改顯示「沒有權限」頁面，取代原生 `alert()`。
+- 聊天頁新增「回到最新訊息」按鈕，並以螢幕報讀軟體播報回答完成、失敗或停止；新增網路離線與恢復提示、「跳到主要內容」連結，非管理員進入管理頁時改顯示「沒有權限」頁面，取代原生 `alert()`。
 - `frontend/src/services/sse.ts`：依規格實作的 SSE 解析器與 8 個 Vitest 測試（事件跨讀取切段、CRLF、多行資料等）。
 
 #### 文件與測試
@@ -604,7 +619,7 @@
 
 - 刪除文件只移除該文件的片段與向量，不再重算全部向量。
 - 檢索與索引寫入改在背景執行緒執行，不再阻塞事件迴圈；片段、FAISS 與 BM25 的讀寫以同一把鎖保護。
-- 重排模型改為必要元件：載入失敗時啟動報錯，執行時重排失敗回傳錯誤代碼，不再回傳未過濾的片段。
+- 重排模型改為必要元件：載入失敗時啟動即回報錯誤，執行時重排失敗回傳錯誤代碼，不再回傳未過濾的片段。
 - `search_knowledge_base` 指定 `target_document` 時在重排前限定文件，查不到不再改用全庫結果。
 - BM25 查詢改由斷詞器產生詞項後以 OR 組合；斷詞結果一律轉小寫；索引目錄記錄斷詞簽章，簽章不符時自動重建 BM25（向量不需重算），唯讀評估則拒絕執行。
 - 設定中的相對路徑（`DATA_DIR`、`UPLOAD_DIR`、索引路徑、`HF_*`、`DOMAIN_PROFILE_PATH`、`JIEBA_DICTIONARY`）一律以 `backend/` 為基準。
@@ -631,7 +646,7 @@
 
 #### 版本與文件
 
-- 版本號統一為 3.0.0：後端以 `backend/app/__init__.py` 的 `__version__` 為準，OpenAPI 文件與 MCP 交握的 `clientInfo` 皆引用此值；前端 `package.json` 同步更新；OpenAPI 標題改為「AskMiao API」。
+- 版本號統一為 3.0.0：後端以 `backend/app/__init__.py` 的 `__version__` 為準，OpenAPI 文件與 MCP 交握的 `clientInfo` 都引用此值；前端 `package.json` 同步更新；OpenAPI 標題改為「AskMiao API」。
 - 依 3.0.0 的實作重寫 README、API 參考、系統架構與 `llms.txt`（中英雙語），修正先前與程式不符的描述，例如 `init_db.py` 並不會建立管理員帳號、知識庫支援的副檔名清單，以及前端實際讀取的環境變數。
 - `frontend/.env.example` 只保留前端實際讀取的變數，移除已不存在的 workflow WebSocket 位址與後端專用設定。
 - 介紹頁（`site/`）依現行實作改版：互動示範在瀏覽器端重現引用配號、RRF 與相關性門檻、網址來源限制、SSRF 檢查順序與 MCP 環境變數繼承規則，截圖改用新品牌介面。
@@ -656,7 +671,7 @@
 - BM25 以 Whoosh 查詢語法（預設 AND）解析整句查詢，多詞查詢常找不到結果，標點也會被當成查詢語法。
 - 相關性門檻套在混合分數上，第一名一定拿到 0.15 而過門檻，導致永遠至少送一段無關片段給模型。
 - 只有 BM25 找到的片段在加權融合後進不了重排候選。
-- uploads watcher 在上傳檔不見時刪除索引與資料庫紀錄；從其他目錄啟動時會把所有文件判為遺失。現改為只記一次警告。
+- uploads watcher 在上傳檔不見時刪除索引與資料庫紀錄；從其他目錄啟動時會把所有文件判為遺失。現在改為只記一次警告。
 - Claude 模型 ID 格式錯誤（2.2.1 誤寫為 `claude-4-8-opus` 形式）。
 - PostgreSQL 初始化腳本 `init.sql` 缺少 `documents.description` 欄位。
 
@@ -668,12 +683,12 @@
 - 串流出錯時畫面停在「AI 自主研究中」且沒有任何提示；對話清單載入失敗時只顯示「尚無歷史對話」。
 - 串流中切換對話時，回答被寫進另一段對話，完成後標題又跳回原對話。
 - 密碼打錯時登入頁顯示「未找到刷新令牌」：登入、註冊與重新整理權杖的 401 不再觸發權杖重新整理。
-- 用鍵盤操作時看不到焦點；欄位標籤沒有綁定輸入框，讀螢幕軟體讀不出欄位名稱；建議提問、引用來源與上傳拖放區無法用鍵盤操作。
-- 手機上對話清單入口被頂欄蓋住、回答泡泡比畫面寬；桌面版聊天頁多出一條頁面捲軸。
+- 用鍵盤操作時看不到焦點；欄位標籤沒有綁定輸入框，螢幕報讀軟體讀不出欄位名稱；建議提問、引用來源與上傳拖放區無法用鍵盤操作。
+- 手機上對話清單入口被頂欄蓋住、回答泡泡比畫面寬；桌機版聊天頁多出一條頁面捲軸。
 - 按「載入更早訊息」後跳回最底，串流時往上捲會被拉回底部。
 - 知識庫刪除失敗仍顯示「刪除成功」且錯誤提示關不掉；重新載入時整頁變成轉圈；上傳失敗的原因被丟掉；「取消全部上傳」後仍繼續上傳剩下的檔案。
 - 改密碼與後台編輯使用者時，錯誤顯示在對話框後方的頁面上。
-- AI 工具頁的通知沒有樣式、搜尋不會篩選 MCP 伺服器、表單在手機上溢出、匯入 OpenAPI 時預設帶入範例規格。
+- AI 工具頁的通知沒有樣式、搜尋不會篩選 MCP 伺服器、表單在手機上超出版面、匯入 OpenAPI 時預設帶入範例規格。
 - 按鈕的載入圈圈不會轉；知識庫頁「清空清單」使用不存在的按鈕樣式，兩個圖示名稱不存在。
 - 在沒有剪貼簿 API 的環境（例如以 http 從區網連線）複製會靜默失敗。
 - 後台表格在 1024px 寬時「操作」欄被擠出畫面。
@@ -694,9 +709,9 @@
 ### 修正 (Fixed)
 
 - **錯誤回應改用錯誤代碼**：
-  - 新增 `app/core/error_response.py`，未預期例外之完整訊息與堆疊僅寫入伺服器日誌，對外僅回傳隨機錯誤代碼與 `error_id`（CWE-209 / CWE-497）。
-  - `api_tools.py`、`mcp.py`、`chat.py` 與 `openapi_parser.py` 全面套用；輸入驗證類錯誤改以 `SafeClientError` 標記後原樣回傳，保留可據以修正之診斷訊息。
-- **移除 RAG 串流中外洩之例外文字**：`rag/agent.py`、`rag/pipeline.py` 與 `rag/tools.py` 之串流輸出不再夾帶例外內容。
+  - 新增 `app/core/error_response.py`，未預期例外的完整訊息與堆疊只寫入伺服器日誌，對外只回傳隨機錯誤代碼與 `error_id`（CWE-209 / CWE-497）。
+  - `api_tools.py`、`mcp.py`、`chat.py` 與 `openapi_parser.py` 全面套用；輸入驗證類錯誤改以 `SafeClientError` 標記後原樣回傳，保留使用者可據以修正的診斷訊息。
+- **移除 RAG 串流中外洩的例外文字**：`rag/agent.py`、`rag/pipeline.py` 與 `rag/tools.py` 的串流輸出不再夾帶例外內容。
 
 ---
 
@@ -704,10 +719,10 @@
 
 ### 修正 (Fixed)
 
-- **修復 OpenAPI 解析與遠端請求之 SSRF 漏洞 (#25)**：
-  - 新增 `app/core/ssrf_protection.py`，對使用者提供之 URL 進行協定、連接埠、主機名稱與 DNS 解析後 IP 範圍驗證，阻擋私有網段、迴環與連結本地位址、雲端中繼資料端點與危險連接埠。
-  - `openapi_parser.py`、`rag/tools.py`（`web_fetch`）與 `api_tools.py` 全面改走 SSRF 防護閘門。
-  - 新增 `backend/tests/test_ssrf_protection.py` 覆蓋阻擋與放行情境。
+- **修正 OpenAPI 解析與遠端請求的 SSRF 漏洞 (#25)**：
+  - 新增 `app/core/ssrf_protection.py`，依協定、連接埠、主機名稱與 DNS 解析後的 IP 範圍驗證使用者提供的網址，阻擋私有網段、回送與連結本地位址、雲端中繼資料端點與危險連接埠。
+  - `openapi_parser.py`、`rag/tools.py`（`web_fetch`）與 `api_tools.py` 都改走 SSRF 防護閘門。
+  - 新增 `backend/tests/test_ssrf_protection.py`，涵蓋阻擋與放行的情境。
 
 ---
 
@@ -716,19 +731,19 @@
 ### 新增 (Added)
 
 - **自訂 API 工具**：
-  - 新增 `custom_api_tools` 資料表與 `/api/api-tools` 端點，支援工具 CRUD、啟用切換與即時連通性測試。
-  - 通用 HTTP 執行器支援 Path 變數替換、Query 組裝、Header 與認證注入（Bearer / API Key / Basic）、JSON 與表單主體序列化及逾時隔離。
+  - 新增 `custom_api_tools` 資料表與 `/api/api-tools` 端點，支援工具 CRUD、啟用切換與即時連線測試。
+  - 通用 HTTP 執行器支援路徑變數替換、查詢字串組裝、標頭與認證注入（Bearer / API Key / Basic）、JSON 與表單主體序列化，以及逾時隔離。
 - **OpenAPI / Swagger 匯入**：
-  - 新增 `services/openapi_parser.py`，支援 OAS 2.0、3.0、3.1 規格內容或規格 URL 解析，並可批次匯入選定端點為 AI 工具（同名覆寫更新）。
+  - 新增 `services/openapi_parser.py`，可解析 OAS 2.0、3.0、3.1 的規格內容或規格網址，並把選定的端點批次匯入成 AI 工具（同名時覆寫更新）。
 - **MCP 伺服器整合**：
-  - 新增 `mcp_servers` 資料表與 `/api/mcp` 端點，支援伺服器 CRUD、範本清單、工具探索（`initialize` + `tools/list`）與單一工具調用測試。
+  - 新增 `mcp_servers` 資料表與 `/api/mcp` 端點，支援伺服器 CRUD、範本清單、工具探索（`initialize` + `tools/list`）與單一工具呼叫測試。
   - 新增 `services/mcp_service.py`，提供 `stdio` 子行程與 HTTP 兩種 JSON-RPC 傳輸用戶端。
-- **工具動態註冊**：`ResearchToolRegistry` 於組裝工具定義時自動載入啟用中的自訂 API 工具與 MCP 工具（命名慣例 `mcp_<伺服器>_<工具>`），變更後無需重啟後端。
+- **工具動態註冊**：`ResearchToolRegistry` 組裝工具定義時自動載入啟用的自訂 API 工具與 MCP 工具（命名慣例 `mcp_<伺服器>_<工具>`），變更後不必重啟後端。
 - **前端 AI 工具管理頁**：新增 `/tools` 路由與 `AiTools` 頁面，提供工具總覽、OpenAPI 匯入精靈與 MCP 伺服器管理。
 
 ### 變更 (Changed)
 
-- 精簡 `.gitignore` 規則並自版本庫移除本地資料庫檔案。
+- 精簡 `.gitignore` 規則，並從版本庫移除本機資料庫檔案。
 
 ---
 
@@ -736,12 +751,12 @@
 
 ### 新增 (Added)
 
-- **多模態對話管線**：對話支援附加圖片與文件；圖片以 `image_url` 內容區塊送入視覺模型，文字類附件抽取內容併入提問上下文。
-- **知識庫動態描述**：文件上傳時自動生成 AI 大綱與摘要，並提供重新生成與手動修訂端點。
+- **多模態對話管線**：對話可附加圖片與文件；圖片以 `image_url` 內容區塊送給視覺模型，文字類附件的擷取內容併入提問的上下文。
+- **知識庫動態描述**：上傳文件時自動生成 AI 大綱與摘要，並提供重新生成與手動修訂的端點。
 
 ### 變更 (Changed)
 
-- 全面現代化前端介面與元件庫。
+- 全面翻新前端介面與元件庫。
 
 ---
 
@@ -750,37 +765,37 @@
 ### 新增 (Added)
 
 - **Agentic RAG 自主研究管線**：
-  - 實作 ReAct 自主研究代理人 `ResearchAgent`，支援多輪自主推理與 Native Tool Calling。
-  - 提供 `ResearchToolRegistry` 原生工具集：內部知識庫搜尋（`search_knowledge_base`）、外部聯網搜尋（`web_search`，具備 Ollama 與 DuckDuckGo 雙引擎備援）與外部網頁內容深度抓取（`web_fetch`）。
-- **模型推理程度（Reasoning Effort）選擇機制**：
-  - 前端頂部導覽列提供 5 檔位切換：`無 (None)`、`輕度 (Low)`、`標準 (Medium)`、`深度 (High)`、`極致 (X-High)`。
-  - 後端全面適配 Azure OpenAI v1 及 OpenAI 官方推理模型，並依微軟 Foundry 規範自動處理工具調用時之相容性。
-- **全新前端視覺與研究歷程展示**：
-  - 新增 `ResearchTraceBlock`：可折疊之研究步驟時間軸與工具調用日誌展示。
-  - 新增 `SourceBadges`：外部參考連結徽章，支援點擊直接另開視窗閱讀來源。
+  - 實作 ReAct 自主研究代理人 `ResearchAgent`，支援多輪自主推理與原生工具呼叫（Native Tool Calling）。
+  - `ResearchToolRegistry` 提供原生工具集：內部知識庫搜尋（`search_knowledge_base`）、聯網搜尋（`web_search`，具備 Ollama 與 DuckDuckGo 雙引擎備援）與外部網頁內容深度抓取（`web_fetch`）。
+- **選擇模型推理程度（Reasoning Effort）**：
+  - 前端頂部導覽列可切換 5 個檔位：`無 (None)`、`輕度 (Low)`、`標準 (Medium)`、`深度 (High)`、`極致 (X-High)`。
+  - 後端全面支援 Azure OpenAI v1 與 OpenAI 官方推理模型，並依微軟 Foundry 規範自動處理呼叫工具時的相容性。
+- **前端視覺改版與研究歷程顯示**：
+  - 新增 `ResearchTraceBlock`：可折疊的研究步驟時間軸，並顯示工具呼叫日誌。
+  - 新增 `SourceBadges`：外部參考連結徽章，點擊即另開視窗閱讀來源。
 - **模組化 RAG 架構**：
   - 將 RAG 系統重構為高內聚模組：向量索引（`indices/`）、混合檢索（`retrievers/`）、執行管線（`pipeline.py`）、評估器（`evaluator.py`）與門面類別（`contextual_rag.py`）。
 
 ### 變更 (Changed)
 
-- **架構輕量化與零依賴化**：
-  - 預設改用 SQLite 關聯式資料庫與記憶體快取，無需啟動 Docker、PostgreSQL 或 Redis 即可一鍵本機啟動。
-  - 移除過時之討論看板與自訂 Agent 模組，專注於高效知識庫問答與深度研究。
-  - 移除查詢快取命中，確保每次問答均能反映最新文檔與即時聯網資訊。
-- **前端版面體驗升級**：
-  - 側邊欄整合為單一自適應實例，桌面端無縫卡片貼合，移動端自動切換抽屜。
-  - 全面使用 Bun 作為前端套件管理與建構工具。
+- **架構輕量化，不需外部服務**：
+  - 預設改用 SQLite 資料庫與記憶體快取，不必啟動 Docker、PostgreSQL 或 Redis 就能在本機一鍵啟動。
+  - 移除過時的討論看板與自訂 Agent 模組，專注在知識庫問答與深度研究。
+  - 移除查詢快取命中，確保每次問答都反映最新的文件與即時聯網資訊。
+- **前端版面改善**：
+  - 側邊欄整合為單一自適應實例，桌機上是無縫貼合的卡片，行動裝置上自動切換成抽屜。
+  - 前端的套件管理與建置一律使用 Bun。
 
 ### 修正 (Fixed)
 
 - **Azure OpenAI v1 API 相容性**：
-  - 移除已過時之 `AZURE_OPENAI_API_VERSION` 依賴，採用標準 v1 端點路徑。
-  - 移除推理模型中不支援的 `max_tokens` 與 `temperature` 參數，改採相容之 payload 結構。
-- **系統穩定性與錯誤修復**：
-  - 修復 `MessageResponse` 缺少 `Dict, Any` 導入引發之 `NameError`。
-  - 修復 `HybridContextualRAG.generate_response()` 遺漏 `reasoning_effort` 參數傳遞之 `TypeError`。
-  - 修復 `/api/chat/models` 遺漏 `settings` 導入導致 500 錯誤與模型選單未正確拆分逗號字串之問題。
-  - 修復前端側邊欄雙重渲染重疊之版面異常。
+  - 不再依賴已過時的 `AZURE_OPENAI_API_VERSION`，改用標準 v1 端點路徑。
+  - 推理模型不再送出不支援的 `max_tokens` 與 `temperature` 參數，改用相容的 payload 結構。
+- **系統穩定性與錯誤修正**：
+  - 修正 `MessageResponse` 缺少 `Dict, Any` 匯入而引發的 `NameError`。
+  - 修正 `HybridContextualRAG.generate_response()` 沒有傳遞 `reasoning_effort` 參數而引發的 `TypeError`。
+  - 修正 `/api/chat/models` 缺少 `settings` 匯入而回傳 500 錯誤，以及模型選單沒有正確拆分以逗號分隔的字串。
+  - 修正前端側邊欄重複渲染而互相重疊的版面問題。
 
 ---
 
@@ -789,6 +804,6 @@
 ### 新增 (Added)
 
 - 增強型混合 RAG 檢索系統（FAISS + Whoosh BM25 + Cross-Encoder Reranker）。
-- RSA-2048 JWT 認證與令牌黑名單撤銷機制。
-- `security_logging.py` 敏感資料雙層脫敏機制（物件遞迴與正則遮罩）。
-- 文件管理與知識庫切分向量化背景任務。
+- RSA-2048 JWT 認證與權杖撤銷黑名單。
+- `security_logging.py` 以兩層機制遮蔽敏感資料（遞迴處理物件與正規表示式遮罩）。
+- 文件管理，以及知識庫切塊與向量化的背景任務。

@@ -18,7 +18,6 @@ const hasRunningStep = (trace: ResearchStep[] | undefined): boolean =>
   Boolean(trace?.some((step) => step.status === 'running'));
 const settleRunningSteps = (trace: ResearchStep[] | undefined): ResearchStep[] | undefined =>
   trace?.map((step) => (step.status === 'running' ? { ...step, status: 'interrupted' } : step));
-/** onError：載入或刪除失敗時通知呼叫端顯示訊息（串流失敗則直接標示在該則回覆上） */
 export function useChat(onError: (message: string) => void) {
   const [conversationsLoading, setConversationsLoading] = useState(false);
   const [conversationsError, setConversationsError] = useState<string | null>(null);
@@ -41,7 +40,6 @@ export function useChat(onError: (message: string) => void) {
   const loadConversationAbortRef = useRef<AbortController | null>(null);
   const loadConversationsAbortRef = useRef<AbortController | null>(null);
   const streamAbortRef = useRef<AbortController | null>(null);
-  // 每次切換或開新對話都會換號；非同步結果回來時用來確認使用者還停在同一個畫面
   const viewTokenRef = useRef(0);
   const fetchConversations = useCallback(async (): Promise<Conversation[]> => {
     loadConversationsAbortRef.current?.abort();
@@ -131,7 +129,6 @@ export function useChat(onError: (message: string) => void) {
     attachments?: ChatAttachment[]
   ) => {
     if (!content.trim() && (!attachments || attachments.length === 0)) return;
-    // 一次只處理一個串流
     if (streamAbortRef.current) return;
     const abortController = new AbortController();
     streamAbortRef.current = abortController;
@@ -156,7 +153,6 @@ export function useChat(onError: (message: string) => void) {
       sources: [],
       sources_detail: []
     };
-    // 只更新這次串流的回覆；找不到代表使用者已切到其他對話，回答仍會由後端儲存
     const updateBotMessage = (update: (message: Message) => Message) => {
       setMessages(prev => {
         const index = prev.findIndex(m => m.id === botMsgId);
@@ -184,7 +180,6 @@ export function useChat(onError: (message: string) => void) {
     setStreamingMessageId(botMsgId);
     let started = false;
     let finished = false;
-    // 後端在 start 事件就已建立對話並存下使用者訊息，之後即使出錯或被停止也要同步到畫面上
     let streamConversationId: number | null = currentConversation?.id ?? null;
     try {
       await chatService.sendMessageStream(
@@ -265,7 +260,6 @@ export function useChat(onError: (message: string) => void) {
       if (isAbortError(err)) {
         updateBotMessage(m => ({ ...m, stopped: true, pending_approval: null, research_trace: settleRunningSteps(m.research_trace) }));
       } else if (!started) {
-        // 後端尚未開始處理：移除剛加入的兩則訊息，交由呼叫端把內容放回輸入框
         setMessages(prev => prev.filter(m => m.id !== userMsgId && m.id !== botMsgId));
         throw err;
       } else {
@@ -278,7 +272,6 @@ export function useChat(onError: (message: string) => void) {
       const conversationId = streamConversationId;
       if (conversationId && conversationId !== currentConversation?.id) {
         fetchConversations().then(fresh => {
-          // 使用者已切到其他對話時只更新清單，不把畫面拉回來
           if (viewTokenRef.current !== viewToken) return;
           const found = fresh.find(c => c.id === conversationId);
           if (found) setCurrentConversation(found);

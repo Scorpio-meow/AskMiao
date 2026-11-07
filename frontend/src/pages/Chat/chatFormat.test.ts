@@ -13,24 +13,20 @@ import {
   skillSuggestionsFor,
   splitThinkContent,
 } from './chatFormat';
-
 const conversation = (id: number, updated_at: string): Conversation => ({
   id,
   title: `對話 ${id}`,
   created_at: updated_at,
   updated_at,
 });
-
 describe('formatMessageTime', () => {
   const now = new Date(2026, 10, 2, 15, 0);
-
   it('shows only the time for messages sent today', () => {
     const sent = new Date(2026, 10, 2, 9, 5);
     expect(formatMessageTime(sent.toISOString(), now)?.label).toBe(
       new Intl.DateTimeFormat('zh-TW', { hour: '2-digit', minute: '2-digit' }).format(sent)
     );
   });
-
   it('adds the date for older messages and the year for other years', () => {
     const lastMonth = new Date(2026, 9, 20, 9, 5);
     const lastYear = new Date(2025, 9, 20, 9, 5);
@@ -39,23 +35,19 @@ describe('formatMessageTime', () => {
     );
     expect(formatMessageTime(lastYear.toISOString(), now)?.label).toBe(formatMessageTime(lastYear.toISOString(), now)?.full);
   });
-
   it('treats server times without a time zone as UTC and rejects invalid values', () => {
     expect(formatMessageTime('2026-11-02T01:00:00', now)?.full).toBe(formatMessageTime('2026-11-02T01:00:00Z', now)?.full);
     expect(formatMessageTime('not a date', now)).toBeNull();
   });
 });
-
 describe('splitThinkContent', () => {
   it('separates the first think block from the answer', () => {
     expect(splitThinkContent('<think>\n先查文件\n</think>\n\n答案 [1]')).toEqual({ thinkContent: '先查文件', mainContent: '答案 [1]' });
   });
-
   it('keeps content without a think block untouched', () => {
     expect(splitThinkContent('  答案  ')).toEqual({ thinkContent: null, mainContent: '  答案  ' });
   });
 });
-
 describe('attachments', () => {
   it('labels file types the same way as before', () => {
     expect(describeAttachmentType('報告.PDF')).toEqual({ kind: 'pdf', label: 'PDF' });
@@ -66,7 +58,6 @@ describe('attachments', () => {
     expect(describeAttachmentType('notes.md')).toEqual({ kind: 'other', label: 'MD' });
     expect(describeAttachmentType('')).toEqual({ kind: 'other', label: 'FILE' });
   });
-
   it('formats sizes and recognises images by type or data URL', () => {
     expect(formatFileSize(undefined)).toBe('');
     expect(formatFileSize(512)).toBe('512 B');
@@ -77,7 +68,6 @@ describe('attachments', () => {
     expect(isImageAttachment({ file_type: 'application/pdf', data_url: 'data:application/pdf;base64,AA' })).toBe(false);
   });
 });
-
 describe('isImeComposition', () => {
   it('ignores Enter while an input method is composing', () => {
     expect(isImeComposition({ isComposing: true, keyCode: 13 })).toBe(true);
@@ -85,39 +75,33 @@ describe('isImeComposition', () => {
     expect(isImeComposition({ isComposing: false, keyCode: 13 })).toBe(false);
   });
 });
-
 describe('skillSuggestionsFor', () => {
   const skills = [
     { name: 'release-notes', description: '整理發行說明' },
     { name: 'report', description: '產生報告' },
     { name: 'translate', description: '翻譯' },
   ];
-
   it('suggests skills only for a bare slash command', () => {
     expect(skillSuggestionsFor('/re', skills, null, 8).map((s) => s.name)).toEqual(['release-notes', 'report']);
     expect(skillSuggestionsFor('/', skills, null, 2).map((s) => s.name)).toEqual(['release-notes', 'report']);
     expect(skillSuggestionsFor('/re 內容', skills, null, 8)).toEqual([]);
     expect(skillSuggestionsFor('請 /re', skills, null, 8)).toEqual([]);
   });
-
   it('stays closed after Escape until the command changes', () => {
     expect(skillSuggestionsFor('/re', skills, '/re', 8)).toEqual([]);
     expect(skillSuggestionsFor('/rep', skills, '/re', 8).map((s) => s.name)).toEqual(['report']);
   });
 });
-
 describe('message helpers', () => {
   const question: Message = { id: 1, content: '第一題', is_user: true };
   const answer: Message = { id: 2, content: '', is_user: false, error: '逾時' };
   const followUp: Message = { id: 3, content: '第二題', is_user: true };
   const failed: Message = { id: 4, content: '', is_user: false, error: '連線中斷' };
-
   it('retries the closest question before the failed answer', () => {
     const messages = [question, answer, followUp, failed];
     expect(findRetryQuestion(messages, failed)).toBe(followUp);
     expect(findRetryQuestion(messages, answer)).toBe(question);
   });
-
   it('announces how the last answer ended', () => {
     expect(completionAnnouncement(undefined)).toBe('');
     expect(completionAnnouncement(question)).toBe('');
@@ -125,17 +109,14 @@ describe('message helpers', () => {
     expect(completionAnnouncement({ ...failed, error: undefined, stopped: true })).toBe('已停止產生回答');
     expect(completionAnnouncement({ id: 5, content: '好', is_user: false })).toBe('AI 已完成回答');
   });
-
   it('builds keys from ids when present', () => {
     expect(messageKey(7, 0)).toBe('id-7');
     expect(messageKey(undefined, 3)).toBe('index-3');
   });
 });
-
 describe('groupConversations', () => {
   const now = new Date(2026, 10, 2, 10, 0);
   const at = (days: number, hour: number) => new Date(2026, 10, 2 - days, hour).toISOString();
-
   it('groups by the last update in the order the server returned', () => {
     const groups = groupConversations([
       conversation(1, at(0, 8)),
@@ -152,7 +133,6 @@ describe('groupConversations', () => {
       ['更早', [5, 6]],
     ]);
   });
-
   it('returns no groups for an empty list', () => {
     expect(groupConversations([], now)).toEqual([]);
   });

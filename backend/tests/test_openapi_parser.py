@@ -103,11 +103,9 @@ paths:
     print("All OpenAPI Parser tests passed successfully!")
 if __name__ == "__main__":
     asyncio.run(main())
-
 @pytest.mark.anyio
 async def test_yaml_aliases_are_rejected():
     from app.core.error_response import SafeClientError
-
     spec_with_alias = """
 openapi: 3.0.3
 info: &info
@@ -118,29 +116,22 @@ paths: {}
 """
     with pytest.raises(SafeClientError, match="別名"):
         await OpenApiParser.parse(spec_with_alias, None, [])
-    # 只有錨點、沒有別名的規格照常解析，回應不再夾帶整份原始規格
     parsed = await OpenApiParser.parse(spec_with_alias.replace("x-copy: *info\n", ""), None, [])
     assert parsed["title"] == "Alias API"
     assert "raw_spec" not in parsed
-
-
 def test_long_operation_id_becomes_a_valid_stable_function_name():
     import re
     from app.core.limits import MAX_TOOL_NAME_CHARS
-
     long_id = "listAllTheOrganizationRepositoryWebhookDeliveriesForTheGivenHookIdentifier"
     name = OpenApiParser._generate_tool_name("get", "/hooks", long_id)
     assert re.fullmatch(rf"[a-zA-Z0-9_-]{{1,{MAX_TOOL_NAME_CHARS}}}", name)
     assert name == OpenApiParser._generate_tool_name("get", "/hooks", long_id)
     assert name != OpenApiParser._generate_tool_name("get", "/hooks", long_id + "V2")
     assert OpenApiParser._generate_tool_name("get", "/hooks", "listHooks") == "listhooks"
-
-
 @pytest.mark.anyio
 async def test_reused_ref_keeps_its_fields_in_every_branch():
     import json
     from app.core.limits import MAX_OPENAPI_SCHEMA_REFS
-
     depth = 20
     schemas = {
         "Loc": {"type": "object", "properties": {"lat": {"type": "number"}, "lng": {"type": "number"}}},
@@ -168,19 +159,15 @@ async def test_reused_ref_keeps_its_fields_in_every_branch():
     assert properties["destination"]["properties"] == loc
     from app.services.openapi_documents import INLINE_DOCUMENT_URI, SpecDocuments
     from app.services.openapi_schema import SchemaNormalizer
-
     docs = SpecDocuments(root=spec, root_uri=INLINE_DOCUMENT_URI, retrieval_url=None)
     docs.register(INLINE_DOCUMENT_URI, spec)
     node = SchemaNormalizer(docs, False, True).normalize({"$ref": "#/components/schemas/Node"}, INLINE_DOCUMENT_URI)
     assert "properties" not in node["properties"]["child"]
     fan_out = SchemaNormalizer(docs, False, True).normalize({"$ref": "#/components/schemas/L0"}, INLINE_DOCUMENT_URI)
     assert json.dumps(fan_out).count('"properties"') <= MAX_OPENAPI_SCHEMA_REFS
-
-
 @pytest.mark.anyio
 async def test_referenced_parameters_bodies_and_security_schemes_keep_their_fields():
     import json
-
     spec = {
         "openapi": "3.0.3",
         "info": {"title": "t", "version": "1"},

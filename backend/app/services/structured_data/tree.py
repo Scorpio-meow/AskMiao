@@ -1,31 +1,24 @@
 import itertools
 from typing import Any, Iterator, List, Optional, Sequence, Tuple
-
 from .models import StructuredDataError, StructuredRecord
 from .render import CONTEXT_HEADER, array_header
 from .values import is_link, is_scalar, make_label, render_scalar, unique_links
-
-
 class _TreeFlattener:
     def __init__(self, ignore_fields: Sequence[str], node_budget: int):
         self.ignore = {field.lower() for field in ignore_fields}
         self.node_budget = node_budget
         self.visited = 0
-
     def _visit(self, count: int) -> None:
         self.visited += count
         if self.visited > self.node_budget:
             raise StructuredDataError("結構化資料展開後的節點數超過原始文字長度")
-
     def is_ignored(self, key: Any) -> bool:
         return str(key).lower() in self.ignore
-
     def flatten(self, value: Any) -> Tuple[List[Tuple[Optional[str], str]], List[str]]:
         fields: List[Tuple[Optional[str], str]] = []
         links: List[str] = []
         self._walk(value, "", fields, links)
         return fields, links
-
     def _walk(self, value: Any, path: str, fields: list, links: list) -> None:
         self._visit(1)
         if isinstance(value, dict):
@@ -52,8 +45,6 @@ class _TreeFlattener:
             if is_link(text):
                 links.append(text)
             fields.append((path or None, text))
-
-
 def _label_of(item: Any, label_fields: Sequence[str], flattener: _TreeFlattener) -> Optional[str]:
     if not isinstance(item, dict):
         return None
@@ -63,8 +54,6 @@ def _label_of(item: Any, label_fields: Sequence[str], flattener: _TreeFlattener)
             if label:
                 return label
     return None
-
-
 def _object_array_keys(root: dict, flattener: _TreeFlattener) -> List[Any]:
     return [
         key for key, value in root.items()
@@ -73,8 +62,6 @@ def _object_array_keys(root: dict, flattener: _TreeFlattener) -> List[Any]:
         and value
         and all(isinstance(element, dict) for element in value)
     ]
-
-
 def _entries(root: Any, flattener: _TreeFlattener) -> Tuple[Optional[dict], Iterator[Tuple[Optional[str], int, Any]]]:
     if isinstance(root, list):
         return None, ((None, position, item) for position, item in enumerate(root, start=1))
@@ -87,8 +74,6 @@ def _entries(root: Any, flattener: _TreeFlattener) -> Tuple[Optional[dict], Iter
         for key in group_keys
         for position, element in enumerate(root[key], start=1)
     )
-
-
 def records_from_tree(
     root: Any,
     label_fields: Sequence[str],

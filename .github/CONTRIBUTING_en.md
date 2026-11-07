@@ -29,7 +29,7 @@ Thank you for helping improve AskMiao! This document explains how to report prob
 Before reporting:
 
 - Search the [existing issues](https://github.com/Scorpio-meow/AskMiao/issues) to avoid duplicates.
-- Check [Troubleshooting](../README_en.md#troubleshooting) in the README. For problems after an upgrade, check the [Upgrade Guide](../docs/upgrading_en.md) first; most startup failures come from a missing required setting.
+- Check [Troubleshooting](../docs/troubleshooting_en.md). For problems after an upgrade, check the [Upgrade Guide](../docs/upgrading_en.md) first; most startup failures come from a missing required setting.
 - Redact passwords, tokens, API keys, `TOOL_SECRETS_KEY`, and personal data.
 
 The backend only returns an error code to clients; the full stack trace is written to the server log. When reporting a bug, include the error code shown in the UI or API response and the matching lines from the log.
@@ -74,6 +74,7 @@ python -m pytest
 ```
 
 - The repository has no `backend/.env`. The required settings and test values are listed in the "Verification" section of [llms_en.txt](../llms_en.txt).
+- The tests use the configured `DATABASE_URL` directly and empty tables such as `agent_skills`; point it at a throwaway SQLite database, never at a development or production database.
 - Some tests load the real embedding and reranker models; a full run takes several minutes.
 - On Windows, if your user name contains non-ASCII characters, add an ASCII path such as `--basetemp=C:\pytest-tmp`; otherwise FAISS fails to write temporary indexes.
 

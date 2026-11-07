@@ -8,8 +8,8 @@ Only the latest major version receives security fixes. If you run an older versi
 
 | Version | Security fixes |
 |---|---|
-| 5.x | ✅ |
-| 4.x and earlier | ❌ |
+| 8.x | ✅ |
+| 7.x and earlier | ❌ |
 
 ## Reporting a vulnerability
 
@@ -50,7 +50,7 @@ Please do not disclose details until the fix is released. If a fix cannot be rea
 
 ### In scope
 
-The code and configuration in this repository, including `backend/`, `frontend/`, the `site/` intro site, and `backend/docker-compose.yml`.
+The code and configuration in this repository, including `backend/`, `frontend/`, the `site/` intro site, `backend/docker-compose.yml`, and the deployment setup in `deploy/` (Dockerfiles, `docker-compose.yml`, `nginx.conf`, `gen-env.sh`).
 
 ### Out of scope
 

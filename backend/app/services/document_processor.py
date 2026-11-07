@@ -30,30 +30,17 @@ from app.services.structured_data import (
     plain_result,
 )
 logger = logging.getLogger(__name__)
-# 摘要啟發式只看每行開頭的這些字元
 MAX_TOC_LINE_CHARS = 300
 OOXML_CONTENT_TYPES_PART = "[Content_Types].xml"
-# 與 python-docx／python-pptx 相同：不展開實體、不連網
 OOXML_XML_PARSER = etree.XMLParser(resolve_entities=False, no_network=True)
-
-
 class DocumentRejected(ValueError):
     pass
-
-
 class DocumentLimitExceeded(DocumentRejected):
-    """文件超過本次抽取的資源預算；訊息只描述哪一項上限，可以原樣告知使用者"""
-
-
+    pass
 def _is_xml_content_type(content_type: str) -> bool:
     lowered = content_type.lower()
     return lowered.endswith("+xml") or lowered.endswith("/xml")
-
-
 def _ooxml_xml_bytes(archive: zipfile.ZipFile, members: list, max_xml_bytes: int) -> int:
-    """依 [Content_Types].xml 加總會被當成 XML 解析的成員大小（另含 .rels 與該檔本身）。
-
-    python-docx／python-pptx 依內容類型而非副檔名決定是否把部件建成 DOM，因此改名不能繞過這個預算"""
     try:
         content_types_info = archive.getinfo(OOXML_CONTENT_TYPES_PART)
     except KeyError as e:
@@ -88,11 +75,7 @@ def _ooxml_xml_bytes(archive: zipfile.ZipFile, members: list, max_xml_bytes: int
         if name.endswith(".rels") or (content_type is not None and _is_xml_content_type(content_type)):
             total += info.file_size
     return total
-
-
 CODE_OR_DATA_EXTENSIONS = (".js", ".ts", ".jsx", ".tsx", ".json", ".jsonl", ".py", ".yaml", ".yml", ".ini", ".env", ".sql")
-
-
 class DocumentProcessor:
     
     FILE_SIGNATURES = {
@@ -133,14 +116,14 @@ class DocumentProcessor:
                 if header.startswith(signature):
                     return True
             
-            logger.warning(f"檔案頭部驗證失敗: {file_path}, 聲稱類型: {content_type}")
+            logger.warning(f"檔案標頭驗證失敗: {file_path}, 聲稱類型: {content_type}")
             raise ValueError(
-                f"檔案頭部與聲稱的類型不符。"
+                f"檔案標頭與聲稱的類型不符。"
                 f"這可能是一個偽造的檔案或損壞的檔案。"
             )
             
         except Exception as e:
-            logger.error(f"驗證檔案頭部時發生錯誤: {e}")
+            logger.error(f"驗證檔案標頭時發生錯誤: {e}")
             raise
     
     @staticmethod
@@ -155,13 +138,10 @@ class DocumentProcessor:
     def extract_text_from_file(
         file_path: str, content_type: str, limits: ExtractionLimits, ocr: Optional[Callable[[bytes], str]]
     ) -> Optional[str]:
-        """limits：本次抽取的資源預算，管理員上傳與聊天附件各用 app.core.limits 中的一組；ocr：PDF 掃描頁的 OCR，None 表示不做"""
         return DocumentProcessor.extract_document(file_path, content_type, limits, ocr).text
-
     @staticmethod
     def stored_text_extraction(filename: str, content: str) -> ExtractionResult:
         return plain_result(content, is_data_format(filename), None)
-
     @staticmethod
     def extract_document(
         file_path: str, content_type: str, limits: ExtractionLimits, ocr: Optional[Callable[[bytes], str]]
@@ -199,7 +179,6 @@ class DocumentProcessor:
                 DocumentProcessor._check_ooxml_archive(file_path, limits, builds_dom=True)
                 return plain_result(DocumentProcessor._extract_from_pptx(file_path), False, None)
             elif ext == ".xlsx" or content_type == "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet":
-                # openpyxl 以 read_only 串流讀取工作表，不會整份建成 DOM
                 DocumentProcessor._check_ooxml_archive(file_path, limits, builds_dom=False)
                 return extract_xlsx(
                     file_path, domain_profile.record_label_fields, lambda: DocumentProcessor._extract_from_xlsx(file_path)
@@ -226,16 +205,11 @@ class DocumentProcessor:
             else:
                 return plain_result(DocumentProcessor._extract_from_txt(file_path), False, None)
         except Exception as e:
-            logger.error(f"提取文本時發生錯誤: {e}")
+            logger.error(f"擷取文字時發生錯誤: {e}")
             raise
     
     @staticmethod
     def _check_ooxml_archive(file_path: str, limits: ExtractionLimits, builds_dom: bool) -> None:
-        """OOXML 是 ZIP：解析前先檢查成員數、宣告的解壓大小與壓縮比，擋下壓縮炸彈。
-
-        zipfile 讀取成員時不會超過宣告的大小，因此宣告值可以當作上界。壓縮比除了逐一成員，
-        也看整個檔案，拆成許多小成員的炸彈同樣會被擋下。builds_dom 為 True 的格式另外限制
-        會被建成 lxml DOM 的 XML 總量：DOM 的記憶體是 XML 大小的十幾到幾十倍"""
         try:
             with zipfile.ZipFile(file_path) as archive:
                 members = archive.infolist()
@@ -292,7 +266,6 @@ class DocumentProcessor:
     @staticmethod
     def _extract_from_html(file_path: str) -> str:
         raw_text = DocumentProcessor._extract_from_txt(file_path)
-        # 線性掃描：標準函式庫 html.parser 遇到大量未閉合的標籤會呈二次時間
         _, _, blocks = extract_text_and_title(raw_text)
         extracted = "\n".join(blocks)
         return extracted or raw_text
@@ -317,10 +290,10 @@ class DocumentProcessor:
                 text_content.append(block.text)
         
         if not text_content:
-            raise DocumentRejected("DOCX 文件中沒有可提取的文本內容")
+            raise DocumentRejected("DOCX 文件中沒有可擷取的文字內容")
         
         full_text = "\n".join(text_content)
-        logger.info(f"成功從 DOCX 提取 {len(doc.paragraphs)} 個段落和 {len(doc.tables)} 個表格，共 {len(full_text)} 字符")
+        logger.info(f"成功從 DOCX 擷取 {len(doc.paragraphs)} 個段落和 {len(doc.tables)} 個表格，共 {len(full_text)} 字元")
         return full_text
     @staticmethod
     def _extract_from_pptx(file_path: str) -> str:
@@ -337,10 +310,10 @@ class DocumentProcessor:
                 slides_text.append("\n".join(slide_lines))
         
         if not slides_text:
-            raise DocumentRejected("PPTX 文件中沒有可提取的文本內容")
+            raise DocumentRejected("PPTX 文件中沒有可擷取的文字內容")
         
         full_text = "\n\n".join(slides_text)
-        logger.info(f"成功從 PPTX 提取 {len(prs.slides)} 頁投影片，共 {len(full_text)} 字符")
+        logger.info(f"成功從 PPTX 擷取 {len(prs.slides)} 頁投影片，共 {len(full_text)} 字元")
         return full_text
     @staticmethod
     def _pptx_shape_lines(shapes) -> list:
@@ -361,7 +334,6 @@ class DocumentProcessor:
         return lines
     @staticmethod
     def _extract_from_xlsx(file_path: str) -> str:
-        # read_only 以串流方式讀取工作表，不把整份活頁簿展開到記憶體
         wb = openpyxl.load_workbook(file_path, data_only=True, read_only=True)
         sheets_text = []
         for sheetname in wb.sheetnames:
@@ -375,10 +347,10 @@ class DocumentProcessor:
                 sheets_text.append("\n".join(sheet_lines))
         
         if not sheets_text:
-            raise DocumentRejected("XLSX 文件中沒有可提取的文本內容")
+            raise DocumentRejected("XLSX 文件中沒有可擷取的文字內容")
         
         full_text = "\n\n".join(sheets_text)
-        logger.info(f"成功從 XLSX 提取 {len(wb.sheetnames)} 個工作表，共 {len(full_text)} 字符")
+        logger.info(f"成功從 XLSX 擷取 {len(wb.sheetnames)} 個工作表，共 {len(full_text)} 字元")
         wb.close()
         return full_text
     
@@ -409,10 +381,6 @@ class DocumentProcessor:
         extraction: Optional[ExtractionResult],
         model: Optional[SystemModelTarget],
     ) -> str:
-        """
-        以管理員指定的文件摘要系統模型生成繁體中文「文件主題與大綱摘要」。
-        未指定系統模型，或模型呼叫超時、發生異常時，改用啟發式規則分析器。
-        """
         if not content or not content.strip():
             return f"收錄內部文件《{filename}》。"
         if model is None:
@@ -433,7 +401,7 @@ class DocumentProcessor:
             "[嚴格準則]\n"
             "1. 核心定位：準確指明文件類型與核心主題（例如：產品規格說明書、宣傳型錄DM、LINE工作討論紀錄、社群貼文資料集、技術手冊等）。\n"
             "2. 內容大綱：提煉出主要涵蓋的章節、核心架構、功能特色或討論焦點。\n"
-            "3. 噪音過濾：嚴格禁止將通訊對話人名/任務待辦（如「1. @某某」）、純頁碼、版權宣告或公司電話地址誤當作章節標題。\n"
+            "3. 雜訊過濾：嚴格禁止將通訊對話人名/任務待辦（如「1. @某某」）、純頁碼、版權宣告或公司電話地址誤當作章節標題。\n"
             "4. 輸出要求：請直接輸出摘要文字本身，語句通順精煉，嚴禁客套話或前言標籤。\n\n"
             f"[文件檔名]{filename}\n"
             f"[文件類型]{file_type}\n"
@@ -459,13 +427,11 @@ class DocumentProcessor:
         return cls._generate_fallback_summary(filename, content, file_type, extraction)
     @classmethod
     def generate_document_summary(cls, filename: str, content: str, file_type: str = "") -> str:
-        """同步版只用規則摘要：呼叫端持有知識庫描述的快取鎖，等模型回應會讓等這把鎖的聊天請求一起卡住"""
         return cls._generate_fallback_summary(filename, content, file_type)
     @classmethod
     def _generate_fallback_summary(
         cls, filename: str, content: str, file_type: str = "", extraction: Optional[ExtractionResult] = None
     ) -> str:
-        """高品質啟發式規則分析器"""
         if not content or not content.strip():
             return f"收錄內部文件《{filename}》。"
         raw_lines = [line.strip() for line in content.strip().splitlines() if line.strip()]
@@ -510,7 +476,6 @@ class DocumentProcessor:
         if not cleaned_lines:
             return f"收錄內部文件《{filename}》。"
         def strip_toc_leader(text: str) -> str:
-            """移除目錄行尾的「.....12」引導線與頁碼；以字元掃描取代含重疊量詞的正規式"""
             without_page = text.rstrip("0123456789")
             end = len(without_page)
             while end > 0 and (without_page[end - 1] in ".·_" or without_page[end - 1].isspace()):
@@ -543,6 +508,6 @@ class DocumentProcessor:
             cols = [c.strip() for c in cleaned_lines[0].replace("|", ",").split(",") if c.strip()]
             if len(cols) >= 2:
                 cols_str = "、".join(cols[:8])
-                return f"結構化表格數據，收錄約 {len(cleaned_lines) - 1} 筆資料，包含欄位：{cols_str}。"
+                return f"結構化表格資料，收錄約 {len(cleaned_lines) - 1} 筆資料，包含欄位：{cols_str}。"
         snippet = " ".join(cleaned_lines[:4])[:120].replace("  ", " ")
         return f"本文件為《{title_cand}》，重點收錄：{snippet}...等內部專業資料。"

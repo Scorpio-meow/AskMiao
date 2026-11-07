@@ -2,7 +2,7 @@
 
 [繁體中文](configuration.md) | [English](configuration_en.md)
 
-> 本文件逐一說明後端 `backend/.env` 與前端 `frontend/.env` 的每個設定、預設值與實際作用，適用於 **8.2.0**（從 8.1.0 升級見 [升級指南](upgrading.md#從-810-升級到-820)）。設定以 `backend/app/core/config.py` 的 `Settings` 為準，範本見 [`backend/.env.example`](../backend/.env.example)。
+> 本文件逐一說明後端 `backend/.env` 與前端 `frontend/.env` 的每個設定、預設值與實際作用，適用於 **8.2.1**（從 8.2.0 升級見 [升級指南](upgrading.md#從-820-升級到-821)）。設定以 `backend/app/core/config.py` 的 `Settings` 為準，範本見 [`backend/.env.example`](../backend/.env.example)。
 
 - [讀取規則](#讀取規則)
 - [必填設定](#必填設定)
@@ -29,14 +29,14 @@
 
 - **來源**：後端從 `backend/.env` 讀取設定（與啟動目錄無關），行程環境變數優先於 `.env`。不認得的鍵會被忽略，所以已移除的舊設定留在 `.env` 中不會出錯。
 - **必填設定沒有預設值**：缺少任一項時，後端在啟動時就以 `Field required` 錯誤結束，並列出缺少的欄位。
-- **數值範圍與格式**：`CONVERSATION_HISTORY_MESSAGES ≥ 0`、`RRF_K ≥ 1`、`0 ≤ RERANK_RELEVANCE_THRESHOLD ≤ 1`，`LOGIN_MAX_FAILURES_PER_ACCOUNT`、`LOGIN_MAX_FAILURES_PER_ADDRESS`、`LOGIN_FAILURE_WINDOW_SECONDS`、`LOGIN_LOCKOUT_SECONDS` 皆須 ≥ 1，`TOOL_SECRETS_KEY` 必須是有效的 Fernet 金鑰；超出範圍或格式不符同樣無法啟動。
-- **布林值**：`true` / `false`、`1` / `0`、`yes` / `no` 皆可。
+- **數值範圍與格式**：`CONVERSATION_HISTORY_MESSAGES ≥ 0`、`RRF_K ≥ 1`、`0 ≤ RERANK_RELEVANCE_THRESHOLD ≤ 1`，`LOGIN_MAX_FAILURES_PER_ACCOUNT`、`LOGIN_MAX_FAILURES_PER_ADDRESS`、`LOGIN_FAILURE_WINDOW_SECONDS`、`LOGIN_LOCKOUT_SECONDS` 都須 ≥ 1，`OLLAMA_NUM_CTX` 與 `RERANKER_OPENVINO_MAX_LENGTH` 有設定時也須 ≥ 1，`TOOL_SECRETS_KEY` 必須是有效的 Fernet 金鑰；超出範圍或格式不符同樣無法啟動。
+- **布林值**：`true` / `false`、`1` / `0`、`yes` / `no` 都可以。
 - **相對路徑**：`DATA_DIR`、`UPLOAD_DIR`、`FAISS_INDEX_PATH`、`BM25_INDEX_DIR`、`METADATA_PATH`、`HF_HOME`、`HF_HUB_CACHE`、`SENTENCE_TRANSFORMERS_HOME`、`DOMAIN_PROFILE_PATH`、`JIEBA_DICTIONARY`、`SKILLS_DIR`、`LOG_DIR` 的相對路徑一律以 `backend/` 為基準。`DATABASE_URL` 不在此列，SQLite 的相對路徑依啟動目錄而定。
 - **程式預設值與範本值**：下表的「程式預設值」是 `.env` 未設定時的值；「範本值」是 `backend/.env.example` 建議的值，兩者不同時以你的 `.env` 為準。
 
 ## 必填設定
 
-下列 22 個設定沒有預設值，缺少任一項後端就無法啟動。
+下列 20 個設定沒有預設值，缺少任一項後端就無法啟動。
 
 | 變數 | 範本值 | 說明 |
 |---|---|---|
@@ -77,7 +77,7 @@ python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().d
 | `LLM_TAGS_TIMEOUT` | `10` | — | 「從 API 取得模型」查詢模型清單的逾時秒數 |
 | `OLLAMA_TEMPERATURE` | 空 | `0.3` | 所有 Ollama 連線的 `temperature`，未設定時使用模型預設值 |
 | `OLLAMA_NUM_PREDICT` | 空 | `2048` | 所有 Ollama 連線的 `num_predict`，未設定時使用模型預設值 |
-| `OLLAMA_NUM_CTX` | 空 | 註解範例 | 所有 Ollama 連線的 `num_ctx`（上下文長度），未設定時使用模型預設值；檢索內容較長時預設值可能不夠 |
+| `OLLAMA_NUM_CTX` | 空 | 註解範例 | 所有 Ollama 連線的 `num_ctx`（上下文長度，≥ 1），未設定時使用模型預設值；檢索內容較長時預設值可能不夠 |
 
 ### API 連線
 
@@ -96,7 +96,7 @@ python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().d
 
 新增連線時，表單依供應商預先帶入官方 API 位址與下列模型清單，可以再增刪：
 
-| 供應商 | 預先帶入的模型（8.2.0） |
+| 供應商 | 預先帶入的模型（8.2.1） |
 |---|---|
 | OpenAI | `gpt-6.1-sol`、`gpt-6-sol`、`gpt-6-luna`、`gpt-6-astra`、`gpt-5.6-sol`、`gpt-5.6-luna`、`gpt-5.6-terra`、`gpt-5.4`、`gpt-5.4-mini` |
 | Anthropic | `claude-opus-5-5`、`claude-fable-5-1`、`claude-sonnet-5-5`、`claude-haiku-5-5`、`claude-sonnet-5`、`claude-opus-5`、`claude-fable-5`、`claude-opus-4-8`、`claude-haiku-4-5` |
@@ -117,18 +117,18 @@ python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().d
 
 - 只能指定共用連線，費用算在該連線上。聊天附件的 OCR 也用這裡的模型，每份附件最多送 `MAX_PDF_OCR_PAGES` 頁（見 [資源上限](#資源上限)）。
 - 思考程度必填，選項與聊天相同（`none`、`minimal`、`low`、`medium`、`high`、`xhigh`、`max`），依供應商對應後傳給模型，介面上停用該模型不支援的檔位。程度越高越慢：Ollama 上的思考模型（例如 qwen3.5、gemma4）不關閉思考時，產生一份摘要可能超過 `LLM_TIMEOUT`，小型本機模型建議選 `none`（Ollama 會送 `think: false`）。資料表在加入這個欄位前已有的指定，升級後為 `none`。
-- 共用連線被刪除，或編輯後不再提供所指定的模型時，該用途自動取消指定；連線的金鑰無法解密（例如更換了 `TOOL_SECRETS_KEY`）時視同未指定，並記錄警告。
+- 共用連線被刪除，或編輯後不再提供指定的模型時，該用途自動取消指定；連線的金鑰無法解密（例如更換了 `TOOL_SECRETS_KEY`）時視同未指定，並記錄警告。
 - 端點見 [API 參考：系統模型](api.md#86-系統模型)。
 
 ### 供應商路由
 
-每條 API 連線依連線設定的供應商與模型名稱決定呼叫方式：
+每條 API 連線依它的供應商與模型名稱決定呼叫方式：
 
 | 供應商 | 模型名稱 | 端點 |
 |---|---|---|
 | `foundry` | 以 `claude-` 開頭 | `{API 位址}/anthropic/v1/messages`，以 `x-api-key` 驗證；API 位址必須是 `*.services.ai.azure.com` |
 | `foundry` | 以 `gpt-`、`o3`、`o4` 開頭（`gpt-oss`、`o3-mini` 除外） | `{API 位址}/openai/v1/responses` |
-| `foundry` | 其他（Kimi、Mistral、Grok、DeepSeek、Llama 等 chat-completion 模型） | `{API 位址}/openai/v1/chat/completions`，不送 `reasoning_effort` |
+| `foundry` | 其他（以 `o1`、`gpt-oss`、`o3-mini` 開頭的模型，以及 Kimi、Mistral、Grok、DeepSeek、Llama 等 chat-completion 模型） | `{API 位址}/openai/v1/chat/completions`；名稱以 `gpt-`、`o1`、`o3`、`o4` 開頭時送 `reasoning_effort`，其他不送 |
 | `anthropic` | 任何 | 官方 `anthropic` SDK（Messages API） |
 | `gemini` | 任何 | `{API 位址}/v1beta/openai/chat/completions` |
 | `openai` | 以 `gpt-6` 開頭 | `{API 位址}/responses` |
@@ -146,11 +146,11 @@ python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().d
 | `CONVERSATION_HISTORY_MESSAGES` | —（必填，≥ 0） | `6` | 提問時從資料庫帶入的前文訊息數（使用者與助理訊息合計，前文一律從使用者訊息開始）；`0` 表示不帶前文 |
 | `WEB_FETCH_ALLOWED_DOMAINS` | —（必填） | `*` | `web_fetch` 可讀取的網域，含子網域，逗號分隔；明確寫 `*` 才表示不限制 |
 | `BLOCK_WEB_TOOLS_AFTER_KB` | —（必填） | `true` | 同一次提問中，知識庫工具回傳過內容後，拒絕之後的 `web_search` 與 `web_fetch` |
-| `OLLAMA_API_KEY` | 空 | 註解範例 | Ollama 官方 Web Search / Web Fetch API 的金鑰。設定後聯網工具優先使用 Ollama API，失敗時改用 DuckDuckGo 或直接抓取；不用於模型呼叫，Ollama Cloud 的金鑰請填在 API 連線 |
+| `OLLAMA_API_KEY` | 空 | 註解範例 | Ollama 官方 Web Search / Web Fetch API 的金鑰。設定後 `web_search` 優先使用 Ollama API，失敗時改用 DuckDuckGo；`web_fetch` 只在 `WEB_FETCH_ALLOWED_DOMAINS` 為 `*` 時優先使用 Ollama API（失敗時改為直接抓取），設定白名單時一律直接抓取。不用於模型呼叫，Ollama Cloud 的金鑰請填在 API 連線 |
 | `OLLAMA_SEARCH_ENDPOINT` | `https://ollama.com/api/web_search` | — | Ollama Web Search 端點 |
 | `OLLAMA_FETCH_ENDPOINT` | `https://ollama.com/api/web_fetch` | — | Ollama Web Fetch 端點 |
 | `DUCKDUCKGO_SEARCH_ENDPOINT` | `https://html.duckduckgo.com/html/` | — | `web_search` 的備援搜尋端點 |
-| `DEFAULT_CONVERSATION_TITLE` | `新對話` | — | 新對話的暫時標題；第一則使用者訊息送出後改為該訊息的前 50 字 |
+| `DEFAULT_CONVERSATION_TITLE` | `新對話` | — | 新對話的暫時標題；第一則使用者訊息送出後改為該訊息的前 50 字，超過 50 字時再加上 `...` |
 
 `WEB_FETCH_ALLOWED_DOMAINS` 的格式規則：
 
@@ -188,7 +188,7 @@ python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().d
 | `FORCE_CPU` | `true` | `true` | 即使有 CUDA 也使用 CPU；CPU 模式的 PyTorch 執行緒數為 min(16, CPU 核心數) |
 | `USE_FP16_QUANTIZATION` | `false` | `false` | 只在 CUDA 上生效：嵌入與重排模型改用 FP16 |
 | `RERANKER_OPENVINO_DEVICE` | 空 | 註解範例 | 重排改用 OpenVINO 執行的裝置（`GPU`、`CPU`，Intel 內顯填 `GPU`）；留空使用 PyTorch。不支援 `NPU`（編譯失敗、無法啟動）。啟用後只載入重排模型的 tokenizer，不載入 PyTorch 模型。首次啟動會把模型轉成 OpenVINO IR，存在 `DATA_DIR/openvino_cache`，約需 10～30 秒，機器忙碌時可能要數分鐘。IR 檔名含模型檔案的指紋，模型更新後會自動重新轉換。每次依實際候選數送出 1～`RERANK_TOP_K` 組。GPU 以 FP16 推論，機率與 PyTorch 相差 0.01 以內、排名相同。Intel Core Ultra 7 155U 實測每 50 組：GPU 約 1.5～2.8 秒（視機器溫度與負載），CPU 約 7.6 秒，PyTorch CPU 約 13 秒。GPU 每遇到一種新的候選數，第一次要多花約 0.3 秒編譯；編譯結果會快取在同一個資料夾，重新啟動後會比較快 |
-| `RERANKER_OPENVINO_MAX_LENGTH` | 空 | 註解範例 | 設定 `RERANKER_OPENVINO_DEVICE` 時必填：每組「查詢 + 片段」的 token 長度，不足補齊、超過截斷；不得大於重排模型的上限（`bge-reranker-base` 為 512），否則啟動失敗 |
+| `RERANKER_OPENVINO_MAX_LENGTH` | 空 | 註解範例 | 設定 `RERANKER_OPENVINO_DEVICE` 時必填（≥ 1）：每組「查詢 + 片段」的 token 長度，不足補齊、超過截斷；不得大於重排模型的上限（`bge-reranker-base` 為 512），否則啟動失敗 |
 | `GPU_BATCH_SIZE` | `128` | `128` | GPU 嵌入批次大小 |
 | `CPU_BATCH_SIZE` | `64` | `32` | CPU 嵌入批次大小 |
 | `USE_FAISS_GPU` | `false` | `false` | FAISS 使用 GPU（需安裝 `faiss-gpu`，初始化失敗時退回 CPU） |
@@ -211,13 +211,13 @@ python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().d
 
 | 變數 | 程式預設值 | 範本值 | 說明 |
 |---|---|---|---|
-| `DATA_DIR` | `data` | `data` | 索引與執行資料的根目錄；jieba 的詞典快取也放在其下的 `jieba_cache/`（不再使用系統暫存目錄） |
+| `DATA_DIR` | `data` | `data` | 索引與執行資料的根目錄；jieba 的詞典快取也放在這個目錄下的 `jieba_cache/`（不再使用系統暫存目錄） |
 | `UPLOAD_DIR` | `data/uploads` | `data/uploads` | 上傳原始檔；重建索引時會優先從這裡重新擷取文字 |
 | `SKILLS_DIR` | —（必填） | `data/skills` | 管理員在「AI 工具」頁上傳的 Agent Skills，每個技能一個子目錄 `SKILLS_DIR/<name>/`；啟動時清除安裝中斷留下的 `.tmp-*`、`.old-*` 目錄 |
 | `FAISS_INDEX_PATH` | `data/faiss_index.bin` | 同左 | FAISS 向量索引（`IndexIDMap2`，以 chunk_id 為 id） |
 | `BM25_INDEX_DIR` | `data/bm25_index` | 同左 | Whoosh BM25 索引目錄（含 `tokenizer_signature.json`） |
 | `METADATA_PATH` | `data/index_metadata.json` | 同左 | 索引中繼資料（JSON），例如最後重建時間 |
-| `MAX_FILE_SIZE_MB` | `50` | `10` | 知識庫單一上傳檔大小上限（MB）；也決定上傳請求的本文上限，見 [資源上限](#資源上限) |
+| `MAX_FILE_SIZE_MB` | `50` | `10` | 知識庫單一上傳檔大小上限（MB）；也決定上傳請求的本文上限，見 [資源上限](#資源上限)。以 `deploy/` 的 Docker Compose 部署時，nginx 只接受 120 MiB 以內的請求本文，此值大於 11 時超過 120 MiB 的上傳會先被 nginx 以 `413` 拒絕，見 [Docker Compose 部署（deploy/.env）](#docker-compose-部署deployenv) |
 | `UPLOADS_WATCHER_INTERVAL` | `30` | `30` | 背景檢查上傳檔是否遺失的間隔秒數；檔案遺失只記一次警告，不會刪除任何資料 |
 
 ## 資料庫
@@ -226,9 +226,9 @@ python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().d
 |---|---|---|---|
 | `DATABASE_URL` | —（必填） | PostgreSQL 範例 | SQLAlchemy 連線字串 |
 | `DB_POOL_SIZE` | `20` | `20` | 連線池大小（PostgreSQL 等非 SQLite 資料庫；SQLite 固定為 5） |
-| `DB_MAX_OVERFLOW` | `40` | `40` | 連線池溢出上限（SQLite 固定為 10） |
+| `DB_MAX_OVERFLOW` | `40` | `40` | 連線池額滿時可再額外建立的連線數（SQLite 固定為 10） |
 | `DB_POOL_RECYCLE` | `3600` | — | 連線回收秒數 |
-| `DB_POOL_PRE_PING` | `true` | — | 取用連線前先檢查（僅非 SQLite） |
+| `DB_POOL_PRE_PING` | `true` | — | 取用連線前先檢查（只用於非 SQLite） |
 | `SQLALCHEMY_ECHO` | `false` | — | 在日誌輸出 SQL |
 
 常見的 `DATABASE_URL`：
@@ -239,7 +239,7 @@ python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().d
 | `backend/docker-compose.yml` 啟動的 PostgreSQL 17 | `postgresql+psycopg2://<POSTGRES_APP_USER>:<POSTGRES_APP_PASSWORD>@localhost:7690/chatbot`（容器只綁定 `127.0.0.1:7690`） |
 | 自行架設的 PostgreSQL | `postgresql+psycopg2://<使用者>:<密碼>@<主機>:5432/<資料庫>`（建議使用非超級使用者，見下節） |
 
-資料表在後端啟動時自動建立，缺少的新欄位（例如 `custom_api_tools.requires_approval`、`mcp_servers.requires_approval`、`users.tokens_valid_after`）也會在啟動時自動補上並回填，以明文存放的舊工具憑證也在啟動時改為加密（見 [工具憑證加密](#工具憑證加密)）。新建立的 SQLite 資料庫中，`users`、`documents` 與 `rag_chunks` 以 `AUTOINCREMENT` 建立，刪除後的 id 不會被重用；既有 SQLite 資料表不會被改寫。`init_db.py` 是為舊版 PostgreSQL 資料庫補欄位與索引的相容腳本，SQLite 不需要執行（其中的 `ADD COLUMN IF NOT EXISTS` 語法 SQLite 不支援）。
+後端啟動時會自動建立資料表、補上並回填缺少的新欄位（例如 `custom_api_tools.requires_approval`、`mcp_servers.requires_approval`、`users.tokens_valid_after`），並把以明文存放的舊工具憑證改為加密（見 [工具憑證加密](#工具憑證加密)）。新建立的 SQLite 資料庫中，`users`、`documents`、`rag_chunks` 與 `llm_connections` 以 `AUTOINCREMENT` 建立，刪除後的 id 不會被重用；既有 SQLite 資料表不會被改寫。`init_db.py` 是為舊版 PostgreSQL 資料庫補欄位與索引的相容腳本，SQLite 不需要執行（SQLite 不支援腳本中的 `ADD COLUMN IF NOT EXISTS` 語法）。
 
 ### PostgreSQL 非超級使用者帳號
 
@@ -253,9 +253,9 @@ python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().d
 
 `DATABASE_URL` 使用 `POSTGRES_APP_USER` 與 `POSTGRES_APP_PASSWORD`（`@`、`:`、`/` 等字元需百分比編碼）。容器埠只對本機回送位址開放，區網與公網都連不到。
 
-建立新的資料卷時，容器依檔名順序執行 `10-init.sql`（`backend/init.sql`，建立資料表）與 `20-app-role.sh`（`backend/init-app-role.sh`）。後者建立 `POSTGRES_APP_USER`（`NOSUPERUSER`、`NOCREATEDB`、`NOCREATEROLE`）並設定密碼，授予資料庫的 `CONNECT` 與 `public` schema 的 `USAGE`、`CREATE`，再把 `public` 中的資料表交給它擁有。後端啟動時自行建立與修改資料表，這些權限就足夠；以非超級使用者連線時，SQL 注入無法以 `COPY ... TO PROGRAM` 執行系統指令或讀取伺服器檔案。
+建立新的 volume 時，容器依檔名順序執行 `10-init.sql`（`backend/init.sql`，建立資料表）與 `20-app-role.sh`（`backend/init-app-role.sh`）。後者建立 `POSTGRES_APP_USER`（`NOSUPERUSER`、`NOCREATEDB`、`NOCREATEROLE`）並設定密碼，授予資料庫的 `CONNECT` 與 `public` schema 的 `USAGE`、`CREATE`，再把 `public` 中的資料表交給它擁有。後端啟動時自行建立與修改資料表，這些權限就足夠；以非超級使用者連線時，SQL 注入無法以 `COPY ... TO PROGRAM` 執行系統指令或讀取伺服器檔案。
 
-初始化腳本只在資料卷第一次建立時執行。使用既有資料卷時，以新的 `docker-compose.yml` 啟動容器後，在 `backend/` 執行一次下列指令，再把 `DATABASE_URL` 改為這組帳號。腳本可以重複執行，每次都會把該帳號的密碼設為容器中的 `POSTGRES_APP_PASSWORD`。
+初始化腳本只在 volume 第一次建立時執行。使用既有 volume 時，以新的 `docker-compose.yml` 啟動容器後，在 `backend/` 執行一次下列指令，再把 `DATABASE_URL` 改為這組帳號。腳本可以重複執行，每次都會把該帳號的密碼設為容器中的 `POSTGRES_APP_PASSWORD`。
 
 ```bash
 docker compose exec postgres bash /docker-entrypoint-initdb.d/20-app-role.sh
@@ -277,7 +277,7 @@ docker compose exec postgres bash /docker-entrypoint-initdb.d/20-app-role.sh
 | `COOKIE_SECURE` | —（必填） | `false` | 重新整理權杖 Cookie 的 `Secure` 屬性，`true` 時瀏覽器只經 HTTPS 送出此 Cookie。以 HTTPS 提供服務時必須設為 `true`，本機以 `http://localhost` 開發時可設為 `false`；不再依 `ENVIRONMENT` 推導 |
 | `COOKIE_SAMESITE` | `lax` | — | 重新整理權杖 Cookie 的 `SameSite` 屬性 |
 
-存取與重新整理權杖一律以 RS256 簽署，沒有其他演算法可選。RSA 金鑰對存放於 `backend/keys/jwt_private.pem` 與 `jwt_public.pem`，首次啟動時若不存在會自動產生（2048 位元，已列入 `.gitignore`；私鑰建立當下即為 `0600`，新建立的 `backend/keys/` 為 `0700`），因此後端帳號需能寫入 `backend/keys/`；金鑰無法載入或產生時，後端在任何 `ENVIRONMENT` 下都拒絕啟動。多台後端共用同一組使用者時，請讓它們使用同一組金鑰。
+存取與重新整理權杖一律以 RS256 簽署，沒有其他演算法可選。RSA 金鑰對存放在 `backend/keys/jwt_private.pem` 與 `jwt_public.pem`，首次啟動時若不存在會自動產生（2048 位元，已列入 `.gitignore`；私鑰建立當下即為 `0600`，新建立的 `backend/keys/` 為 `0700`），因此後端帳號需能寫入 `backend/keys/`；金鑰無法載入或產生時，後端在任何 `ENVIRONMENT` 下都拒絕啟動。多台後端共用同一組使用者時，請讓它們使用同一組金鑰。
 
 每次請求都會把存取權杖對應回資料庫中的帳號：帳號必須存在且啟用，`is_admin` 與角色取自資料庫而非權杖內容，簽發時間早於帳號 `tokens_valid_after` 的權杖一律無效（見 [變更密碼與權杖撤銷](#變更密碼與權杖撤銷)）。重新整理權杖只能使用一次，換發新權杖時舊的立即撤銷。
 
@@ -292,7 +292,7 @@ docker compose exec postgres bash /docker-entrypoint-initdb.d/20-app-role.sh
 
 經由反向代理或 Vite 開發代理連線、又沒有設定 `FORWARDED_ALLOW_IPS` 時，所有使用者共用代理的位址，因此依位址的門檻要設得比依帳號的寬（範本為 `20` 與 `5`）。
 
-計數保存在每個後端行程的記憶體中：後端重新啟動後歸零，多個後端行程之間也不共用，各自計數。追蹤的識別數與位址數有上限（見 [資源上限](#資源上限)），超過時最久沒有新失敗的先淘汰，其失敗紀錄與暫停一併清除。
+計數保存在每個後端行程的記憶體中：後端重新啟動後歸零，多個後端行程之間也不共用，各自計數。追蹤的識別數與位址數有上限（見 [資源上限](#資源上限)），超過時最久沒有新失敗的先淘汰，它的失敗紀錄與暫停一併清除。
 
 ### 註冊與建立帳號
 
@@ -338,12 +338,12 @@ python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().d
 | `DEVTUNNEL_URL` | 空 | 空 | 額外加入 CORS 白名單的一個來源，例如 Dev Tunnels 網址 |
 | `RATE_LIMIT_ENABLED` | `true` | `true` | 是否啟用速率限制 |
 | `RATE_LIMIT_PER_MINUTE` | `60` | `60` | 每個來源 IP 在 60 秒內的請求上限，超過回傳 `429` 與 `Retry-After` |
-| `FORWARDED_ALLOW_IPS` | 空 | 註解範例 `127.0.0.1` | 信任其 `X-Forwarded-For` 的反向代理位址（交給 uvicorn 的 `forwarded_allow_ips`）；未設定時 uvicorn 不處理代理標頭 |
+| `FORWARDED_ALLOW_IPS` | 空 | 註解範例 `127.0.0.1` | 反向代理的位址，後端信任這些位址送來的 `X-Forwarded-For`（交給 uvicorn 的 `forwarded_allow_ips`）；未設定時 uvicorn 不處理代理標頭 |
 
 > [!NOTE]
-> 速率限制與 [登入失敗節流](#登入失敗節流) 的依位址計數都以連線的來源 IP 計算。未設定 `FORWARDED_ALLOW_IPS` 時，用戶端自帶的 `X-Forwarded-For` 一律不採信，經由 Vite 開發代理或反向代理連線的所有使用者來源 IP 相同，會共用同一個額度與同一個登入失敗計數。
+> 速率限制與 [登入失敗節流](#登入失敗節流) 的依位址計數都以連線的來源 IP 計算。未設定 `FORWARDED_ALLOW_IPS` 時，用戶端送來的 `X-Forwarded-For` 一律不採信，經由 Vite 開發代理或反向代理連線的所有使用者來源 IP 相同，會共用同一個額度與同一個登入失敗計數。
 >
-> 只有在後端前方的反向代理會「覆寫」`X-Forwarded-For`（例如 nginx 的 `proxy_set_header X-Forwarded-For $remote_addr;`）時，才把該代理的位址設為 `FORWARDED_ALLOW_IPS`，速率限制與登入失敗節流才會以真實用戶端 IP 計算。Vite 開發代理會原樣轉送用戶端自帶的標頭，**不可**為它設定此值，否則任何人都能偽造來源 IP 繞過速率限制與依位址的登入失敗節流。此設定只在以 `python main.py` 啟動時生效。
+> 只有在後端前方的反向代理會「覆寫」`X-Forwarded-For`（例如 nginx 的 `proxy_set_header X-Forwarded-For $remote_addr;`）時，才把該代理的位址設為 `FORWARDED_ALLOW_IPS`，速率限制與登入失敗節流才會以真實用戶端 IP 計算。Vite 開發代理會原樣轉送用戶端送來的標頭，**不可**為它設定此值，否則任何人都能偽造來源 IP 繞過速率限制與依位址的登入失敗節流。此設定只在以 `python main.py` 啟動時生效。
 
 速率限制在每個後端行程的記憶體中計數，追蹤的位址數有上限（見 [資源上限](#資源上限)）。速率限制超過時一律回傳 `429`，不會以 `403` 拒絕位址（舊版從未被填入的 IP 封鎖名單已移除）。同一個來源 IP 在一個視窗（60 秒）內只在第一次被擋時寫一筆警告（含路徑），視窗結束時再寫一筆被擋次數與各路徑的次數；每個被擋的請求仍會出現在存取日誌（`status=429`）。
 
@@ -361,9 +361,38 @@ python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().d
 
 `HOST`、`PORT`、`RELOAD` 與 `FORWARDED_ALLOW_IPS` 只在以 `python main.py` 啟動時套用；以其他方式啟動（例如直接執行 `uvicorn main:app`）時不會套用，但 `HOST` 與 `RELOAD` 仍是必填。`python main.py` 啟動的 uvicorn 只在設定 `FORWARDED_ALLOW_IPS` 時處理代理標頭（`proxy_headers`），見 [網路存取控制](#網路存取控制)。
 
+### Docker Compose 部署（deploy/.env）
+
+以 `deploy/docker-compose.yml` 部署時，compose 的變數與後端容器的環境變數（`env_file`）都來自 `deploy/.env`，後端容器以 `python main.py` 啟動。逐步說明見 [部署指南](deployment.md)。
+
+`deploy/docker-compose.yml` 不內建任何密碼與網路設定，下列變數缺少任一項時 `docker compose` 拒絕啟動：
+
+| 變數 | 說明 |
+|---|---|
+| `POSTGRES_PASSWORD`、`POSTGRES_APP_USER`、`POSTGRES_APP_PASSWORD` | 同 [PostgreSQL 非超級使用者帳號](#postgresql-非超級使用者帳號) |
+| `WEB_PORT` | 主機上對應到 `web`（nginx）容器 80 埠的連接埠 |
+| `WEB_CONTAINER_IP` | `web` 容器在 compose 網路中的固定 IP |
+| `NETWORK_SUBNET` | compose 網路 `askmiao-net` 的子網路；請選不與公司內網、VPN 或主機上其他 Docker 網路重疊的網段 |
+
+`deploy/gen-env.sh` 產生這份檔案：必須以環境變數提供 `PUBLIC_ORIGIN`、`WEB_PORT`、`NETWORK_SUBNET`、`WEB_CONTAINER_IP`，`deploy/.env` 已存在時拒絕覆寫。腳本複製 `backend/.env.example`，再在檔尾附加下列值：
+
+| 變數 | 寫入的值 |
+|---|---|
+| `HOST` | `0.0.0.0`，讓 nginx 容器連入 |
+| `ENVIRONMENT` | `production`；目前只改變啟動日誌中 CORS 模式的說明文字（`backend/app/middleware.py`） |
+| `COOKIE_SECURE` | `PUBLIC_ORIGIN` 以 `https://` 開頭時為 `true`，否則為 `false` |
+| `TOOL_SECRETS_KEY` | 隨機產生的 Fernet 金鑰 |
+| `POSTGRES_PASSWORD`、`POSTGRES_APP_USER`、`POSTGRES_APP_PASSWORD` | 隨機產生的兩組密碼；帳號為 `askmiao_app` |
+| `DATABASE_URL` | 以上述帳號連到 `postgres:5432` 的 `chatbot` 資料庫 |
+| `ALLOWED_ORIGINS` | `PUBLIC_ORIGIN` |
+| `FORWARDED_ALLOW_IPS` | `WEB_CONTAINER_IP`；容器內的 nginx 以 `X-Forwarded-For: $remote_addr` 覆寫該標頭，速率限制與登入失敗節流因此以真實用戶端 IP 計算 |
+| `WEB_PORT`、`WEB_CONTAINER_IP`、`NETWORK_SUBNET` | 輸入的值 |
+
+容器內的 nginx 只接受 120 MiB 以內的請求本文（`deploy/nginx.conf` 的 `client_max_body_size 120m`）。`MAX_FILE_SIZE_MB` 大於 11 時，後端的文件上傳本文上限（見 [資源上限](#資源上限)）會超過 120 MiB，超過 120 MiB 的上傳先被 nginx 以 `413` 拒絕。
+
 ## 資源上限
 
-下列上限是保護單一後端行程可用性與操作者付費用量的程式常數，**不是** `.env` 設定；集中定義於 [`backend/app/core/limits.py`](../backend/app/core/limits.py)（少數與單一模組綁定的常數定義在該模組中，表中註明）。調整時請修改原始碼並同步更新本節。
+下列上限是保護單一後端行程可用性與操作者付費用量的程式常數，**不是** `.env` 設定；集中定義在 [`backend/app/core/limits.py`](../backend/app/core/limits.py)（少數與單一模組綁定的常數定義在該模組中，表中註明）。調整時請修改原始碼並同步更新本節。
 
 **請求與聊天**
 
@@ -371,7 +400,7 @@ python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().d
 |---|---|---|
 | `MAX_REQUEST_BODY_BYTES` | 1 MiB | 一般 API 請求與所有未帶有效存取權杖的請求本文上限，超過回傳 `413`；`Content-Length` 超過時直接拒絕，分塊傳輸邊讀邊計數 |
 | `MAX_CHAT_REQUEST_BODY_BYTES` | 約 27.7 MiB | `POST /api/chat/send` 的本文上限（附件總量 20 MiB 經 base64 膨脹 4/3 後再加 1 MiB）；只有帶著簽章有效的存取權杖時才放寬，否則仍為 1 MiB |
-| 文件上傳本文上限 | `MAX_FILES_PER_UPLOAD` × `MAX_FILE_SIZE_MB` MiB + 1 MiB | `POST /api/documents/upload` 的本文上限（範本值 `MAX_FILE_SIZE_MB=10` 時為 101 MiB）；只有存取權杖簽章有效且其 `is_admin` 聲明為 `true` 時才放寬，其他請求仍為 1 MiB |
+| 文件上傳本文上限 | `MAX_FILES_PER_UPLOAD` × `MAX_FILE_SIZE_MB` MiB + 1 MiB | `POST /api/documents/upload` 的本文上限（範本值 `MAX_FILE_SIZE_MB=10` 時為 101 MiB）；只有存取權杖簽章有效且 `is_admin` 聲明為 `true` 時才放寬，其他請求仍為 1 MiB。以 `deploy/` 部署時另受 nginx 的 120 MiB 限制，`MAX_FILE_SIZE_MB` 大於 11 時以 nginx 為準 |
 | `MAX_FILES_PER_UPLOAD` | 10 | 單次上傳的檔案數 |
 | `MAX_FILENAME_BYTES` | 255 位元組 | 上傳檔名以 UTF-8 計算的長度（Linux 檔案系統的檔名上限），超過時該檔回報 `400` |
 | `MAX_CHAT_MESSAGE_CHARS` | 20,000 字元 | 單則聊天訊息長度，超過回傳 `422` |
@@ -392,19 +421,41 @@ python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().d
 | `MAX_TOOL_RESULT_CHARS` | 20,000 字元 | 每次工具呼叫的結果放進模型脈絡前的上限，超過的部分截斷 |
 | `MAX_TOOL_NAME_CHARS` | 64 字元 | 交給模型的工具函式名稱長度（OpenAI 等供應商的上限）；由 OpenAPI operationId 或 MCP 產生的名稱超過時截斷並加上 8 碼雜湊，手動建立或匯入的名稱超過時回傳 `400` |
 | `MAX_OPENAPI_SCHEMA_REFS` | 200 | 解析 OpenAPI 規格時，每個參數或請求主體 schema 最多展開的 `$ref` 數；超過的參照與循環參照改以只含說明的物件 schema 取代 |
+| `MAX_OPENAPI_SCHEMA_DEPTH` | 32 | 解析 OpenAPI 規格時，參數或請求主體 schema 展開的巢狀層數（`$ref`、`properties`、`items`、`allOf` 等每進一層計一次）；更深的部分改以只含說明的物件 schema 取代 |
+| `MAX_OPENAPI_DOCUMENT_BYTES` | 10 MiB | 匯入時每份文件的大小：規格（含 Arazzo）、Overlay、Overlay 指向的規格、Arazzo 的 `sourceDescriptions` 與外部參照文件，貼上的內容與從網址取得的都適用 |
+| `MAX_OPENAPI_EXTERNAL_DOCUMENTS`、`MAX_OPENAPI_TOTAL_BYTES` | 20 份、30 MiB | 解析外部 `$ref` 時最多下載的外部參照文件數，以及規格與外部參照文件的合計大小；超過時其餘文件不載入，改列在警告中 |
+| `OPENAPI_FETCH_TIMEOUT_SECONDS`、`OPENAPI_FETCH_MAX_REDIRECTS` | 15 秒、5 次 | 從網址取得上述文件的逾時與轉址次數，每一跳都重新做 SSRF 檢查 |
+| `MAX_OVERLAY_ACTIONS`（`services/openapi_overlay.py`） | 500 | 單份 Overlay 的 `actions` 數，超過回傳 `400` |
+| `MAX_JSONPATH_CHARS`、`MAX_JSONPATH_NODES`（`services/jsonpath.py`） | 2,000 字元、100,000 個 | Overlay 與 Arazzo 工作流程中 JSONPath 運算式的長度，以及單次查詢走訪的節點數，超過即失敗 |
+| `MAX_ARAZZO_STEP_RUNS`、`MAX_ARAZZO_WORKFLOW_SECONDS` | 50 次、300 秒 | 一次 Arazzo 工作流程工具呼叫執行的步驟總數（含 `retry`、`goto` 與巢狀工作流程）與總時限，超過即失敗，避免 `goto` 或 `retry` 形成迴圈 |
+| `MAX_ARAZZO_RETRY_AFTER_SECONDS` | 30 秒 | `retry` 動作每次等待的上限（`retryAfter`，或回應中以秒數表示的 `Retry-After`），也不超過剩餘時限 |
+| `MAX_ARAZZO_NESTED_WORKFLOWS` | 5 層 | 工作流程以 `dependsOn`、步驟或動作的 `workflowId` 呼叫其他工作流程的巢狀層數 |
+| `MAX_REGEX_CONTEXT_CHARS`（`services/arazzo.py`） | 20,000 字元 | Arazzo `successCriteria` 的 regex 條件只比對內容的前這麼多字元 |
 | `MAX_KB_CATALOG_CHARS` | 4,000 字元 | `search_knowledge_base` 工具說明中文件目錄（檔名與摘要）的長度；每次呼叫模型都會送出，超過時只列出前面的文件並告知其餘份數 |
 | `MAX_MCP_CATALOG_CHARS` | 8,000 字元 | `read_mcp_resource`、`get_mcp_prompt` 工具說明中各自列出的 MCP resources 或 prompts 清單長度；放不下的伺服器不列出並寫入警告日誌 |
-| `MAX_TEXT_CLEANUP_CHARS` | 2,000,000 字元 | `web_fetch` 抽取文字前先截斷 HTML 的長度 |
+| `MAX_TEXT_CLEANUP_CHARS` | 2,000,000 字元 | `web_fetch` 抽取文字前，以及 `web_search` 解析 DuckDuckGo 結果頁前，先截斷 HTML 的長度 |
+| 聯網工具的逾時（`rag/tools.py`） | 15 秒、12 秒 | 呼叫 Ollama Web Search／Web Fetch API 的逾時，以及 `web_search` 改用 DuckDuckGo 時的逾時 |
+| `web_fetch` 直接抓取（`rag/tools.py`） | 12 秒、5 次、5 MiB、3,500 字元 | 直接抓取網頁的逾時、轉址次數（每一跳都重新做 SSRF 檢查並比對 `WEB_FETCH_ALLOWED_DOMAINS`）與回應大小；回傳的內文（含經 Ollama Web Fetch 取得的）截斷為 3,500 字元 |
 | `MAX_DATE_RANGE_CHARS`、`MAX_TARGET_DATES`、`MAX_FILTER_RECORDS`（`rag/tools.py`） | 200 字元、93 天、50 筆 | `filter_and_count_records` 的 `date_range` 長度、展開後的日期數與回傳筆數（`limit` 超過時夾到 50） |
 | `MAX_API_TOOL_RESPONSE_BYTES`（`api/api_tools.py`） | 1 MiB | 自訂 API 工具的回應本文上限，超過即中止讀取並回傳 `502` |
+| `MAX_API_TOOL_TEXT_CHARS`（`api/api_tools.py`） | 4,000 字元 | 自訂 API 工具的回應不是 JSON（`Content-Type` 不含 `application/json`，或內容無法解析）時，回傳給模型的文字長度 |
 | `MAX_API_TOOL_REDIRECTS`（`api/api_tools.py`）、`MAX_MCP_HTTP_REDIRECTS`（`services/mcp_service.py`） | 5 次、5 次 | 自訂 API 工具與 HTTP MCP 手動跟隨轉址的次數上限：轉址回應的本文不讀取，每一跳都重新做 SSRF 檢查；HTTP MCP 與自訂 API 工具的 `GET`、`HEAD`、`OPTIONS` 以外的方法只跟隨同一來源的轉址，自訂 API 工具的 `GET`、`HEAD`、`OPTIONS` 轉址到其他來源時不轉送憑證標頭。整個呼叫（含轉址）另以該工具或伺服器的 `timeout` 設定為總時限，自訂 API 工具逾時回傳 `504` |
+| `MAX_OAUTH_RESPONSE_BYTES`、`OAUTH_TIMEOUT_SECONDS`、`OAUTH_MAX_REDIRECTS`（`services/oauth_client.py`） | 256 KiB、15 秒、3 次 | OAuth 請求（自訂 API 工具的 OAuth2 client credentials 權杖端點，MCP OAuth 的中繼資料、用戶端註冊與權杖端點）的回應大小、整個請求（含轉址）的時限，以及只跟隨同一來源轉址的次數；連線一律經 SSRF 驗證 |
+| `MAX_CACHED_TOKENS`（`services/oauth_client.py`） | 1,000 | 行程內快取的 OAuth2 client credentials 權杖數，滿了以後整個清空 |
 | `MAX_MCP_HTTP_RESPONSE_BYTES`（`services/mcp_service.py`） | 4 MiB | HTTP 傳輸 MCP 伺服器的單次回應上限 |
 | `MAX_MCP_STDIO_LINE_BYTES`（`services/mcp_service.py`） | 4 MiB | `stdio` MCP 子行程單行 JSON-RPC 訊息的上限，與 HTTP 回應上限相同 |
 | `MCP_STDERR_TAIL_BYTES`（`services/mcp_service.py`） | 2,048 位元組 | `stdio` 子行程的 stderr 持續讀出（避免管線寫滿而卡住），只保留最後這麼多位元組，子行程異常結束時寫入伺服器日誌 |
 | `MAX_CONCURRENT_STDIO_PROCESSES`（`services/mcp_service.py`） | 4 | 同時存在的 `stdio` MCP 子行程數；等待空位最多到該伺服器的 `timeout` 設定，逾時即失敗 |
+| `MCP_DISCOVER_PROBE_TIMEOUT_SECONDS`（`services/mcp_service.py`） | 5 秒 | 連線時以 `server/discover` 協商新版協定的等待時間（不超過伺服器的 `timeout`），逾時改用舊版的 `initialize` |
+| `MAX_MCP_ERROR_BODY_BYTES`（`services/mcp_service.py`） | 64 KiB | HTTP MCP 回應不是 `200` 時，讀取本文以取出 JSON-RPC 錯誤的上限，超過時不解析 |
+| `MAX_MCP_TOOL_PAGES`（`services/mcp_service.py`） | 50 頁 | `tools/list`、`resources/list`、`prompts/list` 依 `nextCursor` 分頁讀取的頁數，超過即失敗 |
+| `MAX_MCP_CATALOG_ITEMS`、`MAX_MCP_URI_CHARS`、`MAX_MCP_CATALOG_DESCRIPTION_CHARS`（`services/mcp_service.py`） | 200 個、2,048 字元、500 字元 | 每個伺服器的 resources 與 prompts 各只取前 200 個；URI 超過 2,048 字元的 resource 略過；resource、prompt 與 prompt 參數的說明截斷為 500 字元 |
+| `AUTHORIZATION_STATE_TTL_SECONDS`、`MAX_PENDING_AUTHORIZATIONS`（`services/mcp_oauth.py`） | 600 秒、1,000 個 | MCP OAuth 授權從開始到回呼的時限，以及行程內同時保留的待完成授權數（滿了以後先淘汰最早開始的） |
+| `PROBE_TIMEOUT_SECONDS`（`services/mcp_oauth.py`） | 15 秒 | 開始 MCP OAuth 授權時，向 MCP 伺服器探測 `WWW-Authenticate` 的逾時 |
 | `APPROVAL_TIMEOUT_SECONDS`（`rag/tool_approval.py`） | 300 秒 | 等待使用者核准工具呼叫的時間，逾時視為拒絕 |
-| `DNS_RESOLVE_TIMEOUT_SECONDS`、`DNS_RESOLVER_MAX_WORKERS`（`core/ssrf_protection.py`） | 5 秒；8 條與 4 條執行緒 | SSRF 驗證的 DNS 查詢在兩個專用執行緒池中進行：`web_fetch` 的使用者網址用 8 條（`DnsPool.USER_URL`），自訂 API 工具、HTTP MCP 與 OpenAPI 規格網址用 4 條（`DnsPool.CONFIGURED_ENDPOINT`），慢速網域占滿前者時不影響後者；逾時視為無法解析 |
+| `DNS_RESOLVE_TIMEOUT_SECONDS`、`DNS_RESOLVER_MAX_WORKERS`（`core/ssrf_protection.py`） | 5 秒；8 條與 4 條執行緒 | SSRF 驗證在兩個專用執行緒池中查詢 DNS：`web_fetch` 的使用者網址用 8 條（`DnsPool.USER_URL`），自訂 API 工具、HTTP MCP 與 OpenAPI 規格網址用 4 條（`DnsPool.CONFIGURED_ENDPOINT`），慢速網域占滿前者時不影響後者；逾時視為無法解析 |
 | `LLM_POOL_ACQUIRE_TIMEOUT_SECONDS`（`core/llm_client.py`） | 15 秒 | 等待 LLM 連線池名額的上限，與 `LLM_TIMEOUT` 分開，池被占滿時很快失敗 |
+| `MAX_DISCOVERED_MODELS` | 500 | 「從 API 取得模型」回傳的模型數，依名稱排序後取前 500 個 |
 
 **文件解析**
 
@@ -437,10 +488,11 @@ OOXML 的檢查在解析前進行，依 ZIP 成員宣告的大小計算。python
 | `MAX_SKILL_FILES` | 500 | 單一技能的檔案數；上傳資料夾時逐一套用在每個技能 |
 | `MAX_SKILL_FOLDER_FILES` | 1000 | 一次上傳資料夾（`POST /api/skills/upload-folder`）的檔案數，含會被略過的 `.git` 等檔案 |
 | `MAX_SKILL_MD_BYTES` | 256 KiB | `SKILL.md` 的大小 |
+| `MAX_SKILL_NAME_CHARS`、`MAX_SKILL_DESCRIPTION_CHARS`、`MAX_SKILL_COMPATIBILITY_CHARS`（`services/agent_skills.py`） | 64、1,024、500 字元 | `SKILL.md` 的 `name`、`description`、`compatibility` 長度；`name` 超過時拒絕安裝，其他兩項超過時只加上警告 |
 | `MAX_SKILL_RESOURCE_LISTING` | 100 | 啟用技能時列給模型的檔案數 |
 | `MAX_SKILL_RESOURCE_CHARS` | 20,000 字元 | 啟用技能時回傳的 `SKILL.md` 內文與每次 `read_skill_resource` 的結果，超過的部分截斷 |
 | `MAX_SKILL_CATALOG_CHARS` | 8,000 字元 | `activate_skill` 工具說明中技能目錄（名稱與描述）的長度；放不下的技能不列出並寫入警告日誌 |
-| `MAX_SKILL_SCRIPT_SECONDS` | 60 秒 | `run_skill_script` 每次執行的時限，逾時終止整個程序群組，結果的 `timed_out` 為 `true` |
+| `MAX_SKILL_SCRIPT_SECONDS` | 60 秒 | `run_skill_script` 每次執行的時限，逾時終止整個行程群組，結果的 `timed_out` 為 `true` |
 | `MAX_SKILL_SCRIPT_OUTPUT_CHARS` | 20,000 字元 | 腳本的 `stdout` 與 `stderr` 各自保留的長度，超過時截斷並設 `output_truncated` |
 | `MAX_SKILL_SCRIPT_ARGS`、`MAX_SKILL_SCRIPT_ARG_CHARS` | 20 個、1,000 字元 | 腳本命令列參數的個數與每個參數的長度，超過時不執行 |
 | `MAX_SKILL_SCRIPT_STDIN_CHARS` | 100,000 字元 | 傳給腳本標準輸入的長度，超過的部分截斷 |
@@ -480,7 +532,7 @@ OOXML 的檢查在解析前進行，依 ZIP 成員宣告的大小計算。python
 
 ## 領域設定檔
 
-`DOMAIN_PROFILE_PATH` 指向的 JSON 檔（預設 `backend/config/domain_profile.json`）收納部署領域專屬的資料，啟動時以嚴格格式驗證：缺少欄位、多出未知欄位或出現空字串都會讓後端無法啟動。
+`DOMAIN_PROFILE_PATH`（必填）指向的 JSON 檔（範本值 `config/domain_profile.json`，即 `backend/config/domain_profile.json`）收納部署領域專屬的資料，啟動時以嚴格格式驗證：缺少欄位、多出未知欄位或出現空字串都會讓後端無法啟動。
 
 ```json
 {
@@ -546,8 +598,8 @@ python scripts/evaluate_retrieval.py --corpus eval/corpus --golden eval/corpus_g
 
 | 變數 | 未設定時 | 說明 |
 |---|---|---|
-| `VITE_API_BASE` | `/api` | API 位址。設為絕對網址（例如 `http://localhost:8001`）時，瀏覽器直接呼叫後端，後端的 `ALLOWED_ORIGINS` 必須包含前端來源；此值同時是 Vite `/api` 代理的目標。路徑結尾會自動補上 `/api`。建置時其來源會寫入 CSP 的 `connect-src`，變更後需要重新建置 |
-| `VITE_API_URL` | — | `VITE_API_BASE` 未設定時才使用，格式相同；為絕對網址時，其來源同樣在建置時寫入 `connect-src` |
+| `VITE_API_BASE` | `/api` | API 位址。設為絕對網址（例如 `http://localhost:8001`）時，瀏覽器直接呼叫後端，後端的 `ALLOWED_ORIGINS` 必須包含前端來源；此值同時是 Vite `/api` 代理的目標。路徑結尾會自動補上 `/api`。它的來源會在建置時寫入 CSP 的 `connect-src`，變更後需要重新建置。主機名稱含 `devtunnels.ms` 時，請求網址與寫入 `connect-src` 的來源都會去掉連接埠（`frontend/src/services/api.ts`、`frontend/vite.config.js`） |
+| `VITE_API_URL` | — | `VITE_API_BASE` 未設定時才使用，格式相同；為絕對網址時，它的來源同樣在建置時寫入 `connect-src` |
 | `PORT` | `3000` | Vite 開發伺服器埠號（`bun run preview` 固定為 3000） |
 | `GENERATE_SOURCEMAP` | 輸出 | 建置時是否輸出 source map，設為 `false` 才關閉 |
 
@@ -557,6 +609,6 @@ Vite 開發與預覽伺服器固定只監聽 `localhost`（`frontend/vite.config
 
 ### 建置時的 CSP
 
-`bun run build` 把 CSP 以 `<meta http-equiv="Content-Security-Policy">` 寫入 `index.html`（`frontend/vite.config.js`；開發伺服器需要內嵌的 HMR 腳本，因此只在建置時套用）：`default-src 'self'`；腳本與樣式只允許同源檔案，以及 `index.html` 內嵌腳本與樣式（反框架守衛、主題初始化）的 SHA-256 雜湊；圖片只允許 `'self'`、`data:` 與 `blob:`；`connect-src` 為 `'self'` 加上 `VITE_API_BASE`、`VITE_API_URL` 中絕對網址的來源；另有 `object-src 'none'`、`base-uri 'none'` 與 `form-action 'self'`。網頁伺服器沒有設定 CSP 時，被注入的 HTML 也無法執行腳本。
+`bun run build` 把 CSP 以 `<meta http-equiv="Content-Security-Policy">` 寫入 `index.html`（`frontend/vite.config.js`；開發伺服器需要內嵌的 HMR 腳本，因此只在建置時套用）：`default-src 'self'`；腳本與樣式只允許同源檔案，以及 `index.html` 內嵌腳本與樣式（反框架守衛、主題初始化）的 SHA-256 雜湊；圖片只允許 `'self'`、`data:` 與 `blob:`；`connect-src` 為 `'self'` 加上 `VITE_API_BASE`、`VITE_API_URL` 中絕對網址的來源（主機名稱含 `devtunnels.ms` 時去掉連接埠）；另有 `object-src 'none'`、`base-uri 'none'` 與 `form-action 'self'`。網頁伺服器沒有設定 CSP 時，被注入的 HTML 也無法執行腳本。
 
 `<meta>` 無法設定 `frame-ancestors`，因此提供建置產物的網頁伺服器仍要送出反框架標頭（`X-Frame-Options: DENY` 或 `Content-Security-Policy: frame-ancestors 'none'`）。

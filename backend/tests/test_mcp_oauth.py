@@ -3,24 +3,19 @@ import json
 import time
 from unittest.mock import AsyncMock, patch
 from urllib.parse import parse_qs, urlparse
-
 import httpx
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-
 from app.api import mcp
 from app.core.jwt_auth import get_current_user_from_token
 from app.core.tool_secrets import decrypt_json, encrypt_json
 from app.models import McpServer
 from app.models.database import SessionLocal
-
 PUBLIC_IP = ipaddress.ip_address("93.184.216.34")
 ADMIN_USER = {"user_id": 1, "username": "admin", "email": "admin@example.com", "role": "admin", "is_admin": True}
 SERVER_NAME = "oauth_test_server"
 MCP_URL = "https://mcp.example.com/mcp"
-
-
 class FakeServers:
     def __init__(self, registration=True):
         self.registration = registration
@@ -35,7 +30,6 @@ class FakeServers:
         self.metadata_document = False
         self.challenge_scope = None
         self.insufficient_scope = None
-
     def handle(self, request):
         host = request.headers["host"]
         path = request.url.path
@@ -84,22 +78,16 @@ class FakeServers:
             self.issued += 1
             return httpx.Response(200, json={"access_token": f"access-{self.issued}", "refresh_token": f"refresh-{self.issued}", "expires_in": 3600}, request=request)
         return httpx.Response(404, request=request)
-
-
 @pytest.fixture
 def fake(monkeypatch):
     servers = FakeServers()
-
     async def fake_send(self, request):
         await request.aread()
         return servers.handle(request)
-
     monkeypatch.setattr(httpx.AsyncHTTPTransport, "handle_async_request", fake_send)
     with patch("app.core.ssrf_protection.resolve_hostname", new_callable=AsyncMock) as mock_dns:
         mock_dns.return_value = [PUBLIC_IP]
         yield servers
-
-
 @pytest.fixture
 def client(existing_users):
     existing_users(ADMIN_USER)
@@ -116,16 +104,12 @@ def client(existing_users):
     db.query(McpServer).filter(McpServer.name == SERVER_NAME).delete()
     db.commit()
     db.close()
-
-
 def create_server(client, **extra):
     response = client.post("/api/mcp/servers", json={
         "name": SERVER_NAME, "display_name": "OAuth 測試", "transport_type": "http", "url": MCP_URL, **extra,
     })
     assert response.status_code == 200, response.text
     return response.json()["server"]
-
-
 def authorize(client):
     server = create_server(client)
     assert server["status"] == "error"
@@ -135,8 +119,6 @@ def authorize(client):
     url = urlparse(start.json()["authorization_url"])
     params = {k: v[0] for k, v in parse_qs(url.query).items()}
     return server, url, params
-
-
 def test_full_authorization_code_flow(fake, client):
     server, url, params = authorize(client)
     assert f"{url.scheme}://{url.netloc}{url.path}" == "https://auth.example.com/authorize"
@@ -146,27 +128,21 @@ def test_full_authorization_code_flow(fake, client):
     assert params["resource"] == MCP_URL
     assert params["scope"] == "mcp"
     assert params["redirect_uri"] == "https://testserver/api/mcp/oauth/callback"
-
     page = client.get("/api/mcp/oauth/callback", params={"state": params["state"], "code": "the-code"})
     assert page.status_code == 200 and "授權完成" in page.text
     exchange = fake.token_requests[0]
     assert exchange["grant_type"] == ["authorization_code"] and exchange["code"] == ["the-code"]
     assert len(exchange["code_verifier"][0]) >= 43 and exchange["resource"] == [MCP_URL]
-
     replay = client.get("/api/mcp/oauth/callback", params={"state": params["state"], "code": "the-code"})
     assert replay.status_code == 400
-
     listed = client.get("/api/mcp/servers").json()["servers"]
     stored = next(s for s in listed if s["name"] == SERVER_NAME)
     assert stored["oauth_authorized"] is True
     assert "access-1" not in json.dumps(listed)
-
     discovered = client.post(f"/api/mcp/servers/{server['id']}/discover")
     assert discovered.status_code == 200, discovered.text
     assert [t["name"] for t in discovered.json()["tools"]] == ["secure_tool"]
     assert fake.mcp_auth[-1] == "Bearer access-1"
-
-
 def test_expired_token_is_refreshed_before_use(fake, client):
     server, _, params = authorize(client)
     client.get("/api/mcp/oauth/callback", params={"state": params["state"], "code": "c"})
@@ -181,8 +157,6 @@ def test_expired_token_is_refreshed_before_use(fake, client):
     assert fake.token_requests[-1]["grant_type"] == ["refresh_token"]
     assert fake.token_requests[-1]["refresh_token"] == ["refresh-1"]
     assert fake.mcp_auth[-1] == "Bearer access-2"
-
-
 def test_rejected_or_unknown_callback_does_not_store_tokens(fake, client):
     server, _, params = authorize(client)
     denied = client.get("/api/mcp/oauth/callback", params={"state": params["state"], "error": "access_denied"})
@@ -191,8 +165,6 @@ def test_rejected_or_unknown_callback_does_not_store_tokens(fake, client):
     assert fake.token_requests == []
     with SessionLocal() as db:
         assert db.get(McpServer, server["id"]).oauth_tokens is None
-
-
 def test_admin_client_is_used_without_registration(fake, client):
     fake.registration = False
     server = create_server(client, oauth_client={"client_id": "admin-client", "client_secret": "admin-secret", "scope": "read"})
@@ -201,7 +173,6 @@ def test_admin_client_is_used_without_registration(fake, client):
     assert params["client_id"] == "admin-client" and params["scope"] == "read"
     client.get("/api/mcp/oauth/callback", params={"state": params["state"], "code": "c"})
     assert fake.token_requests[0]["code"] == ["c"]
-
     edited = client.put(f"/api/mcp/servers/{server['id']}", json={
         "display_name": "改名", "oauth_client": {"client_id": "admin-client", "client_secret": "••••••••", "scope": "read"},
     })
@@ -210,20 +181,15 @@ def test_admin_client_is_used_without_registration(fake, client):
         "oauth_client": {"client_id": "other-client", "client_secret": "••••••••", "scope": "read"},
     })
     assert changed.json()["server"]["oauth_authorized"] is False
-
     revoked = client.delete(f"/api/mcp/servers/{server['id']}/oauth")
     assert revoked.json()["server"]["oauth_authorized"] is False
-
-
 def test_url_change_registers_a_new_client(fake, client):
     registrations = []
     handle = fake.handle
-
     def counting(request):
         if request.url.path == "/register":
             registrations.append(request)
         return handle(request)
-
     fake.handle = counting
     server, _, params = authorize(client)
     assert params["client_id"] == "registered-client-1"
@@ -234,8 +200,6 @@ def test_url_change_registers_a_new_client(fake, client):
         assert db.get(McpServer, server["id"]).oauth_config is None
     assert client.post(f"/api/mcp/servers/{server['id']}/oauth/start").status_code == 200
     assert len(registrations) == 2
-
-
 def test_url_change_keeps_the_admin_client(fake, client):
     fake.registration = False
     server = create_server(client, oauth_client={"client_id": "admin-client", "client_secret": "admin-secret", "scope": "read"})
@@ -243,16 +207,12 @@ def test_url_change_keeps_the_admin_client(fake, client):
     assert edited.json()["server"]["oauth_client"]["client_id"] == "admin-client"
     params = {k: v[0] for k, v in parse_qs(urlparse(client.post(f"/api/mcp/servers/{server['id']}/oauth/start").json()["authorization_url"]).query).items()}
     assert params["client_id"] == "admin-client"
-
-
 def test_missing_client_without_registration_is_reported(fake, client):
     fake.registration = False
     server = create_server(client)
     response = client.post(f"/api/mcp/servers/{server['id']}/oauth/start")
     assert response.status_code == 400
     assert "client_id" in response.json()["detail"]
-
-
 def test_callback_validates_the_issuer_when_the_server_advertises_it(fake, client):
     fake.iss_supported = True
     _, _, params = authorize(client)
@@ -265,23 +225,17 @@ def test_callback_validates_the_issuer_when_the_server_advertises_it(fake, clien
     accepted = client.get("/api/mcp/oauth/callback", params={"state": params["state"], "code": "c", "iss": "https://auth.example.com"})
     assert accepted.status_code == 200
     assert len(fake.token_requests) == 1
-
-
 def test_present_issuer_is_compared_even_without_advertisement(fake, client):
     _, _, params = authorize(client)
     mismatch = client.get("/api/mcp/oauth/callback", params={"state": params["state"], "code": "c", "iss": "https://evil.example.com"})
     assert mismatch.status_code == 400
     assert fake.token_requests == []
-
-
 def authorize_again(client):
     server = next(s for s in client.get("/api/mcp/servers").json()["servers"] if s["name"] == SERVER_NAME)
     start = client.post(f"/api/mcp/servers/{server['id']}/oauth/start")
     assert start.status_code == 200, start.text
     url = urlparse(start.json()["authorization_url"])
     return server, url, {k: v[0] for k, v in parse_qs(url.query).items()}
-
-
 @pytest.mark.parametrize("change", ["no_pkce", "issuer_mismatch"])
 def test_unsafe_authorization_server_metadata_is_refused(fake, client, change):
     if change == "no_pkce":
@@ -292,8 +246,6 @@ def test_unsafe_authorization_server_metadata_is_refused(fake, client, change):
     response = client.post(f"/api/mcp/servers/{server['id']}/oauth/start")
     assert response.status_code == 400
     assert fake.registrations == []
-
-
 def test_client_id_metadata_document_is_preferred_over_registration(fake, client):
     fake.metadata_document = True
     _, _, params = authorize(client)
@@ -303,14 +255,10 @@ def test_client_id_metadata_document_is_preferred_over_registration(fake, client
     assert document["client_id"] == params["client_id"]
     assert document["redirect_uris"] == [params["redirect_uri"]]
     assert document["token_endpoint_auth_method"] == "none"
-
-
 def test_challenged_scope_is_requested_instead_of_scopes_supported(fake, client):
     fake.challenge_scope = "files:read"
     _, _, params = authorize(client)
     assert params["scope"] == "files:read"
-
-
 def test_plain_http_redirect_uri_is_refused(fake, existing_users):
     existing_users(ADMIN_USER)
     app = FastAPI()
@@ -331,8 +279,6 @@ def test_plain_http_redirect_uri_is_refused(fake, existing_users):
         db.query(McpServer).filter(McpServer.name == SERVER_NAME).delete()
         db.commit()
         db.close()
-
-
 def test_insufficient_scope_requests_step_up_authorization(fake, client):
     server, _, params = authorize(client)
     client.get("/api/mcp/oauth/callback", params={"state": params["state"], "code": "c"})
@@ -343,8 +289,6 @@ def test_insufficient_scope_requests_step_up_authorization(fake, client):
     assert "額外的 OAuth 權限" in listed["last_error"]
     _, _, params = authorize_again(client)
     assert params["scope"] == "mcp files:write"
-
-
 def test_registered_client_is_replaced_when_the_authorization_server_changes(fake, client):
     server, _, params = authorize(client)
     client.get("/api/mcp/oauth/callback", params={"state": params["state"], "code": "c"})
@@ -354,8 +298,6 @@ def test_registered_client_is_replaced_when_the_authorization_server_changes(fak
     assert params["client_id"] == "registered-client-2"
     with SessionLocal() as db:
         assert db.get(McpServer, server["id"]).oauth_tokens is None
-
-
 def test_admin_client_is_not_reused_with_another_authorization_server(fake, client):
     fake.registration = False
     server = create_server(client, oauth_client={"client_id": "admin-client", "client_secret": "admin-secret", "scope": "read"})

@@ -2,7 +2,6 @@ import { useState, useEffect } from 'react';
 import { Snackbar, Alert } from './ui';
 import networkMonitor from '../utils/networkMonitor';
 const NetworkStatus = () => {
-  // offline：目前離線；restored：剛從離線恢復。一開始就在線上時不顯示任何提示
   const [status, setStatus] = useState(null);
   useEffect(() => {
     let wasOffline = false;

@@ -11,14 +11,12 @@ export interface TooltipProps {
   className?: string;
   arrow?: boolean;
 }
-// 以 portal + fixed 定位繪製，避免被捲動容器裁切或撐出捲軸
 export const Tooltip: React.FC<TooltipProps> = ({
   title,
   placement = 'top',
   children,
   className = '',
 }) => {
-  // 顯示中時存放渲染位置：位於模態 <dialog> 內要渲染在 dialog 裡，否則會被頂層 (top layer) 蓋住
   const [portalTarget, setPortalTarget] = useState<HTMLElement | null>(null);
   const wrapperRef = useRef<HTMLSpanElement>(null);
   const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -51,7 +49,6 @@ export const Tooltip: React.FC<TooltipProps> = ({
     if (timeoutRef.current) clearTimeout(timeoutRef.current);
     setPortalTarget(null);
   };
-  // 提示框掛上 DOM 後依實際尺寸定位並限制在視窗內
   const positionTooltip = (tooltip: HTMLDivElement | null) => {
     const wrapper = wrapperRef.current;
     if (!tooltip || !wrapper) return;
@@ -75,7 +72,6 @@ export const Tooltip: React.FC<TooltipProps> = ({
     tooltip.style.left = `${left}px`;
     tooltip.classList.add(styles.visible);
   };
-  // 子元素的名稱已與提示相同時不再重複描述
   const childProps = children.props as { 'aria-label'?: string };
   const describes = typeof title === 'string' && childProps['aria-label'] !== title;
   const child = describes

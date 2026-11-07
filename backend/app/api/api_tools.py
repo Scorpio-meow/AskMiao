@@ -47,16 +47,12 @@ from app.core.tool_secrets import (
     merge_masked,
 )
 logger = logging.getLogger(__name__)
-# 自訂 API 工具是所有使用者的 Agent 共用的全域設定，回應中也含 API 金鑰等憑證，
-# 因此整個模組（含查詢）只開放管理員
 router = APIRouter()
 def _serialize_tool_model(tool: CustomApiTool) -> Dict[str, Any]:
-    """將資料庫 CustomApiTool 模型轉換為 Dict（含解密後的憑證，只供執行工具使用，不可直接回傳給用戶端）"""
     headers = decrypt_json(tool.headers)
     auth_config = decrypt_json(tool.auth_config)
     return _tool_fields(tool, headers, auth_config)
 def _tool_response(tool: CustomApiTool) -> Dict[str, Any]:
-    """管理 API 回應用：憑證以遮蔽字樣取代；更新時送回遮蔽字樣的欄位沿用原值"""
     headers, headers_unreadable = decrypt_for_display(tool.headers)
     auth_config, auth_unreadable = decrypt_for_display(tool.auth_config)
     fields = _tool_fields(tool, mask(headers, is_secret_header), mask(auth_config, is_secret_auth_key))
@@ -120,7 +116,6 @@ def _tool_fields(tool: CustomApiTool, headers: Optional[Dict[str, Any]], auth_co
         "created_at": tool.created_at,
         "updated_at": tool.updated_at,
     }
-# 回應本文上限：超過即中止讀取，避免單一上游回應耗盡後端行程記憶體或灌爆模型脈絡
 MAX_API_TOOL_RESPONSE_BYTES = 1024 * 1024
 MAX_API_TOOL_TEXT_CHARS = 4000
 MAX_API_TOOL_REDIRECTS = 5
@@ -129,14 +124,9 @@ MIN_SECRET_LENGTH = 4
 JSON_CONTENT_TYPE = "application/json"
 BODYLESS_METHODS = ("GET", "HEAD", "OPTIONS", "TRACE")
 RESERVED_HEADER_NAMES = ("authorization", "content-type", "accept", "cookie", "host", "content-length")
-
-
 class ApiToolResponseTooLarge(ValueError):
     pass
-
-
 def _collect_secrets(headers: Dict[str, str], auth_type: str, auth_config: Dict[str, Any]) -> Set[str]:
-    """收集本次請求實際注入的憑證值，供遮蔽回應與網址"""
     secrets: Set[str] = set()
     for name, value in headers.items():
         if name.lower() not in NON_SECRET_HEADER_NAMES and value:
@@ -153,10 +143,7 @@ def _collect_secrets(headers: Dict[str, str], auth_type: str, auth_config: Dict[
     elif auth_type == OAUTH2_CLIENT_CREDENTIALS and auth_config.get("client_secret"):
         secrets.add(str(auth_config["client_secret"]))
     return {s for s in secrets if len(s) >= MIN_SECRET_LENGTH}
-
-
 def _redact(value: Any, secrets: Set[str]) -> Any:
-    """把回應（含巢狀 JSON 的鍵與值）中出現的憑證值換成遮蔽字樣"""
     if not secrets:
         return value
     if isinstance(value, str):
@@ -168,22 +155,13 @@ def _redact(value: Any, secrets: Set[str]) -> Any:
     if isinstance(value, list):
         return [_redact(v, secrets) for v in value]
     return value
-
-
 def _without_query(url: str) -> str:
-    """回傳給模型與使用者的網址不帶查詢字串：管理員可能把金鑰寫在工具網址的查詢參數中"""
     return url.split("#", 1)[0].split("?", 1)[0]
-
-
 def _declared_properties(schema: Any) -> Optional[Dict[str, Any]]:
     if isinstance(schema, dict) and isinstance(schema.get("properties"), dict):
         return schema["properties"]
     return None
-
-
 def _undeclared_arguments(tool_dict: Dict[str, Any], arguments: Dict[str, Any]) -> List[str]:
-    """呼叫端（模型）只能使用工具宣告的參數，否則可夾帶管理員沒有開放的查詢參數或本文欄位，
-    以操作者的憑證改變上游的行為；request_body 有宣告欄位的 schema 時，其中的欄位也一併檢查"""
     properties = _declared_properties(tool_dict.get("parameters_schema"))
     declared = set(properties) if properties is not None else set()
     undeclared = [name for name in arguments if name not in declared]
@@ -193,32 +171,16 @@ def _undeclared_arguments(tool_dict: Dict[str, Any], arguments: Dict[str, Any]) 
     if isinstance(body, dict) and body_properties is not None and body_schema.get("additionalProperties") is not True:
         undeclared += [f"request_body.{name}" for name in body if name not in body_properties]
     return undeclared
-
-
 async def execute_api_tool(tool_dict: Dict[str, Any], arguments: Dict[str, Any], tool_name: str) -> Dict[str, Any]:
     if tool_dict.get("workflow_definition"):
         from app.services.arazzo import run_workflow
         return await run_workflow(tool_dict, arguments, tool_name)
     return await execute_http_api_tool(tool_dict, arguments, tool_name)
-
-
 async def execute_http_api_tool(tool_dict: Dict[str, Any], arguments: Dict[str, Any], tool_name: str) -> Dict[str, Any]:
     return await execute_http_request(tool_dict, arguments, tool_name, keep_exchange=False)
-
-
 async def execute_http_request(
     tool_dict: Dict[str, Any], arguments: Dict[str, Any], tool_name: str, keep_exchange: bool
 ) -> Dict[str, Any]:
-    """
-    通用 HTTP API 工具非同步執行器
-    支援：
-    - Path 參數依 style（simple、label、matrix）百分比編碼，不能改變請求的主機或路徑層級
-    - Query、整段查詢字串、Header 與 Cookie 參數依 OpenAPI 的 style／explode 序列化
-    - Auth 注入；跨來源轉址時不轉送憑證
-    - 請求本文依宣告的媒體型別編碼（JSON 家族、表單、multipart、XML、文字）
-    - 隔離超時、回應大小上限、憑證遮蔽與錯誤保護
-    keep_exchange：回傳中附上請求與回應標頭（供 Arazzo 工作流程的執行期運算式取值）
-    """
     start_time = time.time()
     arguments = dict(arguments or {})
     method = (tool_dict.get("method") or "GET").upper()
@@ -346,22 +308,16 @@ async def execute_http_request(
     cookie_items.extend(parts.cookies)
     if cookie_items:
         headers["Cookie"] = "; ".join(cookie_items)
-
-    # 工具網址中固定的查詢參數（可能是寫在網址裡的金鑰）與憑證查詢參數，回傳時一律遮蔽其值
     hidden_query_names: Set[str] = {credential_query_key} if credential_query_key else set()
-
     def display_url(target: httpx.URL) -> str:
         for name in hidden_query_names & set(target.params.keys()):
             target = target.copy_set_param(name, REDACTED)
         return _redact(str(target), secrets)
-
     try:
         original_url = httpx.URL(path_replaced_url)
         template_url = httpx.URL(url.replace("{", "").replace("}", ""))
         if not same_origin(original_url, template_url):
             raise SafeClientError("代入參數後的網址與工具設定的主機不符")
-        # 工具網址中的查詢參數由管理員固定，呼叫端不可覆寫；查詢字串一律在這裡組好，
-        # 不依賴 httpx 對既有查詢字串是合併還是取代（不同版本行為不同）
         fixed_params = original_url.params
         hidden_query_names.update(fixed_params.keys())
         overridden = sorted(name for name in query_names if name in fixed_params and name != credential_query_key)
@@ -370,16 +326,11 @@ async def execute_http_request(
         if parts.querystring and fixed_params:
             raise SafeClientError("工具參數無效：工具網址已有固定的查詢參數，不能再送整段查詢字串")
         raw_query = build_query([(name, value) for name, value in fixed_params.multi_items() if name != credential_query_key], parts)
-
         async def strip_credentials_cross_origin(request: httpx.Request) -> None:
-            # 轉址到其他來源時不轉送管理員設定的憑證標頭
             if not same_origin(request.url, original_url):
                 for name in list(request.headers.keys()):
                     if name.lower() in credential_header_names:
                         del request.headers[name]
-
-        # 每一跳（含轉址）都在傳輸層做 SSRF 檢查，並固定連線到檢查時核可的 IP；
-        # 轉址由 send_following_redirects 手動跟隨，轉址回應的本文不讀取，最終回應才套用大小上限
         req_kwargs: Dict[str, Any] = {
             "method": method,
             "url": original_url.copy_with(query=raw_query.encode("ascii") if raw_query else None),
@@ -395,7 +346,6 @@ async def execute_http_request(
                 raise SafeClientError(f"工具參數無效：{e}") from e
             req_kwargs["headers"] = {**headers, **encoded.pop("headers", {})}
             req_kwargs.update(encoded)
-
         async def perform() -> Dict[str, Any]:
             async with httpx.AsyncClient(
                 timeout=float(timeout),
@@ -459,8 +409,6 @@ async def execute_http_request(
                         "request_body": body_data if (has_whole_body or body_data != {}) else None,
                     }
                 return result
-
-        # httpx 的逾時是逐次讀寫計算；整個呼叫（含轉址與慢速逐段回應）另以工具的逾時設定為總時限
         result = await asyncio.wait_for(perform(), timeout=float(timeout))
         if auth_type == OAUTH2_CLIENT_CREDENTIALS and result.get("status_code") == 401:
             invalidate_client_credentials_token(auth_config)
@@ -524,7 +472,6 @@ async def parse_openapi_spec(
     request_data: OpenApiParseRequest,
     current_user: dict = Depends(get_current_admin_user)
 ):
-    """解析 Swagger 2.0、OpenAPI 3.0～3.2 規格（可先套用 Overlay）或 Arazzo 工作流程文件"""
     try:
         parsed_result = await OpenApiParser.parse(
             spec_content_or_url=request_data.spec_content_or_url,
@@ -547,8 +494,6 @@ def _import_auth(item, global_auth_type: str, global_auth_config: Dict[str, Any]
     if item.auth_type == global_auth_type:
         config.update({key: value for key, value in global_auth_config.items() if value not in (None, "")})
     return item.auth_type, config
-
-
 def _reimport_auth(existing: CustomApiTool, auth_type: str, auth_config: Dict[str, Any]) -> tuple:
     stored = decrypt_for_display(existing.auth_config)[0] or {}
     provided = {key: value for key, value in auth_config.items() if value not in (None, "")}
@@ -557,21 +502,16 @@ def _reimport_auth(existing: CustomApiTool, auth_type: str, auth_config: Dict[st
     if existing.auth_type in (None, "none") or any(is_secret_auth_key(key) for key in provided):
         return auth_type, auth_config
     return existing.auth_type, stored
-
-
 def _import_requires_approval(item) -> bool:
     if item.workflow_definition and item.requires_approval is not None:
         return item.requires_approval
     return default_requires_approval(item.method)
-
-
 @router.post("/import")
 async def import_openapi_tools(
     import_data: OpenApiImportRequest,
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_admin_user)
 ):
-    """批次匯入選定的 OpenAPI 端點為自訂 AI 工具"""
     imported_count = 0
     updated_count = 0
     global_base_url = import_data.global_base_url
@@ -609,7 +549,6 @@ async def import_openapi_tools(
             existing.workflow_definition = json.dumps(item.workflow_definition, ensure_ascii=False) if item.workflow_definition else None
             existing.body_content_type = item.body_content_type
             existing.spec_version = item.spec_version
-            # 重新匯入不會自動放寬既有的核准設定
             existing.requires_approval = bool(existing.requires_approval) or _import_requires_approval(item)
             updated_count += 1
         else:
@@ -652,7 +591,6 @@ async def get_all_api_tools(
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_admin_user)
 ):
-    """獲取自訂 API 工具清單"""
     query = db.query(CustomApiTool)
     if category:
         query = query.filter(CustomApiTool.category == category)
@@ -678,7 +616,6 @@ async def create_api_tool(
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_admin_user)
 ):
-    """手動建立自訂 API 工具"""
     if len(tool_data.name.strip()) > MAX_TOOL_NAME_CHARS:
         raise HTTPException(status_code=400, detail=f"工具名稱最多 {MAX_TOOL_NAME_CHARS} 個字元")
     clean_name = OpenApiParser._generate_tool_name(tool_data.method, tool_data.path or tool_data.url, tool_data.name)
@@ -727,7 +664,6 @@ async def get_api_tool_detail(
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_admin_user)
 ):
-    """獲取單一自訂 API 工具詳情"""
     tool = db.query(CustomApiTool).filter(CustomApiTool.id == tool_id).first()
     if not tool:
         raise HTTPException(status_code=404, detail="找不到該自訂 API 工具")
@@ -742,7 +678,6 @@ async def update_api_tool(
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_admin_user)
 ):
-    """更新自訂 API 工具"""
     tool = db.query(CustomApiTool).filter(CustomApiTool.id == tool_id).first()
     if not tool:
         raise HTTPException(status_code=404, detail="找不到該自訂 API 工具")
@@ -784,7 +719,6 @@ async def update_api_tool(
     if tool_data.requires_approval is not None:
         tool.requires_approval = tool_data.requires_approval
     elif tool_data.method is not None and default_requires_approval(tool_data.method):
-        # 改成會改變狀態的方法時，未明確指定就改為需要核准
         tool.requires_approval = True
     if tool_data.timeout is not None:
         tool.timeout = tool_data.timeout
@@ -801,7 +735,6 @@ async def toggle_api_tool(
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_admin_user)
 ):
-    """切換工具啟用/停用狀態"""
     tool = db.query(CustomApiTool).filter(CustomApiTool.id == tool_id).first()
     if not tool:
         raise HTTPException(status_code=404, detail="找不到該自訂 API 工具")
@@ -819,7 +752,6 @@ async def delete_api_tool(
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_admin_user)
 ):
-    """刪除自訂 API 工具"""
     tool = db.query(CustomApiTool).filter(CustomApiTool.id == tool_id).first()
     if not tool:
         raise HTTPException(status_code=404, detail="找不到該自訂 API 工具")
@@ -836,7 +768,6 @@ async def test_api_tool(
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_admin_user)
 ):
-    """即時測試發送自訂 API 工具請求"""
     tool = db.query(CustomApiTool).filter(CustomApiTool.id == tool_id).first()
     if not tool:
         raise HTTPException(status_code=404, detail="找不到該自訂 API 工具")

@@ -6,16 +6,13 @@ export interface ChipProps extends Omit<React.HTMLAttributes<HTMLElement>, 'onCl
   icon?: React.ReactNode;
   onDelete?: () => void;
   deleteLabel?: string;
-  /** 提供時渲染成 <button> */
   onClick?: (e: React.MouseEvent<HTMLElement>) => void;
-  /** 提供時渲染成 <a> */
   href?: string;
   target?: string;
   rel?: string;
   variant?: 'filled' | 'outlined';
   color?: 'default' | 'primary' | 'success' | 'warning' | 'error' | 'info' | 'secondary';
   size?: 'sm' | 'md' | 'small' | 'medium';
-  /** 長標籤換行而不撐寬容器 */
   wrap?: boolean;
 }
 export const Chip: React.FC<ChipProps> = ({

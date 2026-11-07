@@ -2,7 +2,6 @@ import hashlib
 import re
 from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import urljoin, urlparse
-
 from app.core.error_response import SafeClientError
 from app.core.limits import MAX_TOOL_NAME_CHARS
 from app.models import OAUTH2_CLIENT_CREDENTIALS
@@ -17,7 +16,6 @@ from app.services.openapi_documents import (
 )
 from app.services.openapi_overlay import apply_overlay, is_overlay
 from app.services.openapi_schema import SchemaNormalizer
-
 TOOL_NAME_HASH_CHARS = 8
 SWAGGER_METHODS = ("get", "put", "post", "delete", "options", "head", "patch")
 OAS3_METHODS = SWAGGER_METHODS + ("trace",)
@@ -40,17 +38,12 @@ SWAGGER_SCHEMA_KEYS = (
 )
 INTERACTIVE_OAUTH_FLOWS = ("authorizationCode", "implicit", "password", "deviceAuthorization", "accessCode")
 IGNORED_HEADER_PARAMETERS = ("accept", "content-type", "authorization")
-
 __all__ = ["OpenApiParser", "fit_tool_name", "load_yaml_without_aliases", "media_family"]
-
-
 def fit_tool_name(name: str) -> str:
     if len(name) <= MAX_TOOL_NAME_CHARS:
         return name
     digest = hashlib.sha256(name.encode("utf-8")).hexdigest()[:TOOL_NAME_HASH_CHARS]
     return f"{name[:MAX_TOOL_NAME_CHARS - TOOL_NAME_HASH_CHARS - 1]}_{digest}"
-
-
 def media_family(media_type: str) -> str:
     base = media_type.split(";", 1)[0].strip().lower()
     if base in ("*/*", "application/*") or JSON_MEDIA_PATTERN.match(base):
@@ -64,17 +57,11 @@ def media_family(media_type: str) -> str:
     if base.startswith("text/"):
         return "text"
     return "binary"
-
-
 def _media_rank(media_type: str) -> int:
     return ["json", "form", "multipart", "text", "xml", "binary"].index(media_family(media_type))
-
-
 def _concrete_media(media_type: str) -> str:
     base = media_type.split(";", 1)[0].strip()
     return "application/json" if base in ("*/*", "application/*") else base
-
-
 def detect_spec_version(spec: Dict[str, Any]) -> Tuple[str, str]:
     if "swaggerVersion" in spec and "swagger" not in spec:
         raise SafeClientError(f"不支援 Swagger {spec.get('swaggerVersion')}，請先轉換成 OpenAPI 2.0 以上的版本")
@@ -89,9 +76,7 @@ def detect_spec_version(spec: Dict[str, Any]) -> Tuple[str, str]:
         if not match:
             raise SafeClientError(f"不支援 OpenAPI {version or '（未標示版本）'}，目前支援 Swagger 2.0 與 OpenAPI 3.0、3.1、3.2")
         return f"openapi_3.{match.group('minor')}", version
-    raise SafeClientError("無法識別規格版本：請確認文件包含 openapi、swagger、arazzo 或 overlay 版本欄位")
-
-
+    raise SafeClientError("無法辨識規格版本：請確認文件包含 openapi、swagger、arazzo 或 overlay 版本欄位")
 class _Context:
     def __init__(self, docs: SpecDocuments, label: str, base_url: str, default_base_url: Optional[str]):
         self.docs = docs
@@ -100,7 +85,6 @@ class _Context:
         self.default_base_url = default_base_url
         self.json_schema_2020 = label in ("openapi_3.1", "openapi_3.2")
         self.swagger = label == "swagger_2.0"
-
     def deref(self, node: Any, base: str, depth: int = 0) -> Tuple[Any, str, Dict[str, Any]]:
         overrides: Dict[str, Any] = {}
         while isinstance(node, dict) and isinstance(node.get("$ref"), str) and depth < 32:
@@ -112,17 +96,12 @@ class _Context:
                 return None, base, overrides
             depth += 1
         return node, base, overrides
-
     def schema(self, schema: Any, base: str, for_request: bool, warnings: List[str]) -> Dict[str, Any]:
         normalizer = SchemaNormalizer(self.docs, self.json_schema_2020, for_request)
         result = normalizer.normalize(schema, base)
         warnings.extend(w for w in normalizer.warnings if w not in warnings)
         return result
-
-
 class OpenApiParser:
-    """解析 Swagger 2.0、OpenAPI 3.0、3.1、3.2（可先套用 Overlay 1.0～1.2），以及 Arazzo 1.0、1.1 工作流程文件"""
-
     @classmethod
     async def parse(
         cls,
@@ -152,7 +131,6 @@ class OpenApiParser:
             from app.services.arazzo import parse_arazzo
             return await parse_arazzo(root, url, size, default_base_url)
         return await cls.parse_document(root, url, size, default_base_url)
-
     @classmethod
     async def parse_document(
         cls, root: Dict[str, Any], url: Optional[str], size: int, default_base_url: Optional[str]
@@ -180,7 +158,6 @@ class OpenApiParser:
             "endpoints": endpoints,
             "warnings": warnings,
         }
-
     @classmethod
     def _server_url(cls, servers: Any, docs: SpecDocuments) -> Optional[str]:
         if not isinstance(servers, list) or not servers:
@@ -200,7 +177,6 @@ class OpenApiParser:
             if base:
                 url = urljoin(base, url)
         return url.rstrip("/")
-
     @classmethod
     def _root_base_url(cls, spec: Dict[str, Any], label: str, docs: SpecDocuments) -> str:
         retrieval = urlparse(docs.retrieval_url) if docs.retrieval_url else None
@@ -218,7 +194,6 @@ class OpenApiParser:
         if docs.retrieval_url:
             return f"{retrieval.scheme}://{retrieval.netloc}"
         return ""
-
     @classmethod
     def _endpoints(cls, ctx: _Context, warnings: List[str]) -> List[Dict[str, Any]]:
         paths = ctx.docs.root.get("paths")
@@ -252,7 +227,6 @@ class OpenApiParser:
                 used_names.setdefault(endpoint["name"], 1)
                 endpoints.append(endpoint)
         return endpoints
-
     @classmethod
     def _path_item(cls, ctx: _Context, raw: Any, base: str, warnings: List[str], path: str) -> Tuple[Optional[Dict[str, Any]], str]:
         if not isinstance(raw, dict):
@@ -265,10 +239,8 @@ class OpenApiParser:
             return None, base
         merged = {**target, **{k: v for k, v in raw.items() if k != "$ref"}}
         return merged, target_base
-
     @staticmethod
     def _generate_tool_name(method: str, path: str, operation_id: Optional[str]) -> str:
-        """生成符合 Function Calling 規範的唯一合法工具名稱 (英文字母、數字與底線)"""
         if operation_id:
             clean_op = re.sub(r"[^a-zA-Z0-9_]", "_", operation_id.strip())
             clean_op = re.sub(r"_+", "_", clean_op).strip("_")
@@ -281,7 +253,6 @@ class OpenApiParser:
         if not re.match(r"^[a-zA-Z]", clean_name):
             clean_name = f"api_{clean_name}"
         return clean_name[:MAX_TOOL_NAME_CHARS]
-
     @classmethod
     def _operation_base_url(cls, ctx: _Context, op: Dict[str, Any], item: Dict[str, Any]) -> str:
         if not ctx.swagger:
@@ -290,7 +261,6 @@ class OpenApiParser:
                 if url is not None:
                     return url
         return ctx.base_url
-
     @classmethod
     def _parameters(cls, ctx: _Context, raw_lists: List[Tuple[Any, str]], warnings: List[str]) -> List[Tuple[Dict[str, Any], str, Dict[str, Any]]]:
         merged: Dict[Tuple[str, str], Tuple[Dict[str, Any], str, Dict[str, Any]]] = {}
@@ -308,7 +278,6 @@ class OpenApiParser:
                     continue
                 merged[(name, location)] = (param, param_base, overrides)
         return list(merged.values())
-
     @classmethod
     def _arg_name(cls, wanted: str, location: str, used: Dict[str, Any]) -> str:
         if wanted not in used:
@@ -319,7 +288,6 @@ class OpenApiParser:
             candidate = f"{wanted}_{location}_{suffix}"
             suffix += 1
         return candidate
-
     @classmethod
     def _operation(
         cls, ctx: _Context, path: str, method: str, op: Dict[str, Any], op_base: str,
@@ -467,7 +435,6 @@ class OpenApiParser:
             "spec_version": ctx.label,
             "warnings": warnings,
         }
-
     @staticmethod
     def _xml_root(raw_schema: Any, base: str, ctx: _Context) -> str:
         schema, _, _ = ctx.deref(raw_schema, base) if isinstance(raw_schema, dict) else (None, base, {})
@@ -476,7 +443,6 @@ class OpenApiParser:
         if isinstance(raw_schema, dict) and isinstance(raw_schema.get("$ref"), str):
             return raw_schema["$ref"].rsplit("/", 1)[-1]
         return "root"
-
     @staticmethod
     def _swagger_body_media(ctx: _Context, op: Dict[str, Any], form: bool, has_file: bool = False) -> str:
         consumes = op.get("consumes", ctx.docs.root.get("consumes"))
@@ -487,7 +453,6 @@ class OpenApiParser:
             return FORM_MEDIA
         candidates = [c for c in consumes if media_family(c) not in ("form", "multipart")]
         return _concrete_media(sorted(candidates, key=_media_rank)[0]) if candidates else "application/json"
-
     @classmethod
     def _add_body(
         cls, schema: Dict[str, Any], body_required: bool, media_type: str, description: Optional[str],
@@ -520,7 +485,6 @@ class OpenApiParser:
         styles["request_body"] = {"name": "request_body", "in": "body", "whole": True}
         if body_required:
             required.append("request_body")
-
     @classmethod
     def _security_schemes(cls, ctx: _Context) -> Dict[str, Tuple[Dict[str, Any], str]]:
         root = ctx.docs.root
@@ -533,7 +497,6 @@ class OpenApiParser:
             if isinstance(target, dict):
                 resolved[name] = (target, base)
         return resolved
-
     @staticmethod
     def _scheme(scheme: Dict[str, Any], scopes: List[str]) -> Tuple[Optional[str], Dict[str, Any], List[str]]:
         kind = str(scheme.get("type", "")).lower()
@@ -567,7 +530,6 @@ class OpenApiParser:
         if kind == "mutualtls":
             return None, {}, ["mutualTLS（用戶端憑證）不支援"]
         return None, {}, [f"安全機制 {kind or '（未標示）'} 不支援"]
-
     @classmethod
     def _requirement(cls, requirement: Dict[str, Any], schemes: Dict[str, Tuple[Dict[str, Any], str]]):
         primary: Optional[Tuple[str, Dict[str, Any]]] = None
@@ -596,7 +558,6 @@ class OpenApiParser:
                 usable = False
                 notes.append(f"同時需要多種驗證（{', '.join(requirement)}），只能套用其中一種")
         return primary, extra_headers, notes, usable
-
     @classmethod
     def _security(cls, ctx: _Context, op: Dict[str, Any]) -> Tuple[str, Dict[str, Any], Dict[str, str], List[str]]:
         requirements = op.get("security", ctx.docs.root.get("security"))

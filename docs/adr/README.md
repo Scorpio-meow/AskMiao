@@ -2,7 +2,7 @@
 
 [繁體中文](README.md) | [English](README_en.md)
 
-本目錄記錄 AskMiao 開發過程中的重要架構決策：當時面對的問題、選擇的方案，以及接受的取捨。程式碼說明系統「怎麼做」，ADR 說明「為什麼這樣做」，避免日後有人把刻意的設計當成缺陷改掉。
+本目錄記錄 AskMiao 的重要架構決策：當時面對的問題、選擇的方案，以及接受的取捨。程式碼說明系統「怎麼做」，ADR 說明「為什麼這樣做」，避免日後有人把刻意的設計當成缺陷改掉。
 
 ---
 
@@ -10,9 +10,9 @@
 
 | ADR | 標題 | 狀態 | 決策日期 | 相關版本 | 摘要 |
 |---|---|---|---|---|---|
-| [ADR-0001](./0001-hybrid-rag-and-security.md) | 增強型混合 RAG 檢索架構與雙 Token 安全防護決策 | 已通過 (Accepted) | 2026-08-01 | 1.0.0 | 採用 FAISS + Whoosh + Cross-Encoder 混合 RAG 與 RSA-2048 JWT 雙 Token 防護；其中的分數歸一化融合已由 ADR-0003 取代 |
-| [ADR-0002](./0002-external-tools-and-outbound-safety.md) | 外部工具擴充機制與出站請求安全防護決策 | 已通過 (Accepted) | 2026-09-01 | 2.1.0–2.2.1 | 以資料庫驅動之自訂 API / MCP 工具註冊，並集中實施 SSRF 防護與錯誤代碼機制 |
-| [ADR-0003](./0003-rrf-relevance-citations-and-tool-trust.md) | RRF 融合、相關性門檻、引用對應與工具輸出信任邊界 | 已通過 (Accepted) | 2026-09-24 | 3.0.0 | 兩軌必跑的標準 RRF、以重排機率為相關性門檻、答案引用對應來源，並為工具輸出設立信任邊界與聯網限制；取代 ADR-0001 的分數歸一化融合 |
+| [ADR-0001](./0001-hybrid-rag-and-security.md) | 增強型混合 RAG 檢索架構與雙 Token 安全防護決策 | 已通過 (Accepted) | 2026-08-01 | 1.0.0 | 採用 FAISS + Whoosh + Cross-Encoder 混合 RAG 與 RSA-2048 JWT 雙 Token 防護；其中的分數正規化融合已由 ADR-0003 取代 |
+| [ADR-0002](./0002-external-tools-and-outbound-safety.md) | 外部工具擴充機制與出站請求安全防護決策 | 已通過 (Accepted) | 2026-09-01 | 2.1.0–2.2.1 | 以資料庫註冊自訂 API / MCP 工具，並集中處理 SSRF 防護、統一錯誤代碼 |
+| [ADR-0003](./0003-rrf-relevance-citations-and-tool-trust.md) | RRF 融合、相關性門檻、引用對應與工具輸出信任邊界 | 已通過 (Accepted) | 2026-09-24 | 3.0.0 | 兩軌必跑的標準 RRF、以重排機率為相關性門檻、答案引用對應來源，並為工具輸出設立信任邊界與聯網限制；取代 ADR-0001 的分數正規化融合 |
 | [ADR-0004](./0004-tool-admin-permissions-and-subprocess-isolation.md) | 工具管理權限、MCP 子行程隔離與逐跳 SSRF 驗證 | 已通過 (Accepted) | 2026-09-25 | 3.0.0 | MCP 伺服器與自訂 API 工具只開放管理員管理，stdio 子行程不繼承後端機密環境變數，出站請求的每次轉址都重新做 SSRF 驗證；補充 ADR-0002 |
 | [ADR-0005](./0005-chunk-id-index-and-database-source-of-truth.md) | 以資料庫 chunk_id 為準的片段索引 | 已通過 (Accepted) | 2026-09-24 | 3.0.0 | 片段改存資料庫 `rag_chunks`，FAISS（`IndexIDMap2`）與 BM25 以 chunk_id 對應，啟動時依資料庫校正，取代依清單位置對齊與每日自動重建；補充 ADR-0001 |
 | [ADR-0006](./0006-tool-call-approval.md) | 有副作用工具的對話內核准 | 已通過 (Accepted) | 2026-09-27 | 4.0.0 | 自訂 API 工具與 MCP 伺服器新增 `requires_approval` 旗標，Agent 呼叫前暫停並由發問的使用者在對話中核准，逾時或無人可核准時不執行；補充 ADR-0003 與 ADR-0004 |

@@ -8,7 +8,6 @@ import threading
 from datetime import datetime
 from pathlib import Path
 from types import SimpleNamespace
-
 import faiss
 import numpy as np
 import pytest
@@ -16,7 +15,6 @@ import torch
 from fastapi import HTTPException
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
-
 from app.api import admin as admin_api
 from app.api import documents as documents_api
 from app.core.config import settings
@@ -31,17 +29,12 @@ from app.rag.indices.vector_store import VectorStoreManager
 from app.rag.retrievers import hybrid as hybrid_module
 from app.rag.types import Document
 from app.services import document_removal
-
-
 class FakeEmbedder:
     dimension = 64
-
     def __init__(self, model_name, device=None):
         self.encoded_texts = 0
-
     def get_sentence_embedding_dimension(self):
         return self.dimension
-
     def encode(self, texts, batch_size=None, show_progress_bar=None, convert_to_numpy=True, device=None):
         self.encoded_texts += len(texts)
         vectors = np.zeros((len(texts), self.dimension), dtype="float32")
@@ -49,61 +42,40 @@ class FakeEmbedder:
             for ch in text:
                 vectors[row, ord(ch) % self.dimension] += 1.0
         return vectors
-
-
 class ConstantCrossEncoder:
-    """把每個片段都判為相關的重排模型替身；索引一致性測試不涉及相關性判斷"""
     activation_fn = torch.nn.Sigmoid()
-
     def __init__(self, model_name, device=None):
         pass
-
     def predict(self, pairs):
         return [0.9 for _ in pairs]
-
-
 class FakeQuery:
     def __init__(self, result):
         self.result = result
-
     def filter(self, *args, **kwargs):
         return self
-
     def first(self):
         return self.result
-
     def all(self):
         return self.result
-
-
 class FakeSession:
     def __init__(self, result):
         self.result = result
-
     def query(self, model):
         return FakeQuery(self.result)
-
     def get(self, model, key):
         return None
-
     def add(self, obj):
         pass
-
     def delete(self, obj):
         pass
-
     def commit(self):
         pass
-
-
 @pytest.fixture
 def session_factory(tmp_path):
     engine = create_engine(f"sqlite:///{tmp_path / 'rag.db'}")
     Base.metadata.create_all(engine)
     yield sessionmaker(bind=engine)
     engine.dispose()
-
-
 @pytest.fixture
 def index_dir(tmp_path, monkeypatch):
     monkeypatch.setattr(settings, "DATA_DIR", str(tmp_path))
@@ -121,85 +93,59 @@ def index_dir(tmp_path, monkeypatch):
     monkeypatch.setattr(vector_store_module, "SentenceTransformer", FakeEmbedder)
     monkeypatch.setattr(hybrid_module, "CrossEncoder", ConstantCrossEncoder)
     return tmp_path
-
-
 @pytest.fixture
 def make_rag(index_dir, session_factory):
     return lambda: HybridContextualRAG(session_factory=session_factory)
-
-
 @pytest.fixture
 def rag(make_rag):
     return make_rag()
-
-
 OVERTIME = "overtime requests need manager approval"
 LEAVE = "annual leave depends on seniority"
-
-
 def add_db_document(session_factory, document_id, filename, content):
     with session_factory() as session:
         session.add(DbDocument(id=document_id, filename=filename, content=content, file_type="text/plain"))
         session.commit()
-
-
 def add_indexed_document(rag, session_factory, document_id, filename, content):
     add_db_document(session_factory, document_id, filename, content)
     rag.add_documents([Document(page_content=content, metadata={"source": filename, "document_id": document_id})])
-
-
 def db_chunk_ids(session_factory):
     with session_factory() as session:
         return {row.id for row in session.query(RagChunk).all()}
-
-
 def bm25_sources(rag, query):
     return [doc.metadata["source"] for doc, _ in rag.bm25_search(query)]
-
-
 def assert_indices_match_database(rag, session_factory):
     expected = db_chunk_ids(session_factory)
     assert rag.vector_store.ids() == expected
     assert set(rag.vector_store.chunks) == expected
     assert sorted(int(chunk_id) for chunk_id in rag.bm25_store.indexed_ids()) == sorted(expected)
-
-
 @pytest.mark.asyncio
 async def test_delete_document_endpoint_removes_chunks_without_reembedding(rag, session_factory, monkeypatch):
     add_indexed_document(rag, session_factory, 1, "overtime.txt", OVERTIME)
     add_indexed_document(rag, session_factory, 2, "leave.txt", LEAVE)
     monkeypatch.setattr(document_removal, "get_rag_system", lambda: rag)
     encoded_before = rag.vector_store.local_embeddings.encoded_texts
-
     await documents_api.delete_document(
         1,
         db=FakeSession(SimpleNamespace(id=1, filename="rag_test_missing_overtime.txt")),
         current_user={"username": "admin"},
     )
-
     assert rag.vector_store.local_embeddings.encoded_texts == encoded_before
     assert [doc.metadata["document_id"] for doc in rag.documents] == [2]
     assert bm25_sources(rag, "seniority") == ["leave.txt"]
     assert bm25_sources(rag, "approval") == []
     assert_indices_match_database(rag, session_factory)
-
-
 @pytest.mark.asyncio
 async def test_admin_delete_document_endpoint_also_removes_chunks(rag, session_factory, monkeypatch):
     add_indexed_document(rag, session_factory, 1, "overtime.txt", OVERTIME)
     add_indexed_document(rag, session_factory, 2, "leave.txt", LEAVE)
     monkeypatch.setattr(document_removal, "get_rag_system", lambda: rag)
-
     await admin_api.delete_document(
         1,
         db=FakeSession(SimpleNamespace(id=1, filename="rag_test_missing_overtime.txt")),
         current_user={"username": "admin"},
     )
-
     assert bm25_sources(rag, "approval") == []
     assert_indices_match_database(rag, session_factory)
-
-
 @pytest.mark.asyncio
 async def test_rebuild_index_endpoint_regenerates_chunks(rag, session_factory, monkeypatch):
     db_documents = [
@@ -208,18 +154,14 @@ async def test_rebuild_index_endpoint_regenerates_chunks(rag, session_factory, m
         SimpleNamespace(id=2, filename="rag_test_missing_leave.txt", content=LEAVE,
                         file_type="text/plain", description=None, uploaded_by=1),
     ]
-
     async def fake_summary(filename, content, file_type, extraction, model):
         return f"summary of {filename}"
-
     for doc in db_documents:
         add_db_document(session_factory, doc.id, doc.filename, doc.content)
     rag.add_documents([Document(page_content="stale parking rules", metadata={"source": db_documents[0].filename, "document_id": 1})])
     monkeypatch.setattr(documents_api, "get_rag_system", lambda: rag)
     monkeypatch.setattr(documents_api.DocumentProcessor, "generate_document_summary_async", fake_summary)
-
     result = await documents_api.rebuild_index(db=FakeSession(db_documents), current_user={"username": "admin"})
-
     assert len(rag.documents) == 2
     assert bm25_sources(rag, "parking") == []
     assert bm25_sources(rag, "seniority") == ["rag_test_missing_leave.txt"]
@@ -227,8 +169,6 @@ async def test_rebuild_index_endpoint_regenerates_chunks(rag, session_factory, m
     assert result["records_detected"] == 0
     assert result["failed_documents"] == []
     assert_indices_match_database(rag, session_factory)
-
-
 @pytest.mark.asyncio
 async def test_rebuild_index_reports_failed_documents_and_keeps_the_others_searchable(rag, session_factory, monkeypatch):
     db_documents = [
@@ -237,26 +177,20 @@ async def test_rebuild_index_reports_failed_documents_and_keeps_the_others_searc
         SimpleNamespace(id=2, filename="rag_test_missing_leave.txt", content=LEAVE,
                         file_type="text/plain", description=None, uploaded_by=1),
     ]
-
     async def summary_failing_for_leave(filename, content, file_type, extraction, model):
         if filename == "rag_test_missing_leave.txt":
             raise RuntimeError("summary model crashed")
         return f"summary of {filename}"
-
     for doc in db_documents:
         add_indexed_document(rag, session_factory, doc.id, doc.filename, doc.content)
     monkeypatch.setattr(documents_api, "get_rag_system", lambda: rag)
     monkeypatch.setattr(documents_api.DocumentProcessor, "generate_document_summary_async", summary_failing_for_leave)
-
     result = await documents_api.rebuild_index(db=FakeSession(db_documents), current_user={"username": "admin"})
-
     assert result["failed_documents"] == [{"document_id": 2, "filename": "rag_test_missing_leave.txt"}]
     assert len(rag.documents) == 2
     assert bm25_sources(rag, "approval") == ["rag_test_missing_overtime.txt"]
     assert bm25_sources(rag, "seniority") == ["rag_test_missing_leave.txt"]
     assert_indices_match_database(rag, session_factory)
-
-
 @pytest.mark.asyncio
 async def test_rebuild_index_reextracts_structured_files_into_record_chunks(rag, session_factory, tmp_path, monkeypatch):
     upload_dir = tmp_path / "uploads"
@@ -268,20 +202,16 @@ async def test_rebuild_index_reextracts_structured_files_into_record_chunks(rag,
                         description=None, uploaded_by=1),
     ]
     summaries = []
-
     async def fake_summary(filename, content, file_type, extraction, model):
         summaries.append(extraction)
         return f"summary of {filename}"
-
     for doc in db_documents:
         add_db_document(session_factory, doc.id, doc.filename, doc.content)
     monkeypatch.setattr(documents_api, "UPLOAD_DIR", str(upload_dir))
     monkeypatch.setattr(documents_api, "get_rag_system", lambda: rag)
     monkeypatch.setattr(documents_api.DocumentProcessor, "generate_document_summary_async", fake_summary)
     monkeypatch.setattr(domain_profile, "record_label_fields", ["title"])
-
     result = await documents_api.rebuild_index(db=FakeSession(db_documents), current_user={"username": "admin"})
-
     assert result["records_detected"] == 2
     assert result["missing_source_files"] == []
     assert db_documents[0].content.startswith("[記錄 1]加班規定\ntitle: 加班規定")
@@ -289,8 +219,6 @@ async def test_rebuild_index_reextracts_structured_files_into_record_chunks(rag,
     metadata = sorted((doc.metadata["record_index"], doc.metadata["label"]) for doc in rag.documents)
     assert metadata == [(1, "加班規定"), (2, "請假規定")]
     assert_indices_match_database(rag, session_factory)
-
-
 @pytest.mark.asyncio
 async def test_rebuild_index_keeps_existing_summaries(rag, session_factory, monkeypatch):
     db_documents = [
@@ -299,42 +227,30 @@ async def test_rebuild_index_keeps_existing_summaries(rag, session_factory, monk
         SimpleNamespace(id=2, filename="rag_test_missing_leave.txt", content=LEAVE,
                         file_type="text/plain", description="  ", uploaded_by=1),
     ]
-
     async def fake_summary(filename, content, file_type, extraction, model):
         return f"summary of {filename}"
-
     for doc in db_documents:
         add_db_document(session_factory, doc.id, doc.filename, doc.content)
     monkeypatch.setattr(documents_api, "get_rag_system", lambda: rag)
     monkeypatch.setattr(documents_api.DocumentProcessor, "generate_document_summary_async", fake_summary)
-
     await documents_api.rebuild_index(db=FakeSession(db_documents), current_user={"username": "admin"})
-
     assert [doc.description for doc in db_documents] == ["管理員修訂過的摘要", "summary of rag_test_missing_leave.txt"]
-
-
 @pytest.mark.asyncio
 async def test_second_rebuild_while_one_is_running_is_rejected(monkeypatch):
     started, release = asyncio.Event(), asyncio.Event()
-
     async def slow_rebuild(db, current_user):
         started.set()
         await release.wait()
         return {"message": "done"}
-
     monkeypatch.setattr(documents_api, "_rebuild_all_documents", slow_rebuild)
     monkeypatch.setattr(documents_api, "_rebuild_lock", asyncio.Lock())
     first = asyncio.create_task(documents_api.rebuild_index(db=None, current_user={"username": "admin"}))
     await started.wait()
-
     with pytest.raises(HTTPException) as rejected:
         await documents_api.rebuild_index(db=None, current_user={"username": "admin"})
-
     release.set()
     assert rejected.value.status_code == 409
     assert await first == {"message": "done"}
-
-
 def test_document_lists_leave_out_full_text(session_factory):
     add_db_document(session_factory, 1, "overtime.txt", OVERTIME)
     with session_factory() as session:
@@ -344,46 +260,35 @@ def test_document_lists_leave_out_full_text(session_factory):
         ):
             assert [doc["filename"] for doc in listed] == ["overtime.txt"]
             assert "content" not in listed[0]
-
-
 def test_embeddings_are_computed_outside_the_index_lock(rag, session_factory, monkeypatch):
     add_db_document(session_factory, 1, "overtime.txt", OVERTIME)
     original_embed = rag.vector_store.embed
     original_embed_query = rag.vector_store.embed_query
     lock_free_while_embedding = []
-
     def record_lock_state():
         acquired = []
-
         def try_lock():
             acquired.append(rag.vector_store.lock.acquire(timeout=1))
             if acquired[0]:
                 rag.vector_store.lock.release()
-
         other = threading.Thread(target=try_lock)
         other.start()
         other.join()
         lock_free_while_embedding.append(acquired[0])
-
     def embed(texts):
         record_lock_state()
         return original_embed(texts)
-
     def embed_query(query):
         record_lock_state()
         return original_embed_query(query)
-
     monkeypatch.setattr(rag.vector_store, "embed", embed)
     monkeypatch.setattr(rag.vector_store, "embed_query", embed_query)
     rag.add_documents([Document(page_content=OVERTIME, metadata={"source": "overtime.txt", "document_id": 1})])
     rag.force_reindex()
     rag.smart_search(OVERTIME)
     rag.vector_search(OVERTIME)
-
     assert lock_free_while_embedding == [True, True, True, True]
     assert_indices_match_database(rag, session_factory)
-
-
 def test_target_document_ranked_below_top_k_is_still_found(index_dir, session_factory, monkeypatch):
     monkeypatch.setattr(settings, "TOP_K", 2)
     rag = HybridContextualRAG(session_factory=session_factory)
@@ -392,7 +297,6 @@ def test_target_document_ranked_below_top_k_is_still_found(index_dir, session_fa
     add_indexed_document(rag, session_factory, 6, "parking.txt", "parking needs manager approval")
     parking_id = next(cid for cid, doc in rag.vector_store.chunks.items() if doc.metadata["source"] == "parking.txt")
     overtime_id = next(cid for cid, doc in rag.vector_store.chunks.items() if doc.metadata["source"] == "overtime1.txt")
-
     assert "parking.txt" not in {r.document.metadata["source"] for r in rag.smart_search(OVERTIME)}
     assert [r.document.metadata["source"] for r in rag.smart_search(OVERTIME, target_document="parking.txt")] == ["parking.txt"]
     assert [doc.metadata["source"] for doc, _ in rag.bm25_store.search(OVERTIME, rag.vector_store.chunks, 2, chunk_ids=[parking_id])] == ["parking.txt"]
@@ -403,8 +307,6 @@ def test_target_document_ranked_below_top_k_is_still_found(index_dir, session_fa
         hits = rag.vector_store.search(query_embedding, 2, apply_threshold=False, chunk_ids=[parking_id, overtime_id])
         assert [doc.metadata["source"] for doc, _ in hits] == ["overtime1.txt", "parking.txt"]
         assert rag.vector_store.search(query_embedding, 2, apply_threshold=False, chunk_ids=[]) == []
-
-
 def test_startup_reconciles_indices_with_database(make_rag, session_factory):
     rag = make_rag()
     add_indexed_document(rag, session_factory, 1, "overtime.txt", OVERTIME)
@@ -416,16 +318,12 @@ def test_startup_reconciles_indices_with_database(make_rag, session_factory):
     rag.bm25_store.add_documents({999: stale})
     rag.vector_store.save_indices()
     rag.bm25_store.bm25_searcher.close()
-
     reloaded = make_rag()
-
     assert leave_chunk_id in reloaded.vector_store.ids()
     assert 999 not in reloaded.vector_store.ids()
     assert bm25_sources(reloaded, "parking") == []
     assert bm25_sources(reloaded, "seniority") == ["leave.txt"]
     assert_indices_match_database(reloaded, session_factory)
-
-
 def test_startup_removes_chunks_of_deleted_documents(make_rag, session_factory):
     rag = make_rag()
     add_indexed_document(rag, session_factory, 1, "overtime.txt", OVERTIME)
@@ -434,85 +332,56 @@ def test_startup_removes_chunks_of_deleted_documents(make_rag, session_factory):
         session.query(DbDocument).filter(DbDocument.id == 1).delete()
         session.commit()
     rag.bm25_store.bm25_searcher.close()
-
     reloaded = make_rag()
-
     assert [doc.metadata["document_id"] for doc in reloaded.documents] == [2]
     assert_indices_match_database(reloaded, session_factory)
-
-
 def test_add_documents_rolls_back_database_when_index_update_fails(rag, session_factory, monkeypatch):
     add_db_document(session_factory, 1, "overtime.txt", OVERTIME)
-
     def failing_add(chunk_ids, embeddings, chunks):
         raise RuntimeError("faiss add failed")
-
     monkeypatch.setattr(rag.vector_store, "add", failing_add)
-
     with pytest.raises(RuntimeError, match="faiss add failed"):
         rag.add_documents([Document(page_content=OVERTIME, metadata={"source": "overtime.txt", "document_id": 1})])
-
     assert db_chunk_ids(session_factory) == set()
-
-
 def test_unreadable_faiss_file_raises_and_keeps_file(index_dir):
     with open(settings.FAISS_INDEX_PATH, "wb") as f:
         f.write(b"not a faiss index")
-
     with pytest.raises(RuntimeError, match="原索引檔已保留"):
         VectorStoreManager(data_dir=str(index_dir))
-
     assert os.path.exists(settings.FAISS_INDEX_PATH)
-
-
 def test_legacy_position_based_faiss_index_is_backed_up(index_dir):
     legacy = faiss.IndexFlatIP(FakeEmbedder.dimension)
     legacy.add(np.ones((1, FakeEmbedder.dimension), dtype="float32"))
     faiss.write_index(legacy, settings.FAISS_INDEX_PATH)
-
     store = VectorStoreManager(data_dir=str(index_dir))
-
     assert store.index.ntotal == 0
     assert not os.path.exists(settings.FAISS_INDEX_PATH)
     assert os.path.exists(f"{settings.FAISS_INDEX_PATH}.legacy.bak")
-
-
 def test_failed_save_keeps_previous_index_file(make_rag, session_factory, monkeypatch):
     rag = make_rag()
     add_indexed_document(rag, session_factory, 1, "overtime.txt", OVERTIME)
     add_db_document(session_factory, 2, "leave.txt", LEAVE)
-
     def failing_dump(obj, file, *args, **kwargs):
         raise OSError("disk full")
-
     with monkeypatch.context() as patched:
         patched.setattr(vector_store_module, "json", SimpleNamespace(dump=failing_dump))
         with pytest.raises(OSError):
             rag.add_documents([Document(page_content=LEAVE, metadata={"source": "leave.txt", "document_id": 2})])
-
     assert faiss.read_index(settings.FAISS_INDEX_PATH).ntotal == 1
     rag.bm25_store.bm25_searcher.close()
     reloaded = make_rag()
     assert len(reloaded.documents) == 2
     assert_indices_match_database(reloaded, session_factory)
-
-
 def test_index_metadata_is_json_and_reports_last_reindex(rag, session_factory):
     add_indexed_document(rag, session_factory, 1, "overtime.txt", OVERTIME)
-
     with open(settings.METADATA_PATH, encoding="utf-8") as f:
         metadata = json.load(f)
     assert metadata["total_vectors"] == 1
     assert rag.get_statistics()["last_reindex"] == metadata["last_reindex"]
-
-
 def test_legacy_pickle_metadata_is_not_loaded(rag):
     with open(settings.METADATA_PATH, "wb") as f:
         pickle.dump({"last_reindex": datetime(2026, 10, 1)}, f)
-
     assert rag.get_statistics()["last_reindex"] is None
-
-
 def test_force_reindex_keeps_chunk_ids_and_metadata(index_dir, session_factory, monkeypatch):
     monkeypatch.setattr(settings, "CHUNK_SIZE", 40)
     monkeypatch.setattr(settings, "CHUNK_OVERLAP", 0)
@@ -521,13 +390,9 @@ def test_force_reindex_keeps_chunk_ids_and_metadata(index_dir, session_factory, 
     add_indexed_document(rag, session_factory, 1, "overtime.txt", long_text)
     chunk_indexes = {chunk_id: doc.metadata["chunk_index"] for chunk_id, doc in rag.vector_store.chunks.items()}
     assert len(chunk_indexes) > 1
-
     rag.force_reindex()
-
     assert {chunk_id: doc.metadata["chunk_index"] for chunk_id, doc in rag.vector_store.chunks.items()} == chunk_indexes
     assert_indices_match_database(rag, session_factory)
-
-
 def test_read_only_mode_refuses_inconsistent_indices_without_writing(make_rag, session_factory):
     rag = make_rag()
     add_indexed_document(rag, session_factory, 1, "overtime.txt", OVERTIME)
@@ -535,27 +400,20 @@ def test_read_only_mode_refuses_inconsistent_indices_without_writing(make_rag, s
     read_only = HybridContextualRAG(session_factory=session_factory, read_only=True)
     assert [doc.metadata["document_id"] for doc in read_only.documents] == [1]
     read_only.bm25_store.bm25_searcher.close()
-
     with session_factory() as session:
         session.add(RagChunk(document_id=1, chunk_index=1, content="unindexed chunk", chunk_metadata="{}"))
         session.commit()
     faiss_mtime = os.path.getmtime(settings.FAISS_INDEX_PATH)
-
     with pytest.raises(RuntimeError, match="不一致"):
         HybridContextualRAG(session_factory=session_factory, read_only=True)
-
     assert os.path.getmtime(settings.FAISS_INDEX_PATH) == faiss_mtime
     assert len(db_chunk_ids(session_factory)) == 2
-
-
 def test_startup_rebuilds_only_bm25_when_tokenizer_changes(make_rag, session_factory, monkeypatch):
     rag = make_rag()
     add_indexed_document(rag, session_factory, 1, "overtime.txt", OVERTIME)
     rag.bm25_store.bm25_searcher.close()
     monkeypatch.setattr(domain_profile, "domain_words", [*domain_profile.domain_words, "overtime requests"])
-
     reloaded = make_rag()
-
     assert reloaded.vector_store.local_embeddings.encoded_texts == 0
     assert reloaded.bm25_store.tokenizer_matches()
     signature_path = os.path.join(settings.BM25_INDEX_DIR, SIGNATURE_FILENAME)
@@ -563,26 +421,19 @@ def test_startup_rebuilds_only_bm25_when_tokenizer_changes(make_rag, session_fac
         assert json.load(f) == tokenizers.tokenizer_signature()
     assert bm25_sources(reloaded, "approval") == ["overtime.txt"]
     assert_indices_match_database(reloaded, session_factory)
-
-
 def test_read_only_mode_refuses_changed_tokenizer(make_rag, session_factory, monkeypatch):
     rag = make_rag()
     add_indexed_document(rag, session_factory, 1, "overtime.txt", OVERTIME)
     rag.bm25_store.bm25_searcher.close()
     monkeypatch.setattr(domain_profile, "domain_words", [*domain_profile.domain_words, "overtime requests"])
-
     with pytest.raises(RuntimeError, match="斷詞簽章"):
         HybridContextualRAG(session_factory=session_factory, read_only=True)
-
-
 def load_evaluate_cli():
     path = Path(__file__).resolve().parent.parent / "scripts" / "evaluate_retrieval.py"
     spec = importlib.util.spec_from_file_location("evaluate_retrieval_cli", path)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
-
-
 def test_evaluate_retrieval_cli_runs_on_index_snapshot(make_rag, session_factory, index_dir, monkeypatch, capsys):
     rag = make_rag()
     add_indexed_document(rag, session_factory, 1, "overtime.txt", OVERTIME)
@@ -597,14 +448,10 @@ def test_evaluate_retrieval_cli_runs_on_index_snapshot(make_rag, session_factory
     monkeypatch.setattr(sys, "argv", [
         "evaluate_retrieval.py", "--golden", str(golden), "--k", "1", "3", "--min-mrr", "0.5",
     ])
-
     exit_code = cli.main()
-
     assert exit_code == 0
     assert "MRR：1.000" in capsys.readouterr().out
     assert os.path.getmtime(live_faiss_path) == live_faiss_mtime
-
-
 def test_evaluate_retrieval_cli_compares_relevance_thresholds(make_rag, session_factory, index_dir, monkeypatch, capsys):
     rag = make_rag()
     add_indexed_document(rag, session_factory, 1, "overtime.txt", OVERTIME)
@@ -621,15 +468,11 @@ def test_evaluate_retrieval_cli_compares_relevance_thresholds(make_rag, session_
     monkeypatch.setattr(sys, "argv", [
         "evaluate_retrieval.py", "--golden", str(golden), "--k", "1", "--relevance-thresholds", "0.5", "0.95",
     ])
-
     exit_code = cli.main()
-
     out = capsys.readouterr().out
     assert exit_code == 0
     assert "門檻 0.5：MRR 1.000　hit@1 1.000　反例拒絕率 0.000" in out
     assert "門檻 0.95：MRR 0.000　hit@1 0.000　反例拒絕率 1.000" in out
-
-
 def test_evaluate_retrieval_cli_builds_corpus_without_touching_live_indices(index_dir, monkeypatch, capsys, tmp_path):
     corpus = tmp_path / "corpus"
     corpus.mkdir()
@@ -642,23 +485,17 @@ def test_evaluate_retrieval_cli_builds_corpus_without_touching_live_indices(inde
     )
     live_paths = (settings.FAISS_INDEX_PATH, settings.BM25_INDEX_DIR)
     cli = load_evaluate_cli()
-
     def unavailable_database():
         raise AssertionError("--corpus 不應連線正式資料庫")
-
     monkeypatch.setattr(cli, "SessionLocal", unavailable_database)
     monkeypatch.setattr(sys, "argv", [
         "evaluate_retrieval.py", "--corpus", str(corpus), "--golden", str(golden), "--k", "1", "--min-passage-ndcg", "1.0",
     ])
-
     exit_code = cli.main()
-
     out = capsys.readouterr().out
     assert exit_code == 0
     assert "precision@1：1.000　nDCG@1：1.000　recall@1：1.000" in out
     assert not any(os.path.exists(path) for path in live_paths)
-
-
 def test_evaluate_retrieval_cli_fails_when_passage_ndcg_is_below_minimum(index_dir, monkeypatch, capsys, tmp_path):
     corpus = tmp_path / "corpus"
     corpus.mkdir()
@@ -673,19 +510,13 @@ def test_evaluate_retrieval_cli_fails_when_passage_ndcg_is_below_minimum(index_d
     monkeypatch.setattr(sys, "argv", [
         "evaluate_retrieval.py", "--corpus", str(corpus), "--golden", str(golden), "--k", "1", "--min-passage-ndcg", "0.5",
     ])
-
     exit_code = cli.main()
-
     assert exit_code == 1
     assert "片段層級 nDCG@1 0.000 低於門檻 0.5" in capsys.readouterr().out
-
-
 @pytest.mark.asyncio
 async def test_rag_config_endpoint_reports_retrieval_settings(rag, monkeypatch):
     monkeypatch.setattr(admin_api, "get_rag_system", lambda: rag)
-
     config = await admin_api.get_rag_config(current_user={"username": "admin"})
-
     assert config["batch_size"] == rag.vector_store.batch_size
     assert config["rrf_k"] == 60
     assert config["rerank_relevance_threshold"] == 0.5

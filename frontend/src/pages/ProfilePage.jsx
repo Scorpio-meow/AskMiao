@@ -175,7 +175,6 @@ const ProfilePage = () => {
     );
     setSubmitting(false);
     if (result.success) {
-      // 變更密碼會讓所有裝置的登入失效，包含目前這一個
       navigate('/login', { replace: true, state: { notice: { message: '密碼已變更，請以新密碼重新登入', severity: 'info' } } });
     } else {
       setDialogError(result.error || '修改密碼失敗');

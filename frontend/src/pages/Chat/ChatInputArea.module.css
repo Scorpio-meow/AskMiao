@@ -388,8 +388,8 @@
   }
 }
 
-/* 觸控裝置：放大點擊範圍、字級 16px 避免 iOS 自動放大，並隱藏只適用實體鍵盤的提示 */
 @media (pointer: coarse) {
+
   .attachButton,
   .sendButton {
     width: 44px;

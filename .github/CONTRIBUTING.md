@@ -29,7 +29,7 @@
 回報前請先：
 
 - 搜尋 [既有的 Issue](https://github.com/Scorpio-meow/AskMiao/issues)，避免重複。
-- 看過 README 的 [疑難排解](../README.md#疑難排解)；從舊版升級的問題先對照 [升級指南](../docs/upgrading.md)，啟動失敗多半是缺少必填設定。
+- 看過 [疑難排解](../docs/troubleshooting.md)；從舊版升級的問題先對照 [升級指南](../docs/upgrading.md)，啟動失敗多半是缺少必填設定。
 - 遮蔽密碼、權杖、API 金鑰、`TOOL_SECRETS_KEY` 與個人資料。
 
 後端對外只回傳錯誤代碼，完整堆疊只寫在伺服器日誌。回報錯誤時請附上畫面或 API 回應中的錯誤代碼，以及日誌中對應的片段。
@@ -64,7 +64,7 @@
 
 ## 測試與檢查
 
-目前沒有自動執行測試的 CI，請在送出 Pull Request 前於本機執行下列檢查，並在 Pull Request 說明中列出結果。
+目前沒有自動執行測試的 CI，請在送出 Pull Request 前先在本機執行下列檢查，並在 Pull Request 說明中列出結果。
 
 **後端**：
 
@@ -74,6 +74,7 @@ python -m pytest
 ```
 
 - 版本庫沒有 `backend/.env`，測試需要的必填設定與測試用的值見 [llms.txt](../llms.txt) 的「驗證」一節。
+- 測試直接使用設定的 `DATABASE_URL`，並會清空 `agent_skills` 等資料表；請讓它指向拋棄式的 SQLite，不要對開發或正式資料庫執行。
 - 部分測試會載入實際的嵌入與重排模型，完整執行約需數分鐘。
 - Windows 使用者名稱含中文等非 ASCII 字元時，請加上 `--basetemp=C:\pytest-tmp` 之類的 ASCII 路徑，否則 FAISS 寫入暫存索引會失敗。
 
@@ -106,7 +107,7 @@ bun x tsc --noEmit
 - **變更紀錄**：在 `CHANGELOG.md` 與 `CHANGELOG_en.md` 的 `[Unreleased]` 記下變更，分類沿用 Keep a Changelog（新增、變更、移除、修正、安全性）。
 - **版本號**：`backend/app/__init__.py` 的 `__version__` 與 `frontend/package.json` 的 `version` 在發行時由維護者更新，Pull Request 不需要修改。
 - **臺灣用語**：使用者看得到的文字使用臺灣繁體中文用語，例如使用者名稱、電子郵件、權杖、字元。
-- **介紹頁同步**：介紹頁的互動示範在瀏覽器端重現後端規則。修改下列檔案（`backend/app/` 之下）的規則時，請同步更新 `site/index.html` 與 `site/main.js`：
+- **介紹頁同步**：介紹頁的互動示範在瀏覽器端重現後端規則。修改下列檔案（在 `backend/app/` 底下）的規則時，請同步更新 `site/index.html` 與 `site/main.js`：
   - `rag/research_session.py`：引用配號、網址來源限制
   - `rag/retrievers/hybrid.py`：RRF 融合、混合分數、相關性門檻
   - `rag/tools.py`、`core/config.py`：`WEB_FETCH_ALLOWED_DOMAINS`
@@ -123,7 +124,7 @@ bun x tsc --noEmit
 1. 依 Pull Request 範本填寫變更內容、原因與驗證方式，並連結相關的 Issue（例如 `Closes #123`）。
 2. 有破壞性變更時，寫明影響範圍與升級步驟，發行時會整理進 [升級指南](../docs/upgrading.md)。
 3. 介面有變動時，附上變更前後的截圖。
-4. 維護者審查後可能會請你調整；討論請依 [行為準則](CODE_OF_CONDUCT.md) 進行。
+4. 維護者審查後可能會請你調整；討論時請遵守 [行為準則](CODE_OF_CONDUCT.md)。
 
 ## 授權
 

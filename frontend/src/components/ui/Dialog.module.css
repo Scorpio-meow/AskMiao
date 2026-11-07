@@ -1,4 +1,3 @@
-/* reset.css 的 * { margin: 0 } 會蓋掉瀏覽器讓 <dialog> 置中的 margin: auto，這裡補回 */
 .dialog {
   margin: auto;
   padding: 0;
@@ -114,6 +113,7 @@
 }
 
 @media (max-width: 599px) {
+
   .title,
   .content,
   .actions {

@@ -1,19 +1,14 @@
 import axios from 'axios';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { chatService } from './api';
-
 const tokenExpiringIn = (seconds: number): string => {
   const payload = btoa(JSON.stringify({ exp: Math.floor(Date.now() / 1000) + seconds })).replace(/=+$/, '');
   return `header.${payload}.signature`;
 };
-
 const sseResponse = () => new Response('event: done\ndata: {"answer":"好"}\n\n', { status: 200 });
-
 const authorizationOf = (call: unknown[]) => ((call[1] as RequestInit).headers as Record<string, string>).Authorization;
-
 describe('chatService.sendMessageStream', () => {
   let storage: Map<string, string>;
-
   beforeEach(() => {
     storage = new Map();
     vi.stubGlobal('localStorage', {
@@ -23,21 +18,17 @@ describe('chatService.sendMessageStream', () => {
     });
     vi.stubGlobal('window', { location: { pathname: '/', href: '/' } });
   });
-
   afterEach(() => {
     vi.unstubAllGlobals();
     vi.restoreAllMocks();
   });
-
   it('refreshes an expired access token before sending', async () => {
     storage.set('access_token', tokenExpiringIn(-60));
     const refresh = vi.spyOn(axios, 'post').mockResolvedValue({ data: { access_token: 'fresh-token' } });
     const fetchMock = vi.fn().mockResolvedValue(sseResponse());
     vi.stubGlobal('fetch', fetchMock);
     const events: unknown[] = [];
-
     await chatService.sendMessageStream('你好', null, 3, 'gpt-6-sol', 'medium', (event) => events.push(event));
-
     expect(refresh).toHaveBeenCalledTimes(1);
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(authorizationOf(fetchMock.mock.calls[0])).toBe('Bearer fresh-token');
@@ -45,7 +36,6 @@ describe('chatService.sendMessageStream', () => {
     expect(events).toEqual([{ event: 'done', data: { answer: '好' } }]);
     expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toMatchObject({ connection_id: 3, model_name: 'gpt-6-sol' });
   });
-
   it('refreshes once and resends when the server rejects the token', async () => {
     const valid = tokenExpiringIn(3600);
     storage.set('access_token', valid);
@@ -54,9 +44,7 @@ describe('chatService.sendMessageStream', () => {
       .mockResolvedValueOnce(new Response('{"detail":"權杖已被撤銷"}', { status: 401 }))
       .mockResolvedValueOnce(sseResponse());
     vi.stubGlobal('fetch', fetchMock);
-
-    await chatService.sendMessageStream('你好', null, 3, 'gpt-6-sol', 'medium', () => {});
-
+    await chatService.sendMessageStream('你好', null, 3, 'gpt-6-sol', 'medium', () => { });
     expect(fetchMock.mock.calls.map(authorizationOf)).toEqual([`Bearer ${valid}`, 'Bearer fresh-token']);
   });
 });

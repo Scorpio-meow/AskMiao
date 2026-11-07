@@ -15,9 +15,7 @@ from app.core.llm_client import REASONING_EFFORT_VALUES
 from .database import Base
 class User(Base):
     __tablename__ = "users"
-    # SQLite 預設會把已刪除的最大 id 配給下一位使用者；AUTOINCREMENT 保證 id 不重用
     __table_args__ = {"sqlite_autoincrement": True}
-
     id = Column(Integer, primary_key=True, index=True)
     username = Column(String, unique=True, index=True)
     email = Column(String, unique=True, index=True)
@@ -27,7 +25,6 @@ class User(Base):
     role = Column(String, default="user")
     created_at = Column(DateTime, default=datetime.utcnow)
     last_login = Column(DateTime, nullable=True)
-    # 簽發時間早於此時刻的權杖一律無效：建立帳號時等於 created_at（防 id 重用），變更密碼時更新為當下（撤銷所有工作階段）
     tokens_valid_after = Column(DateTime, nullable=False)
     
     conversations = relationship("Conversation", back_populates="user")
@@ -56,7 +53,6 @@ class Message(Base):
     conversation = relationship("Conversation", back_populates="messages")
 class Document(Base):
     __tablename__ = "documents"
-    # 與 users 相同：避免刪除後的文件 id 被新文件重用，舊片段因此誤掛到新文件
     __table_args__ = {"sqlite_autoincrement": True}
     
     id = Column(Integer, primary_key=True, index=True)
@@ -70,7 +66,6 @@ class Document(Base):
 class RagChunk(Base):
     __tablename__ = "rag_chunks"
     __table_args__ = {"sqlite_autoincrement": True}
-
     id = Column(Integer, primary_key=True, index=True)
     document_id = Column(Integer, ForeignKey("documents.id", ondelete="CASCADE"), index=True, nullable=False)
     chunk_index = Column(Integer, nullable=False)
@@ -99,7 +94,6 @@ class CustomApiTool(Base):
     body_content_type = Column(String, nullable=True)
     response_mapping = Column(Text, nullable=True)
     is_enabled = Column(Boolean, default=True)
-    # Agent 呼叫前是否需要發問的使用者在對話內核准；建立時依 HTTP 方法決定（見 tool_approval.default_requires_approval）
     requires_approval = Column(Boolean, nullable=False)
     timeout = Column(Integer, default=15)
     spec_version = Column(String, nullable=True)
@@ -120,7 +114,6 @@ class McpServer(Base):
     url = Column(String, nullable=True)
     headers = Column(Text, nullable=True)
     is_enabled = Column(Boolean, default=True)
-    # MCP 工具的行為無法事先得知，建立時一律需要核准，管理員可逐台關閉
     requires_approval = Column(Boolean, nullable=False)
     status = Column(String, default="disconnected")
     last_error = Column(Text, nullable=True)
@@ -167,8 +160,6 @@ class LlmConnection(Base):
     allowed_user_ids = Column(Text, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
-
-
 class SystemModel(Base):
     __tablename__ = "system_models"
     purpose = Column(String, primary_key=True)
@@ -180,8 +171,6 @@ LLM_PROVIDER_PATTERN = r"^(openai|anthropic|gemini|foundry|ollama)$"
 MAX_LLM_CONNECTION_MODELS = 50
 SYSTEM_MODEL_PURPOSES = ("document_summary", "pdf_ocr")
 REASONING_EFFORT_PATTERN = f"^({'|'.join(REASONING_EFFORT_VALUES)})$"
-
-
 class LlmConnectionValidator(BaseModel):
     @field_validator("name", "api_base", check_fields=False)
     @classmethod
@@ -192,14 +181,12 @@ class LlmConnectionValidator(BaseModel):
         if not value:
             raise ValueError("不可為空白")
         return value
-
     @field_validator("api_base", check_fields=False)
     @classmethod
     def _validate_api_base(cls, value: Optional[str]) -> Optional[str]:
         if value is not None and not re.match(r"^https?://[^\s/]+", value, re.IGNORECASE):
             raise ValueError("API 位址必須是 http:// 或 https:// 開頭的網址")
         return value
-
     @field_validator("models", check_fields=False)
     @classmethod
     def _normalize_models(cls, value: Optional[List[str]]) -> Optional[List[str]]:
@@ -211,8 +198,6 @@ class LlmConnectionValidator(BaseModel):
         if any(len(m) > 200 for m in models):
             raise ValueError("模型名稱不可超過 200 個字元")
         return models
-
-
 class LlmConnectionCreate(LlmConnectionValidator):
     name: str = Field(max_length=100)
     provider: str = Field(pattern=LLM_PROVIDER_PATTERN)
@@ -220,8 +205,6 @@ class LlmConnectionCreate(LlmConnectionValidator):
     api_key: Optional[str] = Field(default=None, min_length=1, max_length=1000)
     models: List[str] = Field(max_length=MAX_LLM_CONNECTION_MODELS)
     max_output_tokens: Optional[int] = Field(default=None, ge=1)
-
-
 class LlmConnectionUpdate(LlmConnectionValidator):
     name: Optional[str] = Field(default=None, max_length=100)
     provider: Optional[str] = Field(default=None, pattern=LLM_PROVIDER_PATTERN)
@@ -229,33 +212,21 @@ class LlmConnectionUpdate(LlmConnectionValidator):
     api_key: Optional[str] = Field(default=None, min_length=1, max_length=1000)
     models: Optional[List[str]] = Field(default=None, max_length=MAX_LLM_CONNECTION_MODELS)
     max_output_tokens: Optional[int] = Field(default=None, ge=1)
-
-
 class SharedLlmConnectionCreate(LlmConnectionCreate):
     allowed_user_ids: List[int]
-
-
 class SharedLlmConnectionUpdate(LlmConnectionUpdate):
     allowed_user_ids: Optional[List[int]] = None
-
-
 class LlmConnectionTestRequest(BaseModel):
     model_name: str = Field(min_length=1, max_length=200)
-
-
 class LlmModelDiscoveryRequest(LlmConnectionValidator):
     provider: str = Field(pattern=LLM_PROVIDER_PATTERN)
     api_base: str = Field(max_length=500)
     api_key: Optional[str] = Field(default=None, min_length=1, max_length=1000)
     connection_id: Optional[int] = None
-
-
 class SystemModelAssignment(BaseModel):
     connection_id: int
     model_name: str = Field(min_length=1, max_length=200)
     reasoning_effort: str = Field(pattern=REASONING_EFFORT_PATTERN)
-
-
 class SystemModelsUpdate(BaseModel):
     document_summary: Optional[SystemModelAssignment]
     pdf_ocr: Optional[SystemModelAssignment]
@@ -270,24 +241,17 @@ class UserResponse(BaseModel):
     is_active: bool
     is_admin: bool
     created_at: datetime
-# 附件內容只接受內嵌的 base64 data URL；遠端網址會讓模型供應商代為擷取任意位址
 DATA_URL_HEADER_PATTERN = re.compile(r"^data:[\w.+-]+/[\w.+-]+(;[\w.+-]+=[\w.+-]+)*;base64$", re.IGNORECASE)
 BASE64_BODY_PATTERN = re.compile(r"^[A-Za-z0-9+/]*={0,2}$")
-
-
 def decoded_data_url_size(data_url: str) -> int:
-    """不解碼即可算出 base64 data URL 的原始位元組數"""
     body = data_url.split(",", 1)[1]
     return (len(body) * 3) // 4 - body[-2:].count("=")
-
-
 class FileAttachment(BaseModel):
     filename: str = Field(max_length=255)
     file_type: str = Field(max_length=255)
     file_size: Optional[int] = None
     data_url: Optional[str] = None
     content: Optional[str] = Field(default=None, max_length=MAX_ATTACHMENT_TEXT_CHARS)
-
     @field_validator("data_url")
     @classmethod
     def validate_data_url(cls, value: Optional[str]) -> Optional[str]:
@@ -301,8 +265,6 @@ class FileAttachment(BaseModel):
         if decoded_data_url_size(value) > MAX_CHAT_ATTACHMENT_BYTES:
             raise ValueError(f"單一附件不可超過 {MAX_CHAT_ATTACHMENT_BYTES // (1024 * 1024)} MiB")
         return value
-
-
 class MessageCreate(BaseModel):
     content: str = Field(max_length=MAX_CHAT_MESSAGE_CHARS)
     conversation_id: Optional[int] = None
@@ -310,7 +272,6 @@ class MessageCreate(BaseModel):
     model_name: str = Field(min_length=1, max_length=200)
     reasoning_effort: Optional[str] = "medium"
     attachments: Optional[List[FileAttachment]] = Field(default=[], max_length=MAX_CHAT_ATTACHMENTS)
-
     @model_validator(mode="after")
     def validate_attachment_total(self) -> "MessageCreate":
         total = sum(decoded_data_url_size(att.data_url) for att in self.attachments or [] if att.data_url)
@@ -342,8 +303,6 @@ BODY_CONTENT_TYPES = ("application/json", "application/x-www-form-urlencoded", "
 MEDIA_TYPE_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9!#$&^_.+-]{0,126}/[A-Za-z0-9][A-Za-z0-9!#$&^_.+-]{0,126}$")
 OAUTH2_CLIENT_CREDENTIALS = "oauth2_client_credentials"
 AUTH_TYPES = ("none", "bearer", "api_key", "basic", OAUTH2_CLIENT_CREDENTIALS)
-
-
 class ApiToolOptionsValidator(BaseModel):
     @field_validator("body_content_type", check_fields=False)
     @classmethod
@@ -351,15 +310,12 @@ class ApiToolOptionsValidator(BaseModel):
         if value is not None and not MEDIA_TYPE_PATTERN.match(value):
             raise ValueError("body_content_type 必須是媒體型別，例如 application/json、application/merge-patch+json、application/xml")
         return value
-
     @field_validator("auth_type", check_fields=False)
     @classmethod
     def _validate_auth_type(cls, value: Optional[str]) -> Optional[str]:
         if value is not None and value not in AUTH_TYPES:
             raise ValueError(f"auth_type 只能是 {', '.join(AUTH_TYPES)}")
         return value
-
-
 class CustomApiToolCreate(ApiToolOptionsValidator):
     name: str
     display_name: str

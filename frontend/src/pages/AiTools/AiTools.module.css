@@ -51,7 +51,7 @@
     flex-wrap: nowrap;
   }
 
-  .pageActions > .primaryAction {
+  .pageActions>.primaryAction {
     flex: 1 1 auto;
   }
 
@@ -302,7 +302,7 @@
   color: var(--text-secondary);
 }
 
-.sectionMessage + .rowList {
+.sectionMessage+.rowList {
   border-top: 1px solid var(--border-default);
 }
 
@@ -340,7 +340,7 @@
   padding: var(--space-4) var(--space-5);
 }
 
-.row + .row {
+.row+.row {
   border-top: 1px solid var(--border-default);
 }
 
@@ -463,6 +463,7 @@
 }
 
 @media (max-width: 599px) {
+
   .sectionHeader,
   .row {
     padding: var(--space-4);
@@ -833,7 +834,7 @@
   padding: var(--space-3);
 }
 
-.entryItem + .entryItem {
+.entryItem+.entryItem {
   border-top: 1px solid var(--border-subtle);
 }
 
@@ -915,7 +916,7 @@
   border: 0;
 }
 
-.formSection + .formSection {
+.formSection+.formSection {
   padding-top: var(--space-5);
   border-top: 1px solid var(--border-subtle);
 }
@@ -929,7 +930,7 @@
   color: var(--text-primary);
 }
 
-.formSectionTitle + * {
+.formSectionTitle+* {
   clear: both;
 }
 
@@ -1053,6 +1054,7 @@ textarea.input {
 }
 
 @media (pointer: coarse) {
+
   .input,
   .select,
   .searchInput {
@@ -1174,7 +1176,7 @@ textarea.input {
   color: var(--text-tertiary);
 }
 
-.step + .step::before {
+.step+.step::before {
   content: '';
   width: 24px;
   height: 1px;
@@ -1297,7 +1299,7 @@ textarea.input {
   border-radius: var(--radius-md);
 }
 
-.endpointList li + li {
+.endpointList li+li {
   border-top: 1px solid var(--border-subtle);
 }
 
@@ -1487,8 +1489,8 @@ textarea.input {
   overflow-wrap: anywhere;
 }
 
-.fileItem + .fileItem,
-.choiceList li + li {
+.fileItem+.fileItem,
+.choiceList li+li {
   border-top: 1px solid var(--border-subtle);
 }
 

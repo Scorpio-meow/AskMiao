@@ -7,7 +7,6 @@ export interface ConfirmDialogProps {
   description?: React.ReactNode;
   confirmLabel: string;
   cancelLabel?: string;
-  /** 破壞性操作：確認鈕用危險樣式，預設焦點放在「取消」 */
   destructive?: boolean;
   loading?: boolean;
   onConfirm: () => void;

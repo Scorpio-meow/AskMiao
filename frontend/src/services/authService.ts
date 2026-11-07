@@ -11,8 +11,6 @@ export interface LoginNotice {
   message: string;
   severity: 'info' | 'warning';
 }
-// 登出請求失敗時伺服器沒有撤銷重新整理權杖，而存放它的 httpOnly Cookie 只有伺服器能清除：
-// 這個瀏覽器在權杖到期前仍能用它換發新的存取權杖，因此要讓使用者知道登出沒有完成
 export const LOGOUT_UNCONFIRMED_NOTICE: LoginNotice = {
   message: '無法向伺服器確認登出，這個瀏覽器中的登入憑證可能仍然有效。若在共用電腦上，請待連線恢復後重新登入再登出一次，或清除此網站的 Cookie。',
   severity: 'warning',
@@ -109,7 +107,6 @@ class AuthService {
       };
     }
   }
-  /** 回傳伺服器是否確認登出；無論結果如何都會清除本機的登入狀態 */
   async logout(): Promise<boolean> {
     try {
       await withTimeout(
@@ -150,7 +147,6 @@ class AuthService {
         }, { signal }),
         45000
       );
-      // 後端在變更密碼後撤銷所有權杖（含這一次的），本機的登入狀態也一併清除
       this.clearAuth();
       return { success: true, message: response.data.message };
     } catch (error: any) {

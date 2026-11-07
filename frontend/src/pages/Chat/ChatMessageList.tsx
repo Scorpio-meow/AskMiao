@@ -4,7 +4,6 @@ import ChatMessageItem from './ChatMessageItem';
 import { completionAnnouncement, messageKey } from './chatFormat';
 import { Button, Spinner, Icon } from '../../components/ui';
 import styles from './ChatMessageList.module.css';
-// 距離底部在這個範圍內視為「正在看最新訊息」，新內容出現時才自動捲動
 const NEAR_BOTTOM_THRESHOLD_PX = 80;
 const EAGER_RENDER_TAIL = 6;
 const APPROVAL_ANNOUNCEMENT = 'AI 想執行外部工具，需要你確認';
@@ -62,12 +61,10 @@ export const ChatMessageList: React.FC<ChatMessageListProps> = ({
   const streamingMessage = streamingMessageId !== null ? messages.find((m) => m.id === streamingMessageId) : undefined;
   const pendingApprovalId = streamingMessage?.pending_approval?.approval_id ?? null;
   const [announcedApprovalId, setAnnouncedApprovalId] = useState(pendingApprovalId);
-  // 換對話時先隱藏「回到最新訊息」；之後由捲動事件重新判斷
   if (jumpButtonKey !== firstMessageKey) {
     setJumpButtonKey(firstMessageKey);
     setShowJumpButton(false);
   }
-  // 回答結束時才更新播報內容（完成、失敗或停止），不播報「產生中」這類過渡狀態
   if (previousSending !== sending) {
     setPreviousSending(sending);
     setAnnouncement(sending ? '' : completionAnnouncement(messages[messages.length - 1]));
@@ -78,7 +75,6 @@ export const ChatMessageList: React.FC<ChatMessageListProps> = ({
       setAnnouncement(APPROVAL_ANNOUNCEMENT);
     }
   }
-  // 只捲動 DOM；「回到最新訊息」按鈕的顯示由捲動事件更新
   const scrollToBottom = useCallback((behavior: ScrollBehavior) => {
     const el = scrollRef.current;
     if (!el) return;
@@ -107,7 +103,6 @@ export const ChatMessageList: React.FC<ChatMessageListProps> = ({
     previousCountRef.current = messages.length;
     const snapshot = prependSnapshotRef.current;
     if (snapshot && firstKeyChanged && messages.length > previousCount) {
-      // 載入更早的訊息後維持原本看到的位置
       prependSnapshotRef.current = null;
       el.scrollTop = snapshot.scrollTop + (el.scrollHeight - snapshot.scrollHeight);
     } else {
@@ -116,18 +111,14 @@ export const ChatMessageList: React.FC<ChatMessageListProps> = ({
       }
       const lastMessage = messages[messages.length - 1];
       const userJustSent = messages.length > previousCount && lastMessage?.id === streamingMessageId;
-      // 以更新前的內容高度和目前的捲動位置判斷使用者原本是否在看最新內容，
-      // 不依賴 scroll 事件（新 token 可能在使用者往上捲、但 scroll 事件還沒觸發前就先渲染）
       const wasNearBottom = previousScrollHeight - el.scrollTop - el.clientHeight <= NEAR_BOTTOM_THRESHOLD_PX;
       if (firstKeyChanged || userJustSent) {
-        // 換了一段對話，或使用者剛送出訊息：直接到最底
         scrollToBottom('auto');
       } else if (wasNearBottom) {
         el.scrollTop = el.scrollHeight;
       }
     }
     previousScrollHeightRef.current = el.scrollHeight;
-    // 內容變多但使用者不在底部時不會有 scroll 事件，下一個畫格再更新「回到最新訊息」按鈕
     const frame = requestAnimationFrame(updateJumpButton);
     return () => cancelAnimationFrame(frame);
   }, [messages, firstMessageKey, streamingMessageId, loadingMore, scrollToBottom, updateJumpButton]);

@@ -3,12 +3,10 @@ import json
 import logging
 import threading
 from typing import Any, Dict, List, Tuple
-
 from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile
 from sqlalchemy.orm import Session
 from starlette.datastructures import UploadFile as FormFile
 from starlette.exceptions import HTTPException as FormParseError
-
 from app.core.error_response import log_and_get_error_id
 from app.core.jwt_auth import get_current_admin_user
 from app.core.limits import MAX_SKILL_ARCHIVE_BYTES, MAX_SKILL_FOLDER_FILES, MAX_SKILL_UNCOMPRESSED_BYTES, MIB
@@ -30,12 +28,9 @@ from app.services.agent_skills import (
     skill_record_fields,
     skill_visible_to,
 )
-
 logger = logging.getLogger(__name__)
 router = APIRouter()
 _skill_write_lock = threading.Lock()
-
-
 def _json_or_none(value):
     if not value:
         return None
@@ -43,8 +38,6 @@ def _json_or_none(value):
         return json.loads(value)
     except json.JSONDecodeError:
         return None
-
-
 def _skill_response(skill: AgentSkill) -> Dict[str, Any]:
     return {
         "id": skill.id,
@@ -62,15 +55,11 @@ def _skill_response(skill: AgentSkill) -> Dict[str, Any]:
         "created_at": skill.created_at,
         "updated_at": skill.updated_at,
     }
-
-
 def _get_skill(db: Session, skill_id: int) -> AgentSkill:
     skill = db.query(AgentSkill).filter(AgentSkill.id == skill_id).first()
     if not skill:
         raise HTTPException(status_code=404, detail="找不到該技能")
     return skill
-
-
 @router.get("/enabled")
 def get_enabled_skills(db: Session = Depends(get_db), user_id: int = Depends(get_current_user_id)):
     skills = db.query(AgentSkill).filter(AgentSkill.is_enabled == True).order_by(AgentSkill.name).all()
@@ -82,14 +71,10 @@ def get_enabled_skills(db: Session = Depends(get_db), user_id: int = Depends(get
             if skill_files_present(s.name) and skill_visible_to(s.allowed_user_ids, user_id)
         ],
     }
-
-
 @router.get("")
 def get_all_skills(db: Session = Depends(get_db), current_user: dict = Depends(get_current_admin_user)):
     skills = db.query(AgentSkill).order_by(AgentSkill.name).all()
     return {"status": "success", "total": len(skills), "skills": [_skill_response(s) for s in skills]}
-
-
 @router.get("/{skill_id}")
 def get_skill_detail(skill_id: int, db: Session = Depends(get_db), current_user: dict = Depends(get_current_admin_user)):
     skill = _get_skill(db, skill_id)
@@ -102,8 +87,6 @@ def get_skill_detail(skill_id: int, db: Session = Depends(get_db), current_user:
         detail["load_error"] = f"無法讀取 SKILL.md，請重新上傳技能（錯誤代碼：{error_id}）"
     detail["resources"], detail["resources_truncated"] = list_skill_resources(skill.name)
     return {"status": "success", "skill": detail}
-
-
 @router.post("/upload")
 async def upload_skill(
     request: Request,
@@ -120,8 +103,6 @@ async def upload_skill(
     skill, replaced = await asyncio.to_thread(_install_and_record, request, parsed, files, replace, db, current_user)
     action = "更新" if replaced else "安裝"
     return {"status": "success", "message": f"已{action}技能「{parsed.name}」", "skill": _skill_response(skill)}
-
-
 @router.post("/upload-folder")
 async def upload_skill_folder(
     request: Request,
@@ -150,7 +131,6 @@ async def upload_skill_folder(
         found = read_skill_folder(entries)
     except SkillError as e:
         raise HTTPException(status_code=400, detail=str(e))
-
     installed, updated, skipped = await asyncio.to_thread(_install_folder_skills, request, found, replace, db, current_user)
     if not installed and not updated:
         detail = skipped[0]["reason"] if len(skipped) == 1 else "沒有安裝任何技能：" + "；".join(
@@ -163,8 +143,6 @@ async def upload_skill_folder(
         "skills": [_skill_response(skill) for skill in installed + updated],
         "skipped": skipped,
     }
-
-
 def _install_folder_skills(
     request: Request,
     found: List[FolderSkill],
@@ -189,8 +167,6 @@ def _install_folder_skills(
             continue
         (updated if replaced else installed).append(skill)
     return installed, updated, skipped
-
-
 def _folder_message(installed: List[AgentSkill], updated: List[AgentSkill], skipped: List[Dict[str, Any]]) -> str:
     if len(installed) + len(updated) == 1 and not skipped:
         action = "更新" if updated else "安裝"
@@ -198,8 +174,6 @@ def _folder_message(installed: List[AgentSkill], updated: List[AgentSkill], skip
     counts = [text for text in (f"安裝 {len(installed)} 個" if installed else "", f"更新 {len(updated)} 個" if updated else "") if text]
     message = f"已{'、'.join(counts)}技能"
     return f"{message}，略過 {len(skipped)} 個" if skipped else message
-
-
 def _install_and_record(
     request: Request,
     parsed: ParsedSkill,
@@ -216,7 +190,6 @@ def _install_and_record(
             install_skill(parsed, files, replace=replace)
         except SkillError as e:
             raise HTTPException(status_code=400, detail=str(e))
-
         fields = skill_record_fields(parsed)
         if existing:
             for key, value in fields.items():
@@ -234,8 +207,6 @@ def _install_and_record(
             details={"skill": parsed.name, "replaced": existing is not None, "files": len(files)},
         )
         return skill, existing is not None
-
-
 @router.patch("/{skill_id}/toggle")
 def toggle_skill(skill_id: int, db: Session = Depends(get_db), current_user: dict = Depends(get_current_admin_user)):
     skill = _get_skill(db, skill_id)
@@ -247,8 +218,6 @@ def toggle_skill(skill_id: int, db: Session = Depends(get_db), current_user: dic
         "is_enabled": skill.is_enabled,
         "message": f"技能已{'啟用' if skill.is_enabled else '停用'}",
     }
-
-
 @router.patch("/{skill_id}/settings")
 def update_skill_settings(
     skill_id: int,
@@ -276,8 +245,6 @@ def update_skill_settings(
         details={"skill": skill.name, "allow_scripts": bool(skill.allow_scripts), "allowed_user_ids": _json_or_none(skill.allowed_user_ids)},
     )
     return {"status": "success", "message": "技能設定已更新", "skill": _skill_response(skill)}
-
-
 @router.delete("/{skill_id}")
 def delete_skill(
     skill_id: int,

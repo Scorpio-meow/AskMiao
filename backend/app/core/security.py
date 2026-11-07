@@ -35,7 +35,6 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         super().__init__(app)
         self.calls = calls
         self.period = period
-        # 以位址分組的請求時間；追蹤的位址數有上限，最久未活動的先淘汰，大量來源位址不會讓記憶體持續成長
         self.clients: "OrderedDict[str, Deque[float]]" = OrderedDict()
         self.blocked_windows: Dict[str, _BlockedWindow] = {}
     def _record_block(self, client_ip: str, path: str, current_time: float) -> None:

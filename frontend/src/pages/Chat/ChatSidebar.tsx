@@ -20,7 +20,6 @@ export const ChatSidebar: React.FC<ChatSidebarProps> = ({
 }) => {
   const drawerRef = useRef<HTMLDialogElement>(null);
   const drawerHandlers = useModalDialog(drawerRef, open, onClose);
-  // 桌面版改用常駐側欄，視窗放大時關閉抽屜，避免頁面仍處於模態狀態
   useEffect(() => {
     if (!open) return;
     const desktopQuery = window.matchMedia('(min-width: 900px)');

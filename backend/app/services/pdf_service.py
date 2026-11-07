@@ -16,11 +16,9 @@ OBJECT_REFERENCE_PATTERN = re.compile(r"(\d+) 0 R")
 REPLACEMENT_CHARACTER = 0xFFFD
 PageOcr = Callable[[bytes], str]
 class PDFService:
-    """企業級穩健 PDF 處理服務"""
     OCR_RENDER_DPI = 150
     @staticmethod
     def _is_cjk_char(c: str) -> bool:
-        """判定字元是否為 CJK 繁簡中文、注音或常用全形符號"""
         if not c:
             return False
         cp = ord(c)
@@ -37,7 +35,6 @@ class PDFService:
         )
     @staticmethod
     def _is_valid_char(c: str) -> bool:
-        """判定字元是否為合法有效字元（ASCII、CJK、常用標點與換行）"""
         return (
             PDFService._is_cjk_char(c)
             or "\u0020" <= c <= "\u007e"
@@ -47,9 +44,6 @@ class PDFService:
         )
     @staticmethod
     def _is_garbled(text: str, threshold: float = 0.35) -> bool:
-        """
-        評估文字是否為亂碼（若字數過少或合法字元佔比低於閾值則視為亂碼）
-        """
         if not text or len(text.strip()) < 10:
             return True
         cjk_count = sum(1 for c in text if PDFService._is_cjk_char(c))
@@ -131,9 +125,6 @@ class PDFService:
         return added
     @classmethod
     def _render_page_png(cls, page) -> bytes:
-        """把頁面點陣化為 PNG。輸出像素數超過 MAX_OCR_PIXELS 時降低解析度，
-        頁面尺寸由上傳者控制，不能讓它直接決定點陣圖的記憶體配置。
-        PyMuPDF 不支援多執行緒，只能在開啟文件的同一執行緒呼叫。"""
         zoom = cls.OCR_RENDER_DPI / 72.0
         width = max(page.rect.width, 1.0) * zoom
         height = max(page.rect.height, 1.0) * zoom
@@ -143,13 +134,10 @@ class PDFService:
         return pix.tobytes("png")
     @classmethod
     def _ocr_page_sync(cls, ocr: PageOcr, img_bytes: bytes, page_num: int) -> str:
-        """
-        把已點陣化的頁面影像交給系統模型識別（同步執行；只做網路呼叫，可並行）
-        """
         try:
             content = ocr(img_bytes).strip()
             if content:
-                logger.info(f"第 {page_num} 頁 Vision OCR 識別成功 ({len(content)} 字)")
+                logger.info(f"第 {page_num} 頁 Vision OCR 辨識成功 ({len(content)} 字)")
                 return content
             logger.warning(f"第 {page_num} 頁 Vision OCR 沒有回傳文字")
         except Exception as e:
@@ -157,15 +145,9 @@ class PDFService:
         return f"[第 {page_num} 頁為掃描圖片或複雜版面，已記錄]"
     @classmethod
     def extract_text_robust(cls, file_path: str, max_ocr_pages: Optional[int], ocr: Optional[PageOcr]) -> str:
-        """
-        同步/標準進入點：執行多層防護 PDF 抽取（支援 Vision OCR 智慧補全）
-        max_ocr_pages：最多送 Vision OCR 的頁數（每頁一次付費呼叫）；None 表示不限，只用於管理員上傳
-        ocr：管理員指定的 PDF OCR 系統模型；None 表示未指定，掃描頁不做 OCR
-        """
         return cls._extract_sync_internal(file_path, max_ocr_pages, ocr)
     @classmethod
     def _extract_sync_internal(cls, file_path: str, max_ocr_pages: Optional[int], ocr: Optional[PageOcr]) -> str:
-        """內部提取實作：PyMuPDF（補上 ToUnicode 漏掉的替代字形）+ Vision OCR + pypdf 雙重備援"""
         import concurrent.futures
         try:
             doc = fitz.open(file_path)
@@ -202,8 +184,7 @@ class PDFService:
                     pages_text[page_idx] = f"--- 第 {page_num} 頁 ---\n[本頁未進行 OCR：超過每份文件的 OCR 頁數上限]\n"
                 ocr_jobs = ocr_jobs[:max_ocr_pages]
             if ocr_jobs and ocr is not None:
-                logger.info(f"正在對 {len(ocr_jobs)} 頁純圖檔/掃描頁面啟動 Vision OCR 並行識別...")
-                # 點陣化在本執行緒依序完成（PyMuPDF 不支援多執行緒），只有 Vision API 呼叫並行
+                logger.info(f"正在對 {len(ocr_jobs)} 頁純圖檔/掃描頁面啟動 Vision OCR 並行辨識...")
                 rendered_jobs = []
                 for page_idx, page_num, page in ocr_jobs:
                     try:
@@ -224,7 +205,7 @@ class PDFService:
                         try:
                             ocr_text = future.result()
                             if ocr_text and not ocr_text.startswith("[第 "):
-                                pages_text[page_idx] = f"--- 第 {page_num} 頁 (OCR 識別) ---\n{ocr_text.strip()}\n"
+                                pages_text[page_idx] = f"--- 第 {page_num} 頁 (OCR 辨識) ---\n{ocr_text.strip()}\n"
                                 text_pages += 1
                             else:
                                 pages_text[page_idx] = f"--- 第 {page_num} 頁 ---\n{ocr_text.strip()}\n"
@@ -238,10 +219,10 @@ class PDFService:
                     pages_text[page_idx] = f"--- 第 {page_num} 頁 ---\n[本頁為圖檔或無可提取純文字]\n"
             doc.close()
             if not text_pages:
-                raise DocumentRejected("PDF 文件中沒有可提取的文字：每一頁都是圖片或無法辨識的文字，且 OCR 未設定或辨識失敗")
+                raise DocumentRejected("PDF 文件中沒有可擷取的文字：每一頁都是圖片或無法辨識的文字，且 OCR 未設定或辨識失敗")
             final_pages = [p for p in pages_text if p is not None]
             full_text = "\n".join(final_pages).strip()
-            logger.info(f"成功從 PDF 提取 {len(final_pages)} 頁，共 {len(full_text)} 字元")
+            logger.info(f"成功從 PDF 擷取 {len(final_pages)} 頁，共 {len(full_text)} 字元")
             return full_text
         except DocumentRejected:
             raise
@@ -265,5 +246,5 @@ class PDFService:
                 except Exception:
                     continue
         if not text_content:
-            raise DocumentRejected("PDF 文件中沒有可提取的文本內容（可能是純圖檔掃描件）")
+            raise DocumentRejected("PDF 文件中沒有可擷取的文字內容（可能是純圖檔掃描件）")
         return "\n".join(text_content)

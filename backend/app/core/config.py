@@ -6,7 +6,6 @@ from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 BACKEND_DIR = Path(__file__).resolve().parents[2]
 ENV_PATH = BACKEND_DIR / ".env"
-# 相對路徑一律以 backend/ 為基準，避免從其他目錄啟動時指到錯誤位置
 PATH_SETTING_KEYS = (
     "UPLOAD_DIR",
     "DATA_DIR",
@@ -36,37 +35,28 @@ class Settings(BaseSettings):
     OLLAMA_NUM_PREDICT: Optional[int] = None
     OLLAMA_NUM_CTX: Optional[int] = Field(default=None, ge=1)
     ENABLE_WEB_SEARCH: bool
-    # web_fetch 可讀取的網域（含子網域），逗號分隔；明確寫 * 才表示不限制
     WEB_FETCH_ALLOWED_DOMAINS: str
-    # 同一次提問中知識庫工具回傳過內容後，是否拒絕 web_search 與 web_fetch
     BLOCK_WEB_TOOLS_AFTER_KB: bool
     CONVERSATION_HISTORY_MESSAGES: int = Field(ge=0)
     OLLAMA_SEARCH_ENDPOINT: str = "https://ollama.com/api/web_search"
     OLLAMA_FETCH_ENDPOINT: str = "https://ollama.com/api/web_fetch"
     DUCKDUCKGO_SEARCH_ENDPOINT: str = "https://html.duckduckgo.com/html/"
     DEFAULT_CONVERSATION_TITLE: str = "新對話"
-    # 重新整理權杖 Cookie 是否帶 Secure（只經 HTTPS 傳送）；以 HTTPS 提供服務時必須為 true
     COOKIE_SECURE: bool
     COOKIE_SAMESITE: str = "lax"
     LLM_TAGS_TIMEOUT: float = 10.0
-    # 是否開放自行註冊：所有帳號共用整個知識庫與已啟用的工具，關閉時改由管理員以 scripts/create_user.py 建立帳號
     ALLOW_REGISTRATION: bool
-    # 加密自訂 API 工具與 MCP 伺服器憑證（headers、auth_config、env_vars）的 Fernet 金鑰；更換後既有憑證需重新輸入
     TOOL_SECRETS_KEY: str
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
     REFRESH_TOKEN_EXPIRE_DAYS: int = 7
-    # 登入失敗節流：同一帳號或同一來源位址在視窗內失敗達門檻後，暫停該帳號或位址的登入
     LOGIN_MAX_FAILURES_PER_ACCOUNT: int = Field(ge=1)
     LOGIN_MAX_FAILURES_PER_ADDRESS: int = Field(ge=1)
     LOGIN_FAILURE_WINDOW_SECONDS: int = Field(ge=1)
     LOGIN_LOCKOUT_SECONDS: int = Field(ge=1)
     ENVIRONMENT: str = "development"
-    # python main.py 的監聽位址；只有容器或其他主機上的反向代理需要連入時才改為 0.0.0.0
     HOST: str
     PORT: int = 8001
-    # 程式碼變更時自動重新載入，只用於開發
     RELOAD: bool
-    # 是否提供 /docs、/redoc 與 /openapi.json（完整列出所有端點與參數）
     ENABLE_API_DOCS: bool
     LOG_LEVEL: str = "INFO"
     LOG_DIR: str
@@ -98,11 +88,8 @@ class Settings(BaseSettings):
     RERANK_TOP_K: int = 50
     FINAL_K: int = 8
     RERANK_WEIGHT: float = 0.85
-    # 重排模型機率低於此值的片段視為無關（精確比對到網址、貼文 ID、日期者除外）
     RERANK_RELEVANCE_THRESHOLD: float = Field(ge=0.0, le=1.0)
-    # 領域詞、結構化記錄日期欄位與摘要備援規則（JSON）
     DOMAIN_PROFILE_PATH: str
-    # 選填：替換 jieba 主詞典（例如繁體較友善的 dict.txt.big），未設定時使用 jieba 內建詞典
     JIEBA_DICTIONARY: Optional[str] = None
     CHUNK_SIZE: int = 800
     CHUNK_OVERLAP: int = 150
@@ -117,8 +104,6 @@ class Settings(BaseSettings):
     DEVTUNNEL_URL: str = ""
     RATE_LIMIT_ENABLED: bool = True
     RATE_LIMIT_PER_MINUTE: int = 60
-    # 只有在後端前方有會「覆寫」X-Forwarded-For 的反向代理時才設定（例如 127.0.0.1）；
-    # 未設定時一律以實際連線對端作為速率限制的來源，不採信用戶端可偽造的標頭
     FORWARDED_ALLOW_IPS: Optional[str] = None
     UPLOADS_WATCHER_INTERVAL: int = 30
     @field_validator(*PATH_SETTING_KEYS)
@@ -178,7 +163,6 @@ HF_ENVIRONMENT_KEYS = (
     "HF_HUB_DISABLE_SYMLINKS_WARNING",
 )
 def export_hf_environment(config: Settings) -> None:
-    """Hugging Face 相關套件只讀環境變數，且在匯入時就決定快取位置與離線模式，須在載入模型前寫入 os.environ"""
     for key in HF_ENVIRONMENT_KEYS:
         value = getattr(config, key)
         if value is None:

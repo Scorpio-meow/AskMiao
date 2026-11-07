@@ -81,7 +81,7 @@ const RegisterPage = () => {
             </div>
           ) : (
             <Alert severity="info" style={{ marginBottom: '16px' }}>
-              目前不開放註冊，請聯繫管理員建立帳號
+              目前不開放註冊，請聯絡管理員建立帳號
             </Alert>
           )}
           <div className={styles.footer}>

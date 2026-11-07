@@ -18,5 +18,5 @@ export const isTokenExpired = (token: string, bufferTime: number = 300): boolean
 export const clearAuth = (): void => {
   localStorage.removeItem('access_token');
   localStorage.removeItem('user_info');
-  console.log('[Auth] 已清除認證信息');
+  console.log('[Auth] 已清除認證資訊');
 };

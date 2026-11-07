@@ -417,7 +417,7 @@ export default function AiTools() {
               failed: loadState.failed.mcp,
               failedText: '無法載入 MCP 伺服器。',
               staleText: '無法更新 MCP 伺服器，下方是上次載入的資料。',
-              emptyText: '尚未配置任何 MCP 伺服器，點擊「新增 MCP 伺服器」即可套用 Time、Filesystem 等預設範本或自訂指令。',
+              emptyText: '尚未設定任何 MCP 伺服器，點擊「新增 MCP 伺服器」即可套用 Time、Filesystem 等預設範本或自訂指令。',
               renderRow: (server) => (
                 <McpServerRow
                   key={server.id}
