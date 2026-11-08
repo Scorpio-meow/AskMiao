@@ -10,7 +10,7 @@ AskMiao answers with hybrid retrieval (FAISS + BM25 + Cross-Encoder) and agentic
 
 [繁體中文](README.md) | [English](README_en.md)
 
-[![Version](https://img.shields.io/badge/version-8.3.0-2563eb?style=flat)](CHANGELOG_en.md)
+[![Version](https://img.shields.io/badge/version-8.4.0-2563eb?style=flat)](CHANGELOG_en.md)
 [![Python](https://img.shields.io/badge/Python-3.12+-3776AB?style=flat&logo=python&logoColor=white)](https://www.python.org/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-005571?style=flat&logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
 [![React](https://img.shields.io/badge/React-19.3-61DAFB?style=flat&logo=react&logoColor=black)](https://react.dev/)
@@ -80,6 +80,7 @@ AskMiao answers with hybrid retrieval (FAISS + BM25 + Cross-Encoder) and agentic
 
 - **Research trace**: each step's tool, arguments, result preview, and duration stream over SSE and appear as a collapsible timeline.
 - **Multimodal questions**: attach images and files (up to 5 per message, 15 MiB each, 20 MiB in total); images go to vision models as `image_url` parts, and text attachments are extracted into the question.
+- **Conversation files**: the research assistant can create Word, Excel, PowerPoint, PDF, Markdown, CSV, and other files in a conversation; edits to uploaded documents are saved as a new version and the original stays unchanged. Files are downloaded from under the answer or from the "Conversation files" list in the header, and the research assistant asks the user for approval before deleting one.
 - **Conversation history**: each question loads the latest `CONVERSATION_HISTORY_MESSAGES` messages from the database, so restarts keep the context.
 
 ### Traceable answers
@@ -158,6 +159,7 @@ The agent can look things up on its own, but it will not submit a request, delet
 | Custom API tools using any other method | Required | Existing tools are backfilled from their HTTP method when upgrading to 4.0.0 |
 | MCP servers | Required | Set per server; the card shows "server → tool" |
 | Skill scripts (`run_skill_script`) | Required | When a skill's `allowed-tools` lists `run_skill_script`, that skill's scripts are not asked about again within the same question |
+| Deleting conversation files (`delete_conversation_file`) | Always required | A skill's `allowed-tools` cannot waive it; users deleting files themselves in the interface need no approval |
 
 - A pending approval is bound to the asking user; any other account replying with the same `approval_id` gets `404`.
 - Agent runs not started by a user in a chat have nobody to approve, so these tools never run there.
@@ -205,7 +207,8 @@ The agent can look things up on its own, but it will not submit a request, delet
 | Attachments per message | 5, up to 15 MiB each and 20 MiB in total | `422` |
 | Chat attachment parsing | 8 MiB of docx / pptx XML built into a DOM, 64 MiB uncompressed in total, 10,000 members | The attachment is not read, and the model is told so |
 | Chat attachments parsed at once | 2 per backend process | Queued |
-| Attachment storage per user | 200 MiB | `413` |
+| Attachment and conversation file storage per user | 200 MiB | `413`; the research assistant can no longer create files |
+| Files per conversation | 100, up to 15 MiB each | No more files can be saved |
 | Concurrent answer streams per user | 2 | `429` |
 | One tool result passed to the model | 20,000 characters | Truncated |
 | Pending tool approval | 300 seconds | Counts as a denial |
@@ -632,7 +635,7 @@ Common problems such as the backend failing to start, sign-in being paused, the 
 | [Configuration Reference](docs/configuration_en.md) | Defaults and effects of every environment variable, provider routing, threshold calibration, frontend settings |
 | [Deployment Guide](docs/deployment_en.md) | Deploying on a host with Docker Compose, HTTPS, backups, and updates |
 | [Troubleshooting](docs/troubleshooting_en.md) | Common errors at startup, sign-in, in the frontend, and with tools, and how to fix them |
-| [Upgrade Guide](docs/upgrading_en.md) | Steps from 2.x to 3.0.0 and every release since (up to 8.2.2 to 8.3.0), rollback, and troubleshooting |
+| [Upgrade Guide](docs/upgrading_en.md) | Steps from 2.x to 3.0.0 and every release since (up to 8.3.0 to 8.4.0), rollback, and troubleshooting |
 | [Architecture Decision Records](docs/adr/README_en.md) | Context, trade-offs, and amendments of major design decisions |
 | [llms_en.txt](llms_en.txt) | File map, system constraints, and verification steps for AI agents |
 | [Changelog](CHANGELOG_en.md) | What was added, changed, removed, and fixed in each release |
@@ -640,7 +643,7 @@ Common problems such as the backend failing to start, sign-in being paused, the 
 
 ## Versioning
 
-- **Current version**: 8.3.0 (2026-11-08); see the [changelog](CHANGELOG_en.md).
+- **Current version**: 8.4.0 (2026-11-08); see the [changelog](CHANGELOG_en.md).
 - **Policy**: [Semantic Versioning](https://semver.org/). Incompatible changes, such as new required settings or changes to API permissions or the index format, bump the major version.
 - **Where the version lives**: `__version__` in `backend/app/__init__.py` (used by the OpenAPI document and the MCP handshake) and `frontend/package.json`, updated together with `CHANGELOG.md` for each release.
 

@@ -22,7 +22,11 @@ const textOf = (html: string) => stripTags(html).replace(/&(quot|#x27|lt|gt|amp)
 const buttons = (html: string) => [...html.matchAll(/<button([^>]*)>(.*?)<\/button>/gs)]
   .map(([, attrs, inner]) => ({ attrs, text: textOf(inner) }));
 const buttonNamed = (html: string, text: string) => buttons(html).find((button) => button.text.includes(text));
-const renderMessage = (message: Message, options: { isStreaming?: boolean; onRetry?: (m: Message) => void } = {}) =>
+const NO_DELETED_FILES: ReadonlySet<number> = new Set();
+const renderMessage = (
+  message: Message,
+  options: { isStreaming?: boolean; onRetry?: (m: Message) => void; deletedFileIds?: ReadonlySet<number> } = {}
+) =>
   renderToStaticMarkup(
     <ChatMessageItem
       message={message}
@@ -33,6 +37,9 @@ const renderMessage = (message: Message, options: { isStreaming?: boolean; onRet
       onToggleThinking={noop}
       onCopyMessage={noop}
       onRetry={options.onRetry}
+      deletedFileIds={options.deletedFileIds ?? NO_DELETED_FILES}
+      onDownloadFile={noop}
+      onDeleteFile={noop}
     />
   );
 describe('ChatMessageItem', () => {
@@ -102,6 +109,7 @@ describe('ChatMessageItem', () => {
         approval_id: 'a1',
         step: 1,
         tool: 'send_ticket',
+        kind: 'custom_api',
         tool_display_name: '派遣工單',
         target: 'POST tickets.example.com',
         arguments: { note: '你好' },
@@ -153,6 +161,7 @@ describe('ToolApprovalCard', () => {
           approval_id: 'a2',
           step: 1,
           tool: 'send_mail',
+          kind: 'custom_api',
           tool_display_name: '寄送郵件',
           target: 'POST mail.example.com',
           arguments: { to: 'boss‮@example.com', count: 2 },
@@ -168,9 +177,19 @@ describe('ToolApprovalCard', () => {
   });
   it('says when there are no arguments', () => {
     const html = renderToStaticMarkup(
-      <ToolApprovalCard approval={{ approval_id: 'a3', step: 1, tool: 'ping', tool_display_name: 'Ping', target: 'GET api.example.com' }} />
+      <ToolApprovalCard approval={{ approval_id: 'a3', step: 1, tool: 'ping', kind: 'custom_api', tool_display_name: 'Ping', target: 'GET api.example.com' }} />
     );
     expect(textOf(html)).toContain('（沒有參數）');
+  });
+  it('words a file deletion as a deletion, not an external call', () => {
+    const html = renderToStaticMarkup(
+      <ToolApprovalCard
+        approval={{ approval_id: 'a4', step: 1, tool: 'delete_conversation_file', kind: 'file', tool_display_name: '刪除對話檔案', target: '#5「採購合約.docx」', arguments: { file_id: 5 } }}
+      />
+    );
+    expect(textOf(html)).toContain('AI 想刪除對話檔案，需要你確認');
+    expect(textOf(html)).toContain('永久刪除');
+    expect(textOf(html)).not.toContain('外部');
   });
 });
 const listProps = {
@@ -185,6 +204,9 @@ const listProps = {
   onCopyMessage: noop,
   onSelectPrompt: noop,
   onRetry: noop,
+  deletedFileIds: NO_DELETED_FILES,
+  onDownloadFile: noop,
+  onDeleteFile: noop,
 };
 describe('ChatMessageList', () => {
   it('offers suggested prompts for a new conversation', () => {
@@ -254,5 +276,44 @@ describe('ChatSidebar', () => {
     const loadingHtml = renderToStaticMarkup(<ChatSidebar {...sidebarProps} conversations={[]} loading />);
     expect(textOf(loadingHtml)).toContain('正在載入對話清單...');
     expect(textOf(loadingHtml)).not.toContain('尚無歷史對話');
+  });
+});
+describe('conversation files', () => {
+  const created = { id: 7, filename: '旅費.docx', media_type: 'application/vnd', size_bytes: 2048, origin: 'assistant' as const, version: 1, parent_id: null, created_at: null };
+  const updated = { ...created, id: 8, filename: '旅費 v2.docx', version: 2, parent_id: 7 };
+  it('shows the files an answer created with download and delete buttons', () => {
+    const html = renderMessage({ id: 20, content: '完成', is_user: false, files: [{ action: 'created', file: created }, { action: 'updated', file: updated }] });
+    expect(textOf(html)).toContain('旅費.docx');
+    expect(textOf(html)).toContain('已存成新版本 · 2.0 KB');
+    expect(buttons(html).map((button) => button.attrs.match(/aria-label="([^"]*)"/)?.[1])).toEqual(
+      expect.arrayContaining(['下載 旅費.docx', '刪除 旅費.docx', '下載 旅費 v2.docx', '刪除 旅費 v2.docx'])
+    );
+  });
+  it('marks deleted files and drops their buttons', () => {
+    const html = renderMessage(
+      { id: 21, content: '完成', is_user: false, files: [{ action: 'created', file: created }, { action: 'deleted', file: updated }] },
+      { deletedFileIds: new Set([7]) }
+    );
+    expect(textOf(html).match(/已刪除/g)).toHaveLength(2);
+    expect(buttons(html).some((button) => button.attrs.includes('下載'))).toBe(false);
+  });
+  it('lets the user download a stored attachment but not one sent before files existed', () => {
+    const html = renderMessage({
+      id: 22,
+      content: '看附件',
+      is_user: true,
+      attachments: [{ filename: '合約.docx', file_type: 'application/msword', file_id: 9 }, { filename: '舊.pdf', file_type: 'application/pdf' }],
+    });
+    expect(buttons(html).map((button) => button.attrs.match(/aria-label="([^"]*)"/)?.[1])).toEqual(
+      expect.arrayContaining(['下載 合約.docx'])
+    );
+    expect(buttons(html).some((button) => button.attrs.includes('舊.pdf'))).toBe(false);
+  });
+  it('labels file tools in the research trace', () => {
+    const html = renderToStaticMarkup(
+      <ResearchTraceBlock trace={[{ step: 1, tool: 'create_conversation_file', arguments: { filename: '報告.pdf' }, status: 'success' }]} />
+    );
+    expect(textOf(html)).toContain('建立檔案');
+    expect(textOf(html)).toContain('報告.pdf');
   });
 });

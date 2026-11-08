@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { chatService, PendingToolApproval } from '../../services/api';
 import { Button, Icon } from '../../components/ui';
+import { approvalHeadline } from './chatFormat';
 import styles from './ToolApprovalCard.module.css';
 interface ToolApprovalCardProps {
   approval: PendingToolApproval;
@@ -20,6 +21,7 @@ const ToolApprovalCard: React.FC<ToolApprovalCardProps> = ({ approval }) => {
   const [submitting, setSubmitting] = useState<'approve' | 'deny' | null>(null);
   const [error, setError] = useState<string | null>(null);
   const entries = argumentEntries(approval.arguments);
+  const isFile = approval.kind === 'file';
   const decide = async (approved: boolean) => {
     setSubmitting(approved ? 'approve' : 'deny');
     setError(null);
@@ -34,7 +36,7 @@ const ToolApprovalCard: React.FC<ToolApprovalCardProps> = ({ approval }) => {
     <div className={styles.card} role="group" aria-label="工具執行確認">
       <div className={styles.header}>
         <Icon name="warning" size={16} className={styles.headerIcon} />
-        <span>AI 想執行外部工具，需要你確認</span>
+        <span>{approvalHeadline(approval)}</span>
       </div>
       <dl className={styles.summary}>
         <div className={styles.summaryRow}>
@@ -42,7 +44,7 @@ const ToolApprovalCard: React.FC<ToolApprovalCardProps> = ({ approval }) => {
           <dd className={styles.toolName}>{approval.tool_display_name}</dd>
         </div>
         <div className={styles.summaryRow}>
-          <dt>送往</dt>
+          <dt>{isFile ? '檔案' : '送往'}</dt>
           <dd><code className={styles.target}>{approval.target}</code></dd>
         </div>
       </dl>
@@ -62,7 +64,9 @@ const ToolApprovalCard: React.FC<ToolApprovalCardProps> = ({ approval }) => {
         )}
       </div>
       <p className={styles.hint}>
-        此工具可能會修改外部系統的資料。請逐一確認上方每個參數與送出位置再核准；以 ⟦U+…⟧ 標示的是原本看不見的控制字元。未回應會在 5 分鐘後視為拒絕。
+        {isFile
+          ? '核准後這個檔案會永久刪除，無法復原。未回應會在 5 分鐘後視為拒絕。'
+          : '此工具可能會修改外部系統的資料。請逐一確認上方每個參數與送出位置再核准；以 ⟦U+…⟧ 標示的是原本看不見的控制字元。未回應會在 5 分鐘後視為拒絕。'}
       </p>
       {error && <p className={styles.error} role="alert">{error}</p>}
       <div className={styles.actions}>

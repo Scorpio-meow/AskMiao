@@ -17,6 +17,7 @@ from app.core.error_response import format_ssrf_rejection, log_and_get_error_id
 from app.core.html_text import extract_readable_text, extract_text_and_title
 from app.core.limits import MAX_KB_CATALOG_CHARS, MAX_MCP_CATALOG_CHARS, MAX_SKILL_CATALOG_CHARS, MAX_TEXT_CLEANUP_CHARS
 from app.core.security_logging import log_fields
+from app.rag.file_tools import FILE_TOOL_NAMES, execute_file_tool, file_tool_approval, file_tool_definitions
 from app.rag.retrievers.hybrid import matches_target_document
 from app.services import agent_skills
 from app.services.structured_data import merge_record_parts
@@ -33,6 +34,8 @@ def _tool_kind(name: str) -> str:
         return "builtin"
     if name == SKILL_SCRIPT_TOOL_NAME:
         return "skill_script"
+    if name in FILE_TOOL_NAMES:
+        return "file"
     if name in MCP_CATALOG_TOOL_NAMES or name.startswith(MCP_TOOL_PREFIX):
         return "mcp"
     return "api"
@@ -438,7 +441,7 @@ class ResearchToolRegistry:
             doc_descriptions.append(line)
             filenames.append(filename)
         return prompts.KNOWLEDGE_BASE_SEARCH + prompts.KNOWLEDGE_BASE_CATALOG.format(catalog="\n".join(doc_descriptions)), filenames
-    def get_tool_definitions(self, user_id: Optional[int] = None) -> List[Dict[str, Any]]:
+    def get_tool_definitions(self, user_id: Optional[int] = None, conversation_id: Optional[int] = None) -> List[Dict[str, Any]]:
         kb_desc, doc_names = self._generate_knowledge_base_description()
         target_document_schema: Dict[str, Any] = {
             "type": "string",
@@ -542,6 +545,8 @@ class ResearchToolRegistry:
         ]
         if not settings.ENABLE_WEB_SEARCH:
             base_tools = [t for t in base_tools if t["function"]["name"] not in WEB_TOOL_NAMES]
+        if conversation_id is not None:
+            base_tools.extend(file_tool_definitions())
         try:
             base_tools.extend(self._skill_tool_definitions(user_id))
         except Exception as e:
@@ -785,9 +790,17 @@ class ResearchToolRegistry:
             if fit_tool_name(tool.name) == name:
                 return tool
         return None
-    def approval_requirement(self, name: str, arguments: Optional[Dict[str, Any]] = None) -> Optional[Dict[str, str]]:
+    def approval_requirement(
+        self,
+        name: str,
+        arguments: Optional[Dict[str, Any]] = None,
+        user_id: Optional[int] = None,
+        conversation_id: Optional[int] = None,
+    ) -> Optional[Dict[str, str]]:
         if name in BUILTIN_TOOL_NAMES:
             return None
+        if name in FILE_TOOL_NAMES:
+            return file_tool_approval(name, arguments or {}, user_id, conversation_id)
         if name == SKILL_SCRIPT_TOOL_NAME:
             arguments = arguments or {}
             path = str(arguments.get("path", ""))
@@ -843,11 +856,17 @@ class ResearchToolRegistry:
         except Exception as e:
             error_id = log_and_get_error_id(logger, f"執行 {name} 時發生異常", e)
             return {"error": f"執行 MCP 請求失敗（錯誤代碼：{error_id}）"}
-    async def execute_tool(self, name: str, arguments: Dict[str, Any], user_id: Optional[int] = None) -> Any:
+    async def execute_tool(
+        self,
+        name: str,
+        arguments: Dict[str, Any],
+        user_id: Optional[int] = None,
+        conversation_id: Optional[int] = None,
+    ) -> Any:
         fields = {"tool": name, "kind": _tool_kind(name), "arg_keys": ",".join(map(str, arguments)) or None}
         started = time.perf_counter()
         try:
-            result = await self._dispatch_tool(name, arguments, user_id)
+            result = await self._dispatch_tool(name, arguments, user_id, conversation_id)
         except asyncio.CancelledError:
             logger.info("工具呼叫中止 %s", log_fields(**fields, status="cancelled", duration_ms=_elapsed_ms(started)))
             raise
@@ -867,7 +886,9 @@ class ResearchToolRegistry:
             ),
         )
         return result
-    async def _dispatch_tool(self, name: str, arguments: Dict[str, Any], user_id: Optional[int]) -> Any:
+    async def _dispatch_tool(self, name: str, arguments: Dict[str, Any], user_id: Optional[int], conversation_id: Optional[int]) -> Any:
+        if name in FILE_TOOL_NAMES:
+            return await execute_file_tool(name, arguments, user_id, conversation_id)
         if name in WEB_TOOL_NAMES and not settings.ENABLE_WEB_SEARCH:
             return {"error": f"聯網工具已停用（ENABLE_WEB_SEARCH=false）: {name}"}
         if name == "search_knowledge_base":

@@ -4,6 +4,7 @@
 
 > How to upgrade an existing deployment to a new release, with rollback steps and troubleshooting. See the [CHANGELOG](../CHANGELOG_en.md) for the full list of changes in each version.
 
+- [Upgrading from 8.3.0 to 8.4.0](#upgrading-from-830-to-840)
 - [Upgrading from 8.2.2 to 8.3.0](#upgrading-from-822-to-830)
 - [Upgrading from 8.2.1 to 8.2.2](#upgrading-from-821-to-822)
 - [Upgrading from 8.2.0 to 8.2.1](#upgrading-from-820-to-821)
@@ -41,6 +42,23 @@
   - [Step 5: verify the upgrade](#step-5-verify-the-upgrade)
   - [Rolling back to 2.2.x](#rolling-back-to-22x)
   - [Troubleshooting](#troubleshooting)
+
+---
+
+## Upgrading from 8.3.0 to 8.4.0
+
+For upgrading from 8.3.0 to 8.4.0 (2026-11-08); see the [CHANGELOG](../CHANGELOG_en.md#840---2026-11-08) for the full list of changes. This release needs no `.env` changes; the database gains a `conversation_files` table, created automatically when the backend starts (new Docker Compose deployments create it from `backend/init.sql`), so no manual migration is needed. The backend `requirements.txt` adds no packages; reinstall from it as usual.
+
+| Item | 8.3.0 | 8.4.0 | Action |
+|---|---|---|---|
+| Conversation files | Not available | The research assistant can create, read, edit (saved as a new version), and delete files in a conversation; adds `GET /api/chat/conversations/{conversation_id}/files`, `GET /api/chat/files/{file_id}`, and `DELETE /api/chat/files/{file_id}` | None |
+| Storage of non-image attachments | base64 in the user message's `context_used` | Saved as conversation files; the message keeps only the `file_id` | None; attachments from 8.3.0 and earlier are not migrated and still display and carry into the history as usual, but they are not in the conversation file list |
+| `POST /api/chat/send` stream | — | `start` gains `attachment_file_ids`, `approval_required` gains `kind`, a new `file` event is added, and `done` gains `files` | Clients that strictly validate event fields need to accept the new fields and event |
+| Attachment marker | `[附件：file name]` | `[附件 #<file id>：file name]` for attachments saved as conversation files | None; it only affects the text sent to the model |
+| Per-user 200 MiB storage | Attachments only | Attachments and conversation files combined | None; users close to the limit can delete conversation files to free space |
+| Current time | The model does not know the current date and time | The latest user message carries the date, time, and time zone of the backend host's local time | Without Docker Compose, make sure the host's time zone is your users' time zone; with `deploy/`, rebuild the image (`docker compose build`); the backend runs in `Asia/Taipei`, so change `TZ` in `deploy/docker-compose.yml` if your users are elsewhere |
+
+To roll back to 8.3.0, switch back to the older code; the `conversation_files` table is ignored. Messages sent while rolled back work as usual; document attachments sent with 8.4.0 still show their file name card in 8.3.0, and their extracted text is still carried into the history; files the research assistant created cannot be downloaded while rolled back and become available again after you upgrade again.
 
 ---
 

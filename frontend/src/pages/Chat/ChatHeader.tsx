@@ -22,6 +22,7 @@ export const ChatHeader: React.FC<ChatHeaderProps> = ({
   onOpenSidebar,
   sidebarOpen = false,
   sidebarId,
+  onOpenFiles,
 }) => {
   const choices = connections.flatMap((connection) => connection.models.map((model) => choiceKey(connection.id, model)));
   const currentChoice = choices.includes(selectedChoice) ? selectedChoice : choices[0] || '';
@@ -45,6 +46,13 @@ export const ChatHeader: React.FC<ChatHeaderProps> = ({
         <h1 className={styles.title} title={title}>
           {title}
         </h1>
+        {onOpenFiles && (
+          <Tooltip title="對話檔案" placement="bottom">
+            <IconButton size="sm" onClick={onOpenFiles} aria-label="對話檔案" className={styles.filesButton}>
+              <Icon name="folder" size={18} />
+            </IconButton>
+          </Tooltip>
+        )}
       </div>
       <div className={styles.controls} role="group" aria-label="模型設定">
         <div className={`${styles.selectWrapper} ${styles.modelSelect}`}>

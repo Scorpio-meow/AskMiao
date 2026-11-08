@@ -28,6 +28,8 @@ services:
       dockerfile: deploy/Dockerfile.backend
     restart: unless-stopped
     env_file: .env
+    environment:
+      TZ: Asia/Taipei
     depends_on:
       postgres:
         condition: service_healthy

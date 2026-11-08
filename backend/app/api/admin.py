@@ -12,6 +12,7 @@ from app.core.limits import MAX_PASSWORD_CHARS
 from app.crud.crud_user import create_account, update_user_password
 from app.core.cache import cache_response, invalidate_cache
 from app.core.security_logging import log_security_event
+from app.services.conversation_files import delete_files_for_conversations
 from app.services.document_removal import remove_document
 from app.services.llm_connections import remove_user_connections, set_user_shared_access, user_connection_access
 from app.api.documents import DOCUMENT_LIST_COLUMNS
@@ -219,6 +220,7 @@ async def delete_conversation(
     if not conversation:
         raise HTTPException(status_code=404, detail="對話不存在")
     
+    delete_files_for_conversations(db, [conversation_id])
     db.query(Message).filter(Message.conversation_id == conversation_id).delete()
     db.delete(conversation)
     db.commit()
@@ -316,6 +318,7 @@ async def delete_user(
         raise HTTPException(status_code=404, detail="使用者不存在")
     
     conversations = db.query(Conversation).filter(Conversation.user_id == user_id).all()
+    delete_files_for_conversations(db, [conv.id for conv in conversations])
     for conv in conversations:
         db.query(Message).filter(Message.conversation_id == conv.id).delete()
         db.delete(conv)

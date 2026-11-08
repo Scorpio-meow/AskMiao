@@ -1,4 +1,5 @@
 import { ChatConnectionOption, Message, Conversation } from '../../services/api';
+import type { FileCardInfo } from './ConversationFileCard';
 export interface SourceDetail {
   source: string;
   chunk?: number;
@@ -35,6 +36,7 @@ export interface ChatHeaderProps {
   onOpenSidebar?: () => void;
   sidebarOpen?: boolean;
   sidebarId?: string;
+  onOpenFiles?: () => void;
 }
 export interface ChatSidebarProps {
   id: string;
@@ -58,6 +60,9 @@ export interface ChatMessageItemProps {
   onToggleThinking: (id: number | string) => void;
   onCopyMessage: (text: string) => void;
   onRetry?: (failedMessage: Message) => void;
+  deletedFileIds: ReadonlySet<number>;
+  onDownloadFile: (file: FileCardInfo) => void;
+  onDeleteFile: (file: FileCardInfo) => void;
 }
 export interface ChatMessageListProps {
   messages: Message[];
@@ -72,6 +77,9 @@ export interface ChatMessageListProps {
   onCopyMessage: (text: string) => void;
   onSelectPrompt?: (prompt: string) => void;
   onRetry: (failedMessage: Message) => void;
+  deletedFileIds: ReadonlySet<number>;
+  onDownloadFile: (file: FileCardInfo) => void;
+  onDeleteFile: (file: FileCardInfo) => void;
 }
 export type { ChatAttachment } from '../../services/api';
 import type { ChatAttachment } from '../../services/api';

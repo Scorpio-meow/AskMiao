@@ -21,6 +21,16 @@ const getToolDisplayInfo = (toolName: string): ToolDisplayInfo => {
       return { label: '外部聯網搜尋', icon: 'language' };
     case 'web_fetch':
       return { label: '深度閱讀網頁', icon: 'article' };
+    case 'list_conversation_files':
+      return { label: '列出對話檔案', icon: 'folder' };
+    case 'read_conversation_file':
+      return { label: '讀取對話檔案', icon: 'file' };
+    case 'create_conversation_file':
+      return { label: '建立檔案', icon: 'add' };
+    case 'edit_conversation_file':
+      return { label: '修改檔案（另存新版本）', icon: 'edit' };
+    case 'delete_conversation_file':
+      return { label: '刪除對話檔案', icon: 'delete' };
     default:
       return { label: toolName, icon: 'code' };
   }
@@ -41,6 +51,8 @@ const formatStepQueryParam = (step: ResearchTraceStep): string => {
     if (fields.target_document) parts.push(`文件: ${toDisplayText(fields.target_document)}`);
     if (parts.length > 0) return parts.join(' | ');
   }
+  if (fields.filename) return toDisplayText(fields.filename);
+  if (fields.file_id !== undefined && fields.file_id !== null) return `#${toDisplayText(fields.file_id)}`;
   return toDisplayText(fields.query) || toDisplayText(fields.url);
 };
 const StepStatus: React.FC<{ status: ResearchTraceStep['status'] }> = ({ status }) => {

@@ -1,0 +1,35 @@
+.card {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  max-width: 100%;
+  padding: var(--space-1) var(--space-1) var(--space-1) var(--space-3);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-sm);
+  background-color: var(--bg-surface);
+  color: var(--text-primary);
+  font-size: var(--font-size-sm);
+}
+
+.badge {
+  flex: none;
+  color: var(--text-secondary);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
+}
+
+.name {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.meta {
+  flex: none;
+  color: var(--text-tertiary);
+  font-size: var(--font-size-xs);
+}
+
+.deleted .name {
+  color: var(--text-tertiary);
+  text-decoration: line-through;
+}

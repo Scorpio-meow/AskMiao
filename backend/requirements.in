@@ -25,6 +25,7 @@ fonttools
 python-docx
 python-pptx
 openpyxl
+markdown-it-py
 lxml
 PyYAML
 PyJWT

@@ -104,7 +104,8 @@
   pointer-events: none;
 }
 
-.refreshButton {
+.refreshButton,
+.filesButton {
   flex: none;
   color: var(--text-secondary);
 }

@@ -6,6 +6,7 @@ All notable changes to AskMiao are documented in this file. The format is based 
 
 | Version | Release date | Highlights |
 |---|---|---|
+| [8.4.0](#840---2026-11-08) | 2026-11-08 | Conversation files: the research assistant creates, reads, edits (as new versions), and deletes Word, Excel, PowerPoint, PDF, and other files in a conversation, with user approval before any deletion; document attachments are stored as conversation files and can be downloaded again; the research assistant knows the current date and time |
 | [8.3.0](#830---2026-11-08) | 2026-11-08 | vLLM provider, prompts sent to the model collected in `prompts.py` and rewritten after an audit, tool descriptions matched to the code, fixed tool list order |
 | [8.2.2](#822---2026-11-07) | 2026-11-07 | How document upload rejection reasons are returned; no user-visible change |
 | [8.2.1](#821---2026-11-07) | 2026-11-07 | Claude output token limit error messages point to the API connection; documentation checked against the code and reorganized, with a new deployment guide and troubleshooting page |
@@ -38,6 +39,20 @@ All notable changes to AskMiao are documented in this file. The format is based 
 ---
 
 ## [Unreleased]
+
+## [8.4.0] - 2026-11-08
+
+### Added
+
+- **Conversation files**: the research assistant can create, read, edit, and delete files in a conversation, and users download them from the file cards under that answer or from the "Conversation files" list in the header. It can create Markdown, plain text, CSV, JSON, Word (`.docx`), Excel (`.xlsx`), PowerPoint (`.pptx`), and PDF; Word and PDF files are produced from Markdown with support for headings, lists, tables, bold, and italics, and PDFs use built-in CJK fonts. Edits are always saved as a new version (for example `報告 v2.docx`) and the original stays unchanged: text files, Word, and PowerPoint are edited by replacing text (keeping the original paragraph styles), Excel by changing cells, and any file can also be rewritten whole. Every deletion by the research assistant needs the user's approval in the conversation, and a skill's `allowed-tools` cannot waive it; users can delete files themselves in the interface. See [architecture: conversation files](docs/architecture_en.md#conversation-files) for the design.
+- **Conversation file API**: `GET /api/chat/conversations/{conversation_id}/files` lists files, `GET /api/chat/files/{file_id}` downloads one (always as an attachment, with `.html`, `.js`, and the like returned as plain text), and `DELETE /api/chat/files/{file_id}` deletes one, all limited to the file's owner; see [API reference 2.10–2.12](docs/api_en.md#210-get-apichatconversationsconversation_idfiles).
+- **Streaming events**: a new `file` event (`action` is `created`, `updated`, or `deleted`), and `done` and message history gain `files`; `start` gains `attachment_file_ids`; `approval_required` gains the tool category `kind`, and the approval card for deleting a conversation file states that the file will be permanently deleted instead of reusing the explanation for external tools.
+- **The research assistant knows the current date and time**: the latest user message starts with `[現在時間：…]` (the backend host's local time, to the minute), and the system prompt says to rely on it for relative times such as "today", "now", or "last month" and when filling in the current date or time, instead of searching the web for the time. Before, the model did not know the date and either guessed it or copied another time zone's time from web search results. In the Docker Compose deployment the backend's time zone is set to `Asia/Taipei` (the same as the database), and the image installs `tzdata`.
+
+### Changed
+
+- **Document attachments are saved as conversation files**: non-image attachments with a `data_url` in `POST /api/chat/send` are decoded and saved as files of that conversation, and the user message records only the `file_id` instead of keeping the base64; the research assistant can read them and edit them into new versions, and users can download them again. The attachment marker sent to the model becomes `[附件 #<file id>：<file name>]`, and it is included even when no text was extracted. Image attachments and attachments from 8.3.0 and earlier stay as they were.
+- **The 200 MiB per user covers attachments and conversation files together**: past it, sending an attachment returns `413` and the research assistant can no longer create files; deleting conversation files frees space. Deleting a conversation (including when an admin deletes the conversation or the user) deletes its files too.
 
 ## [8.3.0] - 2026-11-08
 

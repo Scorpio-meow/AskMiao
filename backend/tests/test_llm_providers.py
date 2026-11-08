@@ -1,6 +1,7 @@
 import asyncio
 import json
 import re
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 import httpx
 import pytest
@@ -9,6 +10,7 @@ from app.core.config import settings
 from app.core.llm_client import LlmEndpoint
 from app.core.ssrf_protection import SSRFProtectionError, SSRFSafeHttpx2Transport, SSRFSafeTransport
 from app import prompts
+from app.rag import agent as agent_module
 from app.rag.agent import ResearchAgent
 from app.rag.retrievers.hybrid import RetrievedChunk
 from app.rag.tools import ResearchToolRegistry
@@ -170,9 +172,11 @@ CLAUDE_TOOL_USE_CONTENT = [
     SimpleNamespace(type="thinking", thinking="", signature="sig-1"),
     SimpleNamespace(type="tool_use", id="toolu_1", name="search_knowledge_base", input={"query": "特休"}),
 ]
+FIXED_NOW = datetime(2026, 11, 8, 23, 7, tzinfo=timezone(timedelta(hours=8)))
 def claude_agent(monkeypatch):
     registry = ResearchToolRegistry(retriever=StaticRetriever())
-    monkeypatch.setattr(registry, "get_tool_definitions", lambda user_id=None: [KB_TOOL])
+    monkeypatch.setattr(registry, "get_tool_definitions", lambda user_id=None, conversation_id=None: [KB_TOOL])
+    monkeypatch.setattr(agent_module, "local_now", lambda: FIXED_NOW)
     return ResearchAgent(tool_registry=registry)
 async def final_result(events):
     return [event async for event in events if event["event"] == "done"][-1]["data"]
@@ -186,7 +190,7 @@ async def test_agent_tool_round_trip_with_claude_preserves_raw_content(claude, m
     first_call, second_call = fake_messages.chat_calls
     assert first_call["model"] == "claude-opus-5"
     assert first_call["system"] == [{"type": "text", "text": prompts.SYSTEM_PROMPT, "cache_control": {"type": "ephemeral"}}]
-    assert first_call["messages"] == [{"role": "user", "content": [{"type": "text", "text": "特休怎麼算？", "cache_control": {"type": "ephemeral"}}]}]
+    assert first_call["messages"] == [{"role": "user", "content": [{"type": "text", "text": agent_module.with_current_time("特休怎麼算？", FIXED_NOW), "cache_control": {"type": "ephemeral"}}]}]
     assert second_call["messages"][1] == {"role": "assistant", "content": CLAUDE_TOOL_USE_CONTENT}
     assert [block["tool_use_id"] for block in second_call["messages"][2]["content"]] == ["toolu_1"]
     assert fake_messages.answer_stream_calls == []

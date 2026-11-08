@@ -19,8 +19,10 @@
 | Service | Image | Role |
 |---|---|---|
 | `postgres` | `postgres:17.9` | The `chatbot` database. When the volume is first initialized it runs `backend/init.sql` (creates the tables) and then `backend/init-app-role.sh` (creates the non-superuser `POSTGRES_APP_USER` the backend connects as). No port is published to the host |
-| `backend` | `deploy/Dockerfile.backend` (`python:3.12-slim` with the CPU build of PyTorch) | The FastAPI backend, running as the `askmiao` account (uid 1000). It starts after the `postgres` health check passes; the first start downloads the embedding and reranker models, so its health check (`GET /health`) allows 180 seconds before failures count |
+| `backend` | `deploy/Dockerfile.backend` (`python:3.12-slim` with the CPU build of PyTorch and `tzdata`) | The FastAPI backend, running as the `askmiao` account (uid 1000) in the `Asia/Taipei` time zone, which the research assistant uses to tell the current date and time. It starts after the `postgres` health check passes; the first start downloads the embedding and reranker models, so its health check (`GET /health`) allows 180 seconds before failures count |
 | `web` | `deploy/Dockerfile.frontend` (built with `oven/bun:1`, served by `nginx:1.27-alpine`) | Serves the frontend build and reverse-proxies `/api/` to `backend:8001`. The only service published to the host, on `WEB_PORT` |
+
+The time zone of `postgres` and `backend` comes from `TZ` in `deploy/docker-compose.yml`; if your users are in another time zone, change both to the local IANA time zone name.
 
 The three containers share the compose network `askmiao-net` (subnet `NETWORK_SUBNET`), and `web` always uses `WEB_CONTAINER_IP`. nginx accepts request bodies up to 120 MiB, does not buffer SSE streams, and uses 900-second read and send timeouts (`deploy/nginx.conf`).
 

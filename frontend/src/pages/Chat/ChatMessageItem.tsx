@@ -6,6 +6,7 @@ import SourceBadges from './SourceBadges';
 import ResearchTraceBlock from './ResearchTraceBlock';
 import ToolApprovalCard from './ToolApprovalCard';
 import MarkdownContent from './MarkdownContent';
+import ConversationFileCard from './ConversationFileCard';
 import { describeAttachmentType, formatMessageTime, isImageAttachment, splitThinkContent } from './chatFormat';
 import { Tooltip, IconButton, Spinner, Icon, Button, useModalDialog } from '../../components/ui';
 import styles from './ChatMessageItem.module.css';
@@ -37,12 +38,16 @@ const ChatMessageItemView: React.FC<ChatMessageItemProps> = ({
   onToggleThinking,
   onCopyMessage,
   onRetry,
+  deletedFileIds,
+  onDownloadFile,
+  onDeleteFile,
 }) => {
   const isUser = message.is_user;
   const { thinkContent, mainContent } = useMemo(() => splitThinkContent(message.content || ''), [message.content]);
   const [lightboxImg, setLightboxImg] = useState<{ src: string; alt: string } | null>(null);
   const trace = message.research_trace || NO_TRACE;
   const attachments = message.attachments || [];
+  const files = message.files || [];
   const hasTrace = trace.length > 0;
   const hasText = Boolean(mainContent.trim());
   const isSettled = Boolean(message.error || message.stopped);
@@ -63,6 +68,17 @@ const ChatMessageItemView: React.FC<ChatMessageItemProps> = ({
             >
               <img src={src} alt="" className={styles.messageImage} />
             </button>
+          );
+        }
+        if (att.file_id) {
+          return (
+            <ConversationFileCard
+              key={idx}
+              file={{ id: att.file_id, filename: att.filename, size_bytes: att.file_size }}
+              deleted={deletedFileIds.has(att.file_id)}
+              onDownload={onDownloadFile}
+              onDelete={onDeleteFile}
+            />
           );
         }
         return (
@@ -147,6 +163,21 @@ const ChatMessageItemView: React.FC<ChatMessageItemProps> = ({
               <div className={styles.stoppedNote}>
                 <Icon name="info" size={14} />
                 <span>已停止產生。這則回答沒有被儲存，重新整理後不會出現。</span>
+              </div>
+            )}
+            {files.length > 0 && (
+              <div className={styles.attachmentGallery} role="list" aria-label="這則回答的檔案">
+                {files.map((event, idx) => (
+                  <div role="listitem" key={`${event.action}-${event.file.id}-${idx}`}>
+                    <ConversationFileCard
+                      file={event.file}
+                      action={event.action}
+                      deleted={event.action === 'deleted' || deletedFileIds.has(event.file.id)}
+                      onDownload={onDownloadFile}
+                      onDelete={onDeleteFile}
+                    />
+                  </div>
+                ))}
               </div>
             )}
             <SourceBadges sources={message.sources} sourcesDetail={message.sources_detail} />

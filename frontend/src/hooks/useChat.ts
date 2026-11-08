@@ -193,6 +193,12 @@ export function useChat(onError: (message: string) => void) {
             started = true;
             countSavedMessage();
             streamConversationId = ev.data?.conversation_id ?? streamConversationId;
+            const fileIds: Array<number | null> = Array.isArray(ev.data?.attachment_file_ids) ? ev.data.attachment_file_ids : [];
+            if (fileIds.some((fileId) => fileId !== null)) {
+              setMessages(prev => prev.map(m => (m.id === userMsgId
+                ? { ...m, attachments: (m.attachments || []).map((att, index) => ({ ...att, file_id: fileIds[index] ?? null })) }
+                : m)));
+            }
           } else if (ev.event === 'step_start') {
             const stepData = ev.data;
             updateBotMessage(m => {
@@ -216,6 +222,9 @@ export function useChat(onError: (message: string) => void) {
             updateBotMessage(m => (
               m.pending_approval?.approval_id === ev.data?.approval_id ? { ...m, pending_approval: null } : m
             ));
+          } else if (ev.event === 'file') {
+            const fileEvent = ev.data;
+            updateBotMessage(m => ({ ...m, files: [...(m.files || []), fileEvent] }));
           } else if (ev.event === 'token') {
             const token = ev.data?.content || '';
             updateBotMessage(m => ({ ...m, content: (m.content || '') + token }));
@@ -237,7 +246,8 @@ export function useChat(onError: (message: string) => void) {
               content: doneData.answer || m.content,
               sources: doneData.sources || m.sources,
               sources_detail: doneData.sources_detail || m.sources_detail,
-              research_trace: doneData.research_trace || m.research_trace
+              research_trace: doneData.research_trace || m.research_trace,
+              files: doneData.files || m.files
             }));
             streamConversationId = doneData.conversation_id ?? streamConversationId;
           } else if (ev.event === 'error') {

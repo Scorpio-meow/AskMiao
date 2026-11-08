@@ -6,14 +6,16 @@ import os
 import re
 import tempfile
 import time
+from datetime import datetime
 from typing import Any, AsyncGenerator, Callable, Dict, List, Optional
 from app.core.limits import (
     CHAT_ATTACHMENT_EXTRACTION_LIMITS,
     MAX_ATTACHMENT_TEXT_CHARS,
-    MAX_CONCURRENT_ATTACHMENT_EXTRACTIONS,
 )
 from app import prompts
 from app.core.llm_client import LlmEndpoint, chat_completion, stream_completion
+from app.rag.file_tools import FILE_TOOL_NAMES
+from app.services.file_builders import extraction_slots
 from app.rag.tools import ResearchToolRegistry
 from app.services.agent_skills import SKILL_NAME_PATTERN
 from app.rag.research_session import ResearchSession, ToolResultFilter, strip_citations, strip_tool_result_blocks
@@ -24,7 +26,6 @@ logger = logging.getLogger(__name__)
 EXPLICIT_SKILL_PATTERN = re.compile(rf"^/({SKILL_NAME_PATTERN.pattern})(?:\s+|$)")
 MODEL_IMAGE_TYPES = ("image/png", "image/jpeg", "image/gif", "image/webp")
 TEXT_IMAGE_TYPES = ("image/svg+xml",)
-_attachment_extraction_slots = asyncio.Semaphore(MAX_CONCURRENT_ATTACHMENT_EXTRACTIONS)
 def _attachment_ocr() -> Optional[Callable[[bytes], str]]:
     from app.models.database import SessionLocal
     from app.services.system_models import page_ocr, system_model_target
@@ -49,8 +50,21 @@ def _extract_attachment_text(fname: str, ftype: str, data_url: str, ocr: Optiona
     finally:
         if os.path.exists(tmp_path):
             os.remove(tmp_path)
-def attachment_context(filename: str, text: str) -> str:
-    return prompts.ATTACHMENT.format(filename=filename, text=text)
+def attachment_context(filename: str, text: str, file_id: Optional[int]) -> str:
+    if file_id is None:
+        return prompts.ATTACHMENT.format(filename=filename, text=text)
+    return prompts.ATTACHMENT_FILE.format(file_id=file_id, filename=filename, text=text)
+def local_now() -> datetime:
+    return datetime.now().astimezone()
+def with_current_time(query: str, now: datetime) -> str:
+    offset = now.strftime("%z")
+    return prompts.CURRENT_TIME.format(
+        date=now.strftime("%Y-%m-%d"),
+        weekday=prompts.WEEKDAYS[now.weekday()],
+        time=now.strftime("%H:%M"),
+        offset=f"{offset[:3]}:{offset[3:]}",
+        query=query,
+    )
 def query_with_attachments(query: str, doc_contexts: List[str]) -> str:
     if not doc_contexts:
         return query
@@ -67,10 +81,11 @@ class ResearchAgent:
         conversation_history: Optional[List[Dict[str, str]]] = None,
         reasoning_effort: Optional[str] = "medium",
         attachments: Optional[List[Any]] = None,
-        approval_user_id: Optional[int] = None
+        approval_user_id: Optional[int] = None,
+        conversation_id: Optional[int] = None
     ) -> AsyncGenerator[Dict[str, Any], None]:
         start_time = time.time()
-        tools_def = await asyncio.to_thread(self.tools.get_tool_definitions, approval_user_id)
+        tools_def = await asyncio.to_thread(self.tools.get_tool_definitions, approval_user_id, conversation_id)
         skill_names = next(
             (t["function"]["parameters"]["properties"]["name"]["enum"] for t in tools_def if t["function"]["name"] == "activate_skill"),
             [],
@@ -115,6 +130,7 @@ class ResearchAgent:
                 ftype = getattr(att, "file_type", None) or (att.get("file_type") if isinstance(att, dict) else "")
                 data_url = getattr(att, "data_url", None) or (att.get("data_url") if isinstance(att, dict) else None)
                 content = getattr(att, "content", None) or (att.get("content") if isinstance(att, dict) else None)
+                file_id = getattr(att, "file_id", None) if not isinstance(att, dict) else att.get("file_id")
                 stored_text = None
                 if data_url and not data_url.startswith("data:"):
                     logger.warning(f"略過非 data: URL 的附件 {fname}")
@@ -123,12 +139,12 @@ class ResearchAgent:
                     if data_url:
                         image_data_urls.append(data_url)
                 elif ftype.startswith("image/") and ftype not in TEXT_IMAGE_TYPES:
-                    doc_contexts.append(attachment_context(fname, prompts.ATTACHMENT_UNSUPPORTED_IMAGE.format(file_type=ftype)))
+                    doc_contexts.append(attachment_context(fname, prompts.ATTACHMENT_UNSUPPORTED_IMAGE.format(file_type=ftype), file_id))
                 else:
                     extracted_text = content
                     if not extracted_text and data_url and "," in data_url:
                         try:
-                            async with _attachment_extraction_slots:
+                            async with extraction_slots:
                                 extracted_text = await asyncio.to_thread(
                                     _extract_attachment_text, fname, ftype, data_url, attachment_ocr
                                 )
@@ -139,18 +155,21 @@ class ResearchAgent:
                         stored_text = text[:MAX_ATTACHMENT_TEXT_CHARS]
                         if len(text) > MAX_ATTACHMENT_TEXT_CHARS:
                             text = stored_text + prompts.ATTACHMENT_TRUNCATED
-                        doc_contexts.append(attachment_context(fname, text))
+                        doc_contexts.append(attachment_context(fname, text, file_id))
+                    elif file_id is not None:
+                        doc_contexts.append(attachment_context(fname, prompts.ATTACHMENT_NO_TEXT, file_id))
                 attachment_texts.append(stored_text)
         if any(attachment_texts):
             yield {"event": "attachments_extracted", "data": {"contents": attachment_texts}}
         effective_query = query_with_attachments(query, doc_contexts)
+        timed_query = with_current_time(effective_query, local_now())
         if image_data_urls:
-            user_content = [{"type": "text", "text": effective_query}]
+            user_content = [{"type": "text", "text": timed_query}]
             for img_url in image_data_urls:
                 user_content.append({"type": "image_url", "image_url": {"url": img_url}})
             messages.append({"role": "user", "content": user_content})
         else:
-            messages.append({"role": "user", "content": effective_query})
+            messages.append({"role": "user", "content": timed_query})
         session = ResearchSession(
             [effective_query]
             + [m["content"] for m in history if m.get("role") == "user" and isinstance(m.get("content"), str)]
@@ -209,7 +228,7 @@ class ResearchAgent:
                 tool_output = session.refuse_tool_call(fn_name, args)
                 skipped_status = "refused" if tool_output is not None else None
                 if tool_output is None:
-                    approval = await asyncio.to_thread(self.tools.approval_requirement, fn_name, args)
+                    approval = await asyncio.to_thread(self.tools.approval_requirement, fn_name, args, approval_user_id, conversation_id)
                     if session.is_preapproved(fn_name, args):
                         approval = None
                     if approval is not None:
@@ -224,6 +243,7 @@ class ResearchAgent:
                                     "approval_id": approval_id,
                                     "step": step_num,
                                     "tool": fn_name,
+                                    "kind": approval["kind"],
                                     "tool_display_name": approval["display_name"],
                                     "target": approval["target"],
                                     "arguments": args,
@@ -236,7 +256,7 @@ class ResearchAgent:
                                 skipped_status = "not_approved"
                 if tool_output is None:
                     try:
-                        tool_output = await self.tools.execute_tool(fn_name, args, user_id=approval_user_id)
+                        tool_output = await self.tools.execute_tool(fn_name, args, user_id=approval_user_id, conversation_id=conversation_id)
                     except Exception as e:
                         error_id = log_and_get_error_id(logger, f"工具 {fn_name} 執行失敗", e)
                         tool_output = {"error": f"工具執行失敗，請檢查參數格式後再試（錯誤代碼：{error_id}）"}
@@ -261,6 +281,8 @@ class ResearchAgent:
                     "event": "step_end",
                     "data": step_info
                 }
+                if fn_name in FILE_TOOL_NAMES and "action" in tool_output:
+                    yield {"event": "file", "data": {"action": tool_output["action"], "file": tool_output["file"]}}
                 tool_call_id = tc.get("id") or f"call_{step_num}"
                 messages.append({
                     "role": "tool",

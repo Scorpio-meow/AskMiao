@@ -34,7 +34,7 @@ from app.models.database import Base
 from app.rag import agent as agent_module
 from app.rag.research_session import ResearchSession
 from app.rag.tools import ResearchToolRegistry, extract_html_text
-from app.services import chat_service as chat_service_module
+from app.services import conversation_files as conversation_files_module
 from app.services import pdf_service
 from app.services.chat_service import AttachmentQuotaExceeded, ChatService
 from app.services.document_processor import DocumentLimitExceeded, DocumentProcessor, DocumentRejected
@@ -164,7 +164,7 @@ async def test_stream_slot_is_released_when_client_disconnects(monkeypatch, db):
     await stream.aclose()
     assert chat_api._active_streams == {}
 def test_attachment_storage_quota(monkeypatch, db):
-    monkeypatch.setattr(chat_service_module, "MAX_USER_ATTACHMENT_STORAGE_BYTES", 1000)
+    monkeypatch.setattr(conversation_files_module, "MAX_USER_ATTACHMENT_STORAGE_BYTES", 1000)
     service = ChatService()
     service.save_message(db, 1, "q", True, context_used="x" * 900)
     service.ensure_attachment_quota(db, 1, 100)
@@ -175,7 +175,7 @@ def test_attachment_text_is_stored_only_within_the_quota(monkeypatch, db):
     service = ChatService()
     context = json.dumps({"attachments": [{"filename": "a.txt"}]})
     message = service.save_message(db, 1, "q", True, context_used=context)
-    monkeypatch.setattr(chat_service_module, "MAX_USER_ATTACHMENT_STORAGE_BYTES", len(context) + 50)
+    monkeypatch.setattr(conversation_files_module, "MAX_USER_ATTACHMENT_STORAGE_BYTES", len(context) + 50)
     service.save_attachment_texts(db, message.id, ["x" * 100])
     db.refresh(message)
     assert message.context_used == context
@@ -188,8 +188,8 @@ async def test_concurrent_attachment_messages_cannot_exceed_the_quota(monkeypatc
     Base.metadata.create_all(engine)
     Session = sessionmaker(bind=engine)
     attachment = FileAttachment(filename="a.txt", file_type="text/plain", data_url="data:text/plain;base64,QUFBQQ==")
-    one_message = len(json.dumps({"attachments": [attachment.dict()]}, ensure_ascii=False))
-    monkeypatch.setattr(chat_service_module, "MAX_USER_ATTACHMENT_STORAGE_BYTES", one_message * 3 // 2)
+    one_message = len(json.dumps({"attachments": [attachment.dict(exclude={"data_url"})]}, ensure_ascii=False)) + len(b"AAAA")
+    monkeypatch.setattr(conversation_files_module, "MAX_USER_ATTACHMENT_STORAGE_BYTES", one_message * 3 // 2)
     real_check = chat_api.chat_service.ensure_attachment_quota
     def slow_check(db, user_id, new_bytes):
         real_check(db, user_id, new_bytes)
@@ -239,7 +239,7 @@ async def test_attachment_parsing_runs_off_the_event_loop(monkeypatch):
         return {"role": "assistant", "content": "好"}
     monkeypatch.setattr(agent_module, "chat_completion", fake_chat_completion)
     registry = ResearchToolRegistry()
-    monkeypatch.setattr(registry, "get_tool_definitions", lambda user_id=None: [])
+    monkeypatch.setattr(registry, "get_tool_definitions", lambda user_id=None, conversation_id=None: [])
     agent = agent_module.ResearchAgent(tool_registry=registry)
     attachment = FileAttachment(filename="a.txt", file_type="text/plain", data_url=data_url(10))
     [event async for event in research(agent, "摘要", attachments=[attachment])]
@@ -340,8 +340,8 @@ def test_rejected_attachment_is_reported_to_the_model(monkeypatch):
     assert agent_module._extract_attachment_text("scan.pdf", "application/pdf", url, None) == "[附件未讀取內容：PDF 文件中沒有可擷取的文字]"
 @pytest.mark.anyio
 async def test_attachment_extractions_are_bounded_process_wide(monkeypatch):
-    assert agent_module._attachment_extraction_slots._value == MAX_CONCURRENT_ATTACHMENT_EXTRACTIONS
-    monkeypatch.setattr(agent_module, "_attachment_extraction_slots", asyncio.Semaphore(MAX_CONCURRENT_ATTACHMENT_EXTRACTIONS))
+    assert agent_module.extraction_slots._value == MAX_CONCURRENT_ATTACHMENT_EXTRACTIONS
+    monkeypatch.setattr(agent_module, "extraction_slots", asyncio.Semaphore(MAX_CONCURRENT_ATTACHMENT_EXTRACTIONS))
     lock = threading.Lock()
     running = {"now": 0, "peak": 0}
     def slow_extract(fname, ftype, url, ocr):
@@ -358,7 +358,7 @@ async def test_attachment_extractions_are_bounded_process_wide(monkeypatch):
     monkeypatch.setattr(agent_module, "_attachment_ocr", lambda: None)
     monkeypatch.setattr(agent_module, "chat_completion", fake_chat_completion)
     registry = ResearchToolRegistry()
-    monkeypatch.setattr(registry, "get_tool_definitions", lambda user_id=None: [])
+    monkeypatch.setattr(registry, "get_tool_definitions", lambda user_id=None, conversation_id=None: [])
     attachments = [FileAttachment(filename=f"{i}.txt", file_type="text/plain", data_url=data_url(10)) for i in range(2)]
     async def ask():
         agent = agent_module.ResearchAgent(tool_registry=registry)

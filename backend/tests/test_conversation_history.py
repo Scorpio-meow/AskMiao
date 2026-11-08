@@ -1,10 +1,11 @@
 import json
+from datetime import datetime, timedelta, timezone
 import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from app.api import chat as chat_api
 from app.core.config import settings
-from app.models import Conversation, FileAttachment, LlmConnection, Message, MessageCreate
+from app.models import ConversationFile, Conversation, FileAttachment, LlmConnection, Message, MessageCreate
 from app.models.database import Base
 from app.rag import agent as agent_module
 from app.rag.agent import ResearchAgent
@@ -57,7 +58,7 @@ async def test_send_message_passes_database_history_to_rag(db, monkeypatch):
     captured = {}
     class FakeRag:
         async def generate_response_stream(self, query, conversation_history, *, endpoint, model_name,
-                                           reasoning_effort=None, attachments=None, approval_user_id=None):
+                                           reasoning_effort=None, attachments=None, approval_user_id=None, conversation_id=None):
             captured["endpoint"] = endpoint
             captured["model_name"] = model_name
             captured["query"] = query
@@ -123,7 +124,7 @@ def test_recent_history_attachment_text_is_bounded_from_the_newest(db, monkeypat
 @pytest.mark.asyncio
 async def test_follow_up_question_sees_earlier_attachment_text(db, monkeypatch):
     registry = ResearchToolRegistry()
-    monkeypatch.setattr(registry, "get_tool_definitions", lambda user_id=None: [])
+    monkeypatch.setattr(registry, "get_tool_definitions", lambda user_id=None, conversation_id=None: [])
     agent = ResearchAgent(tool_registry=registry)
     sent = []
     async def fake_chat_completion(messages, **kwargs):
@@ -135,16 +136,19 @@ async def test_follow_up_question_sees_earlier_attachment_text(db, monkeypatch):
     monkeypatch.setattr(agent_module, "chat_completion", fake_chat_completion)
     monkeypatch.setattr(agent_module, "_extract_attachment_text", lambda fname, ftype, url, ocr: "特休依年資計算")
     monkeypatch.setattr(agent_module, "_attachment_ocr", lambda: None)
+    now = datetime(2026, 11, 8, 23, 7, tzinfo=timezone(timedelta(hours=8)))
+    monkeypatch.setattr(agent_module, "local_now", lambda: now)
     monkeypatch.setattr(settings, "CONVERSATION_HISTORY_MESSAGES", 6)
     monkeypatch.setattr(chat_api, "get_rag_system", lambda: AgentRag())
     connection_id = add_connection(db)
     attachment = FileAttachment(filename="規章.txt", file_type="text/plain", data_url="data:text/plain;base64,QUFBQQ==")
     await send(db, connection_id, "摘要附件", attachments=[attachment])
     await send(db, connection_id, "那病假呢？", conversation_id=db.query(Conversation).one().id)
+    file_id = db.query(ConversationFile).one().id
     assert sent[-1][1:] == [
-        {"role": "user", "content": "[附件：規章.txt]\n特休依年資計算\n\n[使用者問題]\n摘要附件"},
+        {"role": "user", "content": f"[附件 #{file_id}：規章.txt]\n特休依年資計算\n\n[使用者問題]\n摘要附件"},
         {"role": "assistant", "content": "好"},
-        {"role": "user", "content": "那病假呢？"},
+        {"role": "user", "content": agent_module.with_current_time("那病假呢？", now)},
     ]
 @pytest.mark.asyncio
 async def test_answer_is_not_saved_when_conversation_is_deleted_mid_stream(db, monkeypatch):

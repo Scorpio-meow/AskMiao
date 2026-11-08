@@ -371,6 +371,11 @@ def test_session_passes_skill_content_unwrapped_and_deduplicates():
     assert session.refuse_tool_call("activate_skill", {"name": "pdf-processing"}) is None
     session.record_tool_output("activate_skill", output)
     assert "已在本次提問載入" in session.refuse_tool_call("activate_skill", {"name": "pdf-processing"})["message"]
+def test_skill_allowed_tools_cannot_preapprove_file_deletion():
+    session = ResearchSession([])
+    session.record_tool_output("activate_skill", {"skill": "cleanup", "content": "x", "allowed_tools": ["web_fetch", "delete_conversation_file"]})
+    assert session.is_preapproved("web_fetch", {})
+    assert not session.is_preapproved("delete_conversation_file", {"file_id": 1})
 @pytest.mark.asyncio
 async def test_slash_command_activates_skill_before_model_call(skills_dir):
     install_via_api(skills_dir)
@@ -385,7 +390,7 @@ async def test_slash_command_activates_skill_before_model_call(skills_dir):
     assert "## 技能" in system
     assert "本系統不會執行技能內的腳本" in system
     assert '<skill_content name="pdf-processing">' in system
-    assert captured["messages"][-1]["content"] == "幫我整理這份 PDF"
+    assert captured["messages"][-1]["content"].split("\n\n", 1)[1] == "幫我整理這份 PDF"
     done = events[-1]["data"]
     assert done["research_trace"][0]["tool"] == "activate_skill"
     assert done["research_trace"][0]["status"] == "success"
@@ -399,4 +404,4 @@ async def test_unknown_slash_command_is_left_as_is(skills_dir):
     with patch("app.rag.agent.chat_completion", fake_chat_completion):
         [e async for e in research(agent, "/unknown 你好")]
     assert "## 技能" not in captured["messages"][0]["content"]
-    assert captured["messages"][-1]["content"] == "/unknown 你好"
+    assert captured["messages"][-1]["content"].split("\n\n", 1)[1] == "/unknown 你好"

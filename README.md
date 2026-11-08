@@ -10,7 +10,7 @@
 
 [繁體中文](README.md) | [English](README_en.md)
 
-[![Version](https://img.shields.io/badge/version-8.3.0-2563eb?style=flat)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-8.4.0-2563eb?style=flat)](CHANGELOG.md)
 [![Python](https://img.shields.io/badge/Python-3.12+-3776AB?style=flat&logo=python&logoColor=white)](https://www.python.org/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-005571?style=flat&logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
 [![React](https://img.shields.io/badge/React-19.3-61DAFB?style=flat&logo=react&logoColor=black)](https://react.dev/)
@@ -80,6 +80,7 @@
 
 - **研究歷程**：每一步的工具、參數、結果摘要與耗時以 SSE 即時推送，前端以可摺疊的時間軸呈現。
 - **多模態提問**：對話可附圖片與檔案（每則最多 5 個、單檔 15 MiB、合計 20 MiB），圖片以 `image_url` 交給視覺模型，文字類附件抽取內容併入提問。
+- **對話檔案**：研究助理可以在對話中建立 Word、Excel、PowerPoint、PDF、Markdown、CSV 等檔案；修改上傳的文件時另存新版本，原檔不變。檔案在該則回答下方或標題列的「對話檔案」清單中下載，研究助理要刪除檔案時先經發問者核准。
 - **對話前文**：每次提問從資料庫帶入最近 `CONVERSATION_HISTORY_MESSAGES` 則訊息，後端重啟不會遺失上下文。
 
 ### 可追溯的答案
@@ -158,6 +159,7 @@ Agent 可以自己查資料，但不會自己替你送出申請、刪除紀錄�
 | 自訂 API 工具，其他方法 | 需要 | 升級到 4.0.0 時，既有工具依 HTTP 方法自動回填 |
 | MCP 伺服器 | 需要 | 以伺服器為單位設定，卡片顯示「伺服器 → 工具」 |
 | 技能腳本 `run_skill_script` | 需要 | 技能的 `allowed-tools` 列出 `run_skill_script` 時，該技能的腳本在同一次提問內不再詢問 |
+| 刪除對話檔案 `delete_conversation_file` | 一律需要 | 技能的 `allowed-tools` 也不能免除；使用者自己在介面上刪除不需要核准 |
 
 - 待核准項目綁定發問者，其他帳號以同一個 `approval_id` 回覆會得到 `404`。
 - 不是由使用者在對話中發起的 Agent 呼叫沒有人能核准，這類工具一律不執行。
@@ -205,7 +207,8 @@ Agent 可以自己查資料，但不會自己替你送出申請、刪除紀錄�
 | 每則訊息的附件 | 5 個，單檔 15 MiB、合計 20 MiB | `422` |
 | 聊天附件的解析量 | docx／pptx 建成 DOM 的 XML 合計 8 MiB，解壓合計 64 MiB，成員 10,000 個 | 不讀取該附件，並告知模型 |
 | 同時解析的聊天附件 | 每個後端行程 2 個 | 排隊等候 |
-| 每位使用者的附件儲存量 | 200 MiB | `413` |
+| 每位使用者的附件與對話檔案儲存量 | 200 MiB | `413`，研究助理無法再建立檔案 |
+| 每個對話的檔案 | 100 個，單檔 15 MiB | 無法再存檔 |
 | 每位使用者同時進行的回答串流 | 2 個 | `429` |
 | 單次工具結果放進模型 | 20,000 字 | 截斷 |
 | 待核准的工具呼叫 | 300 秒 | 視為拒絕 |
@@ -632,7 +635,7 @@ bun run build        # 產出 build/
 | [設定參考](docs/configuration.md) | 每個環境變數的預設值與作用、供應商路由、門檻校準、前端設定 |
 | [部署指南](docs/deployment.md) | 以 Docker Compose 部署到主機、HTTPS、備份與更新 |
 | [疑難排解](docs/troubleshooting.md) | 啟動、登入、前端與工具的常見錯誤與處理方式 |
-| [升級指南](docs/upgrading.md) | 從 2.x 升級到 3.0.0，以及之後各版（到 8.2.2 升級到 8.3.0）的步驟、回退方式與常見問題 |
+| [升級指南](docs/upgrading.md) | 從 2.x 升級到 3.0.0，以及之後各版（到 8.3.0 升級到 8.4.0）的步驟、回退方式與常見問題 |
 | [架構決策紀錄（ADR）](docs/adr/README.md) | 重大設計的背景、取捨與後續修訂 |
 | [llms.txt](llms.txt) | 給 AI Agent 讀的檔案地圖、系統約束與驗證方式 |
 | [版本變更紀錄](CHANGELOG.md) | 每個版本的新增、變更、移除與修正 |
@@ -640,7 +643,7 @@ bun run build        # 產出 build/
 
 ## 版本資訊
 
-- **目前版本**：8.3.0（2026-11-08），變更內容見 [CHANGELOG](CHANGELOG.md)。
+- **目前版本**：8.4.0（2026-11-08），變更內容見 [CHANGELOG](CHANGELOG.md)。
 - **版本規則**：遵循 [語意化版本](https://semver.org/lang/zh-TW/)。不相容的變更（例如新增必填設定、改變 API 權限或索引格式）升主版號。
 - **版本號位置**：後端 `backend/app/__init__.py` 的 `__version__`（OpenAPI 文件與 MCP 交握都引用它）、前端 `frontend/package.json`，發行時與 `CHANGELOG.md` 一併更新。
 

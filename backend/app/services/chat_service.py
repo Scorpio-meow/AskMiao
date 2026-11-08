@@ -1,24 +1,32 @@
+import base64
 import json
 from datetime import datetime
 from typing import Dict, List, Optional
-from sqlalchemy import func
 from sqlalchemy.orm import Session
-from app.models import Conversation, Message, MessageResponse, ConversationResponse
+from app import prompts
+from app.models import Conversation, FileAttachment, Message, MessageResponse, ConversationResponse
 from app.core.config import settings
-from app.core.limits import MAX_ATTACHMENT_TEXT_CHARS, MAX_USER_ATTACHMENT_STORAGE_BYTES
+from app.core.limits import MAX_ATTACHMENT_TEXT_CHARS
 from app.rag.agent import attachment_context, query_with_attachments
+from app.services.conversation_files import (
+    AttachmentQuotaExceeded,
+    add_file,
+    clean_filename,
+    delete_files_for_conversations,
+    ensure_file_capacity,
+    ensure_storage_quota,
+)
 DEFAULT_CONVERSATION_TITLE = settings.DEFAULT_CONVERSATION_TITLE
 MAX_TITLE_PREVIEW_LENGTH = 50
 MAX_LISTED_CONVERSATIONS = 200
 MAX_CONVERSATION_MESSAGES = 500
 MAX_HISTORY_ATTACHMENT_CHARS = MAX_ATTACHMENT_TEXT_CHARS
-class AttachmentQuotaExceeded(Exception):
-    pass
 def _build_message_response(msg: Message) -> MessageResponse:
     sources = []
     sources_detail = []
     research_trace = []
     attachments = []
+    files = []
     if msg.context_used:
         try:
             parsed = json.loads(msg.context_used)
@@ -27,6 +35,7 @@ def _build_message_response(msg: Message) -> MessageResponse:
                 sources_detail = parsed.get("sources_detail", [])
                 research_trace = parsed.get("research_trace", [])
                 attachments = parsed.get("attachments", [])
+                files = parsed.get("files", [])
             elif isinstance(parsed, list):
                 sources = parsed
         except Exception:
@@ -41,7 +50,8 @@ def _build_message_response(msg: Message) -> MessageResponse:
         attachments=attachments,
         sources=sources,
         sources_detail=sources_detail,
-        research_trace=research_trace
+        research_trace=research_trace,
+        files=files
     )
 def _stored_attachments(msg: Message) -> List[Dict]:
     try:
@@ -72,8 +82,10 @@ class ChatService:
                 for att in _stored_attachments(msg):
                     text = (att.get("content") or "")[:attachment_budget]
                     if text:
-                        doc_contexts.append(attachment_context(att["filename"], text))
+                        doc_contexts.append(attachment_context(att["filename"], text, att.get("file_id")))
                         attachment_budget -= len(text)
+                    elif att.get("file_id") is not None:
+                        doc_contexts.append(attachment_context(att["filename"], prompts.ATTACHMENT_NO_TEXT, att["file_id"]))
                 content = query_with_attachments(content, doc_contexts)
             if content:
                 history.append({"role": "user" if msg.is_user else "assistant", "content": content})
@@ -82,14 +94,49 @@ class ChatService:
             history.pop(0)
         return history
     def ensure_attachment_quota(self, db: Session, user_id: int, new_bytes: int) -> None:
-        used = db.query(func.coalesce(func.sum(func.length(Message.context_used)), 0)).join(
-            Conversation, Conversation.id == Message.conversation_id
-        ).filter(
-            Conversation.user_id == user_id,
-            Message.is_user.is_(True),
-        ).scalar()
-        if int(used) + new_bytes > MAX_USER_ATTACHMENT_STORAGE_BYTES:
-            raise AttachmentQuotaExceeded()
+        ensure_storage_quota(db, user_id, new_bytes)
+    @staticmethod
+    def _attachment_context(attachments: List[FileAttachment], stored: List[FileAttachment]) -> str:
+        return json.dumps({
+            "attachments": [att.model_dump(exclude={"data_url"}) if any(att is item for item in stored) else att.model_dump() for att in attachments]
+        }, ensure_ascii=False)
+    def save_user_message(
+        self,
+        db: Session,
+        user_id: int,
+        content: str,
+        conversation_id: Optional[int],
+        attachments: List[FileAttachment],
+        model_name: str,
+    ) -> Message:
+        documents = []
+        for attachment in attachments:
+            attachment.file_id = None
+            if attachment.data_url and not attachment.file_type.lower().startswith("image/"):
+                documents.append((attachment, clean_filename(attachment.filename), base64.b64decode(attachment.data_url.split(",", 1)[1])))
+        stored = [attachment for attachment, _, _ in documents]
+        context = self._attachment_context(attachments, stored) if attachments else None
+        if attachments:
+            owned = db.query(Conversation.id).filter(Conversation.id == conversation_id, Conversation.user_id == user_id).first()
+            ensure_file_capacity(db, owned.id if owned else None, len(documents))
+            self.ensure_attachment_quota(db, user_id, len(context) + sum(len(data) for _, _, data in documents))
+        message = self.save_message(db, user_id, content, True, conversation_id, context_used=context, model_name=model_name)
+        if documents:
+            for attachment, filename, data in documents:
+                attachment.file_id = add_file(
+                    db,
+                    conversation_id=message.conversation_id,
+                    user_id=user_id,
+                    filename=filename,
+                    data=data,
+                    origin="user",
+                    parent=None,
+                    enforce_limits=False,
+                ).id
+            message.context_used = self._attachment_context(attachments, stored)
+            db.commit()
+            db.refresh(message)
+        return message
     def create_conversation(self, db: Session, user_id: int, title: Optional[str] = None):
         conversation = Conversation(
             user_id=user_id,
@@ -193,6 +240,7 @@ class ChatService:
         ).first()
         if not conversation:
             return False
+        delete_files_for_conversations(db, [conversation_id])
         db.query(Message).filter(Message.conversation_id == conversation_id).delete()
         db.delete(conversation)
         db.commit()

@@ -2,6 +2,7 @@ import asyncio
 import contextlib
 import threading
 import time
+from datetime import datetime, timedelta, timezone
 import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
@@ -51,7 +52,7 @@ class ScriptedLLM:
         return self
 def make_agent(monkeypatch, retriever=None):
     registry = ResearchToolRegistry(retriever=retriever or StaticRetriever())
-    monkeypatch.setattr(registry, "get_tool_definitions", lambda user_id=None: [])
+    monkeypatch.setattr(registry, "get_tool_definitions", lambda user_id=None, conversation_id=None: [])
     return ResearchAgent(tool_registry=registry), registry
 def record_web_calls(monkeypatch, registry):
     calls = []
@@ -136,6 +137,19 @@ async def test_tool_results_are_wrapped_as_untrusted_data_with_citation_numbers(
     assert opening.startswith('<untrusted_tool_result id="')
     assert closing == opening.replace("<untrusted_tool_result", "</untrusted_tool_result")
     assert '"citation": 1' in body[-1]
+@pytest.mark.asyncio
+async def test_latest_user_message_carries_the_current_local_time(monkeypatch):
+    agent, _ = make_agent(monkeypatch)
+    llm = ScriptedLLM([answer("好")]).install(monkeypatch)
+    monkeypatch.setattr(agent_module, "local_now", lambda: datetime(2026, 11, 8, 23, 7, tzinfo=timezone(timedelta(hours=8))))
+    history = [{"role": "user", "content": "先前的問題"}, {"role": "assistant", "content": "好"}]
+    await collect(research(agent, "把檔案的時間改成現在", conversation_history=history))
+    messages = llm.chat_messages[0]
+    assert messages[-1]["content"] == "[現在時間：2026-11-08（星期日）23:07，時區 UTC+08:00]\n\n把檔案的時間改成現在"
+    assert messages[1]["content"] == "先前的問題"
+    assert "2026-11-08" not in messages[0]["content"]
+def test_current_time_formats_negative_offsets():
+    assert agent_module.with_current_time("問", datetime(2026, 1, 5, 9, 5, tzinfo=timezone(timedelta(hours=-5, minutes=-30)))).startswith("[現在時間：2026-01-05（星期一）09:05，時區 UTC-05:30]")
 @pytest.mark.asyncio
 async def test_previous_answer_citation_markers_are_not_sent_back(monkeypatch):
     agent, _ = make_agent(monkeypatch)
@@ -282,7 +296,7 @@ async def test_malformed_tool_arguments_do_not_abort_the_answer(monkeypatch, arg
 async def test_tool_definitions_are_loaded_off_the_event_loop(monkeypatch):
     agent, registry = make_agent(monkeypatch)
     loaded_in = []
-    monkeypatch.setattr(registry, "get_tool_definitions", lambda user_id=None: loaded_in.append(threading.get_ident()) or [])
+    monkeypatch.setattr(registry, "get_tool_definitions", lambda user_id=None, conversation_id=None: loaded_in.append(threading.get_ident()) or [])
     ScriptedLLM([answer("你好")]).install(monkeypatch)
     await collect(research(agent, "你好"))
     assert loaded_in and loaded_in[0] != threading.get_ident()

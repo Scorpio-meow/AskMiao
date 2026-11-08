@@ -2,7 +2,7 @@
 
 [繁體中文](api.md) | [English](api_en.md)
 
-> REST and SSE streaming endpoints of the AskMiao **8.3.0** backend, written against the actual routers in `backend/app/api/`. With `ENABLE_API_DOCS=true` the backend also serves interactive docs at `http://localhost:8001/docs` (Swagger UI) and `http://localhost:8001/redoc`, and the OpenAPI document at `/openapi.json`. These three paths need no sign-in and list every endpoint and parameter, so keep `ENABLE_API_DOCS=false` (the template value) for public deployments; all three then return `404`.
+> REST and SSE streaming endpoints of the AskMiao **8.4.0** backend, written against the actual routers in `backend/app/api/`. With `ENABLE_API_DOCS=true` the backend also serves interactive docs at `http://localhost:8001/docs` (Swagger UI) and `http://localhost:8001/redoc`, and the OpenAPI document at `/openapi.json`. These three paths need no sign-in and list every endpoint and parameter, so keep `ENABLE_API_DOCS=false` (the template value) for public deployments; all three then return `404`.
 
 ## Contents
 
@@ -27,7 +27,7 @@
 |---|---|
 | Base URL | `http://localhost:8001` (set by `HOST` / `PORT`) |
 | Authentication | Send `Authorization: Bearer <access_token>`; the refresh token lives in the HttpOnly cookie `refresh_token` (path `/api/auth`) and is sent by the browser automatically |
-| Content types | `multipart/form-data` for uploads, `text/event-stream` for chat streaming, `application/json` for everything else |
+| Content types | `multipart/form-data` for uploads, `text/event-stream` for chat streaming, the file's own type for conversation file downloads, `application/json` for everything else |
 | Timestamps | ISO 8601 in UTC without a timezone suffix (for example `2026-09-25T02:30:00`) |
 | Rate limit | `RATE_LIMIT_PER_MINUTE` requests per client IP per 60 seconds (default 60); beyond that the API returns `429`. The client IP is the direct peer unless `FORWARDED_ALLOW_IPS` names a proxy whose `X-Forwarded-For` is trusted |
 | Request body limit | 1 MiB for general requests; `POST /api/chat/send` allows more with a valid access token, and `POST /api/documents/upload`, `POST /api/skills/upload`, and `POST /api/skills/upload-folder` only when the valid access token's `is_admin` claim is `true`. Larger bodies get `413` `{"detail": "請求內容超過大小上限"}`; see [configuration reference: resource limits](configuration_en.md#resource-limits) |
@@ -67,6 +67,9 @@ API messages are in Traditional Chinese; the English glosses in this document ar
 | GET | `/api/chat/conversations/{conversation_id}` | Signed in | One conversation (without messages) |
 | GET | `/api/chat/conversations/{conversation_id}/messages` | Signed in | Paged messages |
 | DELETE | `/api/chat/conversations/{conversation_id}` | Signed in | Delete a conversation |
+| GET | `/api/chat/conversations/{conversation_id}/files` | Signed in (owner only) | List conversation files |
+| GET | `/api/chat/files/{file_id}` | Signed in (owner only) | Download a conversation file |
+| DELETE | `/api/chat/files/{file_id}` | Signed in (owner only) | Delete a conversation file |
 | GET | `/api/llm-connections/providers` | Signed in | Supported providers with their default API address and models |
 | GET | `/api/llm-connections` | Signed in | The caller's personal connections and the shared connections granted to them |
 | POST | `/api/llm-connections` | Signed in | Add a personal connection |
@@ -325,13 +328,16 @@ Send a message and start the `ResearchAgent`. The response is a **Server-Sent Ev
 | `file_size` | integer | Optional file size |
 | `data_url` | string | Optional; must be a base64 `data:` URL (remote URLs such as `http(s)://` are rejected), at most 15 MiB decoded per attachment and 20 MiB in total per message; required for images |
 | `content` | string | Optional pre-extracted plain text, at most 50,000 characters; when absent, text is extracted from the decoded `data_url` (at most 20 PDF pages are OCR'd) |
+| `file_id` | integer | Responses only: the id of the conversation file the attachment was saved as; any value sent in a request is ignored |
+
+A non-image attachment with a `data_url` is decoded and saved as a file of this conversation (`origin` is `user`; see [2.10](#210-get-apichatconversationsconversation_idfiles)), which the research assistant can read and edit into a new version and the user can download again; the user message records only the `file_id` and no longer keeps the base64. The file name is stripped of any path and disallowed characters; files without an extension are saved too, but the research assistant can only read supported formats. Image attachments are still stored in the message as a `data_url`.
 
 At most 50,000 characters of each attachment's text go into the model context; the rest is truncated. Text extracted from a `data_url` is subject to a chat attachment parsing budget that is stricter than for admin uploads (for example, at most 64 MiB uncompressed for a `.docx`, `.pptx`, or `.xlsx`, and at most 8 MiB in total of the XML that `.docx` and `.pptx` parsing builds into a DOM), and each backend process parses at most 2 attachments at a time while the rest wait. An attachment over budget does not fail the request; the model is told that it was not read (附件超過解析上限，未讀取內容, "the attachment exceeds the parsing limit; content not read"). An attachment that cannot be read (for example an invalid Office file, or a PDF that is password-protected or has no extractable text) does not fail the request either; the model is told it was not read, with the reason (附件未讀取內容, "attachment content not read"). The extracted text (at most 50,000 characters per attachment) is saved back to the `content` of that user message's attachment and returned by [2.7](#27-get-apichatconversationsconversation_idmessages); later questions in the same conversation carry it in the history, with earlier attachments' text capped at 50,000 characters in total, counted from the newest message back. See [configuration reference: resource limits](configuration_en.md#resource-limits) for all limits.
 
 | Status | When |
 |---|---|
-| `400` | `model_name` is not in the available model list |
-| `413` | The request body exceeds its limit (1 MiB without a valid access token), or this user's stored attachments would exceed 200 MiB (`附件儲存空間已達上限…`, "attachment storage is full") |
+| `400` | `model_name` is not in the available model list; an attachment's file name is empty once disallowed characters are removed, or this conversation would exceed 100 files |
+| `413` | The request body exceeds its limit (1 MiB without a valid access token), or this user's stored attachments and conversation files would exceed 200 MiB (`附件儲存空間已達上限…`, "attachment storage is full") |
 | `422` | Field validation failed: message too long, too many or too large attachments, a `data_url` that is not a base64 `data:` URL, and so on |
 | `429` | This user already has 2 answers streaming |
 
@@ -343,14 +349,15 @@ Each event is formatted as `event: <name>\ndata: <JSON>\n\n`, in this order:
 
 | Event | When | `data` fields |
 |---|---|---|
-| `start` | The user message has been saved | `conversation_id`, `user_message_id` |
+| `start` | The user message has been saved | `conversation_id`, `user_message_id`, `attachment_file_ids` (in the order of `attachments`: the file id for attachments saved as conversation files, otherwise `null`) |
 | `step_start` | A tool call starts | `step` (from 1), `tool`, `arguments` |
-| `approval_required` | The tool needs approval and the agent pauses (see [2.9](#29-post-apichatapprovalsapproval_id)) | `approval_id`, `step`, `tool`, `tool_display_name`, `target`, `arguments` |
+| `approval_required` | The tool needs approval and the agent pauses (see [2.9](#29-post-apichatapprovalsapproval_id)) | `approval_id`, `step`, `tool`, `kind`, `tool_display_name`, `target`, `arguments` |
 | `approval_resolved` | The user answered or the wait timed out | `approval_id`, `approved` (`false` on timeout) |
 | `step_end` | A tool call ends | `step`, `tool`, `arguments`, `output_preview` (first 300 characters of the result JSON), `duration_seconds`, `status` (`success` / `error`) |
+| `file` | A conversation file tool succeeded, right after that call's `step_end` | `action` (`created`, `updated`, `deleted`), `file` (the file object; see [2.10](#210-get-apichatconversationsconversation_idfiles)) |
 | `token` | Answer text | `content` |
 | `sources` | After the answer | `sources` (deduplicated source names), `sources_detail` (see below) |
-| `done` | The assistant message has been saved; it is not saved when the conversation was deleted during the stream | `message_id` (`null` when not saved), `conversation_id`, `answer`, `sources`, `sources_detail`, `research_trace` (every `step_end` payload) |
+| `done` | The assistant message has been saved; it is not saved when the conversation was deleted during the stream | `message_id` (`null` when not saved), `conversation_id`, `answer`, `sources`, `sources_detail`, `research_trace` (every `step_end` payload), `files` (every `file` event payload) |
 | `error` | An unexpected exception in the API layer; or no stream slot is free when the stream starts (this user already has 2 answers streaming), in which case it is sent before `start` and the stream ends | `detail` (a message with an error code), `error_id`, `request_id`; only `detail` when no stream slot is free |
 
 `sources_detail` lists only the entries the answer cites as `[n]`, in order of first citation; with no citations, `sources` and `sources_detail` are both empty. Fields depend on the source:
@@ -361,13 +368,15 @@ Each event is formatted as `event: <name>\ndata: <JSON>\n\n`, in this order:
 | `filter_and_count_records` | `citation`, `source`, `snippet` |
 | `web_search`, `web_fetch` | `citation`, `source` (page title or URL), `url`, `snippet` |
 
-In `approval_required`, `tool_display_name` is the tool's display name (`<server display name> → <tool name>` for MCP tools), and `target` names where this call actually goes:
+In `approval_required`, `tool_display_name` is the tool's display name (`<server display name> → <tool name>` for MCP tools), `kind` is the tool category, and `target` names where this call actually goes:
 
-| Tool | `target` format | Example |
-|---|---|---|
-| Custom API tool | HTTP method and the host of the tool's configured URL (with the port when one is given; no path or query string) | `POST api.example.com` |
-| MCP server (`http` / `sse`) | Upper-case transport and the host of the server URL | `HTTP mcp.example.com:8443` |
-| MCP server (`stdio`) | `本機指令` ("local command") followed by the command's file name (no path or arguments) | `本機指令 npx` |
+| Tool | `kind` | `target` format | Example |
+|---|---|---|---|
+| Custom API tool | `custom_api` | HTTP method and the host of the tool's configured URL (with the port when one is given; no path or query string) | `POST api.example.com` |
+| MCP server (`http` / `sse`) | `mcp` | Upper-case transport and the host of the server URL | `HTTP mcp.example.com:8443` |
+| MCP server (`stdio`) | `mcp` | `本機指令` ("local command") followed by the command's file name (no path or arguments) | `本機指令 npx` |
+| `run_skill_script` | `skill_script` | `本機指令` ("local command") followed by the interpreter | `本機指令 python` |
+| `delete_conversation_file` | `file` | The file id and file name, with a note when this conversation has no such file | `#5「採購合約.docx」` |
 
 **Stream example**
 
@@ -423,6 +432,8 @@ The tool definitions currently available to the agent (sign-in required), in the
 - Discovered tools of enabled MCP servers, named `mcp_<server>_<tool>` (description prefixed with `[MCP 工具]`).
 - When an enabled MCP server has discovered resources or prompts, `read_mcp_resource` (parameters `server`, `uri`) and `get_mcp_prompt` (parameters `server`, `name`, `arguments`), whose descriptions list the available items (see [Server object](#server-object)).
 - When at least one enabled Agent Skill that the caller can see has its files present, `activate_skill` and `read_skill_resource`, plus `run_skill_script` when one of them has `allow_scripts` turned on (see [7. Agent Skills](#7-agent-skills-apiskills)); otherwise none of them appears.
+
+The conversation file tools (`list_conversation_files`, `read_conversation_file`, `create_conversation_file`, `edit_conversation_file`, `delete_conversation_file`) are offered only during the research of `POST /api/chat/send`, because they need a conversation id, so this endpoint's response does not include them (see [2.10](#210-get-apichatconversationsconversation_idfiles)).
 
 ```json
 {
@@ -503,11 +514,11 @@ Returns the newest `limit` messages in chronological order; page back with `offs
 ]
 ```
 
-A message's `sources`, `sources_detail`, `research_trace`, and `attachments` are parsed from the `context_used` database column; `context_used` in the response is always `null` (the raw value holds attachment base64 and is no longer repeated). A user message's `attachments` keep the fields sent with it (including `data_url`), and `content` holds the text extracted from the attachment (at most 50,000 characters each). `reasoning_effort` is not stored and is always `null`.
+A message's `sources`, `sources_detail`, `research_trace`, `files`, and `attachments` are parsed from the `context_used` database column; `context_used` in the response is always `null` (the raw value may hold image attachments' base64 and is not repeated). A user message's `attachments` keep the fields sent with it, and `content` holds the text extracted from the attachment (at most 50,000 characters each); attachments saved as conversation files carry `file_id` instead of `data_url`, while images and attachments of messages from earlier versions still carry `data_url`. An assistant message's `files` holds that answer's `file` events (`null` when there are none); the events stay even after a file is deleted, so the list in [2.10](#210-get-apichatconversationsconversation_idfiles) is authoritative. `reasoning_effort` is not stored and is always `null`.
 
 ### 2.8 DELETE /api/chat/conversations/{conversation_id}
 
-Delete one of your conversations and all its messages.
+Delete one of your conversations with all its messages and conversation files.
 
 **Response**: `200 OK` `{"message": "對話已刪除"}`; `404` when not found.
 
@@ -527,9 +538,49 @@ Approve or deny a tool call the agent is waiting on. Custom API tools and MCP se
 - No answer within 300 seconds counts as a denial; when the user interrupts the stream, the pending item is cancelled with it.
 - On a denial or timeout the tool does not run, and the agent receives a "not approved by the user" tool result and answers from what it already has.
 - When no user can approve (a non-interactive run), tools that need approval never run.
+- `delete_conversation_file` always needs approval, and a skill's `allowed-tools` cannot waive it; on a denial the file is not deleted.
 - `run_skill_script` needs approval by default (`target` is `本機指令 <interpreter>`, "local command"); when a skill's `allowed-tools` lists `run_skill_script`, that skill's scripts no longer ask for approval for the rest of the question once the skill is activated. `read_mcp_resource` and `get_mcp_prompt` follow that MCP server's `requires_approval`.
-- After a skill is activated, the tool names in its `allowed-tools` no longer ask for approval for the rest of that question (see [Skill object](#skill-object)).
+- After a skill is activated, the tool names in its `allowed-tools` no longer ask for approval for the rest of that question (except `delete_conversation_file`; see [Skill object](#skill-object)).
 - Pending items live in the backend process's memory and are lost when the backend restarts.
+
+### 2.10 GET /api/chat/conversations/{conversation_id}/files
+
+The files in a conversation: document attachments the user uploaded and files the research assistant created or edited with the file tools, in order of creation. Returns `404` `找不到該對話` (conversation not found) when the conversation does not exist or is not yours.
+
+```json
+{
+  "files": [
+    {"id": 5, "filename": "採購合約.docx", "media_type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document", "size_bytes": 36768, "origin": "user", "version": 1, "parent_id": null, "created_at": "2026-11-08T14:45:09.716075"},
+    {"id": 6, "filename": "採購合約 v2.docx", "media_type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document", "size_bytes": 36768, "origin": "assistant", "version": 2, "parent_id": 5, "created_at": "2026-11-08T14:45:51.204117"}
+  ]
+}
+```
+
+| Field | Description |
+|---|---|
+| `origin` | `user` for an attachment the user uploaded, `assistant` for a file the research assistant created or edited |
+| `version`, `parent_id` | The research assistant always saves an edit as a new version: `parent_id` is the file it was edited from, `version` increases within the same series, and ` v<n>` is added to the file name; the original file is unchanged |
+
+The research assistant can create `.md`, `.txt`, `.csv`, `.json`, `.docx`, `.xlsx`, `.pptx`, and `.pdf` files and edit them by replacing text (text files, `.docx`, `.pptx`), changing cells (`.xlsx`), or rewriting the whole file; a PDF can only be rewritten whole. See [Architecture: conversation files](architecture_en.md#conversation-files) for how each format is handled and its limits. A file is at most 15 MiB, a conversation holds at most 100 files, and they share each user's 200 MiB of storage with attachments.
+
+### 2.11 GET /api/chat/files/{file_id}
+
+Download one of your conversation files. The response body is the file content, with these headers:
+
+| Header | Value |
+|---|---|
+| `Content-Type` | Chosen from an allowlist by extension; `.html`, `.htm`, `.css`, `.js`, `.ts`, and `.py` are always `text/plain; charset=utf-8`, and extensions not on the list get `application/octet-stream` |
+| `Content-Disposition` | `attachment`, with non-ASCII file names encoded as `filename*=UTF-8''…` |
+| `Cache-Control` | `private, no-store` |
+| `X-Content-Type-Options` | `nosniff` |
+
+Returns `404` `找不到這個檔案` (file not found) when the file does not exist or is not yours.
+
+### 2.12 DELETE /api/chat/files/{file_id}
+
+Delete one of your conversation files; other versions in the same series are not affected. The research assistant must get approval to delete a file (see [2.9](#29-post-apichatapprovalsapproval_id)); users deleting their own files through this endpoint need none.
+
+**Response**: `200 OK` `{"file": {…}}` (the deleted file object); `404` `找不到這個檔案` (file not found) when the file does not exist or is not yours.
 
 ---
 
@@ -1384,4 +1435,5 @@ The current state, worth knowing when integrating:
 - `expires_in` in token responses is always `1800`, regardless of `ACCESS_TOKEN_EXPIRE_MINUTES`.
 - The token revocation list, rate limit counters, login throttling counts and pauses, per-user concurrent streams, and pending tool approvals live in one backend process's memory; they are not shared across processes or hosts and are cleared on restart (which also lifts any login pause). Rate limiting tracks at most 10,000 source IPs and evicts the least recently active first; login throttling likewise tracks at most 10,000 login identifiers and 10,000 source IPs and evicts those that have gone longest without a new failure first.
 - Rate limiting and login throttling both work per source IP: without `FORWARDED_ALLOW_IPS`, every user who connects through the Vite dev proxy or a reverse proxy shares one source IP, so they share the rate limit and their failed logins add up toward the per-address threshold; once it is reached, every login through that proxy is paused.
-- Attachment storage is never purged automatically: once a user reaches the 200 MiB limit, they must delete conversations with attachments before sending attachments again.
+- Attachment and conversation file storage is never purged automatically: once a user reaches the 200 MiB limit, they must delete conversation files or conversations with attachments before they can send attachments again or have the research assistant create files.
+- Attachments sent with 8.3.0 or earlier are still stored as base64 in their messages; they display and carry into the history as usual, but they are not in the conversation file list and the research assistant cannot edit them.

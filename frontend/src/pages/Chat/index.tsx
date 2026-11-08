@@ -1,9 +1,10 @@
-import React, { useState, useEffect, useCallback, useRef, useId } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef, useId } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { chatService, ChatConnectionOption, Conversation, Message } from '../../services/api';
 import { useChat } from '../../hooks/useChat';
 import { useDocumentTitle } from '../../hooks/useDocumentTitle';
 import { copyText } from '../../utils/clipboard';
+import { saveBlob } from '../../utils/saveBlob';
 import { describeRequestError } from '../../utils/secureLogger';
 import { SnackbarState, ChatAttachment } from './types';
 import ChatSidebar from './ChatSidebar';
@@ -11,6 +12,8 @@ import ChatHeader, { choiceKey, parseChoice } from './ChatHeader';
 import { REASONING_EFFORT_OPTIONS, resolveReasoningEffort } from '../../utils/reasoningEffort';
 import ChatMessageList from './ChatMessageList';
 import ChatInputArea from './ChatInputArea';
+import ConversationFilesDialog from './ConversationFilesDialog';
+import type { FileCardInfo } from './ConversationFileCard';
 import { findRetryQuestion } from './chatFormat';
 import { Snackbar, Alert, ConfirmDialog } from '../../components/ui';
 import styles from './Chat.module.css';
@@ -19,6 +22,7 @@ const describeSendError = (err: unknown): string => {
   if (err instanceof Error && err.message) return err.message;
   return '請稍後再試';
 };
+const isNotFound = (err: unknown): boolean => (err as { response?: { status?: number } })?.response?.status === 404;
 const MODEL_STORAGE_KEY = 'askmiao_selected_model';
 const REASONING_EFFORT_STORAGE_KEY = 'askmiao_reasoning_effort';
 const readStorage = (key: string): string | null => {
@@ -51,6 +55,10 @@ export const ChatPage: React.FC = () => {
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
   const [pendingDelete, setPendingDelete] = useState<Conversation | null>(null);
   const [deleting, setDeleting] = useState(false);
+  const [filesOpen, setFilesOpen] = useState(false);
+  const [pendingFileDelete, setPendingFileDelete] = useState<FileCardInfo | null>(null);
+  const [deletingFile, setDeletingFile] = useState(false);
+  const [removedFileIds, setRemovedFileIds] = useState<ReadonlySet<number>>(() => new Set());
   const [snackbar, setSnackbar] = useState<SnackbarState>({
     open: false,
     message: '',
@@ -81,6 +89,43 @@ export const ChatPage: React.FC = () => {
     startNewConversation,
   } = useChat((message) => showSnackbar(message, 'error'));
   useDocumentTitle(currentConversation?.title || '聊天');
+  const deletedFileIds = useMemo(() => {
+    const ids = new Set(removedFileIds);
+    messages.forEach((m) => (m.files || []).forEach((event) => {
+      if (event.action === 'deleted') ids.add(event.file.id);
+    }));
+    return ids;
+  }, [messages, removedFileIds]);
+  const handleDownloadFile = useCallback(async (file: FileCardInfo) => {
+    try {
+      saveBlob(await chatService.downloadConversationFile(file.id), file.filename);
+    } catch (err) {
+      if (isNotFound(err)) {
+        setRemovedFileIds((prev) => new Set(prev).add(file.id));
+        showSnackbar(`「${file.filename}」已被刪除`, 'error');
+      } else {
+        showSnackbar(`無法下載「${file.filename}」，請稍後再試`, 'error');
+      }
+    }
+  }, [showSnackbar]);
+  const handleConfirmFileDelete = async () => {
+    if (!pendingFileDelete) return;
+    const file = pendingFileDelete;
+    setDeletingFile(true);
+    try {
+      await chatService.deleteConversationFile(file.id);
+      setRemovedFileIds((prev) => new Set(prev).add(file.id));
+      showSnackbar(`已刪除「${file.filename}」`, 'success');
+    } catch (err) {
+      if (isNotFound(err)) {
+        setRemovedFileIds((prev) => new Set(prev).add(file.id));
+      }
+      showSnackbar(isNotFound(err) ? `「${file.filename}」已被刪除` : `無法刪除「${file.filename}」，請稍後再試`, 'error');
+    } finally {
+      setDeletingFile(false);
+      setPendingFileDelete(null);
+    }
+  };
   const selectedChoiceRef = useRef(selectedChoice);
   useEffect(() => {
     selectedChoiceRef.current = selectedChoice;
@@ -216,6 +261,7 @@ export const ChatPage: React.FC = () => {
           onOpenSidebar={() => setMobileSidebarOpen(true)}
           sidebarOpen={mobileSidebarOpen}
           sidebarId={sidebarId}
+          onOpenFiles={currentConversation ? () => setFilesOpen(true) : undefined}
         />
         {connections?.length === 0 && (
           <Alert severity="info" className={styles.noModelsNotice}>
@@ -235,6 +281,9 @@ export const ChatPage: React.FC = () => {
           onCopyMessage={handleCopyMessage}
           onSelectPrompt={setNewMessage}
           onRetry={handleStableRetry}
+          deletedFileIds={deletedFileIds}
+          onDownloadFile={handleDownloadFile}
+          onDeleteFile={setPendingFileDelete}
         />
         <ChatInputArea
           value={newMessage}
@@ -258,6 +307,25 @@ export const ChatPage: React.FC = () => {
         loading={deleting}
         onConfirm={handleConfirmDelete}
         onCancel={() => setPendingDelete(null)}
+      />
+      {filesOpen && currentConversation && (
+        <ConversationFilesDialog
+          conversationId={currentConversation.id}
+          deletedFileIds={deletedFileIds}
+          onClose={() => setFilesOpen(false)}
+          onDownload={handleDownloadFile}
+          onDelete={setPendingFileDelete}
+        />
+      )}
+      <ConfirmDialog
+        open={Boolean(pendingFileDelete)}
+        title="刪除這個檔案？"
+        description={`「${pendingFileDelete?.filename || ''}」會從這個對話中刪除，刪除後無法復原；同一檔案的其他版本不受影響。`}
+        confirmLabel="刪除"
+        destructive
+        loading={deletingFile}
+        onConfirm={handleConfirmFileDelete}
+        onCancel={() => setPendingFileDelete(null)}
       />
       <Snackbar
         key={snackbar.key}

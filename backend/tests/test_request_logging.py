@@ -230,9 +230,9 @@ def _tool_lines(stream: io.StringIO):
 async def test_tool_calls_log_name_duration_and_status_without_argument_values(monkeypatch, formatted_logs):
     registry = ResearchToolRegistry()
     assert "error" in await registry.execute_tool("search_knowledge_base", {"query": SECRET_PROMPT, "top_k": 2})
-    async def succeed(name, arguments, user_id):
+    async def succeed(name, arguments, user_id, conversation_id):
         return {"ok": True}
-    async def explode(name, arguments, user_id):
+    async def explode(name, arguments, user_id, conversation_id):
         raise ValueError("bad top_k")
     monkeypatch.setattr(registry, "_dispatch_tool", succeed)
     assert await registry.execute_tool("mcp_weather_now", {"city": "台北"}) == {"ok": True}

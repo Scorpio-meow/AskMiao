@@ -1,9 +1,18 @@
 from fastapi import APIRouter, Depends, HTTPException
-from fastapi.responses import StreamingResponse
+from fastapi.responses import Response, StreamingResponse
 from sqlalchemy.orm import Session
 from app.models.database import get_db
-from app.models import MessageCreate, ConversationResponse
+from app.models import Conversation, MessageCreate, ConversationResponse
 from app.services.chat_service import AttachmentQuotaExceeded, ChatService
+from app.services.conversation_files import (
+    ConversationFileError,
+    content_disposition,
+    delete_file,
+    get_file,
+    list_files,
+    storage_lock,
+    summary,
+)
 from app.core.rag_manager import get_rag_system
 from app.core.user_context import get_current_user_id
 from app.core.error_response import SafeClientError, build_error_payload
@@ -21,7 +30,6 @@ from pydantic import BaseModel
 router = APIRouter()
 chat_service = ChatService()
 _active_streams: Dict[int, int] = {}
-_attachment_quota_lock = asyncio.Lock()
 def _has_stream_slot(user_id: int) -> bool:
     return _active_streams.get(user_id, 0) < MAX_CONCURRENT_CHAT_STREAMS_PER_USER
 def _acquire_stream_slot(user_id: int) -> bool:
@@ -77,27 +85,22 @@ async def send_message(
             status_code=429,
             detail=f"每位使用者最多同時進行 {MAX_CONCURRENT_CHAT_STREAMS_PER_USER} 個對話回應，請等待目前的回應完成",
         )
-    user_context = None
-    if message_data.attachments:
-        user_context = json.dumps({
-            "attachments": [att.dict() for att in message_data.attachments]
-        }, ensure_ascii=False)
-    async with (_attachment_quota_lock if user_context else contextlib.nullcontext()):
-        if user_context:
-            try:
-                await asyncio.to_thread(chat_service.ensure_attachment_quota, db, user_id, len(user_context))
-            except AttachmentQuotaExceeded:
-                raise HTTPException(status_code=413, detail="附件儲存空間已達上限，請刪除部分含附件的對話後再試")
-        user_message = await asyncio.to_thread(
-            chat_service.save_message,
-            db,
-            user_id,
-            message_data.content,
-            True,
-            message_data.conversation_id,
-            context_used=user_context,
-            model_name=message_data.model_name,
-        )
+    attachments = message_data.attachments or []
+    async with (storage_lock if attachments else contextlib.nullcontext()):
+        try:
+            user_message = await asyncio.to_thread(
+                chat_service.save_user_message,
+                db,
+                user_id,
+                message_data.content,
+                message_data.conversation_id,
+                attachments,
+                message_data.model_name,
+            )
+        except AttachmentQuotaExceeded:
+            raise HTTPException(status_code=413, detail="附件儲存空間已達上限，請刪除部分含附件的對話或對話檔案後再試")
+        except ConversationFileError as e:
+            raise HTTPException(status_code=400, detail=str(e))
     conv_id = user_message.conversation_id
     user_message_id = user_message.id
     conversation_history = await asyncio.to_thread(
@@ -114,12 +117,18 @@ async def send_message(
             yield f"event: error\ndata: {json.dumps(err, ensure_ascii=False)}\n\n"
             return
         try:
-            yield f"event: start\ndata: {json.dumps({'conversation_id': conv_id, 'user_message_id': user_message_id}, ensure_ascii=False)}\n\n"
+            start_payload = {
+                "conversation_id": conv_id,
+                "user_message_id": user_message_id,
+                "attachment_file_ids": [att.file_id for att in attachments],
+            }
+            yield f"event: start\ndata: {json.dumps(start_payload, ensure_ascii=False)}\n\n"
             rag_system = get_rag_system()
             collected_tokens = ""
             collected_sources = []
             collected_sources_detail = []
             collected_research_trace = []
+            collected_files = []
             try:
                 async for event_item in rag_system.generate_response_stream(
                     message_data.content,
@@ -128,7 +137,8 @@ async def send_message(
                     model_name=message_data.model_name,
                     reasoning_effort=message_data.reasoning_effort,
                     attachments=message_data.attachments,
-                    approval_user_id=user_id
+                    approval_user_id=user_id,
+                    conversation_id=conv_id
                 ):
                     ev = event_item.get("event")
                     data = event_item.get("data", {})
@@ -141,6 +151,9 @@ async def send_message(
                     elif ev == "step_end":
                         collected_research_trace.append(data)
                         yield f"event: step_end\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
+                    elif ev == "file":
+                        collected_files.append(data)
+                        yield f"event: file\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
                     elif ev == "token":
                         collected_tokens += data.get("content", "")
                         yield f"event: token\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
@@ -158,7 +171,8 @@ async def send_message(
                 context_payload = json.dumps({
                     "sources": collected_sources,
                     "sources_detail": collected_sources_detail,
-                    "research_trace": collected_research_trace
+                    "research_trace": collected_research_trace,
+                    "files": collected_files
                 }, ensure_ascii=False)
                 bot_message = await asyncio.to_thread(
                     chat_service.save_message,
@@ -176,7 +190,8 @@ async def send_message(
                     "answer": collected_tokens,
                     "sources": collected_sources,
                     "sources_detail": collected_sources_detail,
-                    "research_trace": collected_research_trace
+                    "research_trace": collected_research_trace,
+                    "files": collected_files
                 }
                 yield f"event: done\ndata: {json.dumps(done_payload, ensure_ascii=False)}\n\n"
             except Exception as e:
@@ -257,3 +272,43 @@ def delete_conversation(
         raise HTTPException(status_code=404, detail="找不到該對話")
     
     return {"message": "對話已刪除"}
+@router.get("/conversations/{conversation_id}/files")
+def list_conversation_files(
+    conversation_id: int,
+    db: Session = Depends(get_db),
+    user_id: int = Depends(get_current_user_id)
+):
+    owned = db.query(Conversation.id).filter(Conversation.id == conversation_id, Conversation.user_id == user_id).first()
+    if not owned:
+        raise HTTPException(status_code=404, detail="找不到該對話")
+    return {"files": [summary(file) for file in list_files(db, conversation_id, user_id)]}
+@router.get("/files/{file_id}")
+def download_conversation_file(
+    file_id: int,
+    db: Session = Depends(get_db),
+    user_id: int = Depends(get_current_user_id)
+):
+    try:
+        file = get_file(db, file_id, user_id, None, with_data=True)
+    except ConversationFileError:
+        raise HTTPException(status_code=404, detail="找不到這個檔案")
+    return Response(
+        content=file.data,
+        media_type=file.media_type,
+        headers={
+            "Content-Disposition": content_disposition(file.filename),
+            "Cache-Control": "private, no-store",
+            "X-Content-Type-Options": "nosniff",
+        },
+    )
+@router.delete("/files/{file_id}")
+def delete_conversation_file(
+    file_id: int,
+    db: Session = Depends(get_db),
+    user_id: int = Depends(get_current_user_id)
+):
+    try:
+        removed = delete_file(db, file_id, user_id, None)
+    except ConversationFileError:
+        raise HTTPException(status_code=404, detail="找不到這個檔案")
+    return {"file": removed}

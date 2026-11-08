@@ -1,12 +1,11 @@
 import React, { useCallback, useId, useLayoutEffect, useRef, useState } from 'react';
 import { ChatMessageListProps } from './types';
 import ChatMessageItem from './ChatMessageItem';
-import { completionAnnouncement, messageKey } from './chatFormat';
+import { approvalHeadline, completionAnnouncement, messageKey } from './chatFormat';
 import { Button, Spinner, Icon } from '../../components/ui';
 import styles from './ChatMessageList.module.css';
 const NEAR_BOTTOM_THRESHOLD_PX = 80;
 const EAGER_RENDER_TAIL = 6;
-const APPROVAL_ANNOUNCEMENT = 'AI 想執行外部工具，需要你確認';
 const SUGGESTED_PROMPTS = [
   '請幫我分析並總結文件的核心重點',
   '如何結合知識庫與網路搜尋進行自主研究？',
@@ -45,6 +44,9 @@ export const ChatMessageList: React.FC<ChatMessageListProps> = ({
   onCopyMessage,
   onSelectPrompt,
   onRetry,
+  deletedFileIds,
+  onDownloadFile,
+  onDeleteFile,
 }) => {
   const promptsTitleId = useId();
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -59,7 +61,8 @@ export const ChatMessageList: React.FC<ChatMessageListProps> = ({
   const firstMessageKey = messages.length > 0 ? messageKey(messages[0].id, 0) : undefined;
   const [jumpButtonKey, setJumpButtonKey] = useState(firstMessageKey);
   const streamingMessage = streamingMessageId !== null ? messages.find((m) => m.id === streamingMessageId) : undefined;
-  const pendingApprovalId = streamingMessage?.pending_approval?.approval_id ?? null;
+  const pendingApproval = streamingMessage?.pending_approval ?? null;
+  const pendingApprovalId = pendingApproval?.approval_id ?? null;
   const [announcedApprovalId, setAnnouncedApprovalId] = useState(pendingApprovalId);
   if (jumpButtonKey !== firstMessageKey) {
     setJumpButtonKey(firstMessageKey);
@@ -71,8 +74,8 @@ export const ChatMessageList: React.FC<ChatMessageListProps> = ({
   }
   if (announcedApprovalId !== pendingApprovalId) {
     setAnnouncedApprovalId(pendingApprovalId);
-    if (pendingApprovalId) {
-      setAnnouncement(APPROVAL_ANNOUNCEMENT);
+    if (pendingApproval) {
+      setAnnouncement(approvalHeadline(pendingApproval));
     }
   }
   const scrollToBottom = useCallback((behavior: ScrollBehavior) => {
@@ -194,6 +197,9 @@ export const ChatMessageList: React.FC<ChatMessageListProps> = ({
                   onToggleThinking={onToggleThinking}
                   onCopyMessage={onCopyMessage}
                   onRetry={msg.error && !sending ? onRetry : undefined}
+                  deletedFileIds={deletedFileIds}
+                  onDownloadFile={onDownloadFile}
+                  onDeleteFile={onDeleteFile}
                 />
               );
             })

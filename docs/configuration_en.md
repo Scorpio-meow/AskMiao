@@ -2,7 +2,7 @@
 
 [繁體中文](configuration.md) | [English](configuration_en.md)
 
-> Every setting in the backend `backend/.env` and the frontend `frontend/.env`, with its default and what it actually does, as of **8.3.0** (to upgrade from 8.2.2, see the [upgrade guide](upgrading_en.md#upgrading-from-822-to-830)). The source of truth is `Settings` in `backend/app/core/config.py`; the template is [`backend/.env.example`](../backend/.env.example).
+> Every setting in the backend `backend/.env` and the frontend `frontend/.env`, with its default and what it actually does, as of **8.4.0** (to upgrade from 8.3.0, see the [upgrade guide](upgrading_en.md#upgrading-from-830-to-840)). The source of truth is `Settings` in `backend/app/core/config.py`; the template is [`backend/.env.example`](../backend/.env.example).
 
 - [How settings are read](#how-settings-are-read)
 - [Required settings](#required-settings)
@@ -96,7 +96,7 @@ Each account can only chat through two kinds of connection, and the model menu g
 
 When a new connection is created, the form fills in the provider's official API address and the models below, which can be edited:
 
-| Provider | Prefilled models (8.3.0) |
+| Provider | Prefilled models (8.4.0) |
 |---|---|
 | OpenAI | `gpt-6.1-sol`, `gpt-6-sol`, `gpt-6-luna`, `gpt-6-astra`, `gpt-5.6-sol`, `gpt-5.6-luna`, `gpt-5.6-terra`, `gpt-5.4`, `gpt-5.4-mini` |
 | Anthropic | `claude-opus-5-5`, `claude-fable-5-1`, `claude-sonnet-5-5`, `claude-haiku-5-5`, `claude-sonnet-5`, `claude-opus-5`, `claude-fable-5`, `claude-opus-4-8`, `claude-haiku-4-5` |
@@ -424,11 +424,25 @@ The limits below protect a single backend process and the operator's paid usage.
 | `MAX_CHAT_ATTACHMENT_BYTES` | 15 MiB | Decoded size of one attachment; an attachment's `data_url` must be a base64 `data:` URL, and remote URLs are rejected |
 | `MAX_CHAT_ATTACHMENTS_TOTAL_BYTES` | 20 MiB | Decoded size of all attachments in one message |
 | `MAX_ATTACHMENT_TEXT_CHARS` | 50,000 characters | Text per attachment placed into the model context (the rest is truncated), and the length limit of an attachment's `content` field in the request and of the attachment text saved back to the database |
-| `MAX_USER_ATTACHMENT_STORAGE_BYTES` | 200 MiB | Attachment storage per user in the database; beyond it, sending a message returns `413`. Old attachments are never purged automatically; deleting conversations with attachments frees the space |
+| `MAX_USER_ATTACHMENT_STORAGE_BYTES` | 200 MiB | Attachment and conversation file storage per user in the database (the length of the user's messages' `context_used` plus the size of their conversation files); beyond it, sending a message returns `413` and the research assistant can no longer create files. Nothing is purged automatically; deleting conversation files or conversations with attachments frees the space |
 | `MAX_CONCURRENT_CHAT_STREAMS_PER_USER` | 2 | Answer streams one user may run at once; more get `429` |
 | `MAX_LISTED_CONVERSATIONS` (`services/chat_service.py`) | 200 | `GET /api/chat/conversations` lists only the 200 most recently updated conversations |
 | `MAX_CONVERSATION_MESSAGES` (`services/chat_service.py`) | 500 | Messages returned at most by one call to `GET /api/chat/conversations/{conversation_id}/messages` (the cap on `limit`) |
 | `MAX_HISTORY_ATTACHMENT_CHARS` (`services/chat_service.py`) | 50,000 characters | Total attachment text from earlier user messages carried in the history, counted from the newest message back; equal to `MAX_ATTACHMENT_TEXT_CHARS` |
+
+**Conversation files**
+
+| Constant | Value | Description |
+|---|---|---|
+| `MAX_CONVERSATION_FILE_BYTES` | 15 MiB | Size of one conversation file, equal to `MAX_CHAT_ATTACHMENT_BYTES`; when a file the research assistant produces or edits is larger, the tool returns an error |
+| `MAX_CONVERSATION_FILES` | 100 | Files per conversation (including attachments the user uploaded); past it, sending an attachment returns `400` and the file-creating tools return an error |
+| `MAX_FILE_TOOL_CONTENT_CHARS` | 200,000 characters | Length of the `content` string when creating or editing a file, and the combined length of slide titles, bullets, and speaker notes; spreadsheets are limited by cell count instead |
+| `MAX_SPREADSHEET_CELLS` | 200,000 | Total cells when creating an `.xlsx` or `.csv` |
+| `MAX_PRESENTATION_SLIDES` | 100 | Slides when creating a `.pptx` |
+| `MAX_FILE_EDITS` | 50 | Text replacements (`edits`) in one edit |
+| `MAX_GENERATED_PDF_PAGES` | 500 | Pages in a generated PDF; past it, the file is not saved and an error is returned |
+| `FILE_READ_PAGE_CHARS` | 15,000 characters | Text returned at most by each `read_conversation_file` call; the rest is read in parts with `next_offset` |
+| `FILE_TEXT_CACHE_ENTRIES` | 8 | Files whose extracted text `read_conversation_file` keeps cached, so reading one file in parts does not parse it again |
 
 **Tools and outbound requests**
 
@@ -491,7 +505,7 @@ Admin uploads to the knowledge base and chat attachments each use their own `Ext
 | `MAX_RECORD_LABEL_CHARS` | 80 characters | Length of the label value in a structured record header; longer values are cut and get "…", while the field value itself is never cut |
 | `MAX_SUMMARY_FIELD_NAMES` | 8 | Most field names listed in the summary of structured data |
 | `MAX_OOXML_COMPRESSION_RATIO` | 100 | Maximum compression ratio for a single member, or the whole file, larger than 10 MiB uncompressed (`OOXML_RATIO_CHECK_MIN_BYTES`); the same in both budgets |
-| `MAX_CONCURRENT_ATTACHMENT_EXTRACTIONS` | 2 | Chat attachments parsed at once across the whole process; multiplied by the per-file budget, this bounds the memory used for attachment parsing |
+| `MAX_CONCURRENT_ATTACHMENT_EXTRACTIONS` | 2 | Chat attachments and conversation files (reads and edits) parsed at once across the whole process; multiplied by the per-file budget, this bounds the memory used for attachment parsing |
 
 The OOXML checks run before parsing and use the sizes the ZIP members declare. python-docx and python-pptx build whole XML parts into a DOM (about 15 to 30 times the XML size in memory); which members count toward the XML total is decided from `[Content_Types].xml` (plus `.rels` files and `[Content_Types].xml` itself), so changing a part's file extension does not get around it. `.xlsx` files are read as a stream, so this item does not apply to them. When a file exceeds any OOXML budget, an admin upload of that file fails; a chat attachment is not parsed, and the model is told that the attachment exceeded the parsing limits and was not read. JSON, JSONL, YAML, and JS declaration attachments over the length limit are not parsed into structured records and get only the linear noise cleanup. CSV and XLSX are not subject to this length limit; YAML whose aliases expand to more nodes than the source has characters is never parsed and is handled as plain text.
 

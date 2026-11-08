@@ -2,7 +2,7 @@
 
 [繁體中文](configuration.md) | [English](configuration_en.md)
 
-> 本文件逐一說明後端 `backend/.env` 與前端 `frontend/.env` 的每個設定、預設值與實際作用，適用於 **8.3.0**（從 8.2.2 升級見 [升級指南](upgrading.md#從-822-升級到-830)）。設定以 `backend/app/core/config.py` 的 `Settings` 為準，範本見 [`backend/.env.example`](../backend/.env.example)。
+> 本文件逐一說明後端 `backend/.env` 與前端 `frontend/.env` 的每個設定、預設值與實際作用，適用於 **8.4.0**（從 8.3.0 升級見 [升級指南](upgrading.md#從-830-升級到-840)）。設定以 `backend/app/core/config.py` 的 `Settings` 為準，範本見 [`backend/.env.example`](../backend/.env.example)。
 
 - [讀取規則](#讀取規則)
 - [必填設定](#必填設定)
@@ -96,7 +96,7 @@ python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().d
 
 新增連線時，表單依供應商預先帶入官方 API 位址與下列模型清單，可以再增刪：
 
-| 供應商 | 預先帶入的模型（8.3.0） |
+| 供應商 | 預先帶入的模型（8.4.0） |
 |---|---|
 | OpenAI | `gpt-6.1-sol`、`gpt-6-sol`、`gpt-6-luna`、`gpt-6-astra`、`gpt-5.6-sol`、`gpt-5.6-luna`、`gpt-5.6-terra`、`gpt-5.4`、`gpt-5.4-mini` |
 | Anthropic | `claude-opus-5-5`、`claude-fable-5-1`、`claude-sonnet-5-5`、`claude-haiku-5-5`、`claude-sonnet-5`、`claude-opus-5`、`claude-fable-5`、`claude-opus-4-8`、`claude-haiku-4-5` |
@@ -424,11 +424,25 @@ python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().d
 | `MAX_CHAT_ATTACHMENT_BYTES` | 15 MiB | 單一附件解碼後的大小；附件的 `data_url` 必須是 base64 編碼的 `data:` URL，遠端網址會被拒絕 |
 | `MAX_CHAT_ATTACHMENTS_TOTAL_BYTES` | 20 MiB | 單則訊息所有附件解碼後的合計大小 |
 | `MAX_ATTACHMENT_TEXT_CHARS` | 50,000 字元 | 每個附件放進模型脈絡的文字上限（超過的部分截斷），也是請求中附件 `content` 欄位與存回資料庫的附件文字的長度上限 |
-| `MAX_USER_ATTACHMENT_STORAGE_BYTES` | 200 MiB | 每位使用者存在資料庫的附件總量，超過時送出訊息回傳 `413`；系統不會自動清除舊附件，刪除含附件的對話即可釋放 |
+| `MAX_USER_ATTACHMENT_STORAGE_BYTES` | 200 MiB | 每位使用者存在資料庫的附件與對話檔案總量（使用者訊息的 `context_used` 長度加上對話檔案大小），超過時送出訊息回傳 `413`，研究助理也無法再建立檔案；系統不會自動清除，刪除對話檔案或含附件的對話即可釋放 |
 | `MAX_CONCURRENT_CHAT_STREAMS_PER_USER` | 2 | 每位使用者同時進行中的回答串流數，超過回傳 `429` |
 | `MAX_LISTED_CONVERSATIONS`（`services/chat_service.py`） | 200 | `GET /api/chat/conversations` 只列最近更新的 200 段對話 |
 | `MAX_CONVERSATION_MESSAGES`（`services/chat_service.py`） | 500 | `GET /api/chat/conversations/{conversation_id}/messages` 單次最多回傳的訊息數（`limit` 的上限） |
 | `MAX_HISTORY_ATTACHMENT_CHARS`（`services/chat_service.py`） | 50,000 字元 | 前文帶入的先前使用者訊息附件文字合計上限，從最新的訊息往前計算；等於 `MAX_ATTACHMENT_TEXT_CHARS` |
+
+**對話檔案**
+
+| 常數 | 值 | 說明 |
+|---|---|---|
+| `MAX_CONVERSATION_FILE_BYTES` | 15 MiB | 單一對話檔案的大小，等於 `MAX_CHAT_ATTACHMENT_BYTES`；研究助理產生或修改的檔案超過時工具回傳錯誤 |
+| `MAX_CONVERSATION_FILES` | 100 | 每個對話的檔案數（含使用者上傳的附件），超過時送出附件回傳 `400`、建立檔案的工具回傳錯誤 |
+| `MAX_FILE_TOOL_CONTENT_CHARS` | 200,000 字元 | 建立或修改檔案時，`content` 字串的長度，以及簡報標題、項目與備忘稿的合計長度；試算表另以儲存格數限制 |
+| `MAX_SPREADSHEET_CELLS` | 200,000 | 建立 `.xlsx`、`.csv` 時的儲存格總數 |
+| `MAX_PRESENTATION_SLIDES` | 100 | 建立 `.pptx` 時的投影片數 |
+| `MAX_FILE_EDITS` | 50 | 單次修改的文字取代（`edits`）數 |
+| `MAX_GENERATED_PDF_PAGES` | 500 | 產生的 PDF 頁數，超過時不存檔並回傳錯誤 |
+| `FILE_READ_PAGE_CHARS` | 15,000 字元 | `read_conversation_file` 每次回傳的文字上限，其餘以 `next_offset` 分段讀取 |
+| `FILE_TEXT_CACHE_ENTRIES` | 8 | `read_conversation_file` 快取擷取文字的檔案數，同一個檔案分段讀取時不重新解析 |
 
 **工具與出站請求**
 
@@ -491,7 +505,7 @@ python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().d
 | `MAX_RECORD_LABEL_CHARS` | 80 字元 | 結構化記錄標頭中識別欄位值的長度，超過時截斷並加上「…」；欄位本身的值不截斷 |
 | `MAX_SUMMARY_FIELD_NAMES` | 8 個 | 結構化資料的摘要最多列出的欄位名稱數 |
 | `MAX_OOXML_COMPRESSION_RATIO` | 100 | 解壓後超過 10 MiB（`OOXML_RATIO_CHECK_MIN_BYTES`）的單一成員或整個檔案，壓縮比不可超過此值；兩組預算相同 |
-| `MAX_CONCURRENT_ATTACHMENT_EXTRACTIONS` | 2 | 整個行程同時解析的聊天附件數；與單檔預算相乘即為附件解析的記憶體上界 |
+| `MAX_CONCURRENT_ATTACHMENT_EXTRACTIONS` | 2 | 整個行程同時解析的聊天附件與對話檔案（讀取與修改）數；與單檔預算相乘即為附件解析的記憶體上界 |
 
 OOXML 的檢查在解析前進行，依 ZIP 成員宣告的大小計算。python-docx 與 python-pptx 會把 XML 部件整份建成 DOM（記憶體約為 XML 大小的 15 至 30 倍），哪些成員算進 XML 總量依 `[Content_Types].xml` 判定（另含 `.rels` 與該檔本身），改副檔名無法繞過；`.xlsx` 以串流讀取，不套用此項。超過任一項 OOXML 預算時，管理員上傳的該檔案上傳失敗；聊天附件則不解析，改告知模型附件超過解析上限、未讀取內容。超過長度的 JSON、JSONL、YAML 與 JS 宣告附件不解析成結構化記錄，只做線性的雜訊清除。CSV 與 XLSX 不套用這個長度上限；YAML 的別名展開後節點數超過原始文字長度時一律放棄解析，改以純文字處理。
 

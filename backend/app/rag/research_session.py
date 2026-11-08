@@ -6,6 +6,7 @@ import httpx
 from app import prompts
 from app.core.config import settings
 from app.core.limits import MAX_TOOL_RESULT_CHARS
+from app.rag.file_tools import DELETE_FILE_TOOL_NAME
 from app.rag.tools import SKILL_SCRIPT_TOOL_NAME, SKILL_TOOL_NAMES, WEB_TOOL_NAMES
 CITATION_NUMBERS = r"\d+(?:\s*[,，、]\s*\d+)*"
 CITATION_PATTERN = re.compile(rf"\[({CITATION_NUMBERS})\]")
@@ -116,7 +117,7 @@ class ResearchSession:
             if name == "activate_skill" and output.get("skill"):
                 self.activated_skills.add(output["skill"])
                 allowed_tools = output.get("allowed_tools") or []
-                self.preapproved_tools.update(tool for tool in allowed_tools if tool != SKILL_SCRIPT_TOOL_NAME)
+                self.preapproved_tools.update(tool for tool in allowed_tools if tool not in (SKILL_SCRIPT_TOOL_NAME, DELETE_FILE_TOOL_NAME))
                 if SKILL_SCRIPT_TOOL_NAME in allowed_tools:
                     self.preapproved_script_skills.add(output["skill"])
             self._add_url_source(output.get("content"))

@@ -1,5 +1,5 @@
-from sqlalchemy import Column, Integer, String, DateTime, Text, Boolean, ForeignKey
-from sqlalchemy.orm import relationship
+from sqlalchemy import Column, Integer, String, DateTime, Text, Boolean, ForeignKey, LargeBinary
+from sqlalchemy.orm import deferred, relationship
 from datetime import datetime
 import re
 from pydantic import BaseModel, Field, field_validator, model_validator
@@ -49,8 +49,23 @@ class Message(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
     context_used = Column(Text)
     model_name = Column(String, nullable=True)
-    
+
     conversation = relationship("Conversation", back_populates="messages")
+class ConversationFile(Base):
+    __tablename__ = "conversation_files"
+    __table_args__ = {"sqlite_autoincrement": True}
+    id = Column(Integer, primary_key=True, index=True)
+    conversation_id = Column(Integer, ForeignKey("conversations.id", ondelete="CASCADE"), index=True, nullable=False)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False)
+    filename = Column(String, nullable=False)
+    media_type = Column(String, nullable=False)
+    size_bytes = Column(Integer, nullable=False)
+    data = deferred(Column(LargeBinary, nullable=False))
+    origin = Column(String, nullable=False)
+    parent_id = Column(Integer, nullable=True)
+    root_id = Column(Integer, nullable=True)
+    version = Column(Integer, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
 class Document(Base):
     __tablename__ = "documents"
     __table_args__ = {"sqlite_autoincrement": True}
@@ -252,6 +267,7 @@ class FileAttachment(BaseModel):
     file_size: Optional[int] = None
     data_url: Optional[str] = None
     content: Optional[str] = Field(default=None, max_length=MAX_ATTACHMENT_TEXT_CHARS)
+    file_id: Optional[int] = None
     @field_validator("data_url")
     @classmethod
     def validate_data_url(cls, value: Optional[str]) -> Optional[str]:
@@ -290,6 +306,7 @@ class MessageResponse(BaseModel):
     sources: Optional[List[str]] = None
     sources_detail: Optional[List[Dict[str, Any]]] = None
     research_trace: Optional[List[Dict[str, Any]]] = None
+    files: Optional[List[Dict[str, Any]]] = None
 class ConversationResponse(BaseModel):
     id: int
     title: str

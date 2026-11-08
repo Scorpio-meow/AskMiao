@@ -9,7 +9,22 @@ export interface ChatAttachment {
   file_size?: number;
   data_url?: string;
   content?: string;
+  file_id?: number | null;
   file?: File;
+}
+export interface ConversationFile {
+  id: number;
+  filename: string;
+  media_type: string;
+  size_bytes: number;
+  origin: 'user' | 'assistant';
+  version: number;
+  parent_id: number | null;
+  created_at: string | null;
+}
+export interface ConversationFileEvent {
+  action: 'created' | 'updated' | 'deleted';
+  file: ConversationFile;
 }
 export interface Message {
   id?: number;
@@ -42,11 +57,13 @@ export interface Message {
   error?: string;
   stopped?: boolean;
   pending_approval?: PendingToolApproval | null;
+  files?: ConversationFileEvent[];
 }
 export interface PendingToolApproval {
   approval_id: string;
   step: number;
   tool: string;
+  kind: 'mcp' | 'skill_script' | 'custom_api' | 'file';
   tool_display_name: string;
   target: string;
   arguments?: unknown;
@@ -178,7 +195,7 @@ api.interceptors.response.use(
   }
 );
 export interface StreamEvent {
-  event: 'start' | 'step_start' | 'step_end' | 'approval_required' | 'approval_resolved' | 'token' | 'think' | 'sources' | 'done' | 'error';
+  event: 'start' | 'step_start' | 'step_end' | 'approval_required' | 'approval_resolved' | 'file' | 'token' | 'think' | 'sources' | 'done' | 'error';
   data: any;
 }
 export interface ChatConnectionOption {
@@ -279,6 +296,17 @@ export const chatService = {
       { approved }
     );
     return response.data;
+  },
+  async listConversationFiles(conversationId: number): Promise<ConversationFile[]> {
+    const response = await api.get<{ files: ConversationFile[] }>(`/chat/conversations/${conversationId}/files`);
+    return response.data.files;
+  },
+  async downloadConversationFile(fileId: number): Promise<Blob> {
+    const response = await api.get<Blob>(`/chat/files/${fileId}`, { responseType: 'blob' });
+    return response.data;
+  },
+  async deleteConversationFile(fileId: number): Promise<void> {
+    await api.delete(`/chat/files/${fileId}`);
   }
 };
 export const documentService = {

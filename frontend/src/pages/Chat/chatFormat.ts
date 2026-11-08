@@ -1,4 +1,4 @@
-import type { ChatAttachment, Conversation, EnabledSkill, Message } from '../../services/api';
+import type { ChatAttachment, Conversation, EnabledSkill, Message, PendingToolApproval } from '../../services/api';
 import { parseServerDate } from '../../utils/serverDate';
 const timeFormatter = new Intl.DateTimeFormat('zh-TW', { hour: '2-digit', minute: '2-digit' });
 const monthDayTimeFormatter = new Intl.DateTimeFormat('zh-TW', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' });
@@ -63,6 +63,8 @@ export const findRetryQuestion = (messages: Message[], failedMessage: Message): 
   const index = messages.indexOf(failedMessage);
   return messages.slice(0, index).reverse().find((message) => message.is_user);
 };
+export const approvalHeadline = (approval: PendingToolApproval): string =>
+  approval.kind === 'file' ? `AI 想${approval.tool_display_name}，需要你確認` : 'AI 想執行外部工具，需要你確認';
 export const completionAnnouncement = (lastMessage: Message | undefined): string => {
   if (!lastMessage || lastMessage.is_user) return '';
   if (lastMessage.error) return `回答失敗：${lastMessage.error}`;

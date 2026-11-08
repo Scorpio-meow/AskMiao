@@ -19,8 +19,10 @@
 | 服務 | 映像 | 作用 |
 |---|---|---|
 | `postgres` | `postgres:17.9` | 資料庫 `chatbot`。資料庫的 volume 第一次初始化時依序執行 `backend/init.sql`（建立資料表）與 `backend/init-app-role.sh`（建立非超級使用者 `POSTGRES_APP_USER`，後端以這個帳號連線）。不對主機開放連接埠 |
-| `backend` | `deploy/Dockerfile.backend`（`python:3.12-slim`，安裝 CPU 版 PyTorch） | FastAPI 後端，以 uid 1000 的 `askmiao` 帳號執行。等 `postgres` 健康檢查通過才啟動；第一次啟動要下載嵌入與重排模型，健康檢查（`GET /health`）最多等待 180 秒再開始計算失敗 |
+| `backend` | `deploy/Dockerfile.backend`（`python:3.12-slim`，安裝 CPU 版 PyTorch 與 `tzdata`） | FastAPI 後端，以 uid 1000 的 `askmiao` 帳號執行，時區為 `Asia/Taipei`（研究助理以此判斷現在的日期與時間）。等 `postgres` 健康檢查通過才啟動；第一次啟動要下載嵌入與重排模型，健康檢查（`GET /health`）最多等待 180 秒再開始計算失敗 |
 | `web` | `deploy/Dockerfile.frontend`（以 `oven/bun:1` 建置，`nginx:1.27-alpine` 提供） | 提供前端建置產物，並把 `/api/` 反向代理到 `backend:8001`。唯一對主機開放的服務，連接埠為 `WEB_PORT` |
+
+`postgres` 與 `backend` 的時區由 `deploy/docker-compose.yml` 的 `TZ` 決定，使用者在其他時區時兩處一起改成當地的 IANA 時區名稱。
 
 三個容器都在 compose 的 `askmiao-net` 網路（子網路 `NETWORK_SUBNET`），`web` 固定使用 `WEB_CONTAINER_IP`。nginx 允許的請求本文最多 120 MiB，SSE 串流不經緩衝，讀寫逾時 900 秒（`deploy/nginx.conf`）。
 

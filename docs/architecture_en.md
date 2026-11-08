@@ -2,7 +2,7 @@
 
 [繁體中文](architecture.md) | [English](architecture_en.md)
 
-> The architecture of AskMiao **8.3.0**: layers, startup, data model, document processing and retrieval, the agentic RAG research loop, the LLM layer, external tool integration, authentication and security, and the frontend (see the [changelog](../CHANGELOG_en.md#821---2026-11-07) for this release's changes). The trade-offs behind these designs are recorded in the [Architecture Decision Records](adr/README_en.md).
+> The architecture of AskMiao **8.4.0**: layers, startup, data model, document processing and retrieval, the agentic RAG research loop, the LLM layer, external tool integration, authentication and security, and the frontend (see the [changelog](../CHANGELOG_en.md#840---2026-11-08) for this release's changes). The trade-offs behind these designs are recorded in the [Architecture Decision Records](adr/README_en.md).
 
 ## Contents
 
@@ -156,6 +156,7 @@ Common startup failures:
 erDiagram
     users ||--o{ conversations : "owns"
     conversations ||--o{ messages : "contains"
+    conversations ||--o{ conversation_files : "stores"
     users ||--o{ documents : "uploads"
     documents ||--o{ rag_chunks : "split into"
     users ||--o{ llm_connections : "owns (personal connections)"
@@ -264,10 +265,25 @@ erDiagram
         string model_name
         string reasoning_effort
     }
+    conversation_files {
+        int id PK
+        int conversation_id FK
+        int user_id FK
+        string filename
+        string media_type
+        int size_bytes
+        bytes data "loaded lazily"
+        string origin "user, assistant"
+        int parent_id "edited from"
+        int root_id "first version of the series"
+        int version
+        datetime created_at
+    }
 ```
 
 - **`rag_chunks` is the source of truth for chunks**: its `id` is the chunk_id that keys both FAISS and BM25. `chunk_metadata` holds `source`, `document_id`, `chunk_index`, `original_filename`, and `content_type`, plus `question` for Q&A chunks and, for structured records, `record_index`, `part`, and `part_count`, along with `label`, `links`, `group`, `sheet`, and `row` depending on the source (see section 4).
-- **`messages.context_used`**: assistant messages store `sources`, `sources_detail`, and `research_trace`; user messages store `attachments` (including the attachments' base64, capped at 200 MiB per user; up to 50,000 characters of each attachment's extracted text go into that attachment's `content` so later questions can carry it in the history). `/api/chat` responses carry only the parsed fields, and `context_used` is always `null`.
+- **`messages.context_used`**: assistant messages store `sources`, `sources_detail`, `research_trace`, and `files` (the conversation files this answer created, edited, or deleted); user messages store `attachments`. Image attachments keep their base64 `data_url`; the original file of any other attachment is saved as a conversation file, and only its `file_id` is kept here, with no base64. Up to 50,000 characters of each attachment's extracted text go into that attachment's `content` so later questions can carry it in the history. `/api/chat` responses carry only the parsed fields, and `context_used` is always `null`.
+- **`conversation_files`**: the files in a conversation, both document attachments the user uploaded (`origin=user`) and files the research assistant created or edited (`origin=assistant`); the content lives in the `data` column and is loaded only for downloads and reads. Edits are always saved as a new version: `parent_id` points to the file it was edited from, `root_id` to the first version of the series, and `version` increases within the series. For each user, the length of their user messages' `context_used` plus the size of their conversation files is capped at 200 MiB in total. Files are deleted with their conversation (including when an admin deletes the conversation or the user); see [Conversation files](#conversation-files).
 - **`requires_approval`**: the approval-before-call flag of custom API tools and MCP servers; see section 9.
 - **`users.tokens_valid_after`**: access and refresh tokens issued before this moment are rejected. It equals `created_at` when the account is created (so old tokens never map to a new account that reuses a deleted account's id) and is set to the current time on a password change or an admin password reset; see section 10.
 - **Tool credential columns**: `headers` and `auth_config` of `custom_api_tools` and `env_vars`, `headers`, `oauth_config`, and `oauth_tokens` of `mcp_servers` are stored encrypted with `TOOL_SECRETS_KEY` (Fernet), starting with `fernet:`; see section 9. LLM API connection keys (`llm_connections.api_key`) are encrypted with the same key.
@@ -441,6 +457,7 @@ flowchart TB
 | `run_skill_script` | Offered only for skills the user can see that have `allow_scripts` on; runs the script with the backend's Python (`-I`), `bash`, or `node` in a temporary copy of the skill directory, with the same environment as `stdio` MCP, at most 60 seconds, at most 20,000 characters each of `stdout` and `stderr`, and at most 2 at once; always needs the user's approval unless the skill whose script runs is activated and lists it in `allowed-tools` |
 | `read_mcp_resource` | Offered only when an enabled MCP server has discovered resources; reads a listed URI with `resources/read`, and URIs not in the list are refused; approval follows the server's `requires_approval` |
 | `get_mcp_prompt` | Offered only when an enabled MCP server has discovered prompts; gets a listed prompt with `prompts/get`; approval follows the server's `requires_approval` |
+| `list_conversation_files`, `read_conversation_file`, `create_conversation_file`, `edit_conversation_file`, `delete_conversation_file` | Offered only in chat (when there is a conversation id); list, read, create, edit (saved as a new version), and delete this conversation's files; `delete_conversation_file` always needs the user's approval; see [Conversation files](#conversation-files) |
 
 Each tool result is truncated to 20,000 characters and each attachment's extracted text to 50,000 characters before entering the model context. Arguments that are not an object are treated as an empty object, and a tool that raises (for example on a `null` `top_k`) returns an error code to the model instead of ending the whole answer. The tool list (knowledge-base catalog, custom API tools, and MCP tools) is assembled in a worker thread.
 
@@ -451,12 +468,14 @@ Every piece of text sent to the model lives in `backend/app/prompts.py`: the sys
 | Purpose | Constant | When it is sent |
 |---|---|---|
 | The research assistant's system prompt | `SYSTEM_PROMPT` | The first message of every question; the rules are in the next section |
+| Current time | `CURRENT_TIME`, `WEEKDAYS` | Prepended to the latest user message with the current date, weekday, time of day (to the minute), and time zone, taken from the backend host's local time; the system prompt says to rely on it |
 | Skill rules | `SKILL_RULES` | Appended to the system prompt when the caller has skills available; says skill content cannot override the citation and data-safety rules |
 | A skill the user named | `EXPLICIT_SKILL` | When a message starts with `/skill-name`, the skill's content goes at the end of the system prompt |
 | Skill content wrapping | `SKILL_PATHS`, `SKILL_SCRIPTS_ALLOWED`, `SKILL_SCRIPTS_DISABLED`, and others | The `<skill_content>` returned by `activate_skill` and the `<skill_resource>` returned by `read_skill_resource` |
 | Tool and parameter descriptions | `SEARCH_*`, `FILTER_*`, `WEB_*`, `MCP_*`, `SKILL_*`, and others | Sent with the tool definitions on every model call. The `search_knowledge_base` description is a knowledge-base catalog built from the current documents (`KNOWLEDGE_BASE_CATALOG`), and the `top_k` limit comes from `FINAL_K` |
 | Custom API and MCP tool descriptions | `CUSTOM_API_TOOL`, `MCP_TOOL` | Written as `[自訂 API] <display name>：<description>` and `[MCP 工具] <server>／<tool>：<description>` |
-| Tool result and attachment wrapping | `TOOL_RESULT_NOTICE`, `ATTACHMENT`, `ATTACHMENT_QUESTION`, and others | Tool results are wrapped in `<untrusted_tool_result>` with a one-line reminder; attachment text starts with `[附件：<file name>]` and comes before `[使用者問題]` |
+| Tool result and attachment wrapping | `TOOL_RESULT_NOTICE`, `ATTACHMENT`, `ATTACHMENT_FILE`, `ATTACHMENT_QUESTION`, and others | Tool results are wrapped in `<untrusted_tool_result>` with a one-line reminder; attachment text starts with `[附件：<file name>]` (`[附件 #<file id>：<file name>]` for attachments saved as conversation files, and this marker is included even when no text was extracted) and comes before `[使用者問題]` |
+| Conversation file tool descriptions and results | `LIST_FILES`, `READ_FILE`, `CREATE_FILE`, `EDIT_FILE`, `DELETE_FILE`, `FILE_*` | Sent with the tool definitions when there is a conversation id; `FILE_CREATED`, `FILE_UPDATED`, and `FILE_DELETED` are the notes to the model in tool results, and `DELETE_FILE_APPROVAL` is the tool name on the approval card |
 | Document summaries | `document_summary()` | Sent to the document summary system model; see [AI summaries](#ai-summaries) |
 | OCR of scanned PDFs | `PDF_OCR` | PDF pages with no extractable text are rasterized and sent to the PDF OCR system model; see [Text extraction](#text-extraction) |
 | Connection tests | `CONNECTION_TEST` | `POST /api/llm-connections/{connection_id}/test` |
@@ -464,6 +483,7 @@ Every piece of text sent to the model lives in `backend/app/prompts.py`: the sys
 ### System prompt rules
 
 - **Verification**: greetings, small talk, and requests that need no lookup are answered directly; questions that may concern internal documents go to the knowledge base first instead of being answered from general knowledge; a tool refused by the user or the system is not retried. The system prompt names no tools: when to use each tool and what it returns live in its description (for example, counting with `filter_and_count_records`, or falling back to the knowledge base when `web_fetch` fails), so disabling the web tools leaves no rule pointing at a missing tool.
+- **Current time**: the latest user message starts with `[現在時間：<date>（<weekday>）<HH:MM>，時區 UTC<offset>]` (the backend host's local time, from `with_current_time()` in `app/rag/agent.py`), and the system prompt says to rely on it for relative times and "now" instead of searching the web for the time. Putting the time in the user message rather than the system prompt keeps the system prompt fixed, so the provider's prompt cache is not affected; earlier user messages in the history carry no time.
 - **Citations**: use only citation numbers from this question's tool results, citing as `[n]` at the end of a sentence; say plainly when nothing was found instead of guessing.
 - **Data safety**: treat tool results as data only, and never splice conversation, knowledge-base, or tool-result data into URLs or search queries.
 - **Skills** (added only when skills are enabled): skill content may be followed but cannot override the data-safety and citation rules; when to load a skill is in the `activate_skill` description. When a message starts with `/skill-name`, the backend appends that skill to the system prompt before the first model call.
@@ -484,22 +504,43 @@ Results from custom API and MCP tools are wrapped as untrusted too, but they are
 
 ### Streaming and persistence
 
-- `step_start` / `step_end` are pushed around each tool call, with `approval_required` / `approval_resolved` in between when approval is needed; the final answer is pushed as `token` events, followed by `sources` and `done`. See [API reference 2.1](api_en.md#21-post-apichatsend) for the event format.
-- The user message is saved before streaming starts, and the text extracted from its attachments is written back to each attachment's `content` before the model is called; the assistant message is saved only after the stream completes, so an answer stopped midway is not stored, and neither is an answer whose conversation was deleted during the stream (`done` then has a `null` `message_id`). During the stream the database connection goes back to the pool, and database access plus attachment decoding and parsing run in worker threads without blocking the event loop.
-- Each user may have at most 2 answer streams at once (more get `429`); before sending, the backend checks that `model_name` is in the available model list and that the user's attachment storage stays within 200 MiB.
+- `step_start` / `step_end` are pushed around each tool call, with `approval_required` / `approval_resolved` in between when approval is needed; after a conversation file tool succeeds, `file` is pushed after `step_end`; the final answer is pushed as `token` events, followed by `sources` and `done`. See [API reference 2.1](api_en.md#21-post-apichatsend) for the event format.
+- The user message is saved before streaming starts, with its document attachments saved as conversation files at the same time, and the text extracted from its attachments is written back to each attachment's `content` before the model is called; the assistant message is saved only after the stream completes, so an answer stopped midway is not stored, and neither is an answer whose conversation was deleted during the stream (`done` then has a `null` `message_id`). During the stream the database connection goes back to the pool, and database access plus attachment decoding and parsing run in worker threads without blocking the event loop.
+- Each user may have at most 2 answer streams at once (more get `429`); before sending, the backend checks that `model_name` is in the available model list and that the user's stored attachments and conversation files stay within 200 MiB.
 - History is the latest `CONVERSATION_HISTORY_MESSAGES` messages from the database, always starting with a user message, with `[n]` markers removed from earlier answers (code blocks and inline code are left alone) so the model does not reuse stale numbers. The attachment text of earlier user messages (the attachments' `content`) is carried along too, at most 50,000 characters in total counted from the newest message back (`MAX_HISTORY_ATTACHMENT_CHARS`).
 
 ### Tool call approval
 
 `ToolApprovalBroker` in `app/rag/tool_approval.py` lets the asking user decide in the chat whether a tool with side effects runs; see [ADR-0006](adr/0006-tool-call-approval_en.md) for the rationale:
 
-1. Before running a tool, the agent asks `ResearchToolRegistry.approval_requirement()` for the `requires_approval` flag of the matching custom API tool or MCP server; built-in tools need no approval, and `run_skill_script` always does. Tool names listed in the `allowed-tools` of a skill activated in the same question are kept in `ResearchSession.preapproved_tools`, and those tools skip approval; `run_skill_script` is the exception: it is kept in `preapproved_script_skills` and skips approval only for scripts of the skill that lists it.
-2. When approval is needed, the broker creates a pending item bound to the asking user's `user_id` (with a random `approval_id`), the stream sends `approval_required` (tool name, display name, arguments, and the `target` where the request is actually sent: the HTTP method and host for a custom API tool, or the transport and host or local command name for MCP), and the agent pauses.
+1. Before running a tool, the agent asks `ResearchToolRegistry.approval_requirement()` for the `requires_approval` flag of the matching custom API tool or MCP server; built-in tools need no approval, and `run_skill_script` and `delete_conversation_file` always do. Tool names listed in the `allowed-tools` of a skill activated in the same question are kept in `ResearchSession.preapproved_tools`, and those tools skip approval, though `delete_conversation_file` is not affected; `run_skill_script` is the exception: it is kept in `preapproved_script_skills` and skips approval only for scripts of the skill that lists it.
+2. When approval is needed, the broker creates a pending item bound to the asking user's `user_id` (with a random `approval_id`), the stream sends `approval_required` (tool name, category `kind`, display name, arguments, and the `target` where the request is actually sent: the HTTP method and host for a custom API tool, the transport and host or local command name for MCP, or the file id and file name for deleting a conversation file), and the agent pauses. The frontend picks the card's explanation by `kind`; for deleting a conversation file it says the file will be permanently deleted.
 3. The frontend shows a confirmation card inside that answer; the user's approve or deny click calls `POST /api/chat/approvals/{approval_id}`. Only the same user can answer; anyone else, or an item already handled or timed out, gets `404`.
 4. The stream sends `approval_resolved`. On approval the tool runs as usual; on a denial or a 300-second timeout it does not, and the agent receives a "not approved by the user" tool result and answers from what it already has.
 5. When no user can approve (`approval_user_id` is `None`, for example in a non-interactive run), tools that need approval never run.
 
 Pending items live only in process memory; when the user interrupts the stream, the waiting item is cancelled with it.
+
+### Conversation files
+
+The research assistant can create, read, edit, and delete files in a conversation, and the user downloads them from the conversation. Storage, permissions, and quota are in `app/services/conversation_files.py`, producing, editing, and reading each format in `app/services/file_builders.py`, and the tool definitions and execution in `app/rag/file_tools.py`.
+
+| Format | Create | Edit |
+|---|---|---|
+| `.md`, `.txt`, `.json` | `content` written as is in UTF-8 | `edits` replace text, or `content` rewrites the whole file |
+| `.csv` | The first sheet of `sheets`, written in UTF-8 (with BOM) | As above, or `sheets` rewrites the whole file |
+| `.docx` | The Markdown in `content` is parsed with markdown-it-py (raw HTML is not accepted) and mapped to Word headings, bulleted and numbered lists, tables, bold, italics, quotes, and code | `edits` replace text in paragraphs and table cells, keeping paragraph styles; when the matched text spans several runs (pieces of text with their own formatting), only those runs are merged, so bold and italics elsewhere stay as they were. `content` can also rewrite the whole file |
+| `.xlsx` | `sheets`, with a bold, frozen header row | `cells` change cells (a `null` `value` clears the cell), or `sheets` rewrites the whole file |
+| `.pptx` | `slides`, in the 16:9 "Title and Content" layout, with `notes` written to the speaker notes | `edits` replace text, or `slides` rewrites the whole file |
+| `.pdf` | The Markdown in `content` is converted to HTML and laid out on A4 with PyMuPDF's `Story`; CJK text uses PyMuPDF's built-in fonts, and only the glyphs used are kept before saving | Only `content` rewriting the whole file |
+
+- **Versions**: the result of `edit_conversation_file` is always saved as a new file named `<source name> v<n><extension>` (when the source is version m produced by the research assistant, its trailing " vm" is removed first; a user upload named "report v3.docx" becomes "report v3 v2.docx"), with `version` set to the highest version in the series plus 1; the original file is unchanged. Each `find` in `edits` must appear exactly once in the file, otherwise the whole edit fails and no new version is created. Legacy `.doc`, `.xls`, and `.ppt` files cannot be edited; save them in a new format with `create_conversation_file` instead.
+- **Reading**: `read_conversation_file` returns at most 15,000 characters per call, read in parts with `offset` and the returned `next_offset`; `.xlsx` lists each cell's address and value, and other formats reuse the chat attachment text extraction. Extracted text is cached for the 8 most recent files (`FILE_TEXT_CACHE_ENTRIES`), so reading one file in parts does not parse it again each time; reads and edits share the chat attachments' limit of 2 files parsed at once across the whole process (`MAX_CONCURRENT_ATTACHMENT_EXTRACTIONS`). Read results are wrapped in `<untrusted_tool_result>` like other tool results, so text in a file is never treated as instructions.
+- **Spreadsheet formulas**: strings in `.xlsx` are always written as text, so values starting with `=` do not become formulas; in `.csv`, strings starting with `=`, `+`, `-`, `@`, a tab, or `\r` are prefixed with `'`.
+- **Permissions**: every tool checks in the service layer that the file belongs to this conversation and this user, never trusting ids given by the model; `/api/chat/files/{file_id}` is limited to the file's owner, and anyone else gets `404`. Deleting needs approval, so instructions inside a file cannot make the research assistant delete files.
+- **Downloads**: responses carry `Content-Disposition: attachment` (non-ASCII file names encoded per RFC 5987), `X-Content-Type-Options: nosniff`, and `Cache-Control: private, no-store`; `Content-Type` is chosen from an allowlist by extension, and `.html`, `.js`, `.css`, and the like are always returned as `text/plain`, so they never run in the browser.
+- **Limits**: 15 MiB per file, 100 files per conversation, 200,000 characters of tool input content, 200,000 cells per spreadsheet, 100 slides per presentation, at most 50 text replacements per edit, and at most 500 PDF pages (see [configuration reference: resource limits](configuration_en.md#resource-limits)). Producing and editing files runs in worker threads, and saving and the quota check happen under the same lock.
+- **Streaming**: after a tool succeeds, a `file` event is sent (`action` is `created`, `updated`, or `deleted`), and the frontend shows a file card under that answer; these events are also saved in the assistant message's `context_used.files`, so they still show when the conversation is reloaded.
 
 ---
 
@@ -687,7 +728,7 @@ Tool results (knowledge-base chunks, web pages, external API responses) may carr
 2. **Domain allowlist**: `WEB_FETCH_ALLOWED_DOMAINS` restricts the readable domains (subdomains included); only an explicit `*` means unrestricted. The initial URL and every redirect target must be on the allowlist, and Ollama Web Fetch is not used unless the allowlist is `*` (Ollama follows redirects on its side, so they cannot be checked hop by hop).
 3. **Web tools off after the knowledge base**: with `BLOCK_WEB_TOOLS_AFTER_KB=true`, once a knowledge-base tool has returned content in a question, later `web_search` and `web_fetch` calls are refused.
 
-Agent Skills are the exception: skills are uploaded by admins, so the results of `activate_skill` and `read_skill_resource` reach the model as-is in `<skill_content>` and `<skill_resource>` as instructions, and URLs in them count as URL sources. Uploaded zips are rejected if they contain absolute paths, `..`, or symbolic links, and the size limit counts the bytes actually decompressed; uploaded folders are likewise rejected for absolute paths and `..`; both reject path segments containing a colon, so a drive letter or alternate data stream cannot write outside the skill directory on Windows. Scripts in a skill are not executed by default; once an admin turns on a skill's `allow_scripts`, `run_skill_script` results are wrapped as untrusted and every run needs the user's approval. Scripts run in a temporary copy with a minimal environment, but this is **not a sandbox**: they run as the backend's OS account, can read any file that account can read and reach the network, are not bound by the three limits above, and should be enabled only for trusted skills. A skill's `allowed-tools` lets the listed tools skip approval for that question (including external tools with side effects; listing `run_skill_script` covers only that skill's own scripts), so check that field before installing a skill too.
+Agent Skills are the exception: skills are uploaded by admins, so the results of `activate_skill` and `read_skill_resource` reach the model as-is in `<skill_content>` and `<skill_resource>` as instructions, and URLs in them count as URL sources. Uploaded zips are rejected if they contain absolute paths, `..`, or symbolic links, and the size limit counts the bytes actually decompressed; uploaded folders are likewise rejected for absolute paths and `..`; both reject path segments containing a colon, so a drive letter or alternate data stream cannot write outside the skill directory on Windows. Scripts in a skill are not executed by default; once an admin turns on a skill's `allow_scripts`, `run_skill_script` results are wrapped as untrusted and every run needs the user's approval. Scripts run in a temporary copy with a minimal environment, but this is **not a sandbox**: they run as the backend's OS account, can read any file that account can read and reach the network, are not bound by the three limits above, and should be enabled only for trusted skills. A skill's `allowed-tools` lets the listed tools skip approval for that question (including external tools with side effects; listing `run_skill_script` covers only that skill's own scripts; `delete_conversation_file` is not affected and always needs approval), so check that field before installing a skill too.
 
 Results from custom API and MCP tools are wrapped as untrusted too, but they are not URL sources and receive no citation numbers, and their outbound requests are outside these three limits (a known risk; see [ADR-0003](adr/0003-rrf-relevance-citations-and-tool-trust_en.md)). The mitigation is approval before calls: tools with side effects run only after the asking user has seen the tool, where the request goes, and its arguments ([ADR-0006](adr/0006-tool-call-approval_en.md)); custom API tools also accept only the parameters the admin declared in `parameters_schema`, so no extra query parameters or body fields can be slipped in (section 9).
 

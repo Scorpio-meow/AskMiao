@@ -2,7 +2,7 @@
 
 [繁體中文](api.md) | [English](api_en.md)
 
-> 本文件說明 AskMiao 後端 **8.3.0** 的 REST 與 SSE 串流端點，內容依 `backend/app/api/` 的實際路由撰寫。設定 `ENABLE_API_DOCS=true` 時，後端另外在 `http://localhost:8001/docs`（Swagger UI）與 `http://localhost:8001/redoc` 提供互動測試，OpenAPI 規格位於 `/openapi.json`；這三個路徑不需要登入且會列出所有端點與參數，對外服務時請保持 `ENABLE_API_DOCS=false`（範本值），此時三者一律回傳 `404`。
+> 本文件說明 AskMiao 後端 **8.4.0** 的 REST 與 SSE 串流端點，內容依 `backend/app/api/` 的實際路由撰寫。設定 `ENABLE_API_DOCS=true` 時，後端另外在 `http://localhost:8001/docs`（Swagger UI）與 `http://localhost:8001/redoc` 提供互動測試，OpenAPI 規格位於 `/openapi.json`；這三個路徑不需要登入且會列出所有端點與參數，對外服務時請保持 `ENABLE_API_DOCS=false`（範本值），此時三者一律回傳 `404`。
 
 ## 目錄
 
@@ -27,7 +27,7 @@
 |---|---|
 | 基礎位址 | `http://localhost:8001`（由 `HOST` / `PORT` 決定） |
 | 認證方式 | 標頭帶 `Authorization: Bearer <access_token>`；重新整理權杖放在 HttpOnly Cookie `refresh_token`（路徑 `/api/auth`），由瀏覽器自動攜帶 |
-| 內容型態 | 檔案上傳為 `multipart/form-data`，對話串流為 `text/event-stream`，其餘皆為 `application/json` |
+| 內容型態 | 檔案上傳為 `multipart/form-data`，對話串流為 `text/event-stream`，下載對話檔案依檔案格式，其餘皆為 `application/json` |
 | 時間格式 | ISO 8601，時間為 UTC 但不含時區標記（例如 `2026-09-25T02:30:00`） |
 | 速率限制 | 每個來源 IP 每 60 秒 `RATE_LIMIT_PER_MINUTE` 次（預設 60），超過回傳 `429`；來源 IP 預設為實際連線對端，只有設定 `FORWARDED_ALLOW_IPS` 時才採信該代理送來的 `X-Forwarded-For` |
 | 請求本文上限 | 一般請求 1 MiB；`POST /api/chat/send` 帶有效存取權杖時放寬，`POST /api/documents/upload`、`POST /api/skills/upload` 與 `POST /api/skills/upload-folder` 只在有效存取權杖的 `is_admin` 聲明為 `true` 時放寬；超過回傳 `413` `{"detail": "請求內容超過大小上限"}`，詳見 [設定參考：資源上限](configuration.md#資源上限) |
@@ -65,6 +65,9 @@
 | GET | `/api/chat/conversations/{conversation_id}` | 登入 | 單一對話（不含訊息） |
 | GET | `/api/chat/conversations/{conversation_id}/messages` | 登入 | 分頁取得訊息 |
 | DELETE | `/api/chat/conversations/{conversation_id}` | 登入 | 刪除對話 |
+| GET | `/api/chat/conversations/{conversation_id}/files` | 登入（限本人） | 對話檔案清單 |
+| GET | `/api/chat/files/{file_id}` | 登入（限本人） | 下載對話檔案 |
+| DELETE | `/api/chat/files/{file_id}` | 登入（限本人） | 刪除對話檔案 |
 | GET | `/api/llm-connections/providers` | 登入 | 可選的供應商與預設 API 位址、模型 |
 | GET | `/api/llm-connections` | 登入 | 自己的個人連線與開放給自己的共用連線 |
 | POST | `/api/llm-connections` | 登入 | 新增個人連線 |
@@ -323,13 +326,16 @@
 | `file_size` | integer | 選填，檔案大小 |
 | `data_url` | string | 選填，必須是 base64 編碼的 `data:` URL（`http(s)://` 等遠端網址一律拒絕），解碼後單一附件最多 15 MiB、同一則訊息合計最多 20 MiB；圖片必須提供 |
 | `content` | string | 選填，已擷取好的純文字，最多 50,000 字元；未提供時由 `data_url` 解碼後擷取（PDF 最多 OCR 20 頁） |
+| `file_id` | integer | 只出現在回應中：附件存成的對話檔案編號；請求中帶的值一律忽略 |
+
+帶 `data_url` 的非圖片附件會解碼後存成這個對話的檔案（`origin` 為 `user`，見 [2.10](#210-get-apichatconversationsconversation_idfiles)），研究助理可以讀取、修改成新版本，使用者可以重新下載；使用者訊息只記下 `file_id`，不再保存 base64。檔名會去掉路徑與不允許的字元；沒有副檔名的檔案也會保存，但研究助理只能讀取支援的格式。圖片附件照舊以 `data_url` 存在訊息中。
 
 每個附件放進模型脈絡的文字最多 50,000 字元，超過的部分截斷。由 `data_url` 擷取文字時套用比管理員上傳更嚴格的聊天附件解析預算（例如 `.docx`、`.pptx`、`.xlsx` 解壓總量最多 64 MiB，`.docx`、`.pptx` 會建成 DOM 的 XML 合計最多 8 MiB），整個後端行程同時最多解析 2 個附件，其餘排隊等候；超過預算的附件不會讓請求失敗，而是以「附件超過解析上限，未讀取內容」告知模型；無法讀取的附件（例如無效的 Office 文件、PDF 有密碼保護或沒有可擷取的文字）同樣不讓請求失敗，而是以「附件未讀取內容」與原因告知模型。擷取出的文字（每個最多 50,000 字元）存回該則使用者訊息附件的 `content`，[2.7](#27-get-apichatconversationsconversation_idmessages) 的回應會帶出；之後在同一段對話提問時隨前文帶入，先前附件的文字從最新的訊息往前合計最多 50,000 字元。完整上限見 [設定參考：資源上限](configuration.md#資源上限)。
 
 | 狀態碼 | 情況 |
 |---|---|
-| `400` | `model_name` 不在可用模型清單內 |
-| `413` | 請求本文超過上限（未帶有效存取權杖時為 1 MiB），或這位使用者存在資料庫的附件總量將超過 200 MiB（`附件儲存空間已達上限…`） |
+| `400` | `model_name` 不在可用模型清單內；附件檔名去掉不允許的字元後是空白，或這個對話的檔案將超過 100 個 |
+| `413` | 請求本文超過上限（未帶有效存取權杖時為 1 MiB），或這位使用者存在資料庫的附件與對話檔案總量將超過 200 MiB（`附件儲存空間已達上限…`） |
 | `422` | 欄位驗證失敗：訊息過長、附件過多或過大、`data_url` 不是 base64 `data:` URL 等 |
 | `429` | 這位使用者已有 2 個回答正在串流 |
 
@@ -341,14 +347,15 @@
 
 | 事件 | 時機 | `data` 欄位 |
 |---|---|---|
-| `start` | 使用者訊息已存入資料庫 | `conversation_id`、`user_message_id` |
+| `start` | 使用者訊息已存入資料庫 | `conversation_id`、`user_message_id`、`attachment_file_ids`（依 `attachments` 的順序，存成對話檔案的附件為檔案編號，其餘為 `null`） |
 | `step_start` | 每次工具呼叫開始 | `step`（從 1 起算）、`tool`、`arguments` |
-| `approval_required` | 工具需要核准，Agent 暫停等待（見 [2.9](#29-post-apichatapprovalsapproval_id)） | `approval_id`、`step`、`tool`、`tool_display_name`、`target`、`arguments` |
+| `approval_required` | 工具需要核准，Agent 暫停等待（見 [2.9](#29-post-apichatapprovalsapproval_id)） | `approval_id`、`step`、`tool`、`kind`、`tool_display_name`、`target`、`arguments` |
 | `approval_resolved` | 使用者回覆或等待逾時 | `approval_id`、`approved`（逾時為 `false`） |
 | `step_end` | 每次工具呼叫結束 | `step`、`tool`、`arguments`、`output_preview`（結果 JSON 的前 300 字）、`duration_seconds`、`status`（`success` / `error`） |
+| `file` | 對話檔案工具成功，緊接在該次 `step_end` 之後 | `action`（`created`、`updated`、`deleted`）、`file`（檔案物件，見 [2.10](#210-get-apichatconversationsconversation_idfiles)） |
 | `token` | 答案文字 | `content` |
 | `sources` | 答案完成後 | `sources`（來源名稱，去重）、`sources_detail`（見下表） |
-| `done` | 助理訊息已存入資料庫；串流期間對話已被刪除時不儲存 | `message_id`（未儲存時為 `null`）、`conversation_id`、`answer`、`sources`、`sources_detail`、`research_trace`（所有 `step_end` 的內容） |
+| `done` | 助理訊息已存入資料庫；串流期間對話已被刪除時不儲存 | `message_id`（未儲存時為 `null`）、`conversation_id`、`answer`、`sources`、`sources_detail`、`research_trace`（所有 `step_end` 的內容）、`files`（所有 `file` 事件的內容） |
 | `error` | API 層發生未預期例外；或串流開始時已沒有可用的串流名額（這位使用者已有 2 個回答正在串流），此時在 `start` 之前送出並結束串流 | `detail`（含錯誤代碼的訊息）、`error_id`、`request_id`；沒有串流名額時只有 `detail` |
 
 `sources_detail` 只列答案以 `[n]` 實際引用的條目，依第一次引用的順序排列；沒有任何引用時 `sources` 與 `sources_detail` 都是空陣列。每筆的欄位依來源而定：
@@ -359,13 +366,15 @@
 | `filter_and_count_records` | `citation`、`source`、`snippet` |
 | `web_search`、`web_fetch` | `citation`、`source`（網頁標題或網址）、`url`、`snippet` |
 
-`approval_required` 的 `tool_display_name` 是工具的顯示名稱（MCP 工具為 `<伺服器顯示名稱> → <工具名稱>`），`target` 標出這次呼叫實際送往的位置：
+`approval_required` 的 `tool_display_name` 是工具的顯示名稱（MCP 工具為 `<伺服器顯示名稱> → <工具名稱>`），`kind` 是工具類別，`target` 標出這次呼叫實際送往的位置：
 
-| 工具 | `target` 格式 | 範例 |
-|---|---|---|
-| 自訂 API 工具 | HTTP 方法與工具設定網址的主機（有指定埠號時含埠號，不含路徑與查詢字串） | `POST api.example.com` |
-| MCP 伺服器（`http` / `sse`） | 大寫的傳輸方式與伺服器網址的主機 | `HTTP mcp.example.com:8443` |
-| MCP 伺服器（`stdio`） | `本機指令` 加上指令的檔名（不含路徑與參數） | `本機指令 npx` |
+| 工具 | `kind` | `target` 格式 | 範例 |
+|---|---|---|---|
+| 自訂 API 工具 | `custom_api` | HTTP 方法與工具設定網址的主機（有指定埠號時含埠號，不含路徑與查詢字串） | `POST api.example.com` |
+| MCP 伺服器（`http` / `sse`） | `mcp` | 大寫的傳輸方式與伺服器網址的主機 | `HTTP mcp.example.com:8443` |
+| MCP 伺服器（`stdio`） | `mcp` | `本機指令` 加上指令的檔名（不含路徑與參數） | `本機指令 npx` |
+| `run_skill_script` | `skill_script` | `本機指令` 加上直譯器 | `本機指令 python` |
+| `delete_conversation_file` | `file` | 檔案編號與檔名；這個對話沒有此檔案時註明 | `#5「採購合約.docx」` |
 
 **串流範例**
 
@@ -421,6 +430,8 @@ data: {"message_id": 108, "conversation_id": 42, "answer": "特休假需先在�
 - 啟用中 MCP 伺服器的已探索工具，名稱為 `mcp_<伺服器>_<工具>`（說明前綴 `[MCP 工具]`）。
 - 啟用中的 MCP 伺服器有已探索的 resources 或 prompts 時，另有 `read_mcp_resource`（參數 `server`、`uri`）與 `get_mcp_prompt`（參數 `server`、`name`、`arguments`），說明中列出可用的項目（見 [伺服器物件](#伺服器物件)）。
 - 呼叫者看得到、啟用且檔案存在的 Agent Skills 時，另有 `activate_skill` 與 `read_skill_resource`；其中有開啟 `allow_scripts` 的技能時再加上 `run_skill_script`（見 [7. Agent Skills](#7-agent-skills-apiskills)）。沒有時這些工具都不出現。
+
+對話檔案工具（`list_conversation_files`、`read_conversation_file`、`create_conversation_file`、`edit_conversation_file`、`delete_conversation_file`）只在 `POST /api/chat/send` 的研究過程中提供，因為需要對話 id，這個端點的回應不含它們（見 [2.10](#210-get-apichatconversationsconversation_idfiles)）。
 
 ```json
 {
@@ -501,11 +512,11 @@ data: {"message_id": 108, "conversation_id": 42, "answer": "特休假需先在�
 ]
 ```
 
-訊息物件的 `sources`、`sources_detail`、`research_trace` 與 `attachments` 由資料庫的 `context_used` 欄位解析而來；回應中的 `context_used` 一律為 `null`（原始內容含附件的 base64，不再重複輸出）。使用者訊息的 `attachments` 保留送出時的欄位（含 `data_url`），`content` 為附件抽出的文字（每個最多 50,000 字元）。`reasoning_effort` 不會儲存，一律為 `null`。
+訊息物件的 `sources`、`sources_detail`、`research_trace`、`files` 與 `attachments` 由資料庫的 `context_used` 欄位解析而來；回應中的 `context_used` 一律為 `null`（原始內容可能含圖片附件的 base64，不再重複輸出）。使用者訊息的 `attachments` 保留送出時的欄位，`content` 為附件抽出的文字（每個最多 50,000 字元）；存成對話檔案的附件改帶 `file_id`、沒有 `data_url`，圖片與舊版訊息的附件仍帶 `data_url`。助理訊息的 `files` 是這次回答的 `file` 事件（沒有時為 `null`）；檔案之後被刪除時，事件仍會保留，以 [2.10](#210-get-apichatconversationsconversation_idfiles) 的清單為準。`reasoning_effort` 不會儲存，一律為 `null`。
 
 ### 2.8 DELETE /api/chat/conversations/{conversation_id}
 
-刪除自己的對話與所有訊息。
+刪除自己的對話、所有訊息與對話檔案。
 
 **回應**：`200 OK` `{"message": "對話已刪除"}`；找不到時回傳 `404`。
 
@@ -525,9 +536,49 @@ data: {"message_id": 108, "conversation_id": 42, "answer": "特休假需先在�
 - 300 秒內沒有回覆視為拒絕；使用者中斷串流時，等待中的項目一併取消。
 - 拒絕或逾時時工具不會執行，Agent 收到「使用者未核准」的工具結果後改以已取得的資料回答。
 - 沒有可核准的使用者時（非互動式呼叫），需要核准的工具一律不執行。
+- `delete_conversation_file` 一律需要核准，技能的 `allowed-tools` 也不能免除；拒絕時檔案不會刪除。
 - `run_skill_script` 預設需要核准（`target` 為 `本機指令 <直譯器>`）；技能的 `allowed-tools` 列出 `run_skill_script` 時，該技能啟用後，它的腳本在同一次提問的其餘過程中不再要求核准。`read_mcp_resource`、`get_mcp_prompt` 依該 MCP 伺服器的 `requires_approval`。
-- 技能啟用後，它的 `allowed-tools` 列出的工具名稱在同一次提問的其餘過程中不再要求核准（見 [技能物件](#技能物件)）。
+- 技能啟用後，它的 `allowed-tools` 列出的工具名稱在同一次提問的其餘過程中不再要求核准（`delete_conversation_file` 除外，見 [技能物件](#技能物件)）。
 - 待核准項目存在後端行程的記憶體中，後端重啟後失效。
+
+### 2.10 GET /api/chat/conversations/{conversation_id}/files
+
+列出對話中的檔案：使用者上傳的文件類附件，以及研究助理以檔案工具建立或修改的檔案，依建立順序排列。對話不存在或不屬於自己時回傳 `404` `找不到該對話`。
+
+```json
+{
+  "files": [
+    {"id": 5, "filename": "採購合約.docx", "media_type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document", "size_bytes": 36768, "origin": "user", "version": 1, "parent_id": null, "created_at": "2026-11-08T14:45:09.716075"},
+    {"id": 6, "filename": "採購合約 v2.docx", "media_type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document", "size_bytes": 36768, "origin": "assistant", "version": 2, "parent_id": 5, "created_at": "2026-11-08T14:45:51.204117"}
+  ]
+}
+```
+
+| 欄位 | 說明 |
+|---|---|
+| `origin` | `user` 為使用者上傳的附件，`assistant` 為研究助理建立或修改 |
+| `version`、`parent_id` | 研究助理修改檔案時一律另存新版本：`parent_id` 是修改來源，`version` 依同一系列遞增，檔名加上 ` v<n>`；原檔不變 |
+
+研究助理可以建立 `.md`、`.txt`、`.csv`、`.json`、`.docx`、`.xlsx`、`.pptx`、`.pdf`，修改時用文字取代（文字檔、`.docx`、`.pptx`）、儲存格修改（`.xlsx`）或整份重寫，PDF 只能整份重寫；各格式的做法與上限見 [系統架構：對話檔案](architecture.md#對話檔案)。單一檔案最多 15 MiB，每個對話最多 100 個檔案，與附件共用每位使用者 200 MiB 的空間。
+
+### 2.11 GET /api/chat/files/{file_id}
+
+下載自己的對話檔案。回應本文是檔案內容，標頭為：
+
+| 標頭 | 值 |
+|---|---|
+| `Content-Type` | 依副檔名從允許清單決定；`.html`、`.htm`、`.css`、`.js`、`.ts`、`.py` 一律為 `text/plain; charset=utf-8`，不在清單中的為 `application/octet-stream` |
+| `Content-Disposition` | `attachment`，非 ASCII 檔名以 `filename*=UTF-8''…` 編碼 |
+| `Cache-Control` | `private, no-store` |
+| `X-Content-Type-Options` | `nosniff` |
+
+檔案不存在或不屬於自己時回傳 `404` `找不到這個檔案`。
+
+### 2.12 DELETE /api/chat/files/{file_id}
+
+刪除自己的對話檔案，同一系列的其他版本不受影響。研究助理要刪除檔案時必須經過核准（見 [2.9](#29-post-apichatapprovalsapproval_id)），使用者自己以此端點刪除則不需要。
+
+**回應**：`200 OK` `{"file": {…}}`（被刪除的檔案物件）；檔案不存在或不屬於自己時回傳 `404` `找不到這個檔案`。
 
 ---
 
@@ -1382,4 +1433,5 @@ Agent 以漸進揭露使用技能：有啟用且檔案存在的技能時，[`GET
 - 存取權杖回應的 `expires_in` 固定為 `1800`，不隨 `ACCESS_TOKEN_EXPIRE_MINUTES` 變動。
 - 權杖撤銷名單、速率限制計數、登入失敗節流的計數與暫停狀態、每位使用者的同時串流數與待核准的工具呼叫都存在單一後端行程的記憶體中；多行程或多台部署時彼此不共享，後端重啟後清空（暫停中的登入隨即解除）。速率限制追蹤的來源 IP 最多 10,000 個，最久未活動的先淘汰；登入節流追蹤的登入識別與來源 IP 也各最多 10,000 個，最久沒有新失敗的先淘汰。
 - 速率限制與登入節流都依來源 IP 計算：未設定 `FORWARDED_ALLOW_IPS` 時，經由 Vite 開發代理或反向代理連線的所有使用者共用同一個來源 IP，除了共用速率限制的額度，依位址的登入失敗次數也一起累計，達到門檻時經由該代理的所有登入都會暫停。
-- 附件儲存量沒有自動清除機制：使用者達到 200 MiB 上限後，需刪除含附件的對話才能再送出附件。
+- 附件與對話檔案的儲存量沒有自動清除機制：使用者達到 200 MiB 上限後，需刪除對話檔案或含附件的對話，才能再送出附件或讓研究助理建立檔案。
+- 8.3.0 以前送出的附件仍以 base64 存在訊息中，可以照常顯示與帶入前文，但不在對話檔案清單中，研究助理也不能修改。
