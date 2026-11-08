@@ -2,7 +2,7 @@
 
 [繁體中文](configuration.md) | [English](configuration_en.md)
 
-> 本文件逐一說明後端 `backend/.env` 與前端 `frontend/.env` 的每個設定、預設值與實際作用，適用於 **8.2.2**（從 8.2.1 升級見 [升級指南](upgrading.md#從-821-升級到-822)）。設定以 `backend/app/core/config.py` 的 `Settings` 為準，範本見 [`backend/.env.example`](../backend/.env.example)。
+> 本文件逐一說明後端 `backend/.env` 與前端 `frontend/.env` 的每個設定、預設值與實際作用，適用於 **8.3.0**（從 8.2.2 升級見 [升級指南](upgrading.md#從-822-升級到-830)）。設定以 `backend/app/core/config.py` 的 `Settings` 為準，範本見 [`backend/.env.example`](../backend/.env.example)。
 
 - [讀取規則](#讀取規則)
 - [必填設定](#必填設定)
@@ -88,21 +88,21 @@ python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().d
 
 | 欄位 | 說明 |
 |---|---|
-| 供應商 | `openai`（OpenAI 或相容的 API）、`anthropic`、`gemini`、`foundry`、`ollama`；呼叫方式見 [供應商路由](#供應商路由) |
-| API 位址 | 例如 `https://api.openai.com/v1`、`https://api.anthropic.com`、`https://<資源名稱>.services.ai.azure.com`、`https://ollama.com` |
-| API 金鑰 | Anthropic、Gemini、Foundry 必填，OpenAI 相容服務與 Ollama 選填；以 `TOOL_SECRETS_KEY` 加密存放，儲存後不會再從 API 讀出；編輯時留空即沿用原值，但變更供應商或 API 位址時不會沿用，需要重新輸入 |
+| 供應商 | `openai`（OpenAI 或相容的 API）、`anthropic`、`gemini`、`foundry`、`ollama`、`vllm`；呼叫方式見 [供應商路由](#供應商路由) |
+| API 位址 | 例如 `https://api.openai.com/v1`、`https://api.anthropic.com`、`https://<資源名稱>.services.ai.azure.com`、`https://ollama.com`、`http://<主機>:8000/v1`（vLLM） |
+| API 金鑰 | Anthropic、Gemini、Foundry 必填，OpenAI 相容服務、Ollama 與 vLLM 選填；以 `TOOL_SECRETS_KEY` 加密存放，儲存後不會再從 API 讀出；編輯時留空即沿用原值，但變更供應商或 API 位址時不會沿用，需要重新輸入 |
 | 模型 | 這個連線可選的模型名稱（Foundry 為部署名稱），最多 50 個 |
-| 輸出 token 上限 | Claude（`anthropic`，或 Foundry 上的 Claude 部署）必填，與模型的輸出上限取較小值 |
+| 輸出 token 上限 | Claude（`anthropic`，或 Foundry 上的 Claude 部署）必填，與模型的輸出上限取較小值。Claude 的思考也計入這個上限，設得太小時回答會被截斷。vLLM 選填，見 [連接 vLLM](#連接-vllm) |
 
 新增連線時，表單依供應商預先帶入官方 API 位址與下列模型清單，可以再增刪：
 
-| 供應商 | 預先帶入的模型（8.2.2） |
+| 供應商 | 預先帶入的模型（8.3.0） |
 |---|---|
 | OpenAI | `gpt-6.1-sol`、`gpt-6-sol`、`gpt-6-luna`、`gpt-6-astra`、`gpt-5.6-sol`、`gpt-5.6-luna`、`gpt-5.6-terra`、`gpt-5.4`、`gpt-5.4-mini` |
 | Anthropic | `claude-opus-5-5`、`claude-fable-5-1`、`claude-sonnet-5-5`、`claude-haiku-5-5`、`claude-sonnet-5`、`claude-opus-5`、`claude-fable-5`、`claude-opus-4-8`、`claude-haiku-4-5` |
 | Gemini | `gemini-4-argon`、`gemini-3.8-flash`、`gemini-3.6-flash`、`gemini-3.5-flash-lite`、`gemini-3.1-flash-lite` |
 
-一般帳號的個人連線只能指向可從網際網路解析的公開位址：建立與修改時檢查，每次呼叫也經 SSRF 檢查並固定到核可的 IP（與自訂 API 工具相同，見 [ADR-0002](adr/0002-external-tools-and-outbound-safety.md)），內部網路的服務（例如本機 Ollama）請由管理員設為共用連線。管理員的個人連線與共用連線不受此限制。
+一般帳號的個人連線只能指向可從網際網路解析的公開位址：建立與修改時檢查，每次呼叫也經 SSRF 檢查並固定到核可的 IP（與自訂 API 工具相同，見 [ADR-0002](adr/0002-external-tools-and-outbound-safety.md)），內部網路的服務（例如本機的 Ollama 或 vLLM）請由管理員設為共用連線。管理員的個人連線與共用連線不受此限制。
 
 刪除帳號時，該帳號的個人連線一併刪除，並從共用連線的名單移除。
 
@@ -134,9 +134,25 @@ python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().d
 | `openai` | 以 `gpt-6` 開頭 | `{API 位址}/responses` |
 | `openai` | 其他 | `{API 位址}/chat/completions` |
 | `ollama` | 任何 | `{API 位址}/api/chat` |
+| `vllm` | 任何 | `{API 位址}/chat/completions`，見 [連接 vLLM](#連接-vllm) |
 
 > [!NOTE]
 > `reasoning_effort` 會依供應商對應後傳給模型（規則見 [API 參考](api.md)）；走 Chat Completions 的 `gpt-5.x` 模型（名稱含 `gpt-5.`）在帶工具呼叫時一律改送 `none`，以符合推理模型與工具呼叫的相容性限制；原始的 `gpt-5`、`gpt-5-mini`、`gpt-5-nano` 不接受 `none`、`xhigh`、`max`，選 `none` 時改送 `minimal`，選 `xhigh`、`max` 時改送 `high`，其他情況送使用者選擇的程度。
+
+### 連接 vLLM
+
+vLLM 以 `vllm serve` 提供 OpenAI 相容的 API，API 位址填到 `/v1`，例如 `http://<主機>:8000/v1`。研究助理每一輪都會帶工具定義，vLLM 必須加上 `--enable-auto-tool-choice` 與符合模型的 `--tool-call-parser` 才能接受；沒有加時，連線測試會回報「vLLM 伺服器沒有開啟工具呼叫」。會思考的模型另外加上 `--reasoning-parser`，思考內容才會和回答分開，研究助理只採用回答。例如：
+
+```bash
+vllm serve Qwen/Qwen3-8B --enable-auto-tool-choice --tool-call-parser hermes --reasoning-parser qwen3
+```
+
+- 需要 vLLM 0.23.0 以上。0.18.0 之前不接受 `none`（連線測試會失敗），0.21.0 之前不接受 `minimal`、`xhigh`、`max`，選到時回傳 `400`；0.21、0.22 雖然都接受，但 `none` 不會關閉思考。
+- 思考程度直接以 `reasoning_effort` 送出（`none` 至 `max`），由 vLLM 依模型的對話範本套用，例如 Qwen3 選 `none` 時關閉思考。
+- 輸出 token 上限選填，設定時以 `max_completion_tokens` 送出，思考內容也計入；留空時由 vLLM 依模型的上下文長度決定。
+- vLLM 以 `--api-key` 啟動時，在連線填入同一把金鑰；沒有設定時金鑰留空。
+- 模型名稱與 `vllm serve` 載入的模型（或 `--served-model-name`）相同，可以按「從 API 取得模型」讀取 `/v1/models`。
+- vLLM 通常架在內部網路，請由管理員設為共用連線；一般帳號的個人連線只能連到公開位址。
 
 ## Agent 與聯網工具
 

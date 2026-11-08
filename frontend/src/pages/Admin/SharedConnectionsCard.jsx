@@ -68,7 +68,7 @@ export default function SharedConnectionsCard({ users, refreshKey, onConnections
         </Button>
       </div>
       <p className={styles.cardHint}>
-        各帳號預設只能用自己在「個人資料」設定的 API。要讓某些帳號使用公司的金鑰或內部網路的模型（例如本機 Ollama），在這裡建立共用連線並指定可使用的帳號。
+        各帳號預設只能用自己在「個人資料」設定的 API。要讓某些帳號使用公司的金鑰或內部網路的模型（例如本機的 Ollama 或 vLLM），在這裡建立共用連線並指定可使用的帳號。
       </p>
       {notice && <Alert severity="success" onClose={() => setNotice('')} style={{ marginBottom: '16px' }}>{notice}</Alert>}
       {error && <Alert severity="error" onClose={() => setError('')} style={{ marginBottom: '16px' }}>{error}</Alert>}

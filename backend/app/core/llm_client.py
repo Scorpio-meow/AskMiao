@@ -36,6 +36,8 @@ LLM_POOL_ACQUIRE_TIMEOUT_SECONDS = 15.0
 OLLAMA_CLOUD_HOST = "ollama.com"
 OLLAMA_THINKING_KEY = "_ollama_thinking"
 OLLAMA_THINK_BY_REASONING = {"minimal": "low", "low": "low", "medium": "medium", "high": "high", "xhigh": "high", "max": "high"}
+VLLM_AUTO_TOOL_CHOICE_FLAG = "--enable-auto-tool-choice"
+VLLM_TOOLS_DISABLED_MESSAGE = "vLLM 伺服器沒有開啟工具呼叫：啟動 vLLM 時請加上 --enable-auto-tool-choice 與符合模型的 --tool-call-parser"
 def _new_llm_http_client(transport: Optional[httpx.AsyncBaseTransport]) -> httpx.AsyncClient:
     return httpx.AsyncClient(
         timeout=httpx.Timeout(settings.LLM_TIMEOUT, pool=LLM_POOL_ACQUIRE_TIMEOUT_SECONDS),
@@ -234,13 +236,18 @@ def _chat_completions_effort(model: str, tools: Optional[List[Dict[str, Any]]], 
     if not accepts_none:
         return ORIGINAL_GPT5_EFFORT_BY_REASONING.get(reasoning_effort, reasoning_effort)
     return reasoning_effort
+def _openai_error(provider: str, kind: str, status_code: int, body: str) -> str:
+    if provider == "vllm" and VLLM_AUTO_TOOL_CHOICE_FLAG in body:
+        return VLLM_TOOLS_DISABLED_MESSAGE
+    return f"{provider} {kind} ({status_code}): {body[:500]}"
 def _openai_payload(
     provider: str,
     messages: List[Dict[str, Any]],
     model: str,
     tools: Optional[List[Dict[str, Any]]],
     reasoning_effort: Optional[str],
-    stream: bool
+    stream: bool,
+    max_output_tokens: Optional[int]
 ) -> Dict[str, Any]:
     payload: Dict[str, Any] = {
         "model": model,
@@ -256,6 +263,13 @@ def _openai_payload(
             payload["reasoning_effort"] = effort
     if provider == "gemini" and reasoning_effort in GEMINI_EFFORT_BY_REASONING:
         payload["reasoning_effort"] = GEMINI_EFFORT_BY_REASONING[reasoning_effort]
+    if provider == "vllm":
+        if reasoning_effort in REASONING_EFFORT_VALUES:
+            payload["reasoning_effort"] = reasoning_effort
+        if max_output_tokens is not None:
+            payload["max_completion_tokens"] = max_output_tokens
+        if stream:
+            payload["stream_options"] = {"include_usage": True}
     return payload
 async def _openai_chat(
     endpoint: LlmEndpoint,
@@ -270,12 +284,12 @@ async def _openai_chat(
     client = await get_llm_http_client(endpoint.public_only)
     response = await client.post(
         url,
-        json=_openai_payload(provider, messages, model, tools, reasoning_effort, stream=False),
+        json=_openai_payload(provider, messages, model, tools, reasoning_effort, stream=False, max_output_tokens=endpoint.max_output_tokens),
         headers=headers,
         timeout=httpx.Timeout(timeout, pool=LLM_POOL_ACQUIRE_TIMEOUT_SECONDS)
     )
     if response.status_code != 200:
-        raise RuntimeError(f"{provider} API 錯誤 ({response.status_code}): {response.text[:500]}")
+        raise RuntimeError(_openai_error(provider, "API 錯誤", response.status_code, response.text))
     data = response.json()
     choices = data.get("choices") or []
     if not choices:
@@ -293,11 +307,11 @@ async def _openai_stream(
     provider = endpoint.provider
     url, headers = _openai_endpoint(endpoint)
     client = await get_llm_http_client(endpoint.public_only)
-    payload = _openai_payload(provider, messages, model, None, reasoning_effort, stream=True)
+    payload = _openai_payload(provider, messages, model, None, reasoning_effort, stream=True, max_output_tokens=endpoint.max_output_tokens)
     async with client.stream("POST", url, json=payload, headers=headers) as response:
         if response.status_code != 200:
             body = await response.aread()
-            raise RuntimeError(f"{provider} 串流錯誤 ({response.status_code}): {body.decode('utf-8', 'replace')[:500]}")
+            raise RuntimeError(_openai_error(provider, "串流錯誤", response.status_code, body.decode("utf-8", "replace")))
         async for line in response.aiter_lines():
             if not line.startswith("data: "):
                 continue
@@ -899,12 +913,14 @@ async def call_llm(
     endpoint: LlmEndpoint,
     model_name: str,
     timeout: Optional[float] = None,
-    reasoning_effort: Optional[str] = None
+    reasoning_effort: Optional[str] = None,
+    tools: Optional[List[Dict[str, Any]]] = None
 ) -> str:
     message = await chat_completion(
         messages,
         endpoint=endpoint,
         model_name=model_name,
+        tools=tools,
         reasoning_effort=reasoning_effort,
         timeout=timeout
     )

@@ -189,11 +189,11 @@ async def test_prompts_mention_running_scripts_only_when_offered(env, monkeypatc
         await collect(research(agent, "跑腳本"))
         return llm.chat_messages[0][0]["content"], llm.chat_messages[1][-1]["content"]
     system, activation = await prompts()
-    assert "本系統不會執行技能內的腳本" in system
+    assert "run_skill_script" not in system and "本系統不會執行技能內的腳本" not in system
     assert "本系統不會執行技能內的腳本" in activation
     client.patch(f"/api/skills/{skill['id']}/settings", json={"allow_scripts": True})
     system, activation = await prompts()
-    assert "run_skill_script" in system and "本系統不會執行技能內的腳本" not in system
+    assert "run_skill_script" not in system and "本系統不會執行技能內的腳本" not in system
     assert "run_skill_script" in activation and "本系統不會執行技能內的腳本" not in activation
 @pytest.mark.anyio
 async def test_skill_restricted_to_users(env):

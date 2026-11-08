@@ -20,5 +20,6 @@ agentskills/
 quickstart-resources/
 OpenAPI-Specification/
 openvino/
+vllm/
 backend/tests_data/
 media/

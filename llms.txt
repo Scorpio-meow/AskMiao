@@ -2,7 +2,7 @@
 
 [繁體中文](llms.txt) | [English](llms_en.txt)
 
-> 會自己查證、答案附出處的企業知識庫對話系統（版本 8.2.2）。FastAPI 後端以混合檢索（FAISS + BM25 + Cross-Encoder）與 ReAct 研究 Agent 回答問題，答案以 `[n]` 對應實際引用的片段或網頁；React 前端以 SSE 串流顯示研究歷程與引用來源。
+> 會自己查證、答案附出處的企業知識庫對話系統（版本 8.3.0）。FastAPI 後端以混合檢索（FAISS + BM25 + Cross-Encoder）與 ReAct 研究 Agent 回答問題，答案以 `[n]` 對應實際引用的片段或網頁；React 前端以 SSE 串流顯示研究歷程與引用來源。
 
 本檔給 AI Agent 使用：修改程式前先讀「系統約束」，修改後依「驗證」執行檢查。
 
@@ -17,7 +17,8 @@
 - [backend/app/rag/tokenizers.py](backend/app/rag/tokenizers.py): jieba 斷詞、`TOKENIZER_RULES_VERSION`
 - [backend/app/rag/retrievers/hybrid.py](backend/app/rag/retrievers/hybrid.py): RRF 融合、精確比對、重排與相關性門檻
 - [backend/app/rag/research_session.py](backend/app/rag/research_session.py): 單次提問的引用編號、`web_fetch` 網址來源限制、讀過知識庫後停用聯網、不可信資料包裝
-- [backend/app/rag/agent.py](backend/app/rag/agent.py): ResearchAgent 的系統提示、工具迴圈與串流事件
+- [backend/app/prompts.py](backend/app/prompts.py): 送給模型的所有文字：系統提示詞、工具與參數說明、工具結果與附件的包裝、文件摘要、OCR 與連線測試的提示詞
+- [backend/app/rag/agent.py](backend/app/rag/agent.py): ResearchAgent 組裝系統提示詞、工具迴圈與串流事件
 - [backend/app/rag/tools.py](backend/app/rag/tools.py): 內建工具與自訂 API / MCP 工具的註冊與執行、`approval_requirement()`
 - [backend/app/rag/tool_approval.py](backend/app/rag/tool_approval.py): `ToolApprovalBroker`，有副作用工具的對話內核准（ADR-0006）
 - [backend/app/rag/evaluator.py](backend/app/rag/evaluator.py) 與 [backend/scripts/evaluate_retrieval.py](backend/scripts/evaluate_retrieval.py): 檢索評估與相關性門檻校準
@@ -26,7 +27,7 @@
 ### 核心與服務
 
 - [backend/app/core/config.py](backend/app/core/config.py): 所有環境變數、必填設定與驗證規則
-- [backend/app/core/llm_client.py](backend/app/core/llm_client.py): 五家供應商（Microsoft Foundry、OpenAI、Claude、Gemini、Ollama）的呼叫層與路由；每次呼叫都帶一條 API 連線的 `LlmEndpoint`，`.env` 不設定模型商
+- [backend/app/core/llm_client.py](backend/app/core/llm_client.py): 六家供應商（Microsoft Foundry、OpenAI、Claude、Gemini、Ollama、vLLM）的呼叫層與路由；每次呼叫都帶一條 API 連線的 `LlmEndpoint`，`.env` 不設定模型商
 - [backend/app/core/jwt_auth.py](backend/app/core/jwt_auth.py): RSA JWT（PyJWT，解碼只接受 RS256）、`resolve_token_user`（權杖對應資料庫帳號，簽發時間早於 `users.tokens_valid_after` 的權杖無效）、Argon2 密碼、撤銷名單檢查、`get_current_admin_user`
 - [backend/app/core/login_throttle.py](backend/app/core/login_throttle.py): 登入失敗節流，依登入識別與來源位址分別計數，暫停期間回傳 `429` 與 `Retry-After`（行程記憶體）
 - [backend/app/core/tool_secrets.py](backend/app/core/tool_secrets.py): 工具憑證以 `TOOL_SECRETS_KEY`（Fernet）加密存放，管理 API 回應的遮蔽與更新時的 `merge_masked()`
@@ -107,7 +108,7 @@
 - [設定參考](docs/configuration.md): 每個環境變數的預設值與作用、供應商路由、門檻校準、資源上限
 - [部署指南](docs/deployment.md): Docker Compose 部署、HTTPS、備份與更新
 - [疑難排解](docs/troubleshooting.md): 啟動、登入、前端與工具的常見錯誤
-- [升級指南](docs/upgrading.md): 2.x 升級到 3.0.0、3.0.0 升級到 4.0.0、4.0.0 升級到 5.0.0、5.0.0 升級到 6.0.0、6.0.0 升級到 7.0.0、7.0.0 升級到 8.0.0、8.0.x 升級到 8.1.0、8.1.0 升級到 8.2.0、8.2.0 升級到 8.2.1、8.2.1 升級到 8.2.2 的步驟與回退
+- [升級指南](docs/upgrading.md): 2.x 升級到 3.0.0、3.0.0 升級到 4.0.0、4.0.0 升級到 5.0.0、5.0.0 升級到 6.0.0、6.0.0 升級到 7.0.0、7.0.0 升級到 8.0.0、8.0.x 升級到 8.1.0、8.1.0 升級到 8.2.0、8.2.0 升級到 8.2.1、8.2.1 升級到 8.2.2、8.2.2 升級到 8.3.0 的步驟與回退
 - [架構決策紀錄](docs/adr/README.md): ADR-0001 至 ADR-0007
 - [版本變更紀錄](CHANGELOG.md): 各版本變更
 - [貢獻指南](.github/CONTRIBUTING.md): 分支與 Commit 訊息、測試、相依套件、文件雙語與介紹頁同步

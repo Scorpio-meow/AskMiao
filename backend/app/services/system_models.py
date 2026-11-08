@@ -4,12 +4,12 @@ import logging
 from dataclasses import dataclass
 from typing import Callable, Dict, Optional
 from sqlalchemy.orm import Session
+from app import prompts
 from app.core.error_response import SafeClientError
 from app.core.llm_client import LlmEndpoint, call_llm
 from app.models import SYSTEM_MODEL_PURPOSES, LlmConnection, SystemModel, SystemModelAssignment
 from app.services.llm_connections import endpoint_of, models_of
 logger = logging.getLogger(__name__)
-PDF_OCR_PROMPT = "精確辨識並擷取此頁面中的所有繁體中文、英文、表格與文字內容，保留標題結構與階層，排版整潔，不要加入任何多餘的問候或客套話。"
 @dataclass(frozen=True)
 class SystemModelTarget:
     endpoint: LlmEndpoint
@@ -79,7 +79,7 @@ def page_ocr(target: Optional[SystemModelTarget]) -> Optional[Callable[[bytes], 
         messages = [{
             "role": "user",
             "content": [
-                {"type": "text", "text": PDF_OCR_PROMPT},
+                {"type": "text", "text": prompts.PDF_OCR},
                 {"type": "image_url", "image_url": {"url": image_url}},
             ],
         }]

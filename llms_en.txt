@@ -2,7 +2,7 @@
 
 [繁體中文](llms.txt) | [English](llms_en.txt)
 
-> An enterprise knowledge-base chat system that checks its own sources and cites them (version 8.2.2). The FastAPI backend answers with hybrid retrieval (FAISS + BM25 + Cross-Encoder) and a ReAct research agent, citing the chunks or web pages it used as `[n]`; the React frontend streams the research trace and citations over SSE.
+> An enterprise knowledge-base chat system that checks its own sources and cites them (version 8.3.0). The FastAPI backend answers with hybrid retrieval (FAISS + BM25 + Cross-Encoder) and a ReAct research agent, citing the chunks or web pages it used as `[n]`; the React frontend streams the research trace and citations over SSE.
 
 This file is for AI agents: read "System constraints" before changing code, and run the checks under "Verification" afterwards.
 
@@ -17,7 +17,8 @@ This file is for AI agents: read "System constraints" before changing code, and 
 - [backend/app/rag/tokenizers.py](backend/app/rag/tokenizers.py): jieba tokenization and `TOKENIZER_RULES_VERSION`
 - [backend/app/rag/retrievers/hybrid.py](backend/app/rag/retrievers/hybrid.py): RRF fusion, exact matches, reranking, and the relevance threshold
 - [backend/app/rag/research_session.py](backend/app/rag/research_session.py): per-question citation numbers, `web_fetch` URL provenance, web tools disabled after knowledge-base reads, untrusted-data wrapping
-- [backend/app/rag/agent.py](backend/app/rag/agent.py): the ResearchAgent's system prompt, tool loop, and streaming events
+- [backend/app/prompts.py](backend/app/prompts.py): every piece of text sent to the model: the system prompt, tool and parameter descriptions, tool result and attachment wrapping, and the prompts for document summaries, OCR, and connection tests
+- [backend/app/rag/agent.py](backend/app/rag/agent.py): the ResearchAgent's system prompt assembly, tool loop, and streaming events
 - [backend/app/rag/tools.py](backend/app/rag/tools.py): built-in tools plus registration and execution of custom API / MCP tools, `approval_requirement()`
 - [backend/app/rag/tool_approval.py](backend/app/rag/tool_approval.py): `ToolApprovalBroker`, in-chat approval for tools with side effects (ADR-0006)
 - [backend/app/rag/evaluator.py](backend/app/rag/evaluator.py) and [backend/scripts/evaluate_retrieval.py](backend/scripts/evaluate_retrieval.py): retrieval evaluation and relevance-threshold calibration
@@ -26,7 +27,7 @@ This file is for AI agents: read "System constraints" before changing code, and 
 ### Core and services
 
 - [backend/app/core/config.py](backend/app/core/config.py): every environment variable, the required settings, and their validation
-- [backend/app/core/llm_client.py](backend/app/core/llm_client.py): the calling layer and routing for five providers (Microsoft Foundry, OpenAI, Claude, Gemini, Ollama); every call carries the `LlmEndpoint` of one API connection, and `.env` configures no provider
+- [backend/app/core/llm_client.py](backend/app/core/llm_client.py): the calling layer and routing for six providers (Microsoft Foundry, OpenAI, Claude, Gemini, Ollama, vLLM); every call carries the `LlmEndpoint` of one API connection, and `.env` configures no provider
 - [backend/app/core/jwt_auth.py](backend/app/core/jwt_auth.py): RSA JWT (PyJWT; decoding accepts RS256 only), `resolve_token_user` (maps tokens to database accounts; tokens issued before `users.tokens_valid_after` are invalid), Argon2 passwords, revocation checks, `get_current_admin_user`
 - [backend/app/core/login_throttle.py](backend/app/core/login_throttle.py): login failure throttling, counted per login identifier and per source address, returning `429` with `Retry-After` while paused (in process memory)
 - [backend/app/core/tool_secrets.py](backend/app/core/tool_secrets.py): tool credentials encrypted at rest with `TOOL_SECRETS_KEY` (Fernet), masking in admin API responses, and `merge_masked()` on update
@@ -107,7 +108,7 @@ This file is for AI agents: read "System constraints" before changing code, and 
 - [Configuration reference](docs/configuration_en.md): every environment variable's default and effect, provider routing, threshold calibration, resource limits
 - [Deployment guide](docs/deployment_en.md): Docker Compose deployment, HTTPS, backups, and updates
 - [Troubleshooting](docs/troubleshooting_en.md): common errors at startup, sign-in, in the frontend, and with tools
-- [Upgrade guide](docs/upgrading_en.md): upgrading from 2.x to 3.0.0, from 3.0.0 to 4.0.0, from 4.0.0 to 5.0.0, from 5.0.0 to 6.0.0, from 6.0.0 to 7.0.0, from 7.0.0 to 8.0.0, from 8.0.x to 8.1.0, from 8.1.0 to 8.2.0, from 8.2.0 to 8.2.1, and from 8.2.1 to 8.2.2, and rolling back
+- [Upgrade guide](docs/upgrading_en.md): upgrading from 2.x to 3.0.0, from 3.0.0 to 4.0.0, from 4.0.0 to 5.0.0, from 5.0.0 to 6.0.0, from 6.0.0 to 7.0.0, from 7.0.0 to 8.0.0, from 8.0.x to 8.1.0, from 8.1.0 to 8.2.0, from 8.2.0 to 8.2.1, from 8.2.1 to 8.2.2, and from 8.2.2 to 8.3.0, and rolling back
 - [Architecture decision records](docs/adr/README_en.md): ADR-0001 to ADR-0007
 - [Changelog](CHANGELOG_en.md): changes in each release
 - [Contributing](.github/CONTRIBUTING_en.md): branches and commit messages, tests, dependencies, bilingual documentation, and intro site sync

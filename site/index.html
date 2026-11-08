@@ -11,7 +11,7 @@
   <meta name="theme-color" media="(prefers-color-scheme: light)" content="#f5f4f0">
   <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#05070d">
   <meta name="google-site-verification" content="jjQRA2mVrlVkjlSTMgxrNE9bMVfG6cNSKgpwz3CQm6Y">
-  <link rel="canonical" href="https://scorpio-meow.github.io/AskMiao/">
+  <link rel="canonical" href="./" data-absolute>
   <link rel="icon" type="image/png" sizes="32x32" href="assets/favicon-32.png">
   <link rel="icon" type="image/png" sizes="64x64" href="assets/favicon-64.png">
   <link rel="apple-touch-icon" href="assets/apple-touch-icon.png">
@@ -19,38 +19,30 @@
   <meta property="og:site_name" content="AskMiao">
   <meta property="og:title" content="AskMiao：自主研究，答案有出處">
   <meta property="og:description" content="開源的企業級 Agentic RAG 知識庫對話系統。Agent 自主查證內部文件與網路資料，每句結論都以 [n] 標註、對得回原文；會改動外部系統的工具，執行前先問過你。">
-  <meta property="og:url" content="https://scorpio-meow.github.io/AskMiao/">
-  <meta property="og:image" content="https://scorpio-meow.github.io/AskMiao/assets/og-image.png">
+  <meta property="og:url" content="./" data-absolute>
+  <meta property="og:image" content="assets/og-image.png" data-absolute>
   <meta property="og:image:width" content="1200">
   <meta property="og:image:height" content="630">
   <meta property="og:locale" content="zh_TW">
   <meta name="twitter:card" content="summary_large_image">
-  <meta name="twitter:title" content="AskMiao：自主研究，答案有出處">
-  <meta name="twitter:description" content="開源的企業級 Agentic RAG 知識庫對話系統，答案逐句標註出處。">
-  <meta name="twitter:image" content="https://scorpio-meow.github.io/AskMiao/assets/og-image.png">
-  <script type="application/ld+json">
+  <script type="application/ld+json" data-stamp>
   {
     "@context": "https://schema.org",
     "@type": "SoftwareSourceCode",
     "name": "AskMiao",
     "alternateName": "AskMiao 企業知識庫問答系統",
     "description": "開源、可自架的企業級 Agentic RAG 智慧知識庫對話系統，答案逐句附出處",
-    "url": "https://scorpio-meow.github.io/AskMiao/",
-    "image": "https://scorpio-meow.github.io/AskMiao/assets/og-image.png",
+    "url": "./",
+    "image": "assets/og-image.png",
     "author": {"@type": "Person", "name": "Scorpio-meow", "url": "https://github.com/Scorpio-meow"},
     "keywords": "RAG, Agentic RAG, 知識庫, 混合檢索, FAISS, BM25, AI Agent, MCP, Model Context Protocol, OpenAPI, Ollama, 自架",
     "codeRepository": "https://github.com/Scorpio-meow/AskMiao",
     "license": "https://opensource.org/licenses/MIT",
     "programmingLanguage": ["Python", "TypeScript"],
-    "runtimePlatform": ["FastAPI", "React"],
-    "version": "8.2.2",
-    "dateModified": "2026-11-07"
+    "runtimePlatform": ["FastAPI", "React"]
   }
   </script>
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link rel="stylesheet"
-    href="https://fonts.googleapis.com/css2?family=Geist:wght@400..700&family=Geist+Mono:wght@400;500&display=swap">
+  <link rel="preload" href="assets/fonts/geist-latin.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="stylesheet" href="styles.css">
   <script src="main.js" defer></script>
 </head>
@@ -181,7 +173,7 @@
         </div>
         <ul class="hero__facts">
           <li><b>MIT</b><span>開源授權，可自行架設</span></li>
-          <li><b>5</b><span>家模型供應商，皆可呼叫工具</span></li>
+          <li><b>6</b><span>家模型供應商，皆可呼叫工具</span></li>
           <li><b>28</b><span>種文件格式，掃描 PDF 可 OCR</span></li>
           <li><b>300</b><span>秒內未核准的工具呼叫視為拒絕</span></li>
         </ul>
@@ -252,6 +244,7 @@
           <li><span class="logo" style="--logo: url(assets/logos/googlegemini.svg)"></span>Google Gemini</li>
           <li><span class="logo logo--none" aria-hidden="true"></span>Microsoft Foundry</li>
           <li><span class="logo" style="--logo: url(assets/logos/ollama.svg)"></span>Ollama</li>
+          <li><span class="logo logo--none" aria-hidden="true"></span>vLLM</li>
           <li><span class="logo" style="--logo: url(assets/logos/modelcontextprotocol.svg)"></span>Model Context Protocol</li>
           <li><span class="logo" style="--logo: url(assets/logos/huggingface.svg)"></span>Hugging Face</li>
           <li><span class="logo" style="--logo: url(assets/logos/fastapi.svg)"></span>FastAPI</li>
@@ -293,9 +286,9 @@
             <li><b>0:24</b>點開 [1]，看到原文段落與相關度。</li>
             <li><b>0:30</b>FAISS 向量與 BM25 兩軌檢索，以 RRF 依名次融合，Cross-Encoder 重排後只把過門檻的段落交給 Agent。</li>
             <li><b>0:36</b>會改動外部系統的工具，執行前先問過你；按下拒絕，請求就不會送出。</li>
-            <li><b>0:42</b>6.0.0 新功能：Agent Skills，輸入 / 叫出專業做法；MCP 支援 Streamable HTTP 與 OAuth，OpenAPI 匯入一併帶上認證。</li>
-            <li><b>0:48</b>每個出站請求都要過九道檢查，另有登入失敗節流、改密碼即撤銷權杖與工具憑證加密存放。</li>
-            <li><b>0:54</b>五家模型共用一層介面；影片裡的回答都由本機 Ollama 的 nemotron-3.5-bolt 產生。</li>
+            <li><b>0:42</b>Agent Skills：輸入 / 叫出專業做法，也能直接上傳整個技能資料夾；MCP 支援 stdio、HTTP 與 OAuth，OpenAPI 匯入一併帶上認證；每個帳號可以設定自己的 API 連線，管理員開放共用連線並指定系統模型。</li>
+            <li><b>0:48</b>Agent 讀取網頁前要先過九道檢查，另有登入失敗節流、改密碼即撤銷權杖與工具憑證加密存放。</li>
+            <li><b>0:54</b>六家模型共用一層介面，也能全部跑在自己的機器上；影片裡的回答都由本機 Ollama 的 nemotron-3.5-bolt 產生。</li>
             <li><b>1:00</b>自主研究，答案有出處。github.com/Scorpio-meow/AskMiao，MIT 授權。</li>
           </ol>
         </details>
@@ -558,8 +551,8 @@
           </li>
           <li class="bento__card reveal" style="--i: 1" data-glow>
             <div class="bento__text">
-              <h3>五家供應商，各帳號自己的連線</h3>
-              <p>五家都能呼叫工具與串流。管理員可開放共用連線，並替文件摘要與 OCR 指定系統模型。</p>
+              <h3>六家供應商，各帳號自己的連線</h3>
+              <p>六家都能呼叫工具與串流。管理員可開放共用連線，並替文件摘要與 OCR 指定系統模型。</p>
             </div>
             <div class="bento__ui">
               <ul class="frag frag--providers">
@@ -568,6 +561,7 @@
                 <li><span class="logo" style="--logo: url(assets/logos/googlegemini.svg)"></span>Google Gemini<span class="dot is-ok"></span></li>
                 <li><span class="logo logo--none" aria-hidden="true"></span>Microsoft Foundry<span class="dot is-ok"></span></li>
                 <li><span class="logo" style="--logo: url(assets/logos/ollama.svg)"></span>Ollama（本機）<span class="dot is-ok"></span></li>
+                <li><span class="logo logo--none" aria-hidden="true"></span>vLLM（本機）<span class="dot is-ok"></span></li>
               </ul>
             </div>
           </li>
@@ -812,7 +806,7 @@ bun run dev</code></pre>
           </ul>
         </nav>
         <div class="closing__meta">
-          <p><span class="mono">AskMiao 8.2.2</span> · MIT 授權</p>
+          <p><span class="mono">AskMiao <span data-release="version"></span></span> · MIT 授權</p>
           <p>產品名稱與標誌屬於各自的所有者。</p>
         </div>
       </div>

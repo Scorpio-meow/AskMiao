@@ -2,7 +2,7 @@
 
 [繁體中文](api.md) | [English](api_en.md)
 
-> REST and SSE streaming endpoints of the AskMiao **8.2.2** backend, written against the actual routers in `backend/app/api/`. With `ENABLE_API_DOCS=true` the backend also serves interactive docs at `http://localhost:8001/docs` (Swagger UI) and `http://localhost:8001/redoc`, and the OpenAPI document at `/openapi.json`. These three paths need no sign-in and list every endpoint and parameter, so keep `ENABLE_API_DOCS=false` (the template value) for public deployments; all three then return `404`.
+> REST and SSE streaming endpoints of the AskMiao **8.3.0** backend, written against the actual routers in `backend/app/api/`. With `ENABLE_API_DOCS=true` the backend also serves interactive docs at `http://localhost:8001/docs` (Swagger UI) and `http://localhost:8001/redoc`, and the OpenAPI document at `/openapi.json`. These three paths need no sign-in and list every endpoint and parameter, so keep `ENABLE_API_DOCS=false` (the template value) for public deployments; all three then return `404`.
 
 ## Contents
 
@@ -335,7 +335,7 @@ At most 50,000 characters of each attachment's text go into the model context; t
 | `422` | Field validation failed: message too long, too many or too large attachments, a `data_url` that is not a base64 `data:` URL, and so on |
 | `429` | This user already has 2 answers streaming |
 
-**How `reasoning_effort` is handled**: the frontend offers `none`, `low`, `medium`, `high`, `xhigh`, and `max`; the backend accepts `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, and `max`, and drops any other value. Per-provider mapping: GPT models on OpenAI and Microsoft Foundry get it as is (`gpt-6*` and GPT models on Foundry use the Responses API, where only `luna` models accept `none` and the rest get `low`, and `minimal` always becomes `low`); Claude gets `output_config.effort` (`none` and `minimal` become `low`); Gemini maps to `minimal` through `high` (`none` becomes `minimal`, `xhigh` and `max` become `high`); Ollama maps to `think` (`none` is `false`, `xhigh` and `max` become `high`); non-OpenAI models on Foundry get nothing. For OpenAI models on Chat Completions, `gpt-5.x` models (names containing `gpt-5.`) always get `none` when tools are attached; the original `gpt-5`, `gpt-5-mini`, and `gpt-5-nano` do not accept `none`, `xhigh`, or `max`: `none` becomes `minimal` and `xhigh` and `max` become `high`, and otherwise the user's choice is sent.
+**How `reasoning_effort` is handled**: the frontend offers `none`, `low`, `medium`, `high`, `xhigh`, and `max`; the backend accepts `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, and `max`, and drops any other value. Per-provider mapping: GPT models on OpenAI and Microsoft Foundry get it as is (`gpt-6*` and GPT models on Foundry use the Responses API, where only `luna` models accept `none` and the rest get `low`, and `minimal` always becomes `low`); Claude gets `output_config.effort` (`none` and `minimal` become `low`); Gemini maps to `minimal` through `high` (`none` becomes `minimal`, `xhigh` and `max` become `high`); Ollama maps to `think` (`none` is `false`, `xhigh` and `max` become `high`), and vLLM gets the value as is (vLLM applies it through the model's chat template; `none`, for example, turns Qwen3's thinking off); non-OpenAI models on Foundry get nothing. For OpenAI models on Chat Completions, `gpt-5.x` models (names containing `gpt-5.`) always get `none` when tools are attached; the original `gpt-5`, `gpt-5-mini`, and `gpt-5-nano` do not accept `none`, `xhigh`, or `max`: `none` becomes `minimal` and `xhigh` and `max` become `high`, and otherwise the user's choice is sent.
 
 #### SSE events
 
@@ -419,9 +419,9 @@ Requires sign-in. Returns the API connections the account may use with their mod
 The tool definitions currently available to the agent (sign-in required), in the OpenAI Function Calling `tools` format:
 
 - Built-in tools `search_knowledge_base`, `filter_and_count_records`, `web_search`, and `web_fetch` (the last two are omitted when `ENABLE_WEB_SEARCH=false`). The `search_knowledge_base` description lists every document's file name and AI summary so the model can choose where to search.
-- Enabled custom API tools (description prefixed with `[外部自訂 API]`).
-- Discovered tools of enabled MCP servers, named `mcp_<server>_<tool>` (description prefixed with `[MCP 協定工具]`).
-- When an enabled MCP server has discovered resources or prompts, `read_mcp_resource` (parameters `server`, `uri`) and `get_mcp_prompt` (parameters `server`, `name`, `arguments`), whose descriptions are prefixed with `[MCP 協定]` and list the available items (see [Server object](#server-object)).
+- Enabled custom API tools (description prefixed with `[自訂 API]`).
+- Discovered tools of enabled MCP servers, named `mcp_<server>_<tool>` (description prefixed with `[MCP 工具]`).
+- When an enabled MCP server has discovered resources or prompts, `read_mcp_resource` (parameters `server`, `uri`) and `get_mcp_prompt` (parameters `server`, `name`, `arguments`), whose descriptions list the available items (see [Server object](#server-object)).
 - When at least one enabled Agent Skill that the caller can see has its files present, `activate_skill` and `read_skill_resource`, plus `run_skill_script` when one of them has `allow_scripts` turned on (see [7. Agent Skills](#7-agent-skills-apiskills)); otherwise none of them appears.
 
 ```json
@@ -539,7 +539,7 @@ The account's own personal connections (sign-in required). Connection object:
 
 | Field | Description |
 |---|---|
-| `id`, `name`, `provider`, `api_base`, `models` | Connection ID, name, provider (`openai`, `anthropic`, `gemini`, `foundry`, `ollama`), API address, model list |
+| `id`, `name`, `provider`, `api_base`, `models` | Connection ID, name, provider (`openai`, `anthropic`, `gemini`, `foundry`, `ollama`, `vllm`), API address, model list |
 | `max_output_tokens` | Claude output token limit, `null` when unset |
 | `has_api_key` | Whether a key is stored; the key itself is never returned |
 | `scope` | `personal` or `shared` |
@@ -551,7 +551,7 @@ The account's own personal connections (sign-in required). Connection object:
 - `POST /api/llm-connections`: body with `name`, `provider`, `api_base`, `api_key` (optional), `models`, `max_output_tokens` (optional); returns `201` with the connection object.
 - `PUT /api/llm-connections/{connection_id}`: updates only the fields sent; setting `name`, `provider`, `api_base`, or `models` to `null` returns `400` `這些欄位不可設為空值：<fields>` ("these fields cannot be null"). A missing (or `null`) `api_key` keeps the stored key, and an empty string returns `422`; but changing `provider` or `api_base` without a new key clears the stored key, so providers that need a key then return `400` `這個供應商需要 API 金鑰；變更供應商或 API 位址後不會沿用原本的金鑰，請重新輸入` ("this provider needs an API key; the old key is not kept after the provider or API address changes, enter it again"). Someone else's connection returns `404`.
 - `DELETE /api/llm-connections/{connection_id}`: deletes the connection and its key.
-- `POST /api/llm-connections/{connection_id}/test`: body `{"model_name": "gpt-6-sol"}`; sends one short message with that model and returns `{"ok": true, "reply": "OK"}`, or `{"ok": false, "error": "reason"}` (still status `200`) when it fails. A connection that does not exist or that the caller may not test returns `404` `找不到這個 API 連線` ("connection not found"), and a `model_name` missing from the connection's model list returns `400` `這個 API 連線沒有提供此模型` ("model not offered by this connection").
+- `POST /api/llm-connections/{connection_id}/test`: body `{"model_name": "gpt-6-sol"}`; sends one short message with that model and returns `{"ok": true, "reply": "OK"}`, or `{"ok": false, "error": "reason"}` (still status `200`) when it fails. A connection that does not exist or that the caller may not test returns `404` `找不到這個 API 連線` ("connection not found"), and a `model_name` missing from the connection's model list returns `400` `這個 API 連線沒有提供此模型` ("model not offered by this connection"). A vLLM connection also sends one test tool to check that the server has tool calling turned on.
 - `POST /api/llm-connections/discover-models`: body with `provider` and `api_base`, plus `api_key` or `connection_id` (reuses that connection's stored key only when both `provider` and `api_base` match the connection, and otherwise queries without a key; owner only for personal connections, admins only for shared ones, and a connection that does not exist or is not permitted returns `404` `找不到這個 API 連線`, "connection not found"). Returns `{"models": [...]}` (sorted, at most 500) or `400` with the reason. It queries the OpenAI-compatible `{api_base}/models`, Gemini's `/v1beta/openai/models`, Claude's Models API, or Ollama's `/api/tags`; Foundry cannot list deployments and returns `400`. A member's query can likewise only reach public addresses; the timeout is `LLM_TAGS_TIMEOUT`.
 
 Saving checks that Anthropic, Gemini, and Foundry have a key; that Claude (including Claude deployments on Foundry) has `max_output_tokens`, and that Claude on Foundry uses a `*.services.ai.azure.com` endpoint; and that a member's `api_base` resolves to a public address. Failures return `400` with the reason; malformed fields return `422`.
@@ -1291,7 +1291,7 @@ Connections created by admins and granted to accounts; the fields match the [con
 - `PUT /api/admin/llm-connections/{connection_id}`: updates only the fields sent, with the same rules as `PUT` in section 3 (fields cannot be set to `null`, `api_key` cannot be an empty string, and changing `provider` or `api_base` clears the stored key); `allowed_user_ids` follows the same rule as above.
 - `DELETE /api/admin/llm-connections/{connection_id}`: deletes the connection for every account.
 
-The API address of a shared connection is not limited to public addresses and may point at the internal network (for example a local Ollama). Creating, updating, and deleting one writes `ADMIN_LLM_CONNECTION_*` to the security log. When an update drops the model a system model uses, or the connection is deleted, that purpose is cleared as well (see 8.6).
+The API address of a shared connection is not limited to public addresses and may point at the internal network (for example a local Ollama or vLLM). Creating, updating, and deleting one writes `ADMIN_LLM_CONNECTION_*` to the security log. When an update drops the model a system model uses, or the connection is deleted, that purpose is cleared as well (see 8.6).
 
 ### 8.6 System models
 

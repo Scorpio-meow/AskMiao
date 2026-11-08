@@ -157,8 +157,8 @@ async def test_only_model_supported_image_types_are_sent_as_images(monkeypatch):
     events = await collect(research(agent, "看圖", attachments=attachments))
     user_content = llm.chat_messages[0][-1]["content"]
     assert [part["image_url"]["url"] for part in user_content if part["type"] == "image_url"] == ["data:image/png;base64,AAAA"]
-    assert "[附加檔案: b.svg]\n<svg>圖示</svg>" in user_content[0]["text"]
-    assert "[附加檔案: c.bmp]\n[不支援的圖片格式 image/bmp" in user_content[0]["text"]
+    assert "[附件：b.svg]\n<svg>圖示</svg>" in user_content[0]["text"]
+    assert "[附件：c.bmp]\n[不支援的圖片格式 image/bmp" in user_content[0]["text"]
     assert next(e for e in events if e["event"] == "attachments_extracted")["data"] == {"contents": [None, "<svg>圖示</svg>", None]}
 @pytest.mark.asyncio
 async def test_web_fetch_rejects_url_not_given_by_user_or_tool_results(monkeypatch):

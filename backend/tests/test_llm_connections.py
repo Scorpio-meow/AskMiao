@@ -2,6 +2,7 @@ import ipaddress
 import json
 from datetime import datetime
 import pytest
+import httpx
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
@@ -10,7 +11,7 @@ from sqlalchemy.pool import StaticPool
 from app.api import admin as admin_api
 from app.api import chat as chat_api
 from app.api import llm_connections as connections_api
-from app.core import ssrf_protection
+from app.core import llm_client, ssrf_protection
 from app.core.error_response import SafeClientError
 from app.core.jwt_auth import get_current_active_user
 from app.core.ssrf_protection import SSRFProtectionError
@@ -199,12 +200,12 @@ def test_connection_test_reports_errors_without_internal_addresses(env, monkeypa
     alice = login("alice")
     connection_id = alice.post("/api/llm-connections", json=personal()).json()["id"]
     calls = []
-    async def fake_call_llm(messages, *, endpoint, model_name, timeout=None, reasoning_effort=None):
-        calls.append((endpoint.api_key, model_name))
+    async def fake_call_llm(messages, *, endpoint, model_name, timeout=None, reasoning_effort=None, tools=None):
+        calls.append((endpoint.api_key, model_name, tools))
         return "OK"
     monkeypatch.setattr(connections_api, "call_llm", fake_call_llm)
     assert alice.post(f"/api/llm-connections/{connection_id}/test", json={"model_name": "gpt-6-sol"}).json() == {"ok": True, "reply": "OK"}
-    assert calls == [("sk-alice", "gpt-6-sol")]
+    assert calls == [("sk-alice", "gpt-6-sol", None)]
     assert alice.post(f"/api/llm-connections/{connection_id}/test", json={"model_name": "other"}).status_code == 400
     async def blocked(*args, **kwargs):
         try:
@@ -226,3 +227,37 @@ def test_deleting_an_account_removes_its_connections_and_access(env):
     with Session() as session:
         assert session.query(LlmConnection).filter(LlmConnection.owner_id == ids["alice"]).count() == 0
         assert json.loads(session.get(LlmConnection, shared_id).allowed_user_ids) == [ids["bob"]]
+def test_vllm_shared_connection_needs_no_key_and_its_test_checks_tool_calling(env, monkeypatch):
+    login, _, _ = env
+    root = login("root")
+    providers = {preset["provider"]: preset for preset in root.get("/api/llm-connections/providers").json()["providers"]}
+    assert providers["vllm"]["requires_api_key"] is False
+    assert providers["vllm"]["uses_max_output_tokens"] is True
+    created = root.post("/api/admin/llm-connections", json={
+        "name": "內部 vLLM",
+        "provider": "vllm",
+        "api_base": "http://intranet.example.com:8000/v1",
+        "models": ["Qwen/Qwen3-32B"],
+        "max_output_tokens": 8192,
+        "allowed_user_ids": [],
+    })
+    assert created.status_code == 201
+    connection = created.json()
+    assert connection["provider"] == "vllm" and connection["has_api_key"] is False
+    requests = []
+    def handler(request):
+        requests.append((request.url.path, request.headers.get("Authorization"), json.loads(request.content)))
+        return httpx.Response(400, json={"error": {
+            "message": '"auto" tool choice requires --enable-auto-tool-choice and --tool-call-parser to be set',
+            "type": "BadRequestError",
+            "code": 400,
+        }})
+    monkeypatch.setattr(llm_client, "_http_client", httpx.AsyncClient(transport=httpx.MockTransport(handler)))
+    result = root.post(f"/api/llm-connections/{connection['id']}/test", json={"model_name": "Qwen/Qwen3-32B"}).json()
+    assert result == {"ok": False, "error": llm_client.VLLM_TOOLS_DISABLED_MESSAGE}
+    path, authorization, payload = requests[0]
+    assert path == "/v1/chat/completions" and authorization is None
+    assert payload["tools"] == connections_service.CONNECTION_TEST_TOOLS
+    assert payload["tool_choice"] == "auto"
+    assert payload["reasoning_effort"] == "none"
+    assert payload["max_completion_tokens"] == 8192

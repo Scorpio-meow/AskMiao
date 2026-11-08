@@ -12,6 +12,7 @@ from docx.table import Table as DocxTable
 from pptx import Presentation
 from pptx.shapes.group import GroupShape
 import openpyxl
+from app import prompts
 from app.core.config import settings
 from app.core.domain_profile import domain_profile
 from app.core.html_text import extract_text_and_title
@@ -384,7 +385,7 @@ class DocumentProcessor:
         model: Optional[SystemModelTarget],
     ) -> str:
         if not content or not content.strip():
-            return f"收錄內部文件《{filename}》。"
+            return prompts.DOCUMENT_PLACEHOLDER_SUMMARY.format(filename=filename)
         if model is None:
             return cls._generate_fallback_summary(filename, content, file_type, extraction)
         overview = cls._records_overview(extraction)
@@ -396,20 +397,8 @@ class DocumentProcessor:
             mid_start = max(0, (len(stripped) // 2) - 400)
             mid_part = stripped[mid_start:mid_start + 800]
             last_part = stripped[-500:]
-            sample_content = f"{first_part}\n\n[...中略...]\n\n{mid_part}\n\n[...下略...]\n\n{last_part}"
-        prompt = (
-            "你是一個頂級的知識庫文件分析與大綱生成專家。請根據以下文件的檔名與內文摘錄，"
-            "產出一份高水準、專業、客觀且條理分明的「文件主題與大綱摘要」（繁體中文，約 70~150 字）。\n\n"
-            "[嚴格準則]\n"
-            "1. 核心定位：準確指明文件類型與核心主題（例如：產品規格說明書、宣傳型錄DM、LINE工作討論紀錄、社群貼文資料集、技術手冊等）。\n"
-            "2. 內容大綱：提煉出主要涵蓋的章節、核心架構、功能特色或討論焦點。\n"
-            "3. 雜訊過濾：嚴格禁止將通訊對話人名/任務待辦（如「1. @某某」）、純頁碼、版權宣告或公司電話地址誤當作章節標題。\n"
-            "4. 輸出要求：請直接輸出摘要文字本身，語句通順精煉，嚴禁客套話或前言標籤。\n\n"
-            f"[文件檔名]{filename}\n"
-            f"[文件類型]{file_type}\n"
-            + (f"[結構化資料]{overview}\n" if overview else "")
-            + f"[內容摘錄]\n{sample_content}"
-        )
+            sample_content = f"{first_part}{prompts.EXCERPT_MIDDLE_GAP}{mid_part}{prompts.EXCERPT_END_GAP}{last_part}"
+        prompt = prompts.document_summary(filename, file_type, overview, sample_content)
         try:
             from app.core.llm_client import call_llm
             response = await call_llm(
@@ -435,10 +424,10 @@ class DocumentProcessor:
         cls, filename: str, content: str, file_type: str = "", extraction: Optional[ExtractionResult] = None
     ) -> str:
         if not content or not content.strip():
-            return f"收錄內部文件《{filename}》。"
+            return prompts.DOCUMENT_PLACEHOLDER_SUMMARY.format(filename=filename)
         raw_lines = [line.strip() for line in content.strip().splitlines() if line.strip()]
         if not raw_lines:
-            return f"收錄內部文件《{filename}》。"
+            return prompts.DOCUMENT_PLACEHOLDER_SUMMARY.format(filename=filename)
         overview = cls._records_overview(extraction)
         if overview:
             return f"收錄 {overview}。"
@@ -476,7 +465,7 @@ class DocumentProcessor:
                 continue
             cleaned_lines.append(line_str)
         if not cleaned_lines:
-            return f"收錄內部文件《{filename}》。"
+            return prompts.DOCUMENT_PLACEHOLDER_SUMMARY.format(filename=filename)
         def strip_toc_leader(text: str) -> str:
             without_page = text.rstrip("0123456789")
             end = len(without_page)

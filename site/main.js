@@ -43,6 +43,17 @@
     let sfxBus = null;
     let musicBus = null;
     let musicBuffer = null;
+    let musicLoop = null;
+    const SILENCE_LEVEL = 10 ** (-60 / 20);
+    const audibleRange = (buffer) => {
+      const channels = Array.from({ length: buffer.numberOfChannels }, (_, index) => buffer.getChannelData(index));
+      const audible = (index) => channels.some((data) => Math.abs(data[index]) >= SILENCE_LEVEL);
+      let first = 0;
+      while (first < buffer.length - 1 && !audible(first)) first += 1;
+      let last = buffer.length - 1;
+      while (last > first && !audible(last)) last -= 1;
+      return { start: first / buffer.sampleRate, end: (last + 1) / buffer.sampleRate };
+    };
     let musicSource = null;
     let musicLoad = null;
     let stopTimer = 0;
@@ -175,7 +186,10 @@
             return response.arrayBuffer();
           })
           .then((data) => ctx.decodeAudioData(data))
-          .then((buffer) => { musicBuffer = buffer; });
+          .then((buffer) => {
+            musicBuffer = buffer;
+            musicLoop = audibleRange(buffer);
+          });
       }
       return musicLoad;
     };
@@ -196,8 +210,10 @@
           musicSource = ctx.createBufferSource();
           musicSource.buffer = musicBuffer;
           musicSource.loop = true;
+          musicSource.loopStart = musicLoop.start;
+          musicSource.loopEnd = musicLoop.end;
           musicSource.connect(musicBus);
-          musicSource.start();
+          musicSource.start(0, musicLoop.start);
         }
         rampMusic(ducked ? 0 : MUSIC_LEVEL, 2.5);
       }).catch(() => {

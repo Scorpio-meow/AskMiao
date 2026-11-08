@@ -4,6 +4,7 @@ from typing import Any, Dict, List, Optional
 from urllib.parse import urlparse
 import httpx
 from sqlalchemy.orm import Session
+from app import prompts
 from app.core.error_response import SafeClientError
 from app.core.llm_client import (
     DEFAULT_CLAUDE_MODELS,
@@ -21,8 +22,17 @@ PROVIDERS_REQUIRING_API_KEY = ("anthropic", "gemini", "foundry")
 OPENAI_API_BASE = "https://api.openai.com/v1"
 ANTHROPIC_API_BASE = "https://api.anthropic.com"
 GEMINI_API_BASE = "https://generativelanguage.googleapis.com"
+VLLM_API_BASE = "http://localhost:8000/v1"
 PRIVATE_ADDRESS_MESSAGE = "API 位址無法使用：個人連線只能連到可從網際網路解析的公開位址，內部網路的服務請管理員設為共用連線"
-CONNECTION_TEST_PROMPT = [{"role": "user", "content": "請只回覆「OK」。"}]
+CONNECTION_TEST_MESSAGES = [{"role": "user", "content": prompts.CONNECTION_TEST}]
+CONNECTION_TEST_TOOLS = [{
+    "type": "function",
+    "function": {
+        "name": "connection_check",
+        "description": prompts.CONNECTION_TEST_TOOL,
+        "parameters": {"type": "object", "properties": {}},
+    },
+}]
 CONNECTION_TEST_REPLY_CHARS = 200
 def provider_presets() -> List[Dict[str, Any]]:
     return [
@@ -36,6 +46,8 @@ def provider_presets() -> List[Dict[str, Any]]:
          "models": [], "requires_api_key": True, "uses_max_output_tokens": True},
         {"provider": "ollama", "label": "Ollama", "api_base": f"https://{OLLAMA_CLOUD_HOST}",
          "models": [], "requires_api_key": False, "uses_max_output_tokens": False},
+        {"provider": "vllm", "label": "vLLM", "api_base": VLLM_API_BASE,
+         "models": [], "requires_api_key": False, "uses_max_output_tokens": True},
     ]
 def _user_ids(stored: Optional[str]) -> Optional[List[int]]:
     if stored is None:

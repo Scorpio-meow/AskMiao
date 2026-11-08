@@ -10,7 +10,7 @@ import tempfile
 import time
 from typing import Any, Dict, List, Optional, Tuple
 import httpx
-from app import __version__
+from app import __version__, prompts
 from app.core.error_response import format_client_error, log_and_get_error_id
 from app.core.ssrf_protection import DnsPool, SSRFSafeTransport, same_origin, send_following_redirects
 from app.services.mcp_tools import (
@@ -1039,12 +1039,12 @@ class McpManager:
             logger.warning("略過定義不合規則的 MCP 工具 %s: %s", t_name, e)
             return None
         title = mcp_tool.get("title") if isinstance(mcp_tool.get("title"), str) else t_name
-        desc = mcp_tool.get("description") or f"由 MCP 伺服器 [{server_display_name}] 提供的工具: {title}"
+        desc = mcp_tool.get("description") or prompts.MCP_TOOL_PLACEHOLDER.format(server=server_display_name, title=title)
         return {
             "type": "function",
             "function": {
                 "name": mcp_function_name(server_name, t_name),
-                "description": f"[MCP 協定工具]{server_display_name} -> {title}：{desc}",
+                "description": prompts.MCP_TOOL.format(server=server_display_name, title=title, description=desc),
                 "parameters": parameters
             }
         }

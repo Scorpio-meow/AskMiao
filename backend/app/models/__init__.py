@@ -167,7 +167,7 @@ class SystemModel(Base):
     model_name = Column(String, nullable=False)
     reasoning_effort = Column(String, nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
-LLM_PROVIDER_PATTERN = r"^(openai|anthropic|gemini|foundry|ollama)$"
+LLM_PROVIDER_PATTERN = r"^(openai|anthropic|gemini|foundry|ollama|vllm)$"
 MAX_LLM_CONNECTION_MODELS = 50
 SYSTEM_MODEL_PURPOSES = ("document_summary", "pdf_ocr")
 REASONING_EFFORT_PATTERN = f"^({'|'.join(REASONING_EFFORT_VALUES)})$"

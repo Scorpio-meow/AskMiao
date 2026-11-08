@@ -118,7 +118,7 @@ def test_recent_history_attachment_text_is_bounded_from_the_newest(db, monkeypat
     history = ChatService().get_recent_history(db, conversation.id, before_message_id=current.id, limit=10)
     assert history == [
         {"role": "user", "content": "q1"},
-        {"role": "user", "content": "[附加檔案: a.txt]\n新附件內容很\n\n[使用者問題]\nq2"},
+        {"role": "user", "content": "[附件：a.txt]\n新附件內容很\n\n[使用者問題]\nq2"},
     ]
 @pytest.mark.asyncio
 async def test_follow_up_question_sees_earlier_attachment_text(db, monkeypatch):
@@ -142,7 +142,7 @@ async def test_follow_up_question_sees_earlier_attachment_text(db, monkeypatch):
     await send(db, connection_id, "摘要附件", attachments=[attachment])
     await send(db, connection_id, "那病假呢？", conversation_id=db.query(Conversation).one().id)
     assert sent[-1][1:] == [
-        {"role": "user", "content": "[附加檔案: 規章.txt]\n特休依年資計算\n\n[使用者問題]\n摘要附件"},
+        {"role": "user", "content": "[附件：規章.txt]\n特休依年資計算\n\n[使用者問題]\n摘要附件"},
         {"role": "assistant", "content": "好"},
         {"role": "user", "content": "那病假呢？"},
     ]

@@ -10,7 +10,7 @@ AskMiao answers with hybrid retrieval (FAISS + BM25 + Cross-Encoder) and agentic
 
 [繁體中文](README.md) | [English](README_en.md)
 
-[![Version](https://img.shields.io/badge/version-8.2.2-2563eb?style=flat)](CHANGELOG_en.md)
+[![Version](https://img.shields.io/badge/version-8.3.0-2563eb?style=flat)](CHANGELOG_en.md)
 [![Python](https://img.shields.io/badge/Python-3.12+-3776AB?style=flat&logo=python&logoColor=white)](https://www.python.org/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-005571?style=flat&logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
 [![React](https://img.shields.io/badge/React-19.3-61DAFB?style=flat&logo=react&logoColor=black)](https://react.dev/)
@@ -59,7 +59,7 @@ AskMiao answers with hybrid retrieval (FAISS + BM25 + Cross-Encoder) and agentic
 | 2 | **Honest "nothing found"** | Chunks below the reranker probability threshold are dropped, and when nothing passes the agent says so instead of improvising |
 | 3 | **Autonomous research** | A ReAct agent decides whether to search the knowledge base, count records precisely, search the web, or read a page, with the research trace shown live |
 | 4 | **Hybrid retrieval** | Vector search and BM25 always both run, fused by rank with RRF and reranked by a Cross-Encoder; chunks are keyed by a database chunk_id |
-| 5 | **Five LLM providers** | Ollama, OpenAI, Microsoft Foundry, Anthropic Claude, and Google Gemini all support tool calling and streaming |
+| 5 | **Six LLM providers** | Ollama, vLLM, OpenAI, Microsoft Foundry, Anthropic Claude, and Google Gemini all support tool calling and streaming |
 | 6 | **External tools and MCP** | Paste an OpenAPI spec to import API tools or connect MCP servers (with OAuth); managed by admins only, and calls with side effects need the user's approval first |
 | 7 | **Agent Skills** | Upload a skill folder (a whole collection of skills at once), a zip, or a `SKILL.md`; the model loads a skill's instructions and reference files when a question calls for it |
 | 8 | **Defense in depth** | RSA JWT, Argon2 password hashing with login failure throttling, per-hop SSRF validation with the connection pinned to the checked IP, tool credentials encrypted at rest, a trust boundary for tool output, resource limits, and error codes instead of stack traces |
@@ -111,8 +111,8 @@ flowchart LR
 
 ### Multi-provider LLM
 
-- One calling layer supports **Ollama, OpenAI, Microsoft Foundry, Anthropic Claude (official SDK), and Google Gemini**, routed by the connection's provider and the model name, all with tool calling and streaming.
-- The frontend switches models and six reasoning levels: `None`, `Low`, `Medium`, `High`, `X-High`, and `Max`; the level is mapped to what each provider supports and passed to the model (OpenAI, Microsoft Foundry, Claude, Gemini, Ollama), and levels a model does not support are disabled in the UI.
+- One calling layer supports **Ollama, vLLM, OpenAI, Microsoft Foundry, Anthropic Claude (official SDK), and Google Gemini**, routed by the connection's provider and the model name, all with tool calling and streaming.
+- The frontend switches models and six reasoning levels: `None`, `Low`, `Medium`, `High`, `X-High`, and `Max`; the level is mapped to what each provider supports and passed to the model (OpenAI, Microsoft Foundry, Claude, Gemini, Ollama, vLLM), and levels a model does not support are disabled in the UI.
 - Each account sets up its own API connections (address, key, models) in its profile, and admins can create shared connections and choose which accounts may use them; `.env` configures no provider. See [configuration reference: API connections](docs/configuration_en.md#api-connections).
 - Document summaries and OCR of scanned PDFs each use a shared connection, model, and reasoning effort an admin picks under "Admin → System models"; see [configuration reference: system models](docs/configuration_en.md#system-models).
 
@@ -274,7 +274,7 @@ flowchart TB
             Session["ResearchSession<br/>citations, URL provenance, trust boundary"]
             Registry["ResearchToolRegistry<br/>built-in, custom API, MCP tools, skills"]
             Retriever["HybridRetriever<br/>RRF, exact matches, rerank, threshold"]
-            LLM["llm_client<br/>Ollama, OpenAI, Foundry, Claude, Gemini"]
+            LLM["llm_client<br/>Ollama, vLLM, OpenAI, Foundry, Claude, Gemini"]
         end
 
         SSRF["SSRF guard<br/>per-hop validation"]
@@ -353,7 +353,7 @@ See [Architecture & Design](docs/architecture_en.md) for module-level details.
 | Bun | 1.x | Frontend package manager, dev server, and build |
 | Database | SQLite (bundled with Python) or PostgreSQL | SQLite works with zero dependencies |
 | Models | About 1.2 GB downloaded on first start | Embedding model `BAAI/bge-small-zh-v1.5` and reranker `BAAI/bge-reranker-base` |
-| LLM | Any one | A local Ollama, or an OpenAI, Microsoft Foundry, Anthropic, or Gemini API key |
+| LLM | Any one | A local Ollama or vLLM, or an OpenAI, Microsoft Foundry, Anthropic, or Gemini API key |
 
 ### 1. Get the source
 
@@ -507,7 +507,7 @@ AskMiao/
 │   │   ├── core/                     # Settings, auth, security, and the LLM layer
 │   │   │   ├── config.py             # Settings: every environment variable and its validation
 │   │   │   ├── lifespan.py           # Startup: create tables, initialize RAG, watch uploads
-│   │   │   ├── llm_client.py         # One calling layer for five providers (tool calls, streaming)
+│   │   │   ├── llm_client.py         # One calling layer for six providers (tool calls, streaming)
 │   │   │   ├── jwt_auth.py           # RSA JWT, Argon2 password hashing, revocation checks
 │   │   │   ├── login_throttle.py     # Login failure throttling (per login identifier and source address)
 │   │   │   ├── tool_secrets.py       # Tool credential encryption and admin API masking
@@ -632,7 +632,7 @@ Common problems such as the backend failing to start, sign-in being paused, the 
 | [Configuration Reference](docs/configuration_en.md) | Defaults and effects of every environment variable, provider routing, threshold calibration, frontend settings |
 | [Deployment Guide](docs/deployment_en.md) | Deploying on a host with Docker Compose, HTTPS, backups, and updates |
 | [Troubleshooting](docs/troubleshooting_en.md) | Common errors at startup, sign-in, in the frontend, and with tools, and how to fix them |
-| [Upgrade Guide](docs/upgrading_en.md) | Steps from 2.x to 3.0.0 and every release since (up to 8.2.1 to 8.2.2), rollback, and troubleshooting |
+| [Upgrade Guide](docs/upgrading_en.md) | Steps from 2.x to 3.0.0 and every release since (up to 8.2.2 to 8.3.0), rollback, and troubleshooting |
 | [Architecture Decision Records](docs/adr/README_en.md) | Context, trade-offs, and amendments of major design decisions |
 | [llms_en.txt](llms_en.txt) | File map, system constraints, and verification steps for AI agents |
 | [Changelog](CHANGELOG_en.md) | What was added, changed, removed, and fixed in each release |
@@ -640,7 +640,7 @@ Common problems such as the backend failing to start, sign-in being paused, the 
 
 ## Versioning
 
-- **Current version**: 8.2.2 (2026-11-07); see the [changelog](CHANGELOG_en.md).
+- **Current version**: 8.3.0 (2026-11-08); see the [changelog](CHANGELOG_en.md).
 - **Policy**: [Semantic Versioning](https://semver.org/). Incompatible changes, such as new required settings or changes to API permissions or the index format, bump the major version.
 - **Where the version lives**: `__version__` in `backend/app/__init__.py` (used by the OpenAPI document and the MCP handshake) and `frontend/package.json`, updated together with `CHANGELOG.md` for each release.
 

@@ -22,8 +22,9 @@ from app.models import (
 )
 from app.models.database import get_db
 from app.services.llm_connections import (
-    CONNECTION_TEST_PROMPT,
+    CONNECTION_TEST_MESSAGES,
     CONNECTION_TEST_REPLY_CHARS,
+    CONNECTION_TEST_TOOLS,
     chat_option,
     connection_response,
     connections_for_user,
@@ -191,13 +192,15 @@ async def test_connection(
         raise HTTPException(status_code=400, detail="這個 API 連線沒有提供此模型")
     try:
         endpoint = endpoint_of(db, connection)
+        tools = CONNECTION_TEST_TOOLS if connection.provider == "vllm" else None
         db.close()
         reply = await call_llm(
-            CONNECTION_TEST_PROMPT,
+            CONNECTION_TEST_MESSAGES,
             endpoint=endpoint,
             model_name=data.model_name,
             timeout=settings.LLM_TIMEOUT,
             reasoning_effort="none",
+            tools=tools,
         )
     except Exception as e:
         logger.info("API 連線 %s 測試失敗", connection_id, exc_info=True)

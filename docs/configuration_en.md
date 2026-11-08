@@ -2,7 +2,7 @@
 
 [繁體中文](configuration.md) | [English](configuration_en.md)
 
-> Every setting in the backend `backend/.env` and the frontend `frontend/.env`, with its default and what it actually does, as of **8.2.2** (to upgrade from 8.2.1, see the [upgrade guide](upgrading_en.md#upgrading-from-821-to-822)). The source of truth is `Settings` in `backend/app/core/config.py`; the template is [`backend/.env.example`](../backend/.env.example).
+> Every setting in the backend `backend/.env` and the frontend `frontend/.env`, with its default and what it actually does, as of **8.3.0** (to upgrade from 8.2.2, see the [upgrade guide](upgrading_en.md#upgrading-from-822-to-830)). The source of truth is `Settings` in `backend/app/core/config.py`; the template is [`backend/.env.example`](../backend/.env.example).
 
 - [How settings are read](#how-settings-are-read)
 - [Required settings](#required-settings)
@@ -88,21 +88,21 @@ Each account can only chat through two kinds of connection, and the model menu g
 
 | Field | Description |
 |---|---|
-| Provider | `openai` (OpenAI or a compatible API), `anthropic`, `gemini`, `foundry`, `ollama`; see [provider routing](#provider-routing) for how each is called |
-| API address | For example `https://api.openai.com/v1`, `https://api.anthropic.com`, `https://<resource>.services.ai.azure.com`, `https://ollama.com` |
-| API key | Required for Anthropic, Gemini, and Foundry, optional for OpenAI-compatible services and Ollama; encrypted with `TOOL_SECRETS_KEY` and never read back through the API; leave it blank when editing to keep the stored key, except that changing the provider or API address drops it and it must be entered again |
+| Provider | `openai` (OpenAI or a compatible API), `anthropic`, `gemini`, `foundry`, `ollama`, `vllm`; see [provider routing](#provider-routing) for how each is called |
+| API address | For example `https://api.openai.com/v1`, `https://api.anthropic.com`, `https://<resource>.services.ai.azure.com`, `https://ollama.com`, `http://<host>:8000/v1` (vLLM) |
+| API key | Required for Anthropic, Gemini, and Foundry, optional for OpenAI-compatible services, Ollama, and vLLM; encrypted with `TOOL_SECRETS_KEY` and never read back through the API; leave it blank when editing to keep the stored key, except that changing the provider or API address drops it and it must be entered again |
 | Models | The model names offered by this connection (deployment names for Foundry), up to 50 |
-| Output token limit | Required for Claude (`anthropic`, or Claude deployments on Foundry); the smaller of it and the model's own output limit is used |
+| Output token limit | Required for Claude (`anthropic`, or Claude deployments on Foundry); the smaller of it and the model's own output limit is used. Claude's thinking counts toward this limit too, so a limit set too low cuts answers off. Optional for vLLM; see [Connecting vLLM](#connecting-vllm) |
 
 When a new connection is created, the form fills in the provider's official API address and the models below, which can be edited:
 
-| Provider | Prefilled models (8.2.2) |
+| Provider | Prefilled models (8.3.0) |
 |---|---|
 | OpenAI | `gpt-6.1-sol`, `gpt-6-sol`, `gpt-6-luna`, `gpt-6-astra`, `gpt-5.6-sol`, `gpt-5.6-luna`, `gpt-5.6-terra`, `gpt-5.4`, `gpt-5.4-mini` |
 | Anthropic | `claude-opus-5-5`, `claude-fable-5-1`, `claude-sonnet-5-5`, `claude-haiku-5-5`, `claude-sonnet-5`, `claude-opus-5`, `claude-fable-5`, `claude-opus-4-8`, `claude-haiku-4-5` |
 | Gemini | `gemini-4-argon`, `gemini-3.8-flash`, `gemini-3.6-flash`, `gemini-3.5-flash-lite`, `gemini-3.1-flash-lite` |
 
-Members' personal connections may only point at addresses that resolve to the public internet: this is checked when the connection is saved, and every call goes through the SSRF check and is pinned to the approved IP (the same as custom API tools; see [ADR-0002](adr/0002-external-tools-and-outbound-safety_en.md)). Services on the internal network (such as a local Ollama) should be set up by an admin as shared connections. Admins' personal connections and shared connections are not restricted.
+Members' personal connections may only point at addresses that resolve to the public internet: this is checked when the connection is saved, and every call goes through the SSRF check and is pinned to the approved IP (the same as custom API tools; see [ADR-0002](adr/0002-external-tools-and-outbound-safety_en.md)). Services on the internal network (such as a local Ollama or vLLM) should be set up by an admin as shared connections. Admins' personal connections and shared connections are not restricted.
 
 Deleting an account deletes its personal connections and removes it from shared connection lists.
 
@@ -134,9 +134,25 @@ Each API connection is called according to its provider and the model name:
 | `openai` | Starts with `gpt-6` | `{API address}/responses` |
 | `openai` | Anything else | `{API address}/chat/completions` |
 | `ollama` | Any | `{API address}/api/chat` |
+| `vllm` | Any | `{API address}/chat/completions`; see [Connecting vLLM](#connecting-vllm) |
 
 > [!NOTE]
 > `reasoning_effort` is mapped per provider before it is sent (see the [API reference](api_en.md) for the rules); `gpt-5.x` models on Chat Completions (names containing `gpt-5.`) always get `none` when tools are attached, to respect the compatibility limits between reasoning and tool calling; the original `gpt-5`, `gpt-5-mini`, and `gpt-5-nano` do not accept `none`, `xhigh`, or `max`: `none` becomes `minimal` and `xhigh` and `max` become `high`, and otherwise the user's choice is sent.
+
+### Connecting vLLM
+
+vLLM serves an OpenAI-compatible API with `vllm serve`; set the API address to its `/v1` path, for example `http://<host>:8000/v1`. The research assistant sends tool definitions on every turn, which vLLM accepts only when started with `--enable-auto-tool-choice` and a `--tool-call-parser` that matches the model; without them, the connection test reports 「vLLM 伺服器沒有開啟工具呼叫」 (tool calling is not enabled on the vLLM server). Models that think also need `--reasoning-parser`, so the thinking is kept apart from the answer and the research assistant uses only the answer. For example:
+
+```bash
+vllm serve Qwen/Qwen3-8B --enable-auto-tool-choice --tool-call-parser hermes --reasoning-parser qwen3
+```
+
+- vLLM 0.23.0 or later is required. Before 0.18.0, `none` is rejected (so the connection test fails), and before 0.21.0, `minimal`, `xhigh`, and `max` are rejected with `400`; 0.21 and 0.22 accept every level, but `none` does not turn thinking off.
+- The reasoning level is sent as `reasoning_effort` (`none` through `max`), and vLLM applies it through the model's chat template; with Qwen3, for example, `none` turns thinking off.
+- The output token limit is optional; when set it is sent as `max_completion_tokens` and thinking counts toward it, and when empty vLLM decides from the model's context length.
+- When vLLM is started with `--api-key`, enter the same key in the connection; otherwise leave the key empty.
+- Model names match the model `vllm serve` loaded (or its `--served-model-name`), and "Get models from the API" reads them from `/v1/models`.
+- vLLM usually runs on the internal network, so an admin should set it up as a shared connection; members' personal connections can only reach public addresses.
 
 ## Agent and web tools
 

@@ -13,6 +13,7 @@ from app.core.jwt_auth import get_current_active_user
 from app.core.llm_client import LlmEndpoint
 from app.models import SystemModel, User
 from app.models.database import Base, get_db, upgrade_schema
+from app import prompts
 from app.services import system_models
 from app.services.pdf_service import PDFService
 OLLAMA = {"name": "公司 Ollama", "provider": "ollama", "api_base": "http://localhost:11434", "models": ["qwen3:8b", "gemma3:12b"]}
@@ -160,7 +161,7 @@ async def test_page_ocr_sends_the_image_to_the_system_model_through_the_event_lo
     assert seen["thread"] == loop_thread
     assert seen["model_name"] == "vision"
     assert seen["reasoning_effort"] == "low"
-    assert seen["content"][0] == {"type": "text", "text": system_models.PDF_OCR_PROMPT}
+    assert seen["content"][0] == {"type": "text", "text": prompts.PDF_OCR}
     assert seen["content"][1] == {"type": "image_url", "image_url": {"url": "data:image/png;base64,iVBORw=="}}
     assert system_models.page_ocr(None) is None
 def scanned_pdf(tmp_path, pages):

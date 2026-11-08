@@ -4,11 +4,18 @@ import { Alert, Button, Dialog, DialogActions, DialogContent, DialogForm, Dialog
 import { requestErrorMessage } from './requestErrorMessage';
 import styles from './LlmConnections.module.css';
 const API_BASE_HINTS = {
-  openai: 'OpenAI 官方為 https://api.openai.com/v1；OpenAI 相容的服務（OpenRouter、vLLM 等）請填它的 /v1 位址',
+  openai: 'OpenAI 官方為 https://api.openai.com/v1；OpenAI 相容的服務（例如 OpenRouter）請填它的 /v1 位址',
   anthropic: 'Claude API 的位址',
   gemini: 'Gemini API 的位址',
   foundry: 'Foundry 資源端點，例如 https://<資源名稱>.services.ai.azure.com；Claude 部署必須使用這種端點',
   ollama: 'Ollama 的位址，例如 https://ollama.com',
+  vllm: 'vLLM 伺服器的 /v1 位址，例如 http://localhost:8000/v1；伺服器要加上 --enable-auto-tool-choice 與 --tool-call-parser 才能呼叫工具',
+};
+const CLAUDE_MAX_OUTPUT_TOKENS_HINT = 'Claude 每次回應最多產生的 token 數（例如 16000），思考也計入，超過模型上限時自動取較小值；Foundry 只有 Claude 部署需要';
+const MAX_OUTPUT_TOKENS_HINTS = {
+  anthropic: CLAUDE_MAX_OUTPUT_TOKENS_HINT,
+  foundry: CLAUDE_MAX_OUTPUT_TOKENS_HINT,
+  vllm: '選填：每次回應最多產生的 token 數，思考也計入；留空時由 vLLM 依模型的上下文長度決定',
 };
 const SEARCH_THRESHOLD = 8;
 const presetOf = (providers, provider) => providers.find((preset) => preset.provider === provider);
@@ -259,7 +266,7 @@ export default function ConnectionFormDialog({ connection, shared, providers, us
                 inputMode="numeric"
                 value={form.max_output_tokens}
                 onChange={(e) => update({ max_output_tokens: e.target.value })}
-                helperText="Claude 每次回應最多產生的 token 數（例如 16000），超過模型上限時自動取較小值；Foundry 只有 Claude 部署需要"
+                helperText={MAX_OUTPUT_TOKENS_HINTS[form.provider]}
                 disabled={saving}
               />
             )}

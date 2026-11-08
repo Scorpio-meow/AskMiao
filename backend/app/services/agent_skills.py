@@ -15,6 +15,7 @@ from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 from typing import Any, Dict, List, Optional, Tuple
 import yaml
+from app import prompts
 from app.core.config import settings
 from app.core.limits import (
     MAX_SKILL_ARCHIVE_BYTES,
@@ -335,24 +336,20 @@ def format_skill_activation(skill: ParsedSkill, resources: List[str], listing_tr
     truncated_note = ""
     if len(body) > MAX_SKILL_RESOURCE_CHARS:
         body = body[:MAX_SKILL_RESOURCE_CHARS]
-        truncated_note = "\n[技能指示過長，以下已截斷]"
+        truncated_note = prompts.SKILL_INSTRUCTIONS_TRUNCATED
     parts = [f'<skill_content name="{skill.name}">', body + truncated_note]
     if skill.compatibility:
-        parts.append(f"\n相容性說明：{skill.compatibility}")
-    script_note = (
-        "技能指示要求執行腳本時以 run_skill_script 執行。"
-        if allow_scripts
-        else "本系統不會執行技能內的腳本，腳本只能讀取內容參考。"
-    )
-    parts.append(f"\n技能中的相對路徑以技能目錄為基準；需要時以 read_skill_resource 讀取，{script_note}")
+        parts.append(prompts.SKILL_COMPATIBILITY.format(compatibility=skill.compatibility))
+    script_note = prompts.SKILL_SCRIPTS_ALLOWED if allow_scripts else prompts.SKILL_SCRIPTS_DISABLED
+    parts.append(prompts.SKILL_PATHS.format(script_note=script_note))
     if resources:
         listing = "\n".join(f"  <file>{path}</file>" for path in resources)
-        more = "\n  <!-- 檔案過多，清單不完整 -->" if listing_truncated else ""
+        more = prompts.SKILL_RESOURCES_INCOMPLETE if listing_truncated else ""
         parts.append(f"<skill_resources>\n{listing}{more}\n</skill_resources>")
     parts.append("</skill_content>")
     return "\n".join(parts)
 def format_skill_resource(name: str, path: str, text: str, truncated: bool) -> str:
-    note = "\n[檔案過長，以下已截斷]" if truncated else ""
+    note = prompts.SKILL_RESOURCE_TRUNCATED if truncated else ""
     return f'<skill_resource skill="{name}" path="{path}">\n{text}{note}\n</skill_resource>'
 def allowed_tool_names(allowed_tools: Optional[str]) -> List[str]:
     return [token.split("(", 1)[0] for token in (allowed_tools or "").split() if token.split("(", 1)[0]]

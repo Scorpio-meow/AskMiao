@@ -8,7 +8,7 @@ from app.core import llm_client
 from app.core.config import settings
 from app.core.llm_client import LlmEndpoint
 from app.core.ssrf_protection import SSRFProtectionError, SSRFSafeHttpx2Transport, SSRFSafeTransport
-from app.rag import agent as agent_module
+from app import prompts
 from app.rag.agent import ResearchAgent
 from app.rag.retrievers.hybrid import RetrievedChunk
 from app.rag.tools import ResearchToolRegistry
@@ -185,7 +185,7 @@ async def test_agent_tool_round_trip_with_claude_preserves_raw_content(claude, m
     result = await final_result(claude_agent(monkeypatch).stream_research("特休怎麼算？", endpoint=CLAUDE, model_name="claude-opus-5"))
     first_call, second_call = fake_messages.chat_calls
     assert first_call["model"] == "claude-opus-5"
-    assert first_call["system"] == [{"type": "text", "text": agent_module.SYSTEM_PROMPT, "cache_control": {"type": "ephemeral"}}]
+    assert first_call["system"] == [{"type": "text", "text": prompts.SYSTEM_PROMPT, "cache_control": {"type": "ephemeral"}}]
     assert first_call["messages"] == [{"role": "user", "content": [{"type": "text", "text": "特休怎麼算？", "cache_control": {"type": "ephemeral"}}]}]
     assert second_call["messages"][1] == {"role": "assistant", "content": CLAUDE_TOOL_USE_CONTENT}
     assert [block["tool_use_id"] for block in second_call["messages"][2]["content"]] == ["toolu_1"]
@@ -298,7 +298,7 @@ def test_ollama_payload_omits_think_without_reasoning_effort():
     assert "think" not in payload
 def test_openai_compatible_payload_strips_private_fields():
     messages = [{"role": "assistant", "content": "hi", "_anthropic_content": ["raw"]}]
-    payload = llm_client._openai_payload("gemini", messages, "gemini-3.8-flash", None, None, stream=True)
+    payload = llm_client._openai_payload("gemini", messages, "gemini-3.8-flash", None, None, stream=True, max_output_tokens=None)
     assert payload["messages"] == [{"role": "assistant", "content": "hi"}]
     assert "reasoning_effort" not in payload
     assert "tools" not in payload
@@ -312,7 +312,7 @@ def test_openai_compatible_payload_strips_private_fields():
     ("max", "high"),
 ])
 def test_gemini_payload_maps_reasoning_effort_to_supported_levels(effort, expected):
-    payload = llm_client._openai_payload("gemini", [{"role": "user", "content": "hi"}], "gemini-3.8-flash", None, effort, stream=False)
+    payload = llm_client._openai_payload("gemini", [{"role": "user", "content": "hi"}], "gemini-3.8-flash", None, effort, stream=False, max_output_tokens=None)
     assert payload["reasoning_effort"] == expected
 @pytest.mark.asyncio
 async def test_llm_requests_keep_the_pool_acquire_timeout(monkeypatch):
@@ -434,8 +434,8 @@ def test_foundry_claude_rejects_azure_openai_resource_endpoint():
         llm_client._anthropic_client(endpoint)
 def test_foundry_chat_completions_skips_reasoning_effort_for_non_openai_models():
     messages = [{"role": "user", "content": "hi"}]
-    kimi = llm_client._openai_payload("foundry", messages, "Kimi-K2.6", None, "high", stream=False)
-    gpt = llm_client._openai_payload("foundry", messages, "gpt-oss-120b", None, "high", stream=False)
+    kimi = llm_client._openai_payload("foundry", messages, "Kimi-K2.6", None, "high", stream=False, max_output_tokens=None)
+    gpt = llm_client._openai_payload("foundry", messages, "gpt-oss-120b", None, "high", stream=False, max_output_tokens=None)
     assert "reasoning_effort" not in kimi
     assert gpt["reasoning_effort"] == "high"
 @pytest.mark.parametrize("model, tools, effort, expected", [
@@ -450,7 +450,7 @@ def test_foundry_chat_completions_skips_reasoning_effort_for_non_openai_models()
     ("gpt-5-mini", None, "max", "high"),
 ])
 def test_chat_completions_sends_none_effort_only_to_gpt5_point_releases(model, tools, effort, expected):
-    payload = llm_client._openai_payload("openai", [{"role": "user", "content": "hi"}], model, tools, effort, stream=False)
+    payload = llm_client._openai_payload("openai", [{"role": "user", "content": "hi"}], model, tools, effort, stream=False, max_output_tokens=None)
     assert payload["reasoning_effort"] == expected
 @pytest.mark.parametrize("effort, expected", [
     ("none", False),
@@ -514,7 +514,7 @@ def test_openai_compatible_payload_keeps_provider_extra_fields_on_tool_calls():
         {"id": "call_1", "type": "function", "function": {"name": "search_knowledge_base", "arguments": "{}"},
          "extra_content": {"google": {"thought_signature": "sig-abc"}}},
     ]}
-    payload = llm_client._openai_payload("gemini", [assistant], "gemini-3.8-flash", [KB_TOOL], "high", stream=False)
+    payload = llm_client._openai_payload("gemini", [assistant], "gemini-3.8-flash", [KB_TOOL], "high", stream=False, max_output_tokens=None)
     assert payload["messages"][0]["tool_calls"][0]["extra_content"] == {"google": {"thought_signature": "sig-abc"}}
 @pytest.mark.asyncio
 async def test_list_models_reads_each_providers_model_endpoint(monkeypatch):
@@ -535,3 +535,81 @@ async def test_list_models_reads_each_providers_model_endpoint(monkeypatch):
     with pytest.raises(ValueError, match="手動填寫"):
         await llm_client.list_models(LlmEndpoint("foundry", "https://x.services.ai.azure.com", "k", None, False))
     await client.aclose()
+LOCAL_VLLM = LlmEndpoint("vllm", "http://localhost:8000/v1", None, 4096, False)
+@pytest.mark.parametrize("effort", llm_client.REASONING_EFFORT_VALUES)
+def test_vllm_payload_passes_every_reasoning_effort_and_the_output_limit(effort):
+    payload = llm_client._openai_payload("vllm", [{"role": "user", "content": "hi"}], "Qwen/Qwen3-32B", [KB_TOOL], effort, stream=False, max_output_tokens=4096)
+    assert payload["reasoning_effort"] == effort
+    assert payload["max_completion_tokens"] == 4096
+    assert payload["tool_choice"] == "auto"
+    assert "stream_options" not in payload
+def test_vllm_payload_omits_unset_options_and_asks_for_stream_usage():
+    payload = llm_client._openai_payload("vllm", [{"role": "user", "content": "hi"}], "Qwen/Qwen3-32B", None, None, stream=True, max_output_tokens=None)
+    assert payload["stream_options"] == {"include_usage": True}
+    assert "reasoning_effort" not in payload
+    assert "max_completion_tokens" not in payload
+def test_openai_payload_ignores_the_output_limit_for_other_providers():
+    payload = llm_client._openai_payload("openai", [{"role": "user", "content": "hi"}], "gpt-5.4", None, None, stream=True, max_output_tokens=4096)
+    assert "max_completion_tokens" not in payload
+    assert "stream_options" not in payload
+@pytest.mark.asyncio
+async def test_vllm_chat_explains_a_server_without_tool_calling(monkeypatch):
+    def handler(request):
+        return httpx.Response(400, json={"error": {
+            "message": '"auto" tool choice requires --enable-auto-tool-choice and --tool-call-parser to be set',
+            "type": "BadRequestError",
+            "code": 400,
+        }})
+    monkeypatch.setattr(llm_client, "_http_client", httpx.AsyncClient(transport=httpx.MockTransport(handler)))
+    with pytest.raises(RuntimeError) as raised:
+        await llm_client.chat_completion([{"role": "user", "content": "hi"}], endpoint=LOCAL_VLLM, model_name="Qwen/Qwen3-32B", tools=[KB_TOOL])
+    assert str(raised.value) == llm_client.VLLM_TOOLS_DISABLED_MESSAGE
+@pytest.mark.asyncio
+async def test_vllm_tool_round_trip_keeps_reasoning_for_the_next_request(monkeypatch):
+    sent = []
+    replies = [
+        {"choices": [{"finish_reason": "tool_calls", "message": {
+            "role": "assistant", "content": None, "reasoning": "先查知識庫",
+            "tool_calls": [{"id": "call_1", "type": "function", "function": {"name": "search_knowledge_base", "arguments": "{\"query\": \"特休\"}"}}],
+        }}], "usage": {"prompt_tokens": 20, "completion_tokens": 8}},
+        {"choices": [{"finish_reason": "stop", "message": {"role": "assistant", "content": "特休依年資計算"}}]},
+    ]
+    def handler(request):
+        sent.append((request.url.path, json.loads(request.content)))
+        return httpx.Response(200, json=replies[len(sent) - 1])
+    monkeypatch.setattr(llm_client, "_http_client", httpx.AsyncClient(transport=httpx.MockTransport(handler)))
+    messages = [{"role": "user", "content": "特休怎麼算"}]
+    first = await llm_client.chat_completion(messages, endpoint=LOCAL_VLLM, model_name="Qwen/Qwen3-32B", tools=[KB_TOOL], reasoning_effort="high")
+    assert first["tool_calls"][0]["function"]["name"] == "search_knowledge_base"
+    messages += [first, {"role": "tool", "tool_call_id": "call_1", "name": "search_knowledge_base", "content": "特休依年資計算"}]
+    second = await llm_client.chat_completion(messages, endpoint=LOCAL_VLLM, model_name="Qwen/Qwen3-32B", tools=[KB_TOOL], reasoning_effort="high")
+    assert second["content"] == "特休依年資計算"
+    assert [path for path, _ in sent] == ["/v1/chat/completions"] * 2
+    assert sent[1][1]["messages"][1]["reasoning"] == "先查知識庫"
+@pytest.mark.asyncio
+async def test_vllm_stream_yields_only_answer_text(monkeypatch):
+    events = [
+        {"choices": [{"delta": {"reasoning": "想一下"}}]},
+        {"choices": [{"delta": {"content": "特休"}}]},
+        {"choices": [{"delta": {"content": "依年資計算"}, "finish_reason": "stop"}]},
+        {"choices": [], "usage": {"prompt_tokens": 12, "completion_tokens": 6}},
+    ]
+    payloads = []
+    def handler(request):
+        payloads.append(json.loads(request.content))
+        body = "".join(f"data: {json.dumps(event, ensure_ascii=False)}\n\n" for event in events) + "data: [DONE]\n\n"
+        return httpx.Response(200, text=body)
+    monkeypatch.setattr(llm_client, "_http_client", httpx.AsyncClient(transport=httpx.MockTransport(handler)))
+    chunks = [chunk async for chunk in llm_client.stream_completion([{"role": "user", "content": "hi"}], endpoint=LOCAL_VLLM, model_name="Qwen/Qwen3-32B", reasoning_effort="none")]
+    assert chunks == ["特休", "依年資計算"]
+    assert payloads[0]["stream_options"] == {"include_usage": True}
+    assert payloads[0]["reasoning_effort"] == "none"
+@pytest.mark.asyncio
+async def test_vllm_lists_models_from_its_openai_models_endpoint(monkeypatch):
+    paths = []
+    def handler(request):
+        paths.append(request.url.path)
+        return httpx.Response(200, json={"object": "list", "data": [{"id": "Qwen/Qwen3-32B", "object": "model"}]})
+    monkeypatch.setattr(llm_client, "_http_client", httpx.AsyncClient(transport=httpx.MockTransport(handler)))
+    assert await llm_client.list_models(LOCAL_VLLM) == ["Qwen/Qwen3-32B"]
+    assert paths == ["/v1/models"]

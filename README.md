@@ -10,7 +10,7 @@
 
 [繁體中文](README.md) | [English](README_en.md)
 
-[![Version](https://img.shields.io/badge/version-8.2.2-2563eb?style=flat)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-8.3.0-2563eb?style=flat)](CHANGELOG.md)
 [![Python](https://img.shields.io/badge/Python-3.12+-3776AB?style=flat&logo=python&logoColor=white)](https://www.python.org/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-005571?style=flat&logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
 [![React](https://img.shields.io/badge/React-19.3-61DAFB?style=flat&logo=react&logoColor=black)](https://react.dev/)
@@ -59,7 +59,7 @@
 | 2 | **查不到就照實說** | 重排機率低於門檻的片段一律濾除，全部未通過時明確回報「知識庫中查無相關資料」，不硬湊答案 |
 | 3 | **自主研究** | ReAct Agent 自行決定查知識庫、精確統計記錄、上網搜尋或深入閱讀網頁，研究歷程即時顯示 |
 | 4 | **混合檢索** | 向量與 BM25 每次必跑，以 RRF 依名次融合，再由 Cross-Encoder 重排；片段以資料庫 chunk_id 為準 |
-| 5 | **五家模型供應商** | Ollama、OpenAI、Microsoft Foundry、Anthropic Claude、Google Gemini 都能呼叫工具與串流 |
+| 5 | **六家模型供應商** | Ollama、vLLM、OpenAI、Microsoft Foundry、Anthropic Claude、Google Gemini 都能呼叫工具與串流 |
 | 6 | **外部工具與 MCP** | 貼上 OpenAPI 規格即可匯入 API 工具，也能接入 MCP 伺服器（含 OAuth 授權）；只限管理員管理，有副作用的呼叫先經使用者核准 |
 | 7 | **Agent Skills** | 直接上傳技能資料夾（可一次安裝整個技能集合）、zip 或 `SKILL.md`，模型依問題自行載入技能的說明與參考檔 |
 | 8 | **防護完整** | RSA JWT、Argon2 密碼雜湊與登入失敗節流、逐跳 SSRF 驗證並固定連線 IP、工具憑證加密存放、工具輸出信任邊界、資源上限、對外只回錯誤代碼 |
@@ -111,8 +111,8 @@ flowchart LR
 
 ### 多供應商 LLM
 
-- 統一呼叫層支援 **Ollama、OpenAI、Microsoft Foundry、Anthropic Claude（官方 SDK）、Google Gemini**，依連線的供應商與模型名稱路由，五家都支援工具呼叫與串流。
-- 前端可切換模型與六檔推理程度：`無 (None)`、`輕度 (Low)`、`標準 (Medium)`、`深度 (High)`、`極致 (X-High)`、`最大 (Max)`；推理程度會依各供應商的支援範圍對應後傳給模型（OpenAI、Microsoft Foundry、Claude、Gemini、Ollama），不支援的檔位在介面上停用。
+- 統一呼叫層支援 **Ollama、vLLM、OpenAI、Microsoft Foundry、Anthropic Claude（官方 SDK）、Google Gemini**，依連線的供應商與模型名稱路由，六家都支援工具呼叫與串流。
+- 前端可切換模型與六檔推理程度：`無 (None)`、`輕度 (Low)`、`標準 (Medium)`、`深度 (High)`、`極致 (X-High)`、`最大 (Max)`；推理程度會依各供應商的支援範圍對應後傳給模型（OpenAI、Microsoft Foundry、Claude、Gemini、Ollama、vLLM），不支援的檔位在介面上停用。
 - 每個帳號在「個人資料」設定自己的 API 連線（位址、金鑰、模型），管理員可建立共用連線並指定哪些帳號能用；`.env` 不設定任何模型商，詳見 [設定參考：API 連線](docs/configuration.md#api-連線)。
 - 文件摘要與掃描 PDF 的 OCR 由管理員在「管理後台 → 系統模型」各指定一條共用連線、模型與思考程度，見 [設定參考：系統模型](docs/configuration.md#系統模型)。
 
@@ -274,7 +274,7 @@ flowchart TB
             Session["ResearchSession<br/>引用編號、網址來源、信任邊界"]
             Registry["ResearchToolRegistry<br/>內建、自訂 API、MCP 工具與技能"]
             Retriever["HybridRetriever<br/>RRF、精確比對、重排、門檻"]
-            LLM["llm_client<br/>Ollama、OpenAI、Foundry、Claude、Gemini"]
+            LLM["llm_client<br/>Ollama、vLLM、OpenAI、Foundry、Claude、Gemini"]
         end
 
         SSRF["SSRF 防護<br/>逐跳驗證"]
@@ -353,7 +353,7 @@ sequenceDiagram
 | Bun | 1.x | 前端套件管理、開發伺服器與建置 |
 | 資料庫 | SQLite（Python 內建）或 PostgreSQL | 預設可零依賴使用 SQLite |
 | 模型 | 首次啟動下載約 1.2 GB | 嵌入模型 `BAAI/bge-small-zh-v1.5` 與重排模型 `BAAI/bge-reranker-base` |
-| LLM | 擇一 | 本機 Ollama，或 OpenAI、Microsoft Foundry、Anthropic、Gemini 的 API 金鑰 |
+| LLM | 擇一 | 本機的 Ollama 或 vLLM，或 OpenAI、Microsoft Foundry、Anthropic、Gemini 的 API 金鑰 |
 
 ### 1. 取得原始碼
 
@@ -507,7 +507,7 @@ AskMiao/
 │   │   ├── core/                     # 設定、認證、安全與 LLM 呼叫層
 │   │   │   ├── config.py             # Settings：所有環境變數與驗證規則
 │   │   │   ├── lifespan.py           # 啟動流程：建表、初始化 RAG、上傳檔監看
-│   │   │   ├── llm_client.py         # 五家供應商的統一呼叫層（工具呼叫、串流）
+│   │   │   ├── llm_client.py         # 六家供應商的統一呼叫層（工具呼叫、串流）
 │   │   │   ├── jwt_auth.py           # RSA JWT、Argon2 密碼雜湊、撤銷名單檢查
 │   │   │   ├── login_throttle.py     # 登入失敗節流（依登入識別與來源位址）
 │   │   │   ├── tool_secrets.py       # 工具憑證加密與管理 API 遮蔽
@@ -632,7 +632,7 @@ bun run build        # 產出 build/
 | [設定參考](docs/configuration.md) | 每個環境變數的預設值與作用、供應商路由、門檻校準、前端設定 |
 | [部署指南](docs/deployment.md) | 以 Docker Compose 部署到主機、HTTPS、備份與更新 |
 | [疑難排解](docs/troubleshooting.md) | 啟動、登入、前端與工具的常見錯誤與處理方式 |
-| [升級指南](docs/upgrading.md) | 從 2.x 升級到 3.0.0，以及之後各版（到 8.2.1 升級到 8.2.2）的步驟、回退方式與常見問題 |
+| [升級指南](docs/upgrading.md) | 從 2.x 升級到 3.0.0，以及之後各版（到 8.2.2 升級到 8.3.0）的步驟、回退方式與常見問題 |
 | [架構決策紀錄（ADR）](docs/adr/README.md) | 重大設計的背景、取捨與後續修訂 |
 | [llms.txt](llms.txt) | 給 AI Agent 讀的檔案地圖、系統約束與驗證方式 |
 | [版本變更紀錄](CHANGELOG.md) | 每個版本的新增、變更、移除與修正 |
@@ -640,7 +640,7 @@ bun run build        # 產出 build/
 
 ## 版本資訊
 
-- **目前版本**：8.2.2（2026-11-07），變更內容見 [CHANGELOG](CHANGELOG.md)。
+- **目前版本**：8.3.0（2026-11-08），變更內容見 [CHANGELOG](CHANGELOG.md)。
 - **版本規則**：遵循 [語意化版本](https://semver.org/lang/zh-TW/)。不相容的變更（例如新增必填設定、改變 API 權限或索引格式）升主版號。
 - **版本號位置**：後端 `backend/app/__init__.py` 的 `__version__`（OpenAPI 文件與 MCP 交握都引用它）、前端 `frontend/package.json`，發行時與 `CHANGELOG.md` 一併更新。
 

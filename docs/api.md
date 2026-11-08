@@ -2,7 +2,7 @@
 
 [繁體中文](api.md) | [English](api_en.md)
 
-> 本文件說明 AskMiao 後端 **8.2.2** 的 REST 與 SSE 串流端點，內容依 `backend/app/api/` 的實際路由撰寫。設定 `ENABLE_API_DOCS=true` 時，後端另外在 `http://localhost:8001/docs`（Swagger UI）與 `http://localhost:8001/redoc` 提供互動測試，OpenAPI 規格位於 `/openapi.json`；這三個路徑不需要登入且會列出所有端點與參數，對外服務時請保持 `ENABLE_API_DOCS=false`（範本值），此時三者一律回傳 `404`。
+> 本文件說明 AskMiao 後端 **8.3.0** 的 REST 與 SSE 串流端點，內容依 `backend/app/api/` 的實際路由撰寫。設定 `ENABLE_API_DOCS=true` 時，後端另外在 `http://localhost:8001/docs`（Swagger UI）與 `http://localhost:8001/redoc` 提供互動測試，OpenAPI 規格位於 `/openapi.json`；這三個路徑不需要登入且會列出所有端點與參數，對外服務時請保持 `ENABLE_API_DOCS=false`（範本值），此時三者一律回傳 `404`。
 
 ## 目錄
 
@@ -333,7 +333,7 @@
 | `422` | 欄位驗證失敗：訊息過長、附件過多或過大、`data_url` 不是 base64 `data:` URL 等 |
 | `429` | 這位使用者已有 2 個回答正在串流 |
 
-**`reasoning_effort` 的處理**：前端提供 `none`、`low`、`medium`、`high`、`xhigh`、`max` 六檔；後端接受 `none`、`minimal`、`low`、`medium`、`high`、`xhigh`、`max`，其他值不會傳給模型。各供應商的對應：OpenAI 與 Microsoft Foundry 的 GPT 模型直接傳送（`gpt-6*` 與 Foundry 上的 GPT 走 Responses API，`none` 只有 `luna` 系列接受，其餘改送 `low`；`minimal` 一律改送 `low`），Claude 送 `output_config.effort`（`none`、`minimal` 改送 `low`），Gemini 對應到 `minimal` 至 `high`（`none` 改 `minimal`，`xhigh`、`max` 改 `high`），Ollama 對應到 `think`（`none` 為 `false`，`xhigh`、`max` 改 `high`）；Foundry 上非 OpenAI 的模型不送。使用 Chat Completions 的 OpenAI 模型中，`gpt-5.x`（名稱含 `gpt-5.`）在帶工具呼叫時一律改送 `none`；原始的 `gpt-5`、`gpt-5-mini`、`gpt-5-nano` 不接受 `none`、`xhigh`、`max`，選 `none` 時改送 `minimal`，選 `xhigh`、`max` 時改送 `high`，其他情況照使用者的選擇傳送。
+**`reasoning_effort` 的處理**：前端提供 `none`、`low`、`medium`、`high`、`xhigh`、`max` 六檔；後端接受 `none`、`minimal`、`low`、`medium`、`high`、`xhigh`、`max`，其他值不會傳給模型。各供應商的對應：OpenAI 與 Microsoft Foundry 的 GPT 模型直接傳送（`gpt-6*` 與 Foundry 上的 GPT 走 Responses API，`none` 只有 `luna` 系列接受，其餘改送 `low`；`minimal` 一律改送 `low`），Claude 送 `output_config.effort`（`none`、`minimal` 改送 `low`），Gemini 對應到 `minimal` 至 `high`（`none` 改 `minimal`，`xhigh`、`max` 改 `high`），Ollama 對應到 `think`（`none` 為 `false`，`xhigh`、`max` 改 `high`），vLLM 直接傳送（由 vLLM 依模型的對話範本套用，例如 `none` 會關閉 Qwen3 的思考）；Foundry 上非 OpenAI 的模型不送。使用 Chat Completions 的 OpenAI 模型中，`gpt-5.x`（名稱含 `gpt-5.`）在帶工具呼叫時一律改送 `none`；原始的 `gpt-5`、`gpt-5-mini`、`gpt-5-nano` 不接受 `none`、`xhigh`、`max`，選 `none` 時改送 `minimal`，選 `xhigh`、`max` 時改送 `high`，其他情況照使用者的選擇傳送。
 
 #### SSE 事件
 
@@ -417,9 +417,9 @@ data: {"message_id": 108, "conversation_id": 42, "answer": "特休假需先在�
 取得 Agent 目前可用的工具定義（需登入），格式為 OpenAI Function Calling 的 `tools` 結構，包含：
 
 - 內建工具 `search_knowledge_base`、`filter_and_count_records`、`web_search`、`web_fetch`（`ENABLE_WEB_SEARCH=false` 時不含後兩者）。`search_knowledge_base` 的說明會列出知識庫中每份文件的檔名與 AI 摘要，幫助模型判斷該查哪份文件。
-- 啟用中的自訂 API 工具（說明前綴 `[外部自訂 API]`）。
-- 啟用中 MCP 伺服器的已探索工具，名稱為 `mcp_<伺服器>_<工具>`（說明前綴 `[MCP 協定工具]`）。
-- 啟用中的 MCP 伺服器有已探索的 resources 或 prompts 時，另有 `read_mcp_resource`（參數 `server`、`uri`）與 `get_mcp_prompt`（參數 `server`、`name`、`arguments`），說明前綴 `[MCP 協定]`，並列出可用的項目（見 [伺服器物件](#伺服器物件)）。
+- 啟用中的自訂 API 工具（說明前綴 `[自訂 API]`）。
+- 啟用中 MCP 伺服器的已探索工具，名稱為 `mcp_<伺服器>_<工具>`（說明前綴 `[MCP 工具]`）。
+- 啟用中的 MCP 伺服器有已探索的 resources 或 prompts 時，另有 `read_mcp_resource`（參數 `server`、`uri`）與 `get_mcp_prompt`（參數 `server`、`name`、`arguments`），說明中列出可用的項目（見 [伺服器物件](#伺服器物件)）。
 - 呼叫者看得到、啟用且檔案存在的 Agent Skills 時，另有 `activate_skill` 與 `read_skill_resource`；其中有開啟 `allow_scripts` 的技能時再加上 `run_skill_script`（見 [7. Agent Skills](#7-agent-skills-apiskills)）。沒有時這些工具都不出現。
 
 ```json
@@ -537,7 +537,7 @@ data: {"message_id": 108, "conversation_id": 42, "answer": "特休假需先在�
 
 | 欄位 | 說明 |
 |---|---|
-| `id`、`name`、`provider`、`api_base`、`models` | 連線 ID、名稱、供應商（`openai`、`anthropic`、`gemini`、`foundry`、`ollama`）、API 位址、模型清單 |
+| `id`、`name`、`provider`、`api_base`、`models` | 連線 ID、名稱、供應商（`openai`、`anthropic`、`gemini`、`foundry`、`ollama`、`vllm`）、API 位址、模型清單 |
 | `max_output_tokens` | Claude 的輸出 token 上限，未設定為 `null` |
 | `has_api_key` | 是否已設定金鑰；金鑰本身不會回傳 |
 | `scope` | `personal` 或 `shared` |
@@ -549,7 +549,7 @@ data: {"message_id": 108, "conversation_id": 42, "answer": "特休假需先在�
 - `POST /api/llm-connections`：主體為 `name`、`provider`、`api_base`、`api_key`（選填）、`models`、`max_output_tokens`（選填），成功回傳 `201` 與連線物件。
 - `PUT /api/llm-connections/{connection_id}`：只更新有帶的欄位；`name`、`provider`、`api_base`、`models` 不可設為 `null`，否則回傳 `400` `這些欄位不可設為空值：<欄位>`。不帶 `api_key`（或為 `null`）即沿用已儲存的金鑰，空字串回傳 `422`；但變更 `provider` 或 `api_base` 而沒有帶新金鑰時，已儲存的金鑰會被清除，需要金鑰的供應商因此回傳 `400` `這個供應商需要 API 金鑰；變更供應商或 API 位址後不會沿用原本的金鑰，請重新輸入`。不是本人的連線回傳 `404`。
 - `DELETE /api/llm-connections/{connection_id}`：刪除連線與金鑰。
-- `POST /api/llm-connections/{connection_id}/test`：主體 `{"model_name": "gpt-6-sol"}`，以該模型送出一則很短的訊息；成功回傳 `{"ok": true, "reply": "OK"}`，失敗回傳 `{"ok": false, "error": "原因"}`（狀態碼仍為 `200`）。連線不存在或無權測試時回傳 `404` `找不到這個 API 連線`，`model_name` 不在該連線的模型清單內時回傳 `400` `這個 API 連線沒有提供此模型`。
+- `POST /api/llm-connections/{connection_id}/test`：主體 `{"model_name": "gpt-6-sol"}`，以該模型送出一則很短的訊息；成功回傳 `{"ok": true, "reply": "OK"}`，失敗回傳 `{"ok": false, "error": "原因"}`（狀態碼仍為 `200`）。連線不存在或無權測試時回傳 `404` `找不到這個 API 連線`，`model_name` 不在該連線的模型清單內時回傳 `400` `這個 API 連線沒有提供此模型`。vLLM 連線另外附上一個測試用工具，確認伺服器已開啟工具呼叫。
 - `POST /api/llm-connections/discover-models`：主體 `provider`、`api_base`，加上 `api_key` 或 `connection_id`（只在 `provider` 與 `api_base` 都與該連線相同時沿用它已儲存的金鑰，否則不帶金鑰查詢；個人連線限本人，共用連線限管理員，連線不存在或無權使用時回傳 `404` `找不到這個 API 連線`）。回傳 `{"models": [...]}`（排序後最多 500 個），失敗時回傳 `400` 與原因。依供應商查詢 OpenAI 相容的 `{api_base}/models`、Gemini 的 `/v1beta/openai/models`、Claude 的 Models API 或 Ollama 的 `/api/tags`；Foundry 無法列出部署，回傳 `400`。一般帳號的查詢同樣只能連到公開位址，逾時為 `LLM_TAGS_TIMEOUT`。
 
 儲存時檢查：Anthropic、Gemini、Foundry 必須有金鑰；Claude（含 Foundry 上的 Claude 部署）必須設定 `max_output_tokens`，Foundry 上的 Claude 部署必須使用 `*.services.ai.azure.com` 端點；一般帳號的 `api_base` 必須能解析到公開位址。不符合時回傳 `400` 與原因，欄位格式錯誤回傳 `422`。
@@ -1289,7 +1289,7 @@ Agent 以漸進揭露使用技能：有啟用且檔案存在的技能時，[`GET
 - `PUT /api/admin/llm-connections/{connection_id}`：只更新有帶的欄位，規則同第 3 節的 `PUT`（欄位不可設為 `null`、`api_key` 不可為空字串、變更 `provider` 或 `api_base` 時清除原本的金鑰）；`allowed_user_ids` 的規則同上。
 - `DELETE /api/admin/llm-connections/{connection_id}`：刪除連線，所有帳號都無法再使用。
 
-共用連線的 API 位址不受公開位址的限制，可以指向內部網路（例如本機 Ollama）。新增、更新與刪除會以 `ADMIN_LLM_CONNECTION_*` 寫入安全日誌。更新後不再提供某個系統模型所用的模型，或刪除連線時，該用途的指定會一併取消（見 8.6）。
+共用連線的 API 位址不受公開位址的限制，可以指向內部網路（例如本機的 Ollama 或 vLLM）。新增、更新與刪除會以 `ADMIN_LLM_CONNECTION_*` 寫入安全日誌。更新後不再提供某個系統模型所用的模型，或刪除連線時，該用途的指定會一併取消（見 8.6）。
 
 ### 8.6 系統模型
 

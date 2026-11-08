@@ -4,6 +4,7 @@
 
 > How to upgrade an existing deployment to a new release, with rollback steps and troubleshooting. See the [CHANGELOG](../CHANGELOG_en.md) for the full list of changes in each version.
 
+- [Upgrading from 8.2.2 to 8.3.0](#upgrading-from-822-to-830)
 - [Upgrading from 8.2.1 to 8.2.2](#upgrading-from-821-to-822)
 - [Upgrading from 8.2.0 to 8.2.1](#upgrading-from-820-to-821)
 - [Upgrading from 8.1.0 to 8.2.0](#upgrading-from-810-to-820)
@@ -40,6 +41,22 @@
   - [Step 5: verify the upgrade](#step-5-verify-the-upgrade)
   - [Rolling back to 2.2.x](#rolling-back-to-22x)
   - [Troubleshooting](#troubleshooting)
+
+---
+
+## Upgrading from 8.2.2 to 8.3.0
+
+For upgrading from 8.2.2 to 8.3.0 (2026-11-08); see the [CHANGELOG](../CHANGELOG_en.md#830---2026-11-08) for the full list of changes. This release needs no `.env` changes and does not change the database.
+
+| Item | 8.2.2 | 8.3.0 | Action |
+|---|---|---|---|
+| API connection providers | `openai`, `anthropic`, `gemini`, `foundry`, `ollama` | `vllm` as well | None; to connect vLLM, see [configuration reference: Connecting vLLM](configuration_en.md#connecting-vllm). Clients that validate API responses against the provider list need to add `vllm` |
+| Description prefixes in `GET /api/chat/tools` | `[外部自訂 API]`, `[MCP 協定工具]server -> tool`, `[MCP 協定]` | `[自訂 API] `, `[MCP 工具] server／tool`; no prefix on `read_mcp_resource` and `get_mcp_prompt` | Clients that match these descriptions by text need updating |
+| Attachment marker | `[附加檔案: file name]` | `[附件：file name]` | None; it only affects the text sent to the model |
+| Prompts sent to the model | Spread across modules | Collected in `backend/app/prompts.py` and rewritten | Deployments that changed prompts must move those changes into `prompts.py`; with the new wording the model may answer a little differently, so check a few common questions |
+| Document summary length | 70–150 characters | Two or three sentences | None; existing summaries are not regenerated |
+
+To roll back to 8.2.2, switch back to the older code. If you created `vllm` connections, delete them first or change them to `openai` (OpenAI or a compatible API) with the same API address: the 8.2.2 connection form does not know `vllm` and cannot edit them.
 
 ---
 

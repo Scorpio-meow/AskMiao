@@ -10,6 +10,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from pathlib import PurePosixPath
 from urllib.parse import parse_qs, urlparse
 import httpx
+from app import prompts
 from app.core.config import settings
 from app.core.domain_profile import domain_profile
 from app.core.error_response import format_ssrf_rejection, log_and_get_error_id
@@ -402,14 +403,14 @@ class ResearchToolRegistry:
             from app.models import Document
             db = SessionLocal()
             try:
-                rows = db.query(Document.id, Document.filename, Document.description, Document.file_type).all()
+                rows = db.query(Document.id, Document.filename, Document.description, Document.file_type).order_by(Document.id).all()
                 for row in rows:
                     desc = row.description
                     if not desc:
                         content = db.query(Document.content).filter(Document.id == row.id).scalar()
                         if content:
                             desc = DocumentProcessor.generate_document_summary(row.filename, content, row.file_type or "")
-                    doc_items.append((row.filename, desc or f"收錄內部文件《{row.filename}》。"))
+                    doc_items.append((row.filename, desc or prompts.DOCUMENT_PLACEHOLDER_SUMMARY.format(filename=row.filename)))
             finally:
                 db.close()
         except Exception as e:
@@ -423,32 +424,25 @@ class ResearchToolRegistry:
                     desc = DocumentProcessor.generate_document_summary(src, d.page_content)
                     doc_items.append((src, desc))
         if not doc_items:
-            return "檢索已上傳之內部知識庫與專業文件資料。當使用者提供特定網址連結、作者帳號或查詢內部檔案時必須優先呼叫。", []
+            return prompts.KNOWLEDGE_BASE_SEARCH, []
         doc_descriptions = []
         filenames: List[str] = []
         catalog_chars = 0
         for idx, (filename, desc) in enumerate(doc_items, start=1):
-            line = f"{idx}. 《{filename}》：{desc}"
+            line = prompts.KNOWLEDGE_BASE_ENTRY.format(index=idx, filename=filename, description=desc)
             catalog_chars += len(line)
             if catalog_chars > MAX_KB_CATALOG_CHARS:
-                doc_descriptions.append(
-                    f"另有 {len(doc_items) - idx + 1} 份文件未列出，仍可直接檢索，或以 target_document 指定檔名。"
-                )
+                doc_descriptions.append(prompts.KNOWLEDGE_BASE_UNLISTED.format(count=len(doc_items) - idx + 1))
                 filenames = []
                 break
             doc_descriptions.append(line)
             filenames.append(filename)
-        catalog_text = "\n".join(doc_descriptions)
-        return (
-            "檢索內部知識庫。目前知識庫收錄以下各具不同主題之專屬文件庫，呼叫時請針對相應主題檢索：\n"
-            f"{catalog_text}\n"
-            "當使用者提問涉及上述任一文件的專屬領域時，必須優先呼叫此工具。"
-        ), filenames
+        return prompts.KNOWLEDGE_BASE_SEARCH + prompts.KNOWLEDGE_BASE_CATALOG.format(catalog="\n".join(doc_descriptions)), filenames
     def get_tool_definitions(self, user_id: Optional[int] = None) -> List[Dict[str, Any]]:
         kb_desc, doc_names = self._generate_knowledge_base_description()
         target_document_schema: Dict[str, Any] = {
             "type": "string",
-            "description": "可選：限定只查這份文件，須與 search_knowledge_base 說明中《》內的檔名完全相同；不確定就留空查全庫。"
+            "description": prompts.TARGET_DOCUMENT
         }
         if doc_names:
             target_document_schema["enum"] = doc_names
@@ -463,12 +457,12 @@ class ResearchToolRegistry:
                         "properties": {
                             "query": {
                                 "type": "string",
-                                "description": "要檢索的關鍵字、作者帳號或特定網址；中文一律用繁體字（知識庫是繁體中文，簡體字會查不到）"
+                                "description": prompts.SEARCH_QUERY
                             },
                             "target_document": target_document_schema,
                             "top_k": {
                                 "type": "integer",
-                                "description": "回傳的最相關文件片段數量（預設 3，最大 5）",
+                                "description": prompts.SEARCH_TOP_K.format(max_k=settings.FINAL_K),
                                 "default": 3
                             }
                         },
@@ -480,26 +474,26 @@ class ResearchToolRegistry:
                 "type": "function",
                 "function": {
                     "name": "filter_and_count_records",
-                    "description": "精準統計與條件篩選知識庫中的結構化貼文/記錄/文件。可用於計算特定發布月份/日期（如 '2026年8月'、'2025-10-22'）、特定作者（如 '@example_user'）、特定關鍵字或特定文件的總筆數（精確 count），並可取得符合條件的完整或批次清單。當使用者詢問『總共有幾則』、『統計』、『列出某年某月所有貼文』或『某作者的全部記錄』時[必須優先呼叫此工具]。",
+                    "description": prompts.FILTER_RECORDS,
                     "parameters": {
                         "type": "object",
                         "properties": {
                             "date_range": {
                                 "type": "string",
-                                "description": "篩選發布日期或月份（如 '2026-08', '2026年8月', '2025-10-22', '2025年10月22日'）。優先比對發布時間。"
+                                "description": prompts.FILTER_DATE_RANGE
                             },
                             "author": {
                                 "type": "string",
-                                "description": "篩選特定作者帳號（如 '@example_user' 或 'example_user'）"
+                                "description": prompts.FILTER_AUTHOR
                             },
                             "keyword": {
                                 "type": "string",
-                                "description": "篩選內容中包含的關鍵字"
+                                "description": prompts.FILTER_KEYWORD
                             },
                             "target_document": target_document_schema,
                             "limit": {
                                 "type": "integer",
-                                "description": "回傳清單筆數上限（預設 50，最大 200）",
+                                "description": prompts.FILTER_LIMIT.format(max_records=MAX_FILTER_RECORDS),
                                 "default": 50
                             }
                         }
@@ -510,17 +504,17 @@ class ResearchToolRegistry:
                 "type": "function",
                 "function": {
                     "name": "web_search",
-                    "description": "執行外部網路搜尋，取得最新公開即時資訊、時事新聞或內部知識庫未涵蓋的外部公開資料。",
+                    "description": prompts.WEB_SEARCH,
                     "parameters": {
                         "type": "object",
                         "properties": {
                             "query": {
                                 "type": "string",
-                                "description": "搜尋引擎關鍵字"
+                                "description": prompts.WEB_SEARCH_QUERY
                             },
                             "max_results": {
                                 "type": "integer",
-                                "description": "最大搜尋結果筆數（預設 5）",
+                                "description": prompts.WEB_SEARCH_MAX_RESULTS,
                                 "default": 5
                             }
                         },
@@ -532,13 +526,13 @@ class ResearchToolRegistry:
                 "type": "function",
                 "function": {
                     "name": "web_fetch",
-                    "description": "深入閱讀與抓取指定公開網頁的全文內容。當 web_search 回傳的摘要不足以完整回答時，可呼叫此工具深入閱讀特定網址。",
+                    "description": prompts.WEB_FETCH,
                     "parameters": {
                         "type": "object",
                         "properties": {
                             "url": {
                                 "type": "string",
-                                "description": "要讀取的完整網址（http:// 或 https://）"
+                                "description": prompts.WEB_FETCH_URL
                             }
                         },
                         "required": ["url"]
@@ -558,7 +552,7 @@ class ResearchToolRegistry:
             from app.services.mcp_service import McpManager
             from app.services.openapi_parser import fit_tool_name
             db = SessionLocal()
-            custom_tools = db.query(CustomApiTool).filter(CustomApiTool.is_enabled == True).all()
+            custom_tools = db.query(CustomApiTool).filter(CustomApiTool.is_enabled == True).order_by(CustomApiTool.id).all()
             for ct in custom_tools:
                 p_schema = {"type": "object", "properties": {}}
                 if ct.parameters_schema:
@@ -572,11 +566,11 @@ class ResearchToolRegistry:
                     "type": "function",
                     "function": {
                         "name": fit_tool_name(ct.name),
-                        "description": f"[外部自訂 API]{ct.display_name}：{desc}",
+                        "description": prompts.CUSTOM_API_TOOL.format(display_name=ct.display_name, description=desc),
                         "parameters": p_schema
                     }
                 })
-            mcp_servers = db.query(McpServer).filter(McpServer.is_enabled == True).all()
+            mcp_servers = db.query(McpServer).filter(McpServer.is_enabled == True).order_by(McpServer.id).all()
             for ms in mcp_servers:
                 if ms.discovered_tools:
                     try:
@@ -609,17 +603,17 @@ class ResearchToolRegistry:
             (
                 "read_mcp_resource",
                 "discovered_resources",
-                "讀取 MCP 伺服器提供的 resource（文件、資料等）內容，只能讀取下列清單中的 uri：\n",
+                prompts.MCP_RESOURCE_CATALOG,
                 lambda r: f"- {r['uri']}｜{r.get('name') or ''}{('：' + r['description']) if r.get('description') else ''}",
-                {"uri": {"type": "string", "description": "要讀取的 resource uri，必須與清單完全相同"}},
+                {"uri": {"type": "string", "description": prompts.MCP_RESOURCE_URI}},
             ),
             (
                 "get_mcp_prompt",
                 "discovered_prompts",
-                "取得 MCP 伺服器提供的 prompt 範本內容，作為完成任務的參考指引，只能使用下列 prompt：\n",
+                prompts.MCP_PROMPT_CATALOG,
                 lambda p: f"- {p['name']}{('：' + p['description']) if p.get('description') else ''}"
                 + (f"（參數：{', '.join(a['name'] + ('*' if a.get('required') else '') for a in p.get('arguments') or [])}）" if p.get("arguments") else ""),
-                {"name": {"type": "string", "description": "prompt 名稱"}, "arguments": {"type": "object", "description": "prompt 參數，值皆為字串"}},
+                {"name": {"type": "string", "description": prompts.MCP_PROMPT_NAME}, "arguments": {"type": "object", "description": prompts.MCP_PROMPT_ARGUMENTS}},
             ),
         ):
             lines: List[str] = []
@@ -639,13 +633,13 @@ class ResearchToolRegistry:
                 servers_used.append(server.name)
             if not servers_used:
                 continue
-            properties = {"server": {"type": "string", "enum": servers_used, "description": "MCP 伺服器名稱（方括號內）"}, **parameters}
+            properties = {"server": {"type": "string", "enum": servers_used, "description": prompts.MCP_SERVER}, **parameters}
             required = ["server", "uri"] if tool_name == "read_mcp_resource" else ["server", "name"]
             definitions.append({
                 "type": "function",
                 "function": {
                     "name": tool_name,
-                    "description": "[MCP 協定]" + header + "".join(lines),
+                    "description": header + "".join(lines),
                     "parameters": {"type": "object", "properties": properties, "required": required},
                 },
             })
@@ -682,10 +676,7 @@ class ResearchToolRegistry:
         finally:
             db.close()
     def _skill_tool_definitions(self, user_id: Optional[int]) -> List[Dict[str, Any]]:
-        header = (
-            "載入管理員安裝的技能（Agent Skills）完整指示。當使用者的任務符合下列某個技能的描述時，"
-            "先以技能名稱呼叫此工具取得指示，再依指示完成任務；不相關時不要呼叫。\n"
-        )
+        header = prompts.SKILL_CATALOG
         entries: List[str] = []
         names: List[str] = []
         script_names: List[str] = []
@@ -712,7 +703,7 @@ class ResearchToolRegistry:
                     "parameters": {
                         "type": "object",
                         "properties": {
-                            "name": {"type": "string", "enum": names, "description": "要載入的技能名稱"}
+                            "name": {"type": "string", "enum": names, "description": prompts.ACTIVATE_SKILL_NAME}
                         },
                         "required": ["name"]
                     }
@@ -722,12 +713,12 @@ class ResearchToolRegistry:
                 "type": "function",
                 "function": {
                     "name": "read_skill_resource",
-                    "description": "讀取已載入技能目錄中的參考檔、範本或腳本內容（例如 references/REFERENCE.md）。只在技能指示提到該檔案時使用。",
+                    "description": prompts.READ_SKILL_RESOURCE,
                     "parameters": {
                         "type": "object",
                         "properties": {
-                            "skill": {"type": "string", "enum": names, "description": "技能名稱"},
-                            "path": {"type": "string", "description": "技能目錄內的相對路徑"}
+                            "skill": {"type": "string", "enum": names, "description": prompts.SKILL_NAME},
+                            "path": {"type": "string", "description": prompts.SKILL_RESOURCE_PATH}
                         },
                         "required": ["skill", "path"]
                     }
@@ -737,14 +728,14 @@ class ResearchToolRegistry:
             "type": "function",
             "function": {
                 "name": SKILL_SCRIPT_TOOL_NAME,
-                "description": "在主機上執行已載入技能中的腳本（.py、.sh、.js），每次執行前需使用者核准；回傳結束碼、stdout 與 stderr。只在技能指示要求執行該腳本時使用。",
+                "description": prompts.RUN_SKILL_SCRIPT,
                 "parameters": {
                     "type": "object",
                     "properties": {
-                        "skill": {"type": "string", "enum": script_names, "description": "技能名稱"},
-                        "path": {"type": "string", "description": "技能目錄內的腳本相對路徑，例如 scripts/extract.py"},
-                        "args": {"type": "array", "items": {"type": "string"}, "description": "命令列參數"},
-                        "stdin": {"type": "string", "description": "選填：傳給腳本的標準輸入"}
+                        "skill": {"type": "string", "enum": script_names, "description": prompts.SKILL_NAME},
+                        "path": {"type": "string", "description": prompts.SKILL_SCRIPT_PATH},
+                        "args": {"type": "array", "items": {"type": "string"}, "description": prompts.SKILL_SCRIPT_ARGS},
+                        "stdin": {"type": "string", "description": prompts.SKILL_SCRIPT_STDIN}
                     },
                     "required": ["skill", "path"]
                 }
