@@ -6,12 +6,16 @@ import textwrap
 from pathlib import Path
 from urllib.parse import urljoin
 
+ROOT = Path(__file__).resolve().parents[2]
+PAGE = ROOT / "site" / "index.html"
+CHANGELOG = ROOT / "CHANGELOG.md"
+VERSION_FILE = ROOT / "backend" / "app" / "__init__.py"
 RELEASE_HEADING = re.compile(r"^## \[(\d+\.\d+\.\d+)\] - (\d{4}-\d{2}-\d{2})$", re.M)
 VERSION_LINE = re.compile(r'^__version__ = "([^"]+)"$', re.M)
 ABSOLUTE_TAG = re.compile(r"<(?:link|meta)\b[^>]*\sdata-absolute\b[^>]*>")
 URL_ATTRIBUTE = re.compile(r'\s(?:href|content)="([^"]*)"')
-RELEASE_SLOT = re.compile(r'(<([a-z]+)\b[^>]*\sdata-release="(version|date)"[^>]*>)(</\2>)')
-JSON_LD = re.compile(r'<script type="application/ld\+json" data-stamp>(.*?)</script>', re.S)
+JSON_LD_OPEN = '<script type="application/ld+json" data-stamp>'
+SCRIPT_CLOSE = "</script>"
 
 
 def fail(message):
@@ -42,17 +46,22 @@ def absolutize(base, html):
 
 
 def fill_release(html, values):
-    html, count = RELEASE_SLOT.subn(lambda m: m.group(1).replace(f' data-release="{m.group(3)}"', "") + values[m.group(3)] + m.group(4), html)
+    count = 0
+    for key, value in values.items():
+        slot = f'<span data-release="{key}"></span>'
+        count += html.count(slot)
+        html = html.replace(slot, f"<span>{value}</span>")
     if not count:
-        fail("頁面沒有任何 data-release 標記")
+        fail('頁面沒有任何 <span data-release="…"></span> 標記')
     return html, count
 
 
 def stamp_structured_data(base, html, version, date):
-    match = JSON_LD.search(html)
-    if not match:
-        fail('頁面沒有 <script type="application/ld+json" data-stamp>')
-    data = json.loads(match.group(1))
+    start = html.find(JSON_LD_OPEN)
+    end = html.find(SCRIPT_CLOSE, start) if start >= 0 else -1
+    if end < 0:
+        fail(f"頁面沒有 {JSON_LD_OPEN}")
+    data = json.loads(html[start + len(JSON_LD_OPEN):end])
     for key in ("url", "image"):
         if key not in data:
             fail(f"結構化資料缺少 {key}")
@@ -61,39 +70,34 @@ def stamp_structured_data(base, html, version, date):
     data["dateModified"] = date
     body = textwrap.indent(json.dumps(data, ensure_ascii=False, indent=2), "  ")
     block = '<script type="application/ld+json">\n' + body + "\n  </script>"
-    return html[:match.start()] + block + html[match.end():]
+    return html[:start] + block + html[end + len(SCRIPT_CLOSE):]
 
 
 def main():
-    parser = argparse.ArgumentParser(description="部署前把版本、發行日期與絕對網址寫進介紹網站")
-    parser.add_argument("--page", required=True)
+    parser = argparse.ArgumentParser(description="部署前把版本、發行日期與絕對網址寫進介紹網站，並在 stdout 印出 GitHub Actions 的步驟輸出")
     parser.add_argument("--base-url", required=True)
-    parser.add_argument("--changelog", required=True)
-    parser.add_argument("--version-file", required=True)
-    parser.add_argument("--output", required=True)
     args = parser.parse_args()
 
     if not args.base_url.startswith("https://"):
         fail(f"base URL 必須是 https：{args.base_url}")
     base = args.base_url.rstrip("/") + "/"
 
-    version, date = latest_release(Path(args.changelog).read_text(encoding="utf-8"))
-    declared = VERSION_LINE.search(Path(args.version_file).read_text(encoding="utf-8"))
+    version, date = latest_release(CHANGELOG.read_text(encoding="utf-8"))
+    declared = VERSION_LINE.search(VERSION_FILE.read_text(encoding="utf-8"))
     if not declared:
-        fail(f"{args.version_file} 找不到 __version__")
+        fail("backend/app/__init__.py 找不到 __version__")
     if declared.group(1) != version:
-        fail(f"版本不一致：CHANGELOG 是 {version}，{args.version_file} 是 {declared.group(1)}")
+        fail(f"版本不一致：CHANGELOG 是 {version}，backend/app/__init__.py 是 {declared.group(1)}")
 
-    page = Path(args.page)
-    html = page.read_text(encoding="utf-8")
+    html = PAGE.read_text(encoding="utf-8")
     html, absolute_count = absolutize(base, html)
     html, release_count = fill_release(html, {"version": version, "date": date})
     html = stamp_structured_data(base, html, version, date)
-    page.write_text(html, encoding="utf-8", newline="")
+    PAGE.write_text(html, encoding="utf-8", newline="")
 
-    with open(args.output, "a", encoding="utf-8") as output:
-        output.write(f"version={version}\nrelease_date={date}\n")
-    print(f"{version}（{date}）：絕對網址 {absolute_count} 處、版本欄位 {release_count} 處、結構化資料 1 處")
+    print(f"version={version}")
+    print(f"release_date={date}")
+    print(f"{version}（{date}）：絕對網址 {absolute_count} 處、版本欄位 {release_count} 處、結構化資料 1 處", file=sys.stderr)
 
 
 if __name__ == "__main__":

@@ -43,7 +43,7 @@ jobs:
         id: stamp
         env:
           SITE_URL: ${{ steps.pages.outputs.base_url }}
-        run: python3 .github/scripts/stamp_site.py --page site/index.html --base-url "$SITE_URL" --changelog CHANGELOG.md --version-file backend/app/__init__.py --output "$GITHUB_OUTPUT"
+        run: python3 .github/scripts/stamp_site.py --base-url "$SITE_URL" >> "$GITHUB_OUTPUT"
 
       - name: Generate sitemap
         env:
