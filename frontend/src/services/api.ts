@@ -97,6 +97,7 @@ export interface Message {
     duration_seconds?: number;
     status?: string;
     note?: string;
+    agent?: string;
   }>;
   think?: string | null;
   role?: string;
@@ -347,10 +348,10 @@ export const chatService = {
     const response = await api.get<{ status: string; tools: any[] }>('/chat/tools');
     return response.data;
   },
-  async resolveApproval(approvalId: string, approved: boolean): Promise<{ approval_id: string; approved: boolean }> {
-    const response = await api.post<{ approval_id: string; approved: boolean }>(
+  async resolveApproval(approvalId: string, approved: boolean, remember: boolean): Promise<{ approval_id: string; approved: boolean; remember: boolean }> {
+    const response = await api.post<{ approval_id: string; approved: boolean; remember: boolean }>(
       `/chat/approvals/${encodeURIComponent(approvalId)}`,
-      { approved }
+      { approved, remember }
     );
     return response.data;
   },
@@ -545,6 +546,20 @@ export interface SystemModels {
   document_summary: SystemModelAssignment | null;
   pdf_ocr: SystemModelAssignment | null;
 }
+const readInstructions = async (path: string): Promise<string> => {
+  const response = await api.get<{ content: string }>(path);
+  return response.data.content;
+};
+const writeInstructions = async (path: string, content: string): Promise<string> => {
+  const response = await api.put<{ content: string }>(path, { content });
+  return response.data.content;
+};
+export const instructionsService = {
+  getPersonal: () => readInstructions('/chat/instructions'),
+  savePersonal: (content: string) => writeInstructions('/chat/instructions', content),
+  getOrganization: () => readInstructions('/admin/agent-instructions'),
+  saveOrganization: (content: string) => writeInstructions('/admin/agent-instructions', content),
+};
 export const systemModelService = {
   async get(): Promise<SystemModels> {
     const response = await api.get<SystemModels>('/admin/system-models');

@@ -8,9 +8,65 @@ from app.core.limits import (
     MAX_QUESTION_OPTION_CHARS,
     MAX_QUESTION_OPTIONS,
     MAX_STEP_NOTE_CHARS,
+    MAX_SUBAGENT_TASK_CHARS,
+    MAX_SUBAGENT_TASKS,
+    MAX_SUBAGENT_TITLE_CHARS,
 )
 from app.rag.research_session import strip_citations, strip_tool_result_blocks
 THINK_BLOCK = re.compile(r"<think>.*?</think>", re.S)
+DELEGATE_TOOL_NAME = "delegate_research"
+SUBAGENT_TOOL_NAMES = (
+    "search_knowledge_base",
+    "filter_and_count_records",
+    "web_search",
+    "web_fetch",
+    "list_conversation_files",
+    "read_conversation_file",
+)
+DELEGATE_TOOL = {
+    "type": "function",
+    "function": {
+        "name": DELEGATE_TOOL_NAME,
+        "description": prompts.DELEGATE_RESEARCH,
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "tasks": {
+                    "type": "array",
+                    "description": prompts.SUBAGENT_TASKS.format(max_tasks=MAX_SUBAGENT_TASKS),
+                    "maxItems": MAX_SUBAGENT_TASKS,
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "title": {"type": "string", "description": prompts.SUBAGENT_TASK_TITLE.format(max_chars=MAX_SUBAGENT_TITLE_CHARS)},
+                            "instructions": {"type": "string", "description": prompts.SUBAGENT_TASK_INSTRUCTIONS.format(max_chars=MAX_SUBAGENT_TASK_CHARS)},
+                        },
+                        "required": ["title", "instructions"],
+                    },
+                },
+            },
+            "required": ["tasks"],
+        },
+    },
+}
+def _tasks_error(reason: str) -> str:
+    return prompts.SUBAGENT_TASKS_INVALID.format(
+        reason=reason, max_tasks=MAX_SUBAGENT_TASKS, max_title=MAX_SUBAGENT_TITLE_CHARS, max_chars=MAX_SUBAGENT_TASK_CHARS
+    )
+def parse_tasks(arguments: Dict[str, Any]) -> Tuple[Optional[List[Dict[str, str]]], Optional[str]]:
+    tasks = arguments.get("tasks")
+    if not isinstance(tasks, list) or not 1 <= len(tasks) <= MAX_SUBAGENT_TASKS:
+        return None, _tasks_error("子任務數量不符")
+    parsed = []
+    for task in tasks:
+        title = task.get("title") if isinstance(task, dict) else None
+        instructions = task.get("instructions") if isinstance(task, dict) else None
+        if not isinstance(title, str) or not title.strip() or len(title.strip()) > MAX_SUBAGENT_TITLE_CHARS:
+            return None, _tasks_error("標題空白或過長")
+        if not isinstance(instructions, str) or not instructions.strip() or len(instructions.strip()) > MAX_SUBAGENT_TASK_CHARS:
+            return None, _tasks_error("說明空白或過長")
+        parsed.append({"title": title.strip(), "instructions": instructions.strip()})
+    return parsed, None
 ASK_USER_TOOL_NAME = "ask_user"
 ASK_USER_TOOL = {
     "type": "function",

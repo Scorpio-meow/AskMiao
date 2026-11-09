@@ -11,7 +11,9 @@ from app.rag import agent as agent_module
 from app.rag.agent import ResearchAgent
 from app.rag.tools import ResearchToolRegistry
 from app.services import chat_service as chat_service_module
+from app.services.agent_instructions import set_instructions
 from app.services.chat_service import ChatService, _build_message_response
+from app import prompts
 @pytest.fixture
 def db(tmp_path):
     engine = create_engine(f"sqlite:///{tmp_path / 'chat.db'}", connect_args={"check_same_thread": False})
@@ -58,8 +60,9 @@ async def test_send_message_passes_database_history_to_rag(db, monkeypatch):
     captured = {}
     class FakeRag:
         async def generate_response_stream(self, query, conversation_history, *, endpoint, model_name,
-                                           reasoning_effort=None, attachments=None, approval_user_id=None, conversation_id=None, mode):
+                                           reasoning_effort=None, attachments=None, approval_user_id=None, conversation_id=None, mode, instructions):
             captured["mode"] = mode
+            captured["instructions"] = instructions
             captured["endpoint"] = endpoint
             captured["model_name"] = model_name
             captured["query"] = query
@@ -78,7 +81,7 @@ async def test_send_message_passes_database_history_to_rag(db, monkeypatch):
         user_id=1,
     )
     body = "".join([chunk async for chunk in response.body_iterator])
-    assert captured["mode"] == "research"
+    assert (captured["mode"], captured["instructions"]) == ("research", "")
     assert captured["query"] == "那滿一年呢？"
     assert (captured["endpoint"].api_base, captured["model_name"]) == ("https://ollama.example.com", "qwen3:8b")
     assert captured["history"] == [
@@ -186,3 +189,23 @@ async def test_agent_mode_streams_and_saves_the_plan(db, monkeypatch):
 def test_unknown_chat_mode_is_rejected():
     with pytest.raises(ValueError):
         MessageCreate(content="hi", connection_id=1, model_name="qwen3:8b", mode="autopilot")
+@pytest.mark.asyncio
+async def test_send_message_passes_organization_and_personal_instructions(db, monkeypatch):
+    set_instructions(db, None, "  回答附上負責單位  ")
+    set_instructions(db, 1, "先列重點")
+    set_instructions(db, 2, "別人的偏好")
+    captured = {}
+    class InstructedRag:
+        async def generate_response_stream(self, query, conversation_history, *, instructions, **kwargs):
+            captured["instructions"] = instructions
+            yield {"event": "done", "data": {"answer": "好", "sources": []}}
+    monkeypatch.setattr(chat_api, "get_rag_system", lambda: InstructedRag())
+    await send(db, add_connection(db), "整理規定")
+    assert captured["instructions"] == (
+        prompts.ORGANIZATION_INSTRUCTIONS.format(content="回答附上負責單位")
+        + prompts.PERSONAL_INSTRUCTIONS.format(content="先列重點")
+    )
+    set_instructions(db, 1, "   ")
+    set_instructions(db, None, "")
+    await send(db, add_connection(db), "再問一次")
+    assert captured["instructions"] == ""

@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import Response, StreamingResponse
 from sqlalchemy.orm import Session
 from app.models.database import get_db
-from app.models import Conversation, MessageCreate, ConversationResponse, User
+from app.models import AgentInstructionsUpdate, Conversation, MessageCreate, ConversationResponse, User
 from app.services.chat_service import AttachmentQuotaExceeded, ChatService
 from app.services.conversation_files import (
     ConversationFileError,
@@ -31,6 +31,7 @@ from app.services.file_builders import extraction_slots
 from app.services.file_preview import HTML_EXTENSIONS, build_preview, recent_pdfs, render_pdf_page
 from app.rag.tool_approval import approval_broker
 from app.services.llm_connections import chat_option, connections_for_user, resolve_chat_endpoint
+from app.services.agent_instructions import get_instructions, instructions_prompt, set_instructions
 from pydantic import BaseModel, Field
 router = APIRouter()
 chat_service = ChatService()
@@ -115,6 +116,7 @@ async def send_message(
         before_message_id=user_message_id,
         limit=settings.CONVERSATION_HISTORY_MESSAGES
     )
+    instructions = await asyncio.to_thread(instructions_prompt, db, user_id)
     await asyncio.to_thread(db.close)
     async def sse_generator():
         if not _acquire_stream_slot(user_id):
@@ -145,7 +147,8 @@ async def send_message(
                     attachments=message_data.attachments,
                     approval_user_id=user_id,
                     conversation_id=conv_id,
-                    mode=message_data.mode
+                    mode=message_data.mode,
+                    instructions=instructions
                 ):
                     ev = event_item.get("event")
                     data = event_item.get("data", {})
@@ -225,15 +228,26 @@ async def send_message(
     )
 class ToolApprovalDecision(BaseModel):
     approved: bool
+    remember: bool = False
 @router.post("/approvals/{approval_id}")
 async def resolve_tool_approval(
     approval_id: str,
     decision: ToolApprovalDecision,
     user_id: int = Depends(get_current_user_id)
 ):
-    if not approval_broker.resolve(approval_id, user_id, decision.approved):
+    if not approval_broker.resolve(approval_id, user_id, decision.approved, decision.remember):
         raise HTTPException(status_code=404, detail="找不到待核准的工具呼叫，可能已逾時或已處理")
-    return {"approval_id": approval_id, "approved": decision.approved}
+    return {"approval_id": approval_id, "approved": decision.approved, "remember": decision.approved and decision.remember}
+@router.get("/instructions")
+def get_personal_instructions(db: Session = Depends(get_db), user_id: int = Depends(get_current_user_id)):
+    return {"content": get_instructions(db, user_id)}
+@router.put("/instructions")
+def update_personal_instructions(
+    update: AgentInstructionsUpdate,
+    db: Session = Depends(get_db),
+    user_id: int = Depends(get_current_user_id)
+):
+    return {"content": set_instructions(db, user_id, update.content)}
 class QuestionAnswer(BaseModel):
     answer: str = Field(min_length=1, max_length=MAX_QUESTION_ANSWER_CHARS)
 @router.post("/questions/{question_id}")

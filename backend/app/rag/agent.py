@@ -1,5 +1,6 @@
 import asyncio
 import base64
+import itertools
 import json
 import logging
 import os
@@ -13,16 +14,21 @@ from app.core.limits import (
     CHAT_ATTACHMENT_EXTRACTION_LIMITS,
     MAX_AGENT_TURNS,
     MAX_ATTACHMENT_TEXT_CHARS,
+    MAX_SUBAGENT_TURNS,
 )
 from app.models import AGENT_MODE, RESEARCH_MODE
 from app.rag.agent_mode import (
     ASK_USER_TOOL,
     ASK_USER_TOOL_NAME,
+    DELEGATE_TOOL,
+    DELEGATE_TOOL_NAME,
+    SUBAGENT_TOOL_NAMES,
     UPDATE_PLAN_TOOL,
     UPDATE_PLAN_TOOL_NAME,
     clear_old_tool_results,
     parse_plan,
     parse_question,
+    parse_tasks,
     turn_note,
 )
 from app import prompts
@@ -36,6 +42,20 @@ from app.rag.tool_approval import approval_broker
 from app.core.error_response import log_and_get_error_id
 from app.core.security_logging import log_fields
 logger = logging.getLogger(__name__)
+SUBAGENT_RESULTS = "subagent_results"
+OUTPUT_PREVIEW_CHARS = 300
+def parse_arguments(raw_args: Any) -> Dict[str, Any]:
+    if isinstance(raw_args, str):
+        try:
+            args = json.loads(raw_args)
+        except Exception:
+            args = {"query": raw_args}
+    else:
+        args = raw_args or {}
+    return args if isinstance(args, dict) else {}
+def preview_output(output: Any) -> str:
+    text = json.dumps(output, ensure_ascii=False)
+    return text if len(text) <= OUTPUT_PREVIEW_CHARS else text[:OUTPUT_PREVIEW_CHARS] + "..."
 EXPLICIT_SKILL_PATTERN = re.compile(rf"^/({SKILL_NAME_PATTERN.pattern})(?:\s+|$)")
 MODEL_IMAGE_TYPES = ("image/png", "image/jpeg", "image/gif", "image/webp")
 TEXT_IMAGE_TYPES = ("image/svg+xml",)
@@ -85,6 +105,107 @@ def query_with_attachments(query: str, doc_contexts: List[str]) -> str:
 class ResearchAgent:
     def __init__(self, tool_registry: ResearchToolRegistry):
         self.tools = tool_registry
+    async def _delegate(
+        self,
+        tasks: List[Dict[str, str]],
+        tools_def: List[Dict[str, Any]],
+        session: ResearchSession,
+        next_step: Callable[[], int],
+        **call: Any,
+    ) -> AsyncGenerator[Dict[str, Any], None]:
+        events: asyncio.Queue = asyncio.Queue()
+        tools = [tool for tool in tools_def if tool["function"]["name"] in SUBAGENT_TOOL_NAMES]
+        async def run(index: int, task: Dict[str, str]) -> str:
+            label = f"子任務 {index}：{task['title']}"
+            try:
+                return await self._subagent(task, label, tools, session, next_step, events, **call)
+            except Exception as e:
+                return prompts.SUBAGENT_FAILED.format(error_id=log_and_get_error_id(logger, f"{label} 執行失敗", e))
+        runner = asyncio.ensure_future(asyncio.gather(*(run(index, task) for index, task in enumerate(tasks, start=1))))
+        try:
+            while True:
+                getter = asyncio.ensure_future(events.get())
+                done, _ = await asyncio.wait({getter, runner}, return_when=asyncio.FIRST_COMPLETED)
+                if getter in done:
+                    yield getter.result()
+                    continue
+                getter.cancel()
+                while not events.empty():
+                    yield events.get_nowait()
+                break
+            summaries = runner.result()
+        finally:
+            if not runner.done():
+                runner.cancel()
+        yield {"event": SUBAGENT_RESULTS, "data": [{"task": task["title"], "summary": summary} for task, summary in zip(tasks, summaries)]}
+    async def _subagent(
+        self,
+        task: Dict[str, str],
+        label: str,
+        tools: List[Dict[str, Any]],
+        session: ResearchSession,
+        next_step: Callable[[], int],
+        events: asyncio.Queue,
+        *,
+        endpoint: LlmEndpoint,
+        model_name: str,
+        reasoning_effort: Optional[str],
+        approval_user_id: Optional[int],
+        conversation_id: Optional[int],
+    ) -> str:
+        messages: List[Dict[str, Any]] = [
+            {"role": "system", "content": prompts.SUBAGENT_SYSTEM_PROMPT},
+            {"role": "user", "content": with_current_time(prompts.SUBAGENT_TASK.format(**task), local_now())},
+        ]
+        for _ in range(MAX_SUBAGENT_TURNS):
+            clear_old_tool_results(messages, AGENT_TOOL_RESULT_BUDGET_CHARS)
+            reply = await chat_completion(messages, endpoint=endpoint, model_name=model_name, tools=tools, reasoning_effort=reasoning_effort)
+            calls = reply.get("tool_calls")
+            if not calls:
+                return session.drop_unknown_citations(strip_tool_result_blocks(reply.get("content") or "")).strip() or prompts.SUBAGENT_EMPTY
+            messages.append(reply)
+            note = turn_note(reply.get("content"))
+            for call in calls:
+                name = call.get("function", {}).get("name", "")
+                args = parse_arguments(call.get("function", {}).get("arguments", {}))
+                step = next_step()
+                labelled = {"agent": label, **({"note": note} if note else {})}
+                note = None
+                await events.put({"event": "step_start", "data": {"step": step, "tool": name, "arguments": args, **labelled}})
+                started = time.time()
+                output = session.refuse_tool_call(name, args)
+                if output is None and name not in SUBAGENT_TOOL_NAMES:
+                    output = {"error": prompts.SUBAGENT_TOOL_UNAVAILABLE}
+                if output is None:
+                    try:
+                        output = await self.tools.execute_tool(name, args, user_id=approval_user_id, conversation_id=conversation_id)
+                    except Exception as e:
+                        output = {"error": f"工具執行失敗，請檢查參數格式後再試（錯誤代碼：{log_and_get_error_id(logger, f'{label} 的工具 {name} 執行失敗', e)}）"}
+                    session.record_tool_output(name, output)
+                await events.put({"event": "step_end", "data": {
+                    "step": step,
+                    "tool": name,
+                    "arguments": args,
+                    "output_preview": preview_output(output),
+                    "duration_seconds": round(time.time() - started, 2),
+                    "status": "error" if "error" in output else "success",
+                    **labelled,
+                }})
+                messages.append({
+                    "role": "tool",
+                    "tool_call_id": call.get("id") or f"call_{step}",
+                    "name": name,
+                    "_is_error": "error" in output,
+                    "content": session.tool_message_content(name, output),
+                })
+        messages.append({"role": "user", "content": prompts.SUBAGENT_TURN_LIMIT.format(limit=MAX_SUBAGENT_TURNS)})
+        clear_old_tool_results(messages, AGENT_TOOL_RESULT_BUDGET_CHARS)
+        result_filter = ToolResultFilter()
+        text = "".join([
+            result_filter.feed(chunk)
+            async for chunk in stream_completion(messages, endpoint=endpoint, model_name=model_name, tools=tools, reasoning_effort=reasoning_effort)
+        ]) + result_filter.flush()
+        return session.drop_unknown_citations(text).strip() or prompts.SUBAGENT_EMPTY
     async def stream_research(
         self,
         query: str,
@@ -96,7 +217,8 @@ class ResearchAgent:
         attachments: Optional[List[Any]] = None,
         approval_user_id: Optional[int] = None,
         conversation_id: Optional[int] = None,
-        mode: str = RESEARCH_MODE
+        mode: str = RESEARCH_MODE,
+        instructions: str = ""
     ) -> AsyncGenerator[Dict[str, Any], None]:
         start_time = time.time()
         agent_mode = mode == AGENT_MODE
@@ -106,9 +228,9 @@ class ResearchAgent:
             [],
         )
         if agent_mode:
-            tools_def = [*tools_def, UPDATE_PLAN_TOOL, ASK_USER_TOOL]
+            tools_def = [*tools_def, UPDATE_PLAN_TOOL, ASK_USER_TOOL, DELEGATE_TOOL]
         base_prompt = prompts.AGENT_SYSTEM_PROMPT if agent_mode else prompts.SYSTEM_PROMPT
-        system_prompt = base_prompt + prompts.SKILL_RULES if skill_names else base_prompt
+        system_prompt = (base_prompt + prompts.SKILL_RULES if skill_names else base_prompt) + instructions
         plan: Optional[List[Dict[str, str]]] = None
         research_trace: List[Dict[str, Any]] = []
         explicit_skill = None
@@ -197,6 +319,7 @@ class ResearchAgent:
             session.record_tool_output("activate_skill", skill_output)
         final_answer = ""
         turns_used = 0
+        next_step = itertools.count(len(research_trace) + 1).__next__
         while True:
             if agent_mode:
                 if turns_used >= MAX_AGENT_TURNS:
@@ -227,17 +350,7 @@ class ResearchAgent:
             for tc in tool_calls:
                 fn = tc.get("function", {})
                 fn_name = fn.get("name", "")
-                raw_args = fn.get("arguments", {})
-                
-                if isinstance(raw_args, str):
-                    try:
-                        args = json.loads(raw_args)
-                    except Exception:
-                        args = {"query": raw_args}
-                else:
-                    args = raw_args or {}
-                if not isinstance(args, dict):
-                    args = {}
+                args = parse_arguments(fn.get("arguments", {}))
                 if agent_mode and fn_name == UPDATE_PLAN_TOOL_NAME:
                     new_plan, plan_error = parse_plan(args)
                     if new_plan is None:
@@ -254,7 +367,7 @@ class ResearchAgent:
                         "content": session.tool_message_content(fn_name, plan_output)
                     })
                     continue
-                step_num = len(research_trace) + 1
+                step_num = next_step()
                 step_note, note = note, None
                 noted = {"note": step_note} if step_note else {}
                 logger.info("🔍 [Agent Step %s] 呼叫工具 %s", step_num, log_fields(tool=fn_name, arg_keys=",".join(map(str, args)) or None))
@@ -288,6 +401,26 @@ class ResearchAgent:
                         else:
                             tool_output = {"answer": user_answer}
                             session.add_user_text(user_answer)
+                if tool_output is None and agent_mode and fn_name == DELEGATE_TOOL_NAME:
+                    tasks, tasks_error = parse_tasks(args)
+                    if tasks is None:
+                        tool_output = {"error": tasks_error}
+                    else:
+                        delegation = self._delegate(
+                            tasks, tools_def, session, next_step,
+                            endpoint=endpoint, model_name=model_name, reasoning_effort=reasoning_effort,
+                            approval_user_id=approval_user_id, conversation_id=conversation_id,
+                        )
+                        try:
+                            async for event in delegation:
+                                if event["event"] == SUBAGENT_RESULTS:
+                                    tool_output = {"results": event["data"]}
+                                    continue
+                                if event["event"] == "step_end":
+                                    research_trace.append(event["data"])
+                                yield event
+                        finally:
+                            await delegation.aclose()
                 if tool_output is None:
                     approval = await asyncio.to_thread(self.tools.approval_requirement, fn_name, args, approval_user_id, conversation_id)
                     if session.is_preapproved(fn_name, args):
@@ -310,8 +443,10 @@ class ResearchAgent:
                                     "arguments": args,
                                 },
                             }
-                            approved = await approval_broker.wait(approval_id, decision)
-                            yield {"event": "approval_resolved", "data": {"approval_id": approval_id, "approved": approved}}
+                            approved, remember = await approval_broker.wait(approval_id, decision)
+                            yield {"event": "approval_resolved", "data": {"approval_id": approval_id, "approved": approved, "remember": remember}}
+                            if remember:
+                                session.preapprove(fn_name, args)
                             if not approved:
                                 tool_output = {"error": "使用者未核准執行此工具，請改以已取得的資料回答，不要再次呼叫同一工具"}
                                 skipped_status = "not_approved"
@@ -325,14 +460,11 @@ class ResearchAgent:
                 tool_duration = round(time.time() - tool_start, 2)
                 if skipped_status:
                     logger.info("工具呼叫未執行 %s", log_fields(tool=fn_name, status=skipped_status, duration_ms=round(tool_duration * 1000)))
-                output_preview = json.dumps(tool_output, ensure_ascii=False)
-                if len(output_preview) > 300:
-                    output_preview = output_preview[:300] + "..."
                 step_info = {
                     "step": step_num,
                     "tool": fn_name,
                     "arguments": args,
-                    "output_preview": output_preview,
+                    "output_preview": preview_output(tool_output),
                     "duration_seconds": tool_duration,
                     "status": "error" if "error" in tool_output else "success",
                     **noted

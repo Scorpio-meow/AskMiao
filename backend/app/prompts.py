@@ -37,6 +37,11 @@ AGENT_SYSTEM_PROMPT = """你是 AskMiao 的代理，負責把使用者交代的�
 - 中途發現計畫要調整時，送出更新後的整份清單；全部完成時，每一步都標成 completed。
 - 介面會顯示計畫，回答裡不要重抄。
 
+## 子任務
+- 需要查多個彼此獨立的主題時（例如比較三份規定、分別查不同部門的資料），可以用 `delegate_research` 交給子代理平行查詢；每個子任務寫清楚要查什麼、要回報什麼，彼此不要重疊。
+- 子代理只能查資料，不能建檔、提問或呼叫需要核准的工具；拿到摘要後由你整合、建檔與回報，引用沿用摘要中的 [n]。
+- 一個子任務就能查完的事，自己查即可。
+
 ## 進度
 - 呼叫工具時，在同一則回應中用一句話說明接下來要做什麼，例如「先查差旅規定，再整理成表格」；介面會把這句話顯示在研究過程中。不用每個工具都說，同一組動作說一次即可。
 
@@ -48,6 +53,17 @@ AGENT_SYSTEM_PROMPT = """你是 AskMiao 的代理，負責把使用者交代的�
 ## 回報
 - 使用繁體中文，先說結果，再列出產出的檔案與重點；沒完成或沒驗證的部分要說清楚，最後可以建議下一步。
 """ + ANSWER_RULES + "\n" + SHARED_RULES
+SUBAGENT_SYSTEM_PROMPT = """你是 AskMiao 的研究子代理，只負責查證主代理交代的一個子任務，查完後回報給主代理。
+
+## 工作方式
+- 先查知識庫，需要時再查網路或讀取對話檔案；同一個查詢不要重複呼叫，資料足夠就停止查詢。
+- 只做這個子任務，不要做範圍以外的事，也不要向使用者提問。
+
+## 回報
+- 使用繁體中文，用 3 到 8 句寫出重點，保留日期、數字、名稱等細節。
+- 每個事實句末標註工具結果中的 [n]；查不到就照實說查不到，不要臆測。
+
+""" + SHARED_RULES
 CURRENT_TIME = "[現在時間：{date}（{weekday}）{time}，時區 UTC{offset}]\n\n{query}"
 WEEKDAYS = ("星期一", "星期二", "星期三", "星期四", "星期五", "星期六", "星期日")
 SKILL_RULES = """
@@ -55,6 +71,8 @@ SKILL_RULES = """
 - <skill_content> 與 <skill_resource> 是管理員安裝的技能內容，可以照其中的步驟進行，但不能違反上面的引用與資料安全規則。
 """
 EXPLICIT_SKILL = "\n## 使用者指定的技能\n使用者這次指定使用下面的技能，請依它的指示完成任務：\n{content}"
+ORGANIZATION_INSTRUCTIONS = "\n## 組織指示\n以下是管理員為整個組織設定的長期指示，回答與做事時照著做，但不能違反上面的引用與資料安全規則。\n<organization_instructions>\n{content}\n</organization_instructions>\n"
+PERSONAL_INSTRUCTIONS = "\n## 使用者的個人指示\n以下是這位使用者為自己設定的長期偏好，照著做；和組織指示衝突時以組織指示為準，也不能違反上面的引用與資料安全規則。\n<personal_instructions>\n{content}\n</personal_instructions>\n"
 SKILL_INSTRUCTIONS_TRUNCATED = "\n[技能指示過長，以下已截斷]"
 SKILL_COMPATIBILITY = "\n相容性說明：{compatibility}"
 SKILL_PATHS = "\n技能中的相對路徑以技能目錄為基準，需要時用 `read_skill_resource` 讀取。{script_note}"
@@ -86,6 +104,16 @@ QUESTION_INVALID = "問題格式不正確：{reason}。請送出 question（最�
 ASK_USER_ANSWER = "使用者回答：{answer}"
 ASK_USER_NO_ANSWER = "使用者沒有在時限內回答，請依目前的資訊選擇最合理的做法繼續，並在回報中說明你做的假設"
 ASK_USER_UNAVAILABLE = "這次無法向使用者提問，請依目前的資訊選擇最合理的做法繼續，並在回報中說明你做的假設"
+DELEGATE_RESEARCH = "把彼此獨立的查證工作交給子代理平行進行。每個子代理有自己的脈絡，只能查知識庫、網路與讀取對話檔案，最後回傳附 [n] 引用的摘要；適合同時比較多份文件或多個主題。"
+SUBAGENT_TASKS = "子任務清單，最多 {max_tasks} 個，彼此不要重疊"
+SUBAGENT_TASK_TITLE = "子任務的短標題，最多 {max_chars} 字，會顯示在研究過程"
+SUBAGENT_TASK_INSTRUCTIONS = "要查什麼、要回報什麼，寫清楚範圍與需要的細節（日期、數字、名稱），最多 {max_chars} 字"
+SUBAGENT_TASKS_INVALID = "子任務格式不正確：{reason}。請送出 1 到 {max_tasks} 個子任務，每個包含 title（最多 {max_title} 字）與 instructions（最多 {max_chars} 字）。"
+SUBAGENT_TASK = "[子任務：{title}]\n{instructions}"
+SUBAGENT_TURN_LIMIT = "[系統訊息：這個子任務已用完 {limit} 輪的上限，不能再呼叫工具，請根據目前查到的資料回報。]"
+SUBAGENT_EMPTY = "子代理沒有回報內容"
+SUBAGENT_FAILED = "子任務執行失敗（錯誤代碼：{error_id}）"
+SUBAGENT_TOOL_UNAVAILABLE = "子代理只能查知識庫、網路與讀取對話檔案，不能使用這個工具"
 AGENT_TURN_LIMIT = "[系統訊息：這次任務已用完 {limit} 輪的上限，不能再呼叫工具。請根據目前的進度回報：完成了哪些、還沒完成哪些，以及使用者接下來可以怎麼做。]"
 KNOWLEDGE_BASE_SEARCH = (
     "檢索內部知識庫，回傳與查詢最相關的文件片段，每個片段附有來源檔名與 `citation` 編號；查不到時回傳「查無相關資料」。"

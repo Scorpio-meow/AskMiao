@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 from app.models.database import get_db
-from app.models import User, Conversation, Message, Document, CustomApiTool, McpServer, AgentSkill
+from app.models import AgentInstructionsUpdate, User, Conversation, Message, Document, CustomApiTool, McpServer, AgentSkill
 from app.core.rag_manager import get_rag_system
 from app.core.error_response import SafeClientError
 from app.core.jwt_auth import get_current_admin_user, validate_password_strength
@@ -12,6 +12,7 @@ from app.core.limits import MAX_PASSWORD_CHARS
 from app.crud.crud_user import create_account, update_user_password
 from app.core.cache import cache_response, invalidate_cache
 from app.core.security_logging import log_security_event
+from app.services.agent_instructions import delete_user_instructions, get_instructions, set_instructions
 from app.services.conversation_files import delete_files_for_conversations
 from app.services.document_removal import remove_document
 from app.services.llm_connections import remove_user_connections, set_user_shared_access, user_connection_access
@@ -329,6 +330,7 @@ async def delete_user(
         remaining = [uid for uid in json.loads(skill.allowed_user_ids) if uid != user_id]
         skill.allowed_user_ids = json.dumps(remaining)
     remove_user_connections(db, user_id)
+    delete_user_instructions(db, user_id)
     deleted = {"target_user_id": user_id, "username": user.username, "was_admin": bool(user.is_admin)}
     db.delete(user)
     db.commit()
@@ -337,6 +339,19 @@ async def delete_user(
     invalidate_cache("admin_stats")
     
     return {"message": "使用者刪除成功"}
+@router.get("/agent-instructions")
+def get_organization_instructions(db: Session = Depends(get_db), current_user: dict = Depends(get_current_admin_user)):
+    return {"content": get_instructions(db, None)}
+@router.put("/agent-instructions")
+def update_organization_instructions(
+    update: AgentInstructionsUpdate,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_admin_user)
+):
+    content = set_instructions(db, None, update.content)
+    log_security_event("ADMIN_AGENT_INSTRUCTIONS_UPDATED", request=request, user_id=current_user["user_id"], details={"chars": len(content)})
+    return {"content": content}
 @router.get("/vector-store/info")
 async def get_vector_store_info(
     current_user: dict = Depends(get_current_admin_user)

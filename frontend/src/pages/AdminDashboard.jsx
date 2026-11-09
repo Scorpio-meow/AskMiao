@@ -14,6 +14,8 @@ import {
 } from '../components/ui';
 import SharedConnectionsCard from './Admin/SharedConnectionsCard';
 import SystemModelsCard from './Admin/SystemModelsCard';
+import InstructionsCard from '../components/InstructionsCard/InstructionsCard';
+import { instructionsService } from '../services/api';
 import UsersCard from './Admin/UsersCard';
 import styles from './AdminDashboard.module.css';
 const cache = {
@@ -200,6 +202,15 @@ function AdminDashboard() {
         onConnectionsChanged={() => setConnectionsVersion((version) => version + 1)}
       />
       <SystemModelsCard refreshKey={connectionsVersion} />
+      <InstructionsCard
+        className={styles.card}
+        titleClassName={styles.cardTitle}
+        title="組織指示"
+        hint="每次提問都會帶給研究助理，例如公司名稱、常用術語、回答格式或必須遵守的規定。不能推翻引用與資料安全規則；使用者的個人指示和這裡衝突時，以這裡為準。"
+        placeholder="例如：回答一律附上負責單位與聯絡窗口；提到請假規定時先引用員工手冊。"
+        load={instructionsService.getOrganization}
+        save={instructionsService.saveOrganization}
+      />
       <div className={styles.card}>
         <h2 className={styles.cardTitle} id="admin-documents-title">文件管理</h2>
         <div className={styles.tableWrapper}>

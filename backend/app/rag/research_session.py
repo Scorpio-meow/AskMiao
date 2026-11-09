@@ -7,7 +7,7 @@ from app import prompts
 from app.core.config import settings
 from app.core.limits import MAX_TOOL_RESULT_CHARS
 from app.rag.file_tools import DELETE_FILE_TOOL_NAME
-from app.rag.tools import SKILL_SCRIPT_TOOL_NAME, SKILL_TOOL_NAMES, WEB_TOOL_NAMES
+from app.rag.tools import MCP_CATALOG_TOOL_NAMES, SKILL_SCRIPT_TOOL_NAME, SKILL_TOOL_NAMES, WEB_TOOL_NAMES
 CITATION_NUMBERS = r"\d+(?:\s*[,，、]\s*\d+)*"
 CITATION_PATTERN = re.compile(rf"\[({CITATION_NUMBERS})\]")
 CITATION_SEPARATOR = re.compile(r"\s*[,，、]\s*")
@@ -81,6 +81,8 @@ class ToolResultFilter:
         return delta
 def strip_citations(text: str) -> str:
     return CODE_OR_CITATION_PATTERN.sub(lambda match: match.group("code") or "", text)
+def approval_key(name: str, arguments: Dict[str, Any]) -> str:
+    return f"{name}@{arguments.get('server', '')}" if name in MCP_CATALOG_TOOL_NAMES else name
 class ResearchSession:
     def __init__(self, user_texts: Iterable[str]):
         self.boundary_id = secrets.token_hex(4)
@@ -94,10 +96,15 @@ class ResearchSession:
         self.activated_skills: Set[str] = set()
         self.preapproved_tools: Set[str] = set()
         self.preapproved_script_skills: Set[str] = set()
+    def preapprove(self, name: str, arguments: Dict[str, Any]) -> None:
+        if name == SKILL_SCRIPT_TOOL_NAME:
+            self.preapproved_script_skills.add(str(arguments.get("skill", "")))
+        elif name != DELETE_FILE_TOOL_NAME:
+            self.preapproved_tools.add(approval_key(name, arguments))
     def is_preapproved(self, name: str, arguments: Dict[str, Any]) -> bool:
         if name == SKILL_SCRIPT_TOOL_NAME:
             return str(arguments.get("skill", "")) in self.preapproved_script_skills
-        return name in self.preapproved_tools
+        return name in self.preapproved_tools or approval_key(name, arguments) in self.preapproved_tools
     def refuse_tool_call(self, name: str, arguments: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         if name in WEB_TOOL_NAMES and settings.BLOCK_WEB_TOOLS_AFTER_KB and self.kb_content_returned:
             return {"error": "本次提問已讀取知識庫內容，依系統設定（BLOCK_WEB_TOOLS_AFTER_KB）不再使用聯網工具，請以已取得的資料回答"}

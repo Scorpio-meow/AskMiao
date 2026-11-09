@@ -6,6 +6,7 @@ All notable changes to AskMiao are documented in this file. The format is based 
 
 | Version | Release date | Highlights |
 |---|---|---|
+| [8.9.0](#890---2026-11-09) | 2026-11-09 | Organization and personal long-term instructions; approvals can cover the rest of a question; agent mode can hand sub-tasks to parallel subagents |
 | [8.8.0](#880---2026-11-09) | 2026-11-09 | Agent mode can ask the user and wait for the answer; the research trace shows a progress note for each step; file create and edit results carry a structure check |
 | [8.7.0](#870---2026-11-09) | 2026-11-09 | Agent mode: the chat page switches between research and agent mode; agent mode lists a plan, works through it, and reads its files back, with the plan shown as a checklist; at most 30 model calls, and old tool results are cleared once they exceed a budget |
 | [8.6.0](#860---2026-11-09) | 2026-11-09 | Model output limits looked up automatically: Claude connections to Anthropic may leave the output token limit empty, and a vLLM output token limit above the model's context length no longer stops research |
@@ -44,6 +45,14 @@ All notable changes to AskMiao are documented in this file. The format is based 
 ---
 
 ## [Unreleased]
+
+## [8.9.0] - 2026-11-09
+
+### Added
+
+- **Long-term instructions**: the admin page gains 「組織指示」 (organization instructions) and the profile page 「個人指示」 (personal instructions), much like CLAUDE.md in Claude Code or AGENTS.md in Codex. They are appended after the system prompt of every question in both research and agent mode, for things like company terms, answer formats, or personal preferences; they cannot override the citation and data safety rules, and the organization instructions win where the two conflict. They live in a new `agent_instructions` table created at startup. Adds `GET`/`PUT /api/chat/instructions` and `GET`/`PUT /api/admin/agent-instructions`; see [API reference 2.18 and 8.7](docs/api_en.md#218-get-put-apichatinstructions).
+- **Allow for this question**: the tool approval card gains an option after which the same tool is not asked about again during the same answer; the next question asks again, and deleting conversation files still needs approval every time. `POST /api/chat/approvals/{approval_id}` takes an optional `remember`.
+- **Parallel research with subagents**: agent mode gains `delegate_research`, which hands up to 3 independent sub-tasks to subagents that research in parallel. Each subagent has its own context, can only search the knowledge base and the web and read conversation files, and makes at most 8 model calls; the research trace shows each subagent's steps as they happen, labelled with their sub-task, and citation numbers are shared with the main agent. When the user stops the answer, running subagents are cancelled.
 
 ## [8.8.0] - 2026-11-09
 

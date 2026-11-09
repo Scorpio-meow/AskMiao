@@ -2,7 +2,7 @@
 
 [繁體中文](api.md) | [English](api_en.md)
 
-> 本文件說明 AskMiao 後端 **8.8.0** 的 REST 與 SSE 串流端點，內容依 `backend/app/api/` 的實際路由撰寫。設定 `ENABLE_API_DOCS=true` 時，後端另外在 `http://localhost:8001/docs`（Swagger UI）與 `http://localhost:8001/redoc` 提供互動測試，OpenAPI 規格位於 `/openapi.json`；這三個路徑不需要登入且會列出所有端點與參數，對外服務時請保持 `ENABLE_API_DOCS=false`（範本值），此時三者一律回傳 `404`。
+> 本文件說明 AskMiao 後端 **8.9.0** 的 REST 與 SSE 串流端點，內容依 `backend/app/api/` 的實際路由撰寫。設定 `ENABLE_API_DOCS=true` 時，後端另外在 `http://localhost:8001/docs`（Swagger UI）與 `http://localhost:8001/redoc` 提供互動測試，OpenAPI 規格位於 `/openapi.json`；這三個路徑不需要登入且會列出所有端點與參數，對外服務時請保持 `ENABLE_API_DOCS=false`（範本值），此時三者一律回傳 `404`。
 
 ## 目錄
 
@@ -61,6 +61,8 @@
 | GET | `/api/chat/tools` | 登入 | Agent 目前可用的工具定義 |
 | POST | `/api/chat/approvals/{approval_id}` | 登入（限發問者） | 核准或拒絕等待中的工具呼叫 |
 | POST | `/api/chat/questions/{question_id}` | 登入（限發問者） | 回答代理模式中研究助理提出的問題 |
+| GET | `/api/chat/instructions` | 登入 | 自己的個人指示 |
+| PUT | `/api/chat/instructions` | 登入 | 設定或清除自己的個人指示 |
 | GET | `/api/chat/conversations` | 登入 | 自己的對話清單 |
 | POST | `/api/chat/conversations` | 登入 | 建立對話 |
 | GET | `/api/chat/conversations/{conversation_id}` | 登入 | 單一對話（不含訊息） |
@@ -131,6 +133,8 @@
 | DELETE | `/api/admin/llm-connections/{connection_id}` | 管理員 | 刪除共用連線 |
 | GET | `/api/admin/system-models` | 管理員 | 文件摘要與 PDF OCR 指定的連線與模型 |
 | PUT | `/api/admin/system-models` | 管理員 | 指定或取消文件摘要與 PDF OCR 的連線與模型 |
+| GET | `/api/admin/agent-instructions` | 管理員 | 組織指示 |
+| PUT | `/api/admin/agent-instructions` | 管理員 | 設定或清除組織指示 |
 | GET | `/api/admin/statistics` | 管理員 | 系統統計（快取 180 秒） |
 | GET | `/api/admin/conversations` | 管理員 | 最近 50 段對話 |
 | GET | `/api/admin/conversations/{conversation_id}/messages` | 管理員 | 任一對話的訊息 |
@@ -356,9 +360,9 @@
 | 事件 | 時機 | `data` 欄位 |
 |---|---|---|
 | `start` | 使用者訊息已存入資料庫 | `conversation_id`、`user_message_id`、`attachment_file_ids`（依 `attachments` 的順序，存成對話檔案的附件為檔案編號，其餘為 `null`） |
-| `step_start` | 每次工具呼叫開始 | `step`（從 1 起算）、`tool`、`arguments`；模型在這一輪呼叫工具時附帶說明文字時，該輪第一個步驟另有 `note` |
+| `step_start` | 每次工具呼叫開始 | `step`（從 1 起算）、`tool`、`arguments`；模型在這一輪呼叫工具時附帶說明文字時，該輪第一個步驟另有 `note`；子代理的步驟另有 `agent`（例如 `子任務 1：國內出差`） |
 | `approval_required` | 工具需要核准，Agent 暫停等待（見 [2.9](#29-post-apichatapprovalsapproval_id)） | `approval_id`、`step`、`tool`、`kind`、`tool_display_name`、`target`、`arguments` |
-| `approval_resolved` | 使用者回覆或等待逾時 | `approval_id`、`approved`（逾時為 `false`） |
+| `approval_resolved` | 使用者回覆或等待逾時 | `approval_id`、`approved`（逾時為 `false`）、`remember` |
 | `question` | 代理模式中模型以正確格式呼叫 `ask_user`，Agent 暫停等待回答（見 [2.17](#217-post-apichatquestionsquestion_id)） | `question_id`、`step`、`question`、`options`（可能是空陣列） |
 | `question_resolved` | 使用者回答或等待逾時 | `question_id`、`answered`（逾時為 `false`） |
 | `plan` | 代理模式中模型以正確格式呼叫 `update_plan` | `items`：整份計畫，每步為 `{step, status}`，`status` 為 `pending`、`in_progress` 或 `completed` |
@@ -535,9 +539,9 @@ data: {"message_id": 108, "conversation_id": 42, "answer": "特休假需先在�
 
 核准或拒絕 Agent 暫停等待中的工具呼叫。自訂 API 工具與 MCP 伺服器設有 `requires_approval` 旗標（見 [工具物件](#工具物件) 與 [伺服器物件](#伺服器物件)）；Agent 要呼叫這類工具時，`POST /api/chat/send` 的串流先送出 `approval_required` 事件並暫停，等使用者以此端點回覆，再送出 `approval_resolved` 事件。設計背景見 [ADR-0006](adr/0006-tool-call-approval.md)。
 
-**請求主體**：`{"approved": true}`（`false` 表示拒絕）
+**請求主體**：`{"approved": true, "remember": false}`（`approved` 為 `false` 表示拒絕；`remember` 選填，核准時設為 `true` 表示這次提問中再呼叫同一個工具不再詢問）
 
-**回應**：`200 OK` `{"approval_id": "…", "approved": true}`
+**回應**：`200 OK` `{"approval_id": "…", "approved": true, "remember": false}`
 
 | 狀態碼 | 情況 |
 |---|---|
@@ -550,6 +554,7 @@ data: {"message_id": 108, "conversation_id": 42, "answer": "特休假需先在�
 - `delete_conversation_file` 一律需要核准，技能的 `allowed-tools` 也不能免除；拒絕時檔案不會刪除。
 - `run_skill_script` 預設需要核准（`target` 為 `本機指令 <直譯器>`）；技能的 `allowed-tools` 列出 `run_skill_script` 時，該技能啟用後，它的腳本在同一次提問的其餘過程中不再要求核准。`read_mcp_resource`、`get_mcp_prompt` 依該 MCP 伺服器的 `requires_approval`。
 - 技能啟用後，它的 `allowed-tools` 列出的工具名稱在同一次提問的其餘過程中不再要求核准（`delete_conversation_file` 除外，見 [技能物件](#技能物件)）。
+- `remember` 只在同一次提問（同一個串流）中有效，下一次提問重新詢問；`run_skill_script` 以技能為單位記住；`delete_conversation_file` 一律不記住，每次都要核准。
 - 待核准項目存在後端行程的記憶體中，後端重啟後失效。
 
 ### 2.10 GET /api/chat/conversations/{conversation_id}/files
@@ -644,6 +649,14 @@ data: {"message_id": 108, "conversation_id": 42, "answer": "特休假需先在�
 - 300 秒內沒有回答時，研究助理收到「使用者沒有回答」的結果，依現有資訊繼續並在回報中說明假設；使用者中斷串流時，等待中的問題一併取消。
 - 回答以使用者的話交給模型，不包成不可信資料；回答中的完整網址可以給 `web_fetch` 讀取。
 - 等待中的問題存在後端行程的記憶體中，後端重啟後失效。
+
+### 2.18 GET、PUT /api/chat/instructions
+
+讀取或設定自己的個人指示。個人指示只對自己的提問生效，兩種模式都會接在系統提示詞之後；和組織指示（見 [8.7](#87-組織指示)）衝突時以組織指示為準，見 [系統架構：長期指示](architecture.md#長期指示)。
+
+- `GET`：`200 OK` `{"content": "…"}`，沒有設定時為空字串。
+- `PUT`：主體 `{"content": "…"}`，最多 4,000 字元（超過回傳 `422`），前後空白會先去掉；空白內容表示清除。回傳儲存後的 `{"content": "…"}`。
+- 刪除帳號時一併刪除個人指示。
 
 ---
 
@@ -1425,6 +1438,13 @@ Agent 以漸進揭露使用技能：有啟用且檔案存在的技能時，[`GET
 ```json
 {"document_summary": {"connection_id": 3, "model_name": "qwen3:8b", "reasoning_effort": "none"}, "pdf_ocr": null}
 ```
+
+### 8.7 組織指示
+
+- `GET /api/admin/agent-instructions`：`{"content": "…"}`，沒有設定時為空字串。
+- `PUT /api/admin/agent-instructions`：主體 `{"content": "…"}`，規則同 [2.18](#218-getput-apichatinstructions)；成功後以 `ADMIN_AGENT_INSTRUCTIONS_UPDATED` 寫入安全日誌（只記字數）。
+
+組織指示對所有帳號的提問生效，排在個人指示之前。
 
 ---
 

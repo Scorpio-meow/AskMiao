@@ -2,7 +2,7 @@
 
 [繁體中文](architecture.md) | [English](architecture_en.md)
 
-> The architecture of AskMiao **8.8.0**: layers, startup, data model, document processing and retrieval, the agentic RAG research loop, the LLM layer, external tool integration, authentication and security, and the frontend (see the [changelog](../CHANGELOG_en.md#880---2026-11-09) for this release's changes). The trade-offs behind these designs are recorded in the [Architecture Decision Records](adr/README_en.md).
+> The architecture of AskMiao **8.9.0**: layers, startup, data model, document processing and retrieval, the agentic RAG research loop, the LLM layer, external tool integration, authentication and security, and the frontend (see the [changelog](../CHANGELOG_en.md#890---2026-11-09) for this release's changes). The trade-offs behind these designs are recorded in the [Architecture Decision Records](adr/README_en.md).
 
 ## Contents
 
@@ -161,6 +161,7 @@ erDiagram
     documents ||--o{ rag_chunks : "split into"
     users ||--o{ llm_connections : "owns (personal connections)"
     llm_connections ||--o{ system_models : "serves"
+    users ||--o| agent_instructions : "personal instructions"
 
     users {
         int id PK
@@ -258,6 +259,11 @@ erDiagram
         int max_output_tokens
         int owner_id FK "empty for a shared connection"
         text allowed_user_ids "JSON, users of a shared connection"
+    }
+    agent_instructions {
+        int id PK
+        int user_id FK "empty for the organization"
+        text content
     }
     system_models {
         string purpose PK "document_summary, pdf_ocr"
@@ -499,12 +505,17 @@ When `mode` in `POST /api/chat/send` is `agent` (「代理」 at the top of the 
 | System prompt | `SYSTEM_PROMPT` | `AGENT_SYSTEM_PROMPT`: work through understand → plan → act → verify → report and finish only when the task is done; read files back after creating or editing them; report the result first, then what is unfinished or unverified. The answer, citation, and data safety rules are shared (`ANSWER_RULES`, `SHARED_RULES`) |
 | Plan | None | An extra `update_plan` tool that always sends the whole list (at most `MAX_PLAN_STEPS` steps of at most `MAX_PLAN_STEP_CHARS` characters each, with status `pending`, `in_progress`, or `completed`). A valid plan produces a `plan` event; an invalid one returns the reason to the model. Plan updates are not research steps and do not appear in `research_trace` |
 | Questions | None | An extra `ask_user` tool (questions of at most `MAX_QUESTION_CHARS` characters, at most `MAX_QUESTION_OPTIONS` options): it sends a `question` event and pauses until the user answers with [`POST /api/chat/questions/{question_id}`](api_en.md#217-post-apichatquestionsquestion_id), waiting at most 300 seconds. The answer reaches the model as the user's own words, not wrapped as untrusted data, and whole URLs in it may be read with `web_fetch`; on a timeout the model is told to carry on and state its assumptions |
+| Subagents | None | An extra `delegate_research` tool (at most `MAX_SUBAGENT_TASKS` tasks): subagents run in parallel, each with its own context and `SUBAGENT_SYSTEM_PROMPT`, limited to the read-only tools in `SUBAGENT_TOOL_NAMES` (knowledge base, web, reading conversation files) and at most `MAX_SUBAGENT_TURNS` turns each. Their steps join the research trace as they happen with an `agent` label, and they share the main agent's citation numbers and URL provenance; their summaries reach the main agent wrapped as untrusted data. When the user interrupts, running subagents are cancelled |
 | Turn limit | None | After `MAX_AGENT_TURNS` model calls no more tools are offered; `AGENT_TURN_LIMIT` is appended and the model reports what is done and what is not in a streamed answer |
 | Context | Each tool result is capped at `MAX_TOOL_RESULT_CHARS` characters | Before every model call, when all tool results together exceed `AGENT_TOOL_RESULT_BUDGET_CHARS`, the oldest are replaced with `TOOL_RESULT_CLEARED`, always keeping the newest; the model can call the tool again when it needs the data |
 
 Two things apply in both modes: text the model writes alongside its tool calls becomes the `note` of that turn's first research step (at most `MAX_STEP_NOTE_CHARS` characters), shown in the research trace and used as the title of a running step; and file create and edit results carry a `check`, see [Conversation files](#conversation-files). The agent system prompt also asks the model to state its progress in one sentence when calling tools, and to check `check` first.
 
 The frontend shows the plan as a checklist (`PlanChecklist`) above the research trace of the assistant message, with the completed count on the right of its title. The assistant message's `context_used` also stores the last plan, so it is still shown when the conversation is reopened. The chosen mode is kept in the browser's `localStorage` and does not follow the account.
+
+### Long-term instructions
+
+Organization instructions (set by admins) and personal instructions (set by each account) live in `agent_instructions`; the row with an empty `user_id` holds the organization instructions, and each is at most `MAX_AGENT_INSTRUCTIONS_CHARS` characters. `POST /api/chat/send` reads them before the stream starts, wraps them with `ORGANIZATION_INSTRUCTIONS` and `PERSONAL_INSTRUCTIONS` in that order, and appends them after the system prompt (including the skill rules); this applies in both research and agent mode, but not to subagents. The prompt asks the model to follow them without overriding the citation and data safety rules, and the organization instructions win where the two conflict. The admin page has an 「組織指示」 card and the profile page a 「個人指示」 card for editing them; personal instructions are deleted with the account.
 
 ### ResearchSession: per-question state
 
@@ -536,6 +547,8 @@ Results from custom API and MCP tools are wrapped as untrusted too, but they are
 3. The frontend shows a confirmation card inside that answer; the user's approve or deny click calls `POST /api/chat/approvals/{approval_id}`. Only the same user can answer; anyone else, or an item already handled or timed out, gets `404`.
 4. The stream sends `approval_resolved`. On approval the tool runs as usual; on a denial or a 300-second timeout it does not, and the agent receives a "not approved by the user" tool result and answers from what it already has.
 5. When no user can approve (`approval_user_id` is `None`, for example in a non-interactive run), tools that need approval never run.
+
+The confirmation card also offers 「這次提問都允許」 ("allow for this question"): with `remember: true`, `ResearchSession.preapprove()` adds the tool (for `run_skill_script`, the skill) to this question's pre-approved set, so calling it again in the same answer does not ask again; `delete_conversation_file` is never added and always needs approval. The set lives only in this question's `ResearchSession`, so the next question asks again.
 
 Pending items live only in process memory; when the user interrupts the stream, the waiting item is cancelled with it.
 

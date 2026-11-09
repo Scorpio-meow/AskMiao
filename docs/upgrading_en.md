@@ -4,6 +4,7 @@
 
 > How to upgrade an existing deployment to a new release, with rollback steps and troubleshooting. See the [CHANGELOG](../CHANGELOG_en.md) for the full list of changes in each version.
 
+- [Upgrading from 8.8.0 to 8.9.0](#upgrading-from-880-to-890)
 - [Upgrading from 8.7.0 to 8.8.0](#upgrading-from-870-to-880)
 - [Upgrading from 8.6.0 to 8.7.0](#upgrading-from-860-to-870)
 - [Upgrading from 8.5.1 to 8.6.0](#upgrading-from-851-to-860)
@@ -47,6 +48,20 @@
   - [Step 5: verify the upgrade](#step-5-verify-the-upgrade)
   - [Rolling back to 2.2.x](#rolling-back-to-22x)
   - [Troubleshooting](#troubleshooting)
+
+---
+
+## Upgrading from 8.8.0 to 8.9.0
+
+For upgrading from 8.8.0 to 8.9.0 (2026-11-09); see the [CHANGELOG](../CHANGELOG_en.md#890---2026-11-09) for the full list of changes. This release needs no `.env` changes; the database gains an `agent_instructions` table created at startup, so no manual migration is needed. With `deploy/`, rebuild the images as usual.
+
+| Item | 8.8.0 | 8.9.0 | Action |
+|---|---|---|---|
+| Long-term instructions | None | 「組織指示」 on the admin page and 「個人指示」 on the profile page, appended after the system prompt of every question | None; admins fill in the organization instructions when the research assistant should follow house rules |
+| Tool approval | Every call needs approval | The approval card gains 「這次提問都允許」 ("allow for this question"); `POST /api/chat/approvals/{approval_id}` takes an optional `remember` | None; deleting conversation files still needs approval every time |
+| Subagents | None | Agent mode can hand up to 3 sub-tasks to subagents researching in parallel; research steps gain an `agent` field | Subagents can triple the requests hitting the model at once, so check the load first when sharing a local GPU |
+
+To roll back to 8.8.0, switch back to the older code. The `agent_instructions` table is ignored, so long-term instructions are no longer applied; the `agent` field on research steps is ignored and nothing else is affected.
 
 ---
 

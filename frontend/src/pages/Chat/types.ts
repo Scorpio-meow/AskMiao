@@ -17,6 +17,7 @@ export interface ResearchTraceStep {
   duration_seconds?: number;
   status?: 'success' | 'error' | string;
   note?: string;
+  agent?: string;
 }
 export interface SnackbarState {
   open: boolean;

@@ -178,6 +178,7 @@ describe('ToolApprovalCard', () => {
     expect(textOf(html)).toContain('boss⟦U+202E⟧@example.com');
     expect(textOf(html)).toContain('2');
     expect(buttonNamed(html, '拒絕')).toBeDefined();
+    expect(buttonNamed(html, '這次提問都允許')).toBeDefined();
     expect(buttonNamed(html, '核准執行')).toBeDefined();
   });
   it('says when there are no arguments', () => {
@@ -195,6 +196,7 @@ describe('ToolApprovalCard', () => {
     expect(textOf(html)).toContain('AI 想刪除對話檔案，需要你確認');
     expect(textOf(html)).toContain('永久刪除');
     expect(textOf(html)).not.toContain('外部');
+    expect(buttonNamed(html, '這次提問都允許')).toBeUndefined();
   });
 });
 const listProps = {
@@ -425,5 +427,38 @@ describe('QuestionCard', () => {
   it('leaves the question out once the answer stream has ended', () => {
     const html = renderMessage({ id: 41, content: '完成', is_user: false, pending_question: pending });
     expect(textOf(html)).not.toContain('需要你的回答');
+  });
+});
+describe('ResearchTraceBlock with subagents', () => {
+  it('orders steps by number and names the sub-task of each subagent step', () => {
+    const html = renderMessage({
+      id: 50,
+      content: '完成',
+      is_user: false,
+      research_trace: [
+        { step: 3, tool: 'search_knowledge_base', status: 'success', agent: '子任務 2：國外出差' },
+        { step: 2, tool: 'search_knowledge_base', status: 'success', agent: '子任務 1：國內出差' },
+        { step: 1, tool: 'delegate_research', status: 'success' },
+      ],
+    });
+    const text = textOf(html);
+    const first = text.indexOf('步驟 1：交給子代理平行研究');
+    const second = text.indexOf('子任務 1：國內出差');
+    const third = text.indexOf('子任務 2：國外出差');
+    expect(first).toBeGreaterThan(-1);
+    expect(first).toBeLessThan(second);
+    expect(second).toBeLessThan(third);
+  });
+  it('titles the research with the newest running subagent step', () => {
+    const html = renderMessage({
+      id: 51,
+      content: '',
+      is_user: false,
+      research_trace: [
+        { step: 1, tool: 'delegate_research', status: 'running' },
+        { step: 2, tool: 'search_knowledge_base', status: 'running', agent: '子任務 1：國內出差', note: '查國內規定' },
+      ],
+    }, { isStreaming: true });
+    expect(textOf(html)).toContain('研究中：查國內規定（步驟 2）');
   });
 });

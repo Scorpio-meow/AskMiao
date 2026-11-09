@@ -2,7 +2,8 @@ import { useCallback, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../hooks/useAuth';
 import { useLlmProviders } from '../hooks/useLlmProviders';
-import { llmConnectionService } from '../services/api';
+import { instructionsService, llmConnectionService } from '../services/api';
+import InstructionsCard from '../components/InstructionsCard/InstructionsCard';
 import ConnectionFormDialog from '../components/LlmConnections/ConnectionFormDialog';
 import ConnectionTestDialog from '../components/LlmConnections/ConnectionTestDialog';
 import ConnectionList from '../components/LlmConnections/ConnectionList';
@@ -252,6 +253,15 @@ const ProfilePage = () => {
         </dl>
       </div>
       <LlmConnectionsCard isAdmin={user.is_admin} />
+      <InstructionsCard
+        className={styles.card}
+        titleClassName={styles.cardTitle}
+        title="個人指示"
+        hint="只對你自己的提問生效，例如偏好的語氣、格式或你所屬的部門；和組織指示衝突時以組織指示為準。"
+        placeholder="例如：我在業務部，回答請先列重點，再附細節。"
+        load={instructionsService.getPersonal}
+        save={instructionsService.savePersonal}
+      />
       <div className={styles.card}>
         <h2 className={styles.cardTitle} style={{ marginBottom: '16px' }}>
           <Icon name="lock" size={20} />

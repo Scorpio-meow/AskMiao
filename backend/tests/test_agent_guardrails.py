@@ -344,7 +344,7 @@ async def test_agent_mode_plans_without_adding_trace_steps(monkeypatch):
     ]).install(monkeypatch)
     events = await collect(research(agent, "整理特休規定", mode="agent"))
     assert llm.chat_messages[0][0]["content"] == prompts.AGENT_SYSTEM_PROMPT
-    assert [tool["function"]["name"] for tool in llm.chat_tools[0]] == ["update_plan", "ask_user"]
+    assert [tool["function"]["name"] for tool in llm.chat_tools[0]] == ["update_plan", "ask_user", "delegate_research"]
     assert [e["data"] for e in events if e["event"] == "plan"] == [{"items": PLAN}]
     assert [(e["data"]["step"], e["data"]["tool"]) for e in events if e["event"] == "step_end"] == [(1, "search_knowledge_base")]
     plan_reply = next(m for m in llm.chat_messages[1] if m.get("role") == "tool")
@@ -456,3 +456,127 @@ async def test_malformed_question_goes_back_to_the_model(monkeypatch, arguments)
 ])
 def test_progress_notes_hide_thinking_and_stay_short(content, note):
     assert turn_note(content) == note
+def tool_def(name):
+    return {"type": "function", "function": {"name": name, "description": name, "parameters": {"type": "object", "properties": {}}}}
+class RoutedLLM:
+    def __init__(self, main, subagents, failing=()):
+        self.main = list(main)
+        self.subagents = {title: list(replies) for title, replies in subagents.items()}
+        self.failing = set(failing)
+        self.main_messages = []
+        self.subagent_tools = {}
+        self.stream_calls = 0
+    async def chat(self, messages, *, endpoint, model_name, tools=None, reasoning_effort=None):
+        if messages[0]["content"] == prompts.SUBAGENT_SYSTEM_PROMPT:
+            title = messages[1]["content"].split("[子任務：", 1)[1].split("]", 1)[0]
+            self.subagent_tools[title] = [tool["function"]["name"] for tool in tools]
+            await asyncio.sleep(0)
+            if title in self.failing:
+                raise RuntimeError("模型連線中斷")
+            return self.subagents[title].pop(0)
+        self.main_messages.append(list(messages))
+        return self.main.pop(0)
+    async def stream(self, messages, *, endpoint, model_name, tools=None, reasoning_effort=None):
+        self.stream_calls += 1
+        yield "子代理收尾摘要 [1]"
+    def install(self, monkeypatch):
+        monkeypatch.setattr(agent_module, "chat_completion", self.chat)
+        monkeypatch.setattr(agent_module, "stream_completion", self.stream)
+        return self
+def delegate(*titles):
+    return tool_call("delegate_research", {"tasks": [{"title": title, "instructions": f"查{title}的規定"} for title in titles]})
+def subagent_agent(monkeypatch):
+    agent, registry = make_agent(monkeypatch)
+    monkeypatch.setattr(registry, "get_tool_definitions", lambda user_id=None, conversation_id=None: [tool_def("search_knowledge_base"), tool_def("create_conversation_file")])
+    return agent
+@pytest.mark.asyncio
+async def test_subagents_research_in_parallel_and_share_citations(monkeypatch):
+    agent = subagent_agent(monkeypatch)
+    llm = RoutedLLM(
+        [delegate("國內出差", "國外出差"), answer("兩種出差都依年資計算 [1]")],
+        {
+            "國內出差": [{"role": "assistant", "content": "先查國內規定", "tool_calls": [{"id": "s1", "function": {"name": "search_knowledge_base", "arguments": {"query": "國內出差"}}}]}, answer("國內：依年資計算 [1]")],
+            "國外出差": [tool_call("search_knowledge_base", {"query": "國外出差"}, "s2"), answer("國外：依年資計算 [1]")],
+        },
+    ).install(monkeypatch)
+    events = await collect(research(agent, "比較國內外出差規定", mode="agent", approval_user_id=7))
+    assert llm.subagent_tools == {"國內出差": ["search_knowledge_base"], "國外出差": ["search_knowledge_base"]}
+    ended = {e["data"]["step"]: e["data"] for e in events if e["event"] == "step_end"}
+    assert sorted(ended) == [1, 2, 3]
+    assert ended[1]["tool"] == "delegate_research" and "agent" not in ended[1]
+    assert sorted(ended[step]["agent"] for step in (2, 3)) == ["子任務 1：國內出差", "子任務 2：國外出差"]
+    assert next(ended[step]["note"] for step in (2, 3) if ended[step]["agent"].endswith("國內出差")) == "先查國內規定"
+    starts = [e["data"]["step"] for e in events if e["event"] == "step_start"]
+    assert starts[0] == 1 and starts.index(1) < starts.index(2)
+    delegated = next(m for m in llm.main_messages[1] if m.get("role") == "tool")["content"]
+    assert "國內：依年資計算 [1]" in delegated and "國外：依年資計算 [1]" in delegated
+    done = events[-1]["data"]
+    assert done["answer"] == "兩種出差都依年資計算 [1]"
+    assert [source["citation"] for source in done["sources_detail"]] == [1]
+    assert len(done["research_trace"]) == 3
+@pytest.mark.asyncio
+async def test_subagents_cannot_write_and_report_their_failures(monkeypatch):
+    agent = subagent_agent(monkeypatch)
+    executed = []
+    original = agent.tools.execute_tool
+    async def tracking_execute(name, arguments, **kwargs):
+        executed.append(name)
+        return await original(name, arguments, **kwargs)
+    monkeypatch.setattr(agent.tools, "execute_tool", tracking_execute)
+    llm = RoutedLLM(
+        [delegate("寫檔", "斷線"), answer("完成")],
+        {"寫檔": [tool_call("create_conversation_file", {"filename": "a.md", "content": "x"}), answer("沒辦法寫檔")]},
+        failing={"斷線"},
+    ).install(monkeypatch)
+    events = await collect(research(agent, "整理資料", mode="agent", approval_user_id=7))
+    refused = next(e["data"] for e in events if e["event"] == "step_end" and e["data"].get("agent") == "子任務 1：寫檔")
+    assert refused["status"] == "error" and prompts.SUBAGENT_TOOL_UNAVAILABLE in refused["output_preview"]
+    assert executed == []
+    delegated = next(m for m in llm.main_messages[1] if m.get("role") == "tool")["content"]
+    assert "沒辦法寫檔" in delegated and "子任務執行失敗（錯誤代碼：" in delegated
+@pytest.mark.asyncio
+async def test_subagent_reports_when_it_runs_out_of_turns(monkeypatch):
+    monkeypatch.setattr(agent_module, "MAX_SUBAGENT_TURNS", 1)
+    agent = subagent_agent(monkeypatch)
+    llm = RoutedLLM(
+        [delegate("國內出差"), answer("完成")],
+        {"國內出差": [tool_call("search_knowledge_base", {"query": "國內出差"})]},
+    ).install(monkeypatch)
+    await collect(research(agent, "整理國內出差", mode="agent", approval_user_id=7))
+    assert llm.stream_calls == 1
+    delegated = next(m for m in llm.main_messages[1] if m.get("role") == "tool")["content"]
+    assert "子代理收尾摘要 [1]" in delegated
+@pytest.mark.asyncio
+@pytest.mark.parametrize("tasks", [[], [{"title": "一", "instructions": "x"}] * 4, [{"title": " ", "instructions": "x"}]])
+async def test_malformed_subagent_tasks_go_back_to_the_model(monkeypatch, tasks):
+    agent = subagent_agent(monkeypatch)
+    llm = RoutedLLM([tool_call("delegate_research", {"tasks": tasks}), answer("完成")], {}).install(monkeypatch)
+    events = await collect(research(agent, "整理資料", mode="agent", approval_user_id=7))
+    assert not [e for e in events if e["event"] == "step_end" and e["data"].get("agent")]
+    reply = next(m for m in llm.main_messages[1] if m.get("role") == "tool")
+    assert "子任務格式不正確" in reply["content"]
+@pytest.mark.asyncio
+async def test_stopping_the_answer_cancels_running_subagents(monkeypatch):
+    agent = subagent_agent(monkeypatch)
+    cancelled = asyncio.Event()
+    class SlowLLM(RoutedLLM):
+        async def chat(self, messages, **kwargs):
+            if messages[0]["content"] == prompts.SUBAGENT_SYSTEM_PROMPT:
+                try:
+                    await asyncio.sleep(10)
+                except asyncio.CancelledError:
+                    cancelled.set()
+                    raise
+            return await super().chat(messages, **kwargs)
+    SlowLLM([delegate("國內出差"), answer("完成")], {}).install(monkeypatch)
+    stream = research(agent, "整理國內出差", mode="agent", approval_user_id=7)
+    async for event in stream:
+        if event["event"] == "step_start":
+            break
+    waiting = asyncio.ensure_future(stream.__anext__())
+    await asyncio.sleep(0.05)
+    waiting.cancel()
+    with pytest.raises((asyncio.CancelledError, StopAsyncIteration)):
+        await waiting
+    await stream.aclose()
+    await asyncio.wait_for(cancelled.wait(), timeout=1)

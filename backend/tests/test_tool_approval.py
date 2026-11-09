@@ -8,6 +8,7 @@ from app.core.jwt_auth import get_current_user_from_token
 from app.models import CustomApiTool
 from app.models.database import SessionLocal, upgrade_schema
 from app.rag import tool_approval
+from app.rag.research_session import ResearchSession
 from app.rag.tool_approval import ToolApprovalBroker, approval_broker, default_requires_approval
 from test_agent_guardrails import ScriptedLLM, answer, collect, research, make_agent, tool_call
 ADMIN_USER = {"user_id": 1, "username": "admin", "email": "admin@example.com", "role": "admin", "is_admin": True}
@@ -20,18 +21,18 @@ def test_default_policy_by_http_method():
 async def test_only_the_requesting_user_can_resolve():
     broker = ToolApprovalBroker()
     approval_id, future = broker.create(user_id=7)
-    assert broker.resolve(approval_id, user_id=8, approved=True) is False
+    assert broker.resolve(approval_id, user_id=8, approved=True, remember=False) is False
     assert not future.done()
-    assert broker.resolve(approval_id, user_id=7, approved=True) is True
-    assert await broker.wait(approval_id, future) is True
-    assert broker.resolve(approval_id, user_id=7, approved=True) is False
+    assert broker.resolve(approval_id, user_id=7, approved=True, remember=False) is True
+    assert await broker.wait(approval_id, future) == (True, False)
+    assert broker.resolve(approval_id, user_id=7, approved=True, remember=False) is False
 @pytest.mark.anyio
 async def test_unanswered_approval_times_out_as_denied(monkeypatch):
     monkeypatch.setattr(tool_approval, "APPROVAL_TIMEOUT_SECONDS", 0.05)
     broker = ToolApprovalBroker()
     approval_id, future = broker.create(user_id=1)
-    assert await broker.wait(approval_id, future) is False
-    assert broker.resolve(approval_id, user_id=1, approved=True) is False
+    assert await broker.wait(approval_id, future) == (False, False)
+    assert broker.resolve(approval_id, user_id=1, approved=True, remember=False) is False
 def approval_agent(monkeypatch):
     agent, registry = make_agent(monkeypatch)
     executed = []
@@ -51,7 +52,7 @@ async def run_with_decision(agent, decision, user_id=5):
     async for event in research(agent, "幫我下單", approval_user_id=user_id):
         events.append(event)
         if event["event"] == "approval_required" and decision is not None:
-            assert approval_broker.resolve(event["data"]["approval_id"], user_id, decision)
+            assert approval_broker.resolve(event["data"]["approval_id"], user_id, decision, False)
     return events
 @pytest.mark.anyio
 @pytest.mark.parametrize("decision", [True, False])
@@ -85,7 +86,7 @@ async def test_disconnect_while_waiting_discards_the_approval(monkeypatch):
     with pytest.raises((asyncio.CancelledError, StopAsyncIteration)):
         await waiting
     await stream.aclose()
-    assert approval_broker.resolve(approval_id, 5, True) is False
+    assert approval_broker.resolve(approval_id, 5, True, False) is False
     assert executed == []
 def admin_client():
     app = FastAPI()
@@ -176,3 +177,35 @@ def test_question_endpoint_answers_only_the_owners_question():
     assert own_future.result() == "九月"
     for token in (others, own, approval_id):
         approval_broker.discard(token)
+@pytest.mark.anyio
+async def test_remembered_approval_covers_the_rest_of_the_question(monkeypatch):
+    agent, executed = approval_agent(monkeypatch)
+    ScriptedLLM([
+        tool_call("create_order", {"item": "A", "qty": 1}),
+        tool_call("create_order", {"item": "B", "qty": 2}, "call_2"),
+        answer("完成"),
+    ]).install(monkeypatch)
+    asked, resolved = [], []
+    async for event in research(agent, "下兩張單", approval_user_id=5):
+        if event["event"] == "approval_required":
+            asked.append(event["data"]["arguments"]["item"])
+            assert approval_broker.resolve(event["data"]["approval_id"], 5, True, True)
+        if event["event"] == "approval_resolved":
+            resolved.append(event["data"]["remember"])
+    assert (asked, resolved) == (["A"], [True])
+    assert [arguments["item"] for _, arguments in executed] == ["A", "B"]
+def test_file_deletion_is_never_remembered():
+    session = ResearchSession([])
+    session.preapprove("delete_conversation_file", {"file_id": 1})
+    session.preapprove("run_skill_script", {"skill": "report"})
+    assert not session.is_preapproved("delete_conversation_file", {"file_id": 2})
+    assert session.is_preapproved("run_skill_script", {"skill": "report"})
+    assert not session.is_preapproved("run_skill_script", {"skill": "other"})
+@pytest.mark.parametrize("tool", ["read_mcp_resource", "get_mcp_prompt"])
+def test_remembered_mcp_catalog_approval_stays_with_its_server(tool):
+    session = ResearchSession([])
+    session.preapprove(tool, {"server": "wiki", "uri": "wiki://a"})
+    assert session.is_preapproved(tool, {"server": "wiki", "uri": "wiki://b"})
+    assert not session.is_preapproved(tool, {"server": "billing", "uri": "billing://a"})
+    session.preapprove("mcp_wiki_search", {"query": "x"})
+    assert session.is_preapproved("mcp_wiki_search", {"query": "y"})

@@ -18,15 +18,15 @@ const argumentEntries = (args: PendingToolApproval['arguments']): Array<[string,
   return [['（參數）', args]];
 };
 const ToolApprovalCard: React.FC<ToolApprovalCardProps> = ({ approval }) => {
-  const [submitting, setSubmitting] = useState<'approve' | 'deny' | null>(null);
+  const [submitting, setSubmitting] = useState<'approve' | 'remember' | 'deny' | null>(null);
   const [error, setError] = useState<string | null>(null);
   const entries = argumentEntries(approval.arguments);
   const isFile = approval.kind === 'file';
-  const decide = async (approved: boolean) => {
-    setSubmitting(approved ? 'approve' : 'deny');
+  const decide = async (approved: boolean, remember: boolean) => {
+    setSubmitting(remember ? 'remember' : approved ? 'approve' : 'deny');
     setError(null);
     try {
-      await chatService.resolveApproval(approval.approval_id, approved);
+      await chatService.resolveApproval(approval.approval_id, approved, remember);
     } catch (err: any) {
       setError(err?.response?.data?.detail || '無法送出決定，可能已逾時');
       setSubmitting(null);
@@ -66,14 +66,19 @@ const ToolApprovalCard: React.FC<ToolApprovalCardProps> = ({ approval }) => {
       <p className={styles.hint}>
         {isFile
           ? '核准後這個檔案會永久刪除，無法復原。未回應會在 5 分鐘後視為拒絕。'
-          : '此工具可能會修改外部系統的資料。請逐一確認上方每個參數與送出位置再核准；以 ⟦U+…⟧ 標示的是原本看不見的控制字元。未回應會在 5 分鐘後視為拒絕。'}
+          : '此工具可能會修改外部系統的資料。請逐一確認上方每個參數與送出位置再核准；以 ⟦U+…⟧ 標示的是原本看不見的控制字元。選「這次提問都允許」時，這次回答中再呼叫同一個工具就不再詢問。未回應會在 5 分鐘後視為拒絕。'}
       </p>
       {error && <p className={styles.error} role="alert">{error}</p>}
       <div className={styles.actions}>
-        <Button size="sm" variant="outline" onClick={() => decide(false)} disabled={submitting !== null} loading={submitting === 'deny'}>
+        <Button size="sm" variant="outline" onClick={() => decide(false, false)} disabled={submitting !== null} loading={submitting === 'deny'}>
           拒絕
         </Button>
-        <Button size="sm" onClick={() => decide(true)} disabled={submitting !== null} loading={submitting === 'approve'}>
+        {!isFile && (
+          <Button size="sm" variant="outline" onClick={() => decide(true, true)} disabled={submitting !== null} loading={submitting === 'remember'}>
+            這次提問都允許
+          </Button>
+        )}
+        <Button size="sm" onClick={() => decide(true, false)} disabled={submitting !== null} loading={submitting === 'approve'}>
           核准執行
         </Button>
       </div>

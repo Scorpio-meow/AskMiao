@@ -25,8 +25,8 @@ class ToolApprovalBroker:
         return self._open(user_id, APPROVAL)
     def create_question(self, user_id: int) -> Tuple[str, asyncio.Future]:
         return self._open(user_id, QUESTION)
-    def resolve(self, approval_id: str, user_id: int, approved: bool) -> bool:
-        return self._settle(approval_id, user_id, APPROVAL, bool(approved))
+    def resolve(self, approval_id: str, user_id: int, approved: bool, remember: bool) -> bool:
+        return self._settle(approval_id, user_id, APPROVAL, (bool(approved), bool(approved and remember)))
     def answer(self, question_id: str, user_id: int, answer: str) -> bool:
         return self._settle(question_id, user_id, QUESTION, answer)
     def discard(self, token: str) -> None:
@@ -40,8 +40,8 @@ class ToolApprovalBroker:
             return on_timeout
         finally:
             self.discard(token)
-    async def wait(self, approval_id: str, future: asyncio.Future) -> bool:
-        return await self._wait(approval_id, future, False)
+    async def wait(self, approval_id: str, future: asyncio.Future) -> Tuple[bool, bool]:
+        return await self._wait(approval_id, future, (False, False))
     async def wait_answer(self, question_id: str, future: asyncio.Future) -> Optional[str]:
         return await self._wait(question_id, future, None)
 approval_broker = ToolApprovalBroker()

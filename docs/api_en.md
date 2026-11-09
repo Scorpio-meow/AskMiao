@@ -2,7 +2,7 @@
 
 [繁體中文](api.md) | [English](api_en.md)
 
-> REST and SSE streaming endpoints of the AskMiao **8.8.0** backend, written against the actual routers in `backend/app/api/`. With `ENABLE_API_DOCS=true` the backend also serves interactive docs at `http://localhost:8001/docs` (Swagger UI) and `http://localhost:8001/redoc`, and the OpenAPI document at `/openapi.json`. These three paths need no sign-in and list every endpoint and parameter, so keep `ENABLE_API_DOCS=false` (the template value) for public deployments; all three then return `404`.
+> REST and SSE streaming endpoints of the AskMiao **8.9.0** backend, written against the actual routers in `backend/app/api/`. With `ENABLE_API_DOCS=true` the backend also serves interactive docs at `http://localhost:8001/docs` (Swagger UI) and `http://localhost:8001/redoc`, and the OpenAPI document at `/openapi.json`. These three paths need no sign-in and list every endpoint and parameter, so keep `ENABLE_API_DOCS=false` (the template value) for public deployments; all three then return `404`.
 
 ## Contents
 
@@ -63,6 +63,8 @@ API messages are in Traditional Chinese; the English glosses in this document ar
 | GET | `/api/chat/tools` | Signed in | Tool definitions currently available to the agent |
 | POST | `/api/chat/approvals/{approval_id}` | Signed in (asking user only) | Approve or deny a pending tool call |
 | POST | `/api/chat/questions/{question_id}` | Signed in (asking user only) | Answer a question the research assistant asked in agent mode |
+| GET | `/api/chat/instructions` | Signed in | Your personal instructions |
+| PUT | `/api/chat/instructions` | Signed in | Set or clear your personal instructions |
 | GET | `/api/chat/conversations` | Signed in | Your conversations |
 | POST | `/api/chat/conversations` | Signed in | Create a conversation |
 | GET | `/api/chat/conversations/{conversation_id}` | Signed in | One conversation (without messages) |
@@ -133,6 +135,8 @@ API messages are in Traditional Chinese; the English glosses in this document ar
 | DELETE | `/api/admin/llm-connections/{connection_id}` | Admin | Delete a shared connection |
 | GET | `/api/admin/system-models` | Admin | Connection and model chosen for document summaries and PDF OCR |
 | PUT | `/api/admin/system-models` | Admin | Choose or clear the connection and model for document summaries and PDF OCR |
+| GET | `/api/admin/agent-instructions` | Admin | Organization instructions |
+| PUT | `/api/admin/agent-instructions` | Admin | Set or clear the organization instructions |
 | GET | `/api/admin/statistics` | Admin | System statistics (cached for 180 seconds) |
 | GET | `/api/admin/conversations` | Admin | The 50 most recent conversations |
 | GET | `/api/admin/conversations/{conversation_id}/messages` | Admin | Messages of any conversation |
@@ -358,9 +362,9 @@ Each event is formatted as `event: <name>\ndata: <JSON>\n\n`, in this order:
 | Event | When | `data` fields |
 |---|---|---|
 | `start` | The user message has been saved | `conversation_id`, `user_message_id`, `attachment_file_ids` (in the order of `attachments`: the file id for attachments saved as conversation files, otherwise `null`) |
-| `step_start` | A tool call starts | `step` (from 1), `tool`, `arguments`; the first step of a turn also has `note` when the model wrote text alongside its tool calls |
+| `step_start` | A tool call starts | `step` (from 1), `tool`, `arguments`; the first step of a turn also has `note` when the model wrote text alongside its tool calls, and subagent steps have `agent` (for example `子任務 1：國內出差`, "sub-task 1: domestic trips") |
 | `approval_required` | The tool needs approval and the agent pauses (see [2.9](#29-post-apichatapprovalsapproval_id)) | `approval_id`, `step`, `tool`, `kind`, `tool_display_name`, `target`, `arguments` |
-| `approval_resolved` | The user answered or the wait timed out | `approval_id`, `approved` (`false` on timeout) |
+| `approval_resolved` | The user answered or the wait timed out | `approval_id`, `approved` (`false` on timeout), `remember` |
 | `question` | In agent mode, the model called `ask_user` with a valid question and the agent waits for the answer (see [2.17](#217-post-apichatquestionsquestion_id)) | `question_id`, `step`, `question`, `options` (may be empty) |
 | `question_resolved` | The user answered or the wait timed out | `question_id`, `answered` (`false` on timeout) |
 | `plan` | In agent mode, the model called `update_plan` with a valid plan | `items`: the whole plan, each step `{step, status}` with `status` `pending`, `in_progress`, or `completed` |
@@ -537,9 +541,9 @@ Delete one of your conversations with all its messages and conversation files.
 
 Approve or deny a tool call the agent is waiting on. Custom API tools and MCP servers carry a `requires_approval` flag (see [Tool object](#tool-object) and [Server object](#server-object)); when the agent wants to call such a tool, the `POST /api/chat/send` stream first sends an `approval_required` event and pauses until the user answers through this endpoint, then sends `approval_resolved`. See [ADR-0006](adr/0006-tool-call-approval_en.md) for the rationale.
 
-**Request body**: `{"approved": true}` (`false` denies)
+**Request body**: `{"approved": true, "remember": false}` (`approved` `false` denies; `remember` is optional, and `true` with an approval means the same tool is not asked about again during this question)
 
-**Response**: `200 OK` `{"approval_id": "…", "approved": true}`
+**Response**: `200 OK` `{"approval_id": "…", "approved": true, "remember": false}`
 
 | Status | When |
 |---|---|
@@ -552,6 +556,7 @@ Approve or deny a tool call the agent is waiting on. Custom API tools and MCP se
 - `delete_conversation_file` always needs approval, and a skill's `allowed-tools` cannot waive it; on a denial the file is not deleted.
 - `run_skill_script` needs approval by default (`target` is `本機指令 <interpreter>`, "local command"); when a skill's `allowed-tools` lists `run_skill_script`, that skill's scripts no longer ask for approval for the rest of the question once the skill is activated. `read_mcp_resource` and `get_mcp_prompt` follow that MCP server's `requires_approval`.
 - After a skill is activated, the tool names in its `allowed-tools` no longer ask for approval for the rest of that question (except `delete_conversation_file`; see [Skill object](#skill-object)).
+- `remember` lasts only for the same question (the same stream); the next question asks again. `run_skill_script` is remembered per skill, and `delete_conversation_file` is never remembered and always needs approval.
 - Pending items live in the backend process's memory and are lost when the backend restarts.
 
 ### 2.10 GET /api/chat/conversations/{conversation_id}/files
@@ -646,6 +651,14 @@ Answer a question the research assistant asked in agent mode. When the model cal
 - With no answer within 300 seconds, the research assistant gets a "the user did not answer" result, carries on with what it has, and states its assumptions in the report; when the user interrupts the stream, the pending question is cancelled with it.
 - The answer reaches the model as the user's own words, not wrapped as untrusted data; whole URLs in it may be read with `web_fetch`.
 - Pending questions live in the backend process's memory and are lost when the backend restarts.
+
+### 2.18 GET, PUT /api/chat/instructions
+
+Read or set your own personal instructions. They apply only to your own questions and follow the system prompt in both modes; where they conflict with the organization instructions (see [8.7](#87-organization-instructions)), the organization instructions win. See [Architecture: Long-term instructions](architecture_en.md#long-term-instructions).
+
+- `GET`: `200 OK` `{"content": "…"}`, an empty string when nothing is set.
+- `PUT`: body `{"content": "…"}`, at most 4,000 characters (longer returns `422`); surrounding whitespace is trimmed, and empty content clears them. Returns the stored `{"content": "…"}`.
+- Personal instructions are deleted with the account.
 
 ---
 
@@ -1427,6 +1440,13 @@ Document summaries and OCR of scanned PDFs call a model on the system's behalf; 
 ```json
 {"document_summary": {"connection_id": 3, "model_name": "qwen3:8b", "reasoning_effort": "none"}, "pdf_ocr": null}
 ```
+
+### 8.7 Organization instructions
+
+- `GET /api/admin/agent-instructions`: `{"content": "…"}`, an empty string when nothing is set.
+- `PUT /api/admin/agent-instructions`: body `{"content": "…"}` with the same rules as [2.18](#218-get-put-apichatinstructions); on success it writes `ADMIN_AGENT_INSTRUCTIONS_UPDATED` to the security log (character count only).
+
+Organization instructions apply to every account's questions and come before personal instructions.
 
 ---
 

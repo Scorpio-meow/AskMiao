@@ -194,7 +194,7 @@ async def test_agent_reports_file_events_and_waits_for_delete_approval(session_f
         if event["event"] == "approval_required":
             assert (event["data"]["kind"], event["data"]["target"]) == ("file", "#1「摘要.md」")
             from app.rag.tool_approval import approval_broker
-            approval_broker.resolve(event["data"]["approval_id"], 1, False)
+            approval_broker.resolve(event["data"]["approval_id"], 1, False, False)
     file_events = [event["data"] for event in events if event["event"] == "file"]
     assert [(e["action"], e["file"]["filename"]) for e in file_events] == [("created", "摘要.md")]
     with session_factory() as db:

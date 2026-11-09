@@ -186,7 +186,8 @@ class HybridContextualRAG:
         attachments: Optional[List[Any]] = None,
         approval_user_id: Optional[int] = None,
         conversation_id: Optional[int] = None,
-        mode: str
+        mode: str,
+        instructions: str
     ) -> AsyncGenerator[Dict[str, Any], None]:
         async for event in self.pipeline.generate_response_stream(
             query=query,
@@ -197,7 +198,8 @@ class HybridContextualRAG:
             attachments=attachments,
             approval_user_id=approval_user_id,
             conversation_id=conversation_id,
-            mode=mode
+            mode=mode,
+            instructions=instructions
         ):
             yield event
     def evaluate_retrieval(self, cases: List[RetrievalCase], k_values: List[int]) -> Dict[str, Any]:

@@ -2,7 +2,7 @@
 
 [繁體中文](architecture.md) | [English](architecture_en.md)
 
-> 本文件說明 AskMiao **8.8.0** 的架構、啟動流程、資料模型、文件處理與檢索管線、Agentic RAG 研究迴圈、LLM 呼叫層、外部工具整合、認證與安全設計，以及前端架構（本版變更見 [CHANGELOG](../CHANGELOG.md#880---2026-11-09)）。設計背後的取捨記錄在 [架構決策紀錄（ADR）](adr/README.md)。
+> 本文件說明 AskMiao **8.9.0** 的架構、啟動流程、資料模型、文件處理與檢索管線、Agentic RAG 研究迴圈、LLM 呼叫層、外部工具整合、認證與安全設計，以及前端架構（本版變更見 [CHANGELOG](../CHANGELOG.md#890---2026-11-09)）。設計背後的取捨記錄在 [架構決策紀錄（ADR）](adr/README.md)。
 
 ## 目錄
 
@@ -161,6 +161,7 @@ erDiagram
     documents ||--o{ rag_chunks : "切成"
     users ||--o{ llm_connections : "擁有（個人連線）"
     llm_connections ||--o{ system_models : "提供"
+    users ||--o| agent_instructions : "個人指示"
 
     users {
         int id PK
@@ -258,6 +259,11 @@ erDiagram
         int max_output_tokens
         int owner_id FK "空值為共用連線"
         text allowed_user_ids "JSON，共用連線的使用者"
+    }
+    agent_instructions {
+        int id PK
+        int user_id FK "空白為組織指示"
+        text content
     }
     system_models {
         string purpose PK "document_summary、pdf_ocr"
@@ -499,12 +505,17 @@ flowchart TB
 | 系統提示詞 | `SYSTEM_PROMPT` | `AGENT_SYSTEM_PROMPT`：依「了解 → 計畫 → 執行 → 驗證 → 回報」進行，任務完成才結束；建檔或改檔後讀回核對；回報先說結果，再說沒完成或沒驗證的部分。回答、引用與資料安全的規則兩者共用（`ANSWER_RULES`、`SHARED_RULES`） |
 | 計畫 | 無 | 多一個 `update_plan` 工具，每次送出整份清單（最多 `MAX_PLAN_STEPS` 步，每步最多 `MAX_PLAN_STEP_CHARS` 字，狀態為 `pending`、`in_progress`、`completed`）。格式正確時送出 `plan` 事件，格式不對時把原因回給模型。計畫不算研究步驟，不會出現在 `research_trace` |
 | 提問 | 無 | 多一個 `ask_user` 工具（問題最多 `MAX_QUESTION_CHARS` 字、選項最多 `MAX_QUESTION_OPTIONS` 個）：送出 `question` 事件並暫停，使用者以 [`POST /api/chat/questions/{question_id}`](api.md#217-post-apichatquestionsquestion_id) 回答，最多等 300 秒。回答以使用者的話交給模型，不包成不可信資料，其中的完整網址可以給 `web_fetch` 讀取；逾時時請模型依現有資訊繼續並說明假設 |
+| 子代理 | 無 | 多一個 `delegate_research`（最多 `MAX_SUBAGENT_TASKS` 個子任務）：子代理平行執行，各自有獨立的脈絡與 `SUBAGENT_SYSTEM_PROMPT`，只能用 `SUBAGENT_TOOL_NAMES` 列出的唯讀工具（知識庫、網路、讀取對話檔案），每個最多 `MAX_SUBAGENT_TURNS` 輪。子代理的步驟即時併進研究過程並帶 `agent` 標籤，和主代理共用引用編號與網址來源限制；摘要包成不可信資料交給主代理。使用者中斷時，執行中的子代理一併取消 |
 | 輪數上限 | 無 | 呼叫模型 `MAX_AGENT_TURNS` 輪後不再給工具，在訊息最後附上 `AGENT_TURN_LIMIT`，以串流請模型回報完成與未完成的部分 |
 | 脈絡 | 每筆工具結果最多 `MAX_TOOL_RESULT_CHARS` 字元 | 另外在每次呼叫模型前，所有工具結果合計超過 `AGENT_TOOL_RESULT_BUDGET_CHARS` 時，從最舊的開始換成 `TOOL_RESULT_CLEARED`，最新一筆一律保留；需要時模型可以再呼叫一次工具 |
 
 兩種模式共通的兩項：模型呼叫工具時附帶的文字，會成為該輪第一個研究步驟的 `note`（最多 `MAX_STEP_NOTE_CHARS` 字），顯示在研究過程中，執行中的步驟也以它當標題；建檔與改檔的工具結果附有 `check`，見 [對話檔案](#對話檔案)。代理模式的系統提示詞另外要求呼叫工具時用一句話說明進度，並先核對 `check`。
 
 前端在助理訊息的研究過程上方以清單顯示計畫（`PlanChecklist`），已完成數放在標題右側。助理訊息的 `context_used` 會另外存最後一次的計畫，重新開啟對話時仍看得到。模式選擇存在瀏覽器的 `localStorage`，不隨帳號同步。
+
+### 長期指示
+
+組織指示（管理員設定）與個人指示（各帳號自己設定）存於 `agent_instructions`，`user_id` 空白的那一列是組織指示，每則最多 `MAX_AGENT_INSTRUCTIONS_CHARS` 字。`POST /api/chat/send` 在開始串流前讀出，依序以 `ORGANIZATION_INSTRUCTIONS`、`PERSONAL_INSTRUCTIONS` 包好，接在系統提示詞（含技能規則）之後；查證與代理模式都適用，子代理不帶入。提示詞要求照著做，但不能推翻引用與資料安全規則，兩者衝突時以組織指示為準。管理後台的「組織指示」與個人資料頁的「個人指示」各有一個編輯卡片；刪除帳號時一併刪除個人指示。
 
 ### ResearchSession：單次提問的狀態
 
@@ -536,6 +547,8 @@ flowchart TB
 3. 前端在該則回答中顯示確認卡片；使用者按下核准或拒絕後呼叫 `POST /api/chat/approvals/{approval_id}`。只有同一位使用者能處理，其他人或已處理、已逾時的項目回傳 `404`。
 4. 串流送出 `approval_resolved`。核准時照常執行工具；拒絕或 300 秒逾時時不執行，Agent 收到「使用者未核准」的工具結果並改以已取得的資料回答。
 5. 沒有可核准的使用者時（`approval_user_id` 為 `None`，例如非互動式呼叫），需要核准的工具一律不執行。
+
+確認卡片另有「這次提問都允許」：送出 `remember: true` 時，`ResearchSession.preapprove()` 把這個工具（`run_skill_script` 則是該技能）加入這次提問的免核准名單，同一次回答中再呼叫就不再詢問；`delete_conversation_file` 不會加入，每次仍要核准。名單只存在這次提問的 `ResearchSession` 中，下一次提問重新詢問。
 
 待核准項目只存在行程記憶體中；使用者中斷串流時，等待中的項目隨之取消。
 

@@ -33,6 +33,8 @@ const getToolDisplayInfo = (toolName: string): ToolDisplayInfo => {
       return { label: '刪除對話檔案', icon: 'delete' };
     case 'ask_user':
       return { label: '詢問使用者', icon: 'help' };
+    case 'delegate_research':
+      return { label: '交給子代理平行研究', icon: 'people' };
     default:
       return { label: toolName, icon: 'code' };
   }
@@ -114,7 +116,8 @@ export const ResearchTraceBlock: React.FC<ResearchTraceBlockProps> = ({
     userInteractedRef.current = true;
     setIsOpen(prev => !prev);
   };
-  const activeStep = trace.find(s => s.status === 'running') || trace[trace.length - 1];
+  const ordered = [...trace].sort((a, b) => a.step - b.step);
+  const activeStep = ordered.filter(s => s.status === 'running').pop() || ordered[ordered.length - 1];
   const activeToolInfo = activeStep ? getToolDisplayInfo(activeStep.tool) : null;
   const failedCount = trace.filter(s => s.status === 'error').length;
   return (
@@ -142,7 +145,7 @@ export const ResearchTraceBlock: React.FC<ResearchTraceBlockProps> = ({
           <span className={styles.failedCount}>{failedCount} 個失敗</span>
         )}
         <span className={styles.stepDots} aria-hidden="true">
-          {trace.map((step, idx) => (
+          {ordered.map((step, idx) => (
             <span
               key={idx}
               className={`${styles.stepDot} ${step.status === 'running' ? styles.stepDotRunning : ''} ${step.status === 'error' ? styles.stepDotError : ''}`}
@@ -155,7 +158,7 @@ export const ResearchTraceBlock: React.FC<ResearchTraceBlockProps> = ({
       </button>
       <Collapse in={isOpen} id={stepListId}>
         <ol className={styles.stepList} role="list">
-          {trace.map((step: ResearchTraceStep, index: number) => {
+          {ordered.map((step: ResearchTraceStep, index: number) => {
             const toolInfo = getToolDisplayInfo(step.tool);
             const queryParam = formatStepQueryParam(step);
             const outputPreview = toDisplayText(step.output_preview);
@@ -164,6 +167,7 @@ export const ResearchTraceBlock: React.FC<ResearchTraceBlockProps> = ({
               <li key={index} className={styles.stepItem}>
                 <StepStatus status={step.status} />
                 <div className={styles.stepBody}>
+                  {step.agent && <p className={styles.agent}>{step.agent}</p>}
                   {step.note && <p className={styles.note}>{step.note}</p>}
                   <div className={styles.stepHeader}>
                     <span className={styles.stepTitle}>

@@ -5,6 +5,7 @@ import re
 from pydantic import BaseModel, Field, field_validator, model_validator
 from typing import List, Optional, Dict, Any
 from app.core.limits import (
+    MAX_AGENT_INSTRUCTIONS_CHARS,
     MAX_ATTACHMENT_TEXT_CHARS,
     MAX_CHAT_ATTACHMENT_BYTES,
     MAX_CHAT_ATTACHMENTS,
@@ -175,6 +176,13 @@ class LlmConnection(Base):
     allowed_user_ids = Column(Text, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+class AgentInstruction(Base):
+    __tablename__ = "agent_instructions"
+    __table_args__ = {"sqlite_autoincrement": True}
+    id = Column(Integer, primary_key=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=True, unique=True, index=True)
+    content = Column(Text, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 class SystemModel(Base):
     __tablename__ = "system_models"
     purpose = Column(String, primary_key=True)
@@ -298,6 +306,8 @@ class MessageCreate(BaseModel):
         if total > MAX_CHAT_ATTACHMENTS_TOTAL_BYTES:
             raise ValueError(f"單則訊息的附件總量不可超過 {MAX_CHAT_ATTACHMENTS_TOTAL_BYTES // (1024 * 1024)} MiB")
         return self
+class AgentInstructionsUpdate(BaseModel):
+    content: str = Field(max_length=MAX_AGENT_INSTRUCTIONS_CHARS)
 class MessageResponse(BaseModel):
     id: int
     content: str
