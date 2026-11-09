@@ -6,6 +6,7 @@ All notable changes to AskMiao are documented in this file. The format is based 
 
 | Version | Release date | Highlights |
 |---|---|---|
+| [8.5.1](#851---2026-11-09) | 2026-11-09 | `deploy/gen-env.sh` adds the missing line break to `deploy/.env`, so the backend of a new deployment starts |
 | [8.5.0](#850---2026-11-09) | 2026-11-09 | File preview: conversation files and knowledge base documents can be previewed without downloading (PDF pages as images; Word, Excel, and PowerPoint as web pages); the research assistant can build web pages that are previewed in an isolated iframe; cited web pages first show a preview card |
 | [8.4.0](#840---2026-11-08) | 2026-11-08 | Conversation files: the research assistant creates, reads, edits (as new versions), and deletes Word, Excel, PowerPoint, PDF, and other files in a conversation, with user approval before any deletion; document attachments are stored as conversation files and can be downloaded again; the research assistant knows the current date and time |
 | [8.3.0](#830---2026-11-08) | 2026-11-08 | vLLM provider, prompts sent to the model collected in `prompts.py` and rewritten after an audit, tool descriptions matched to the code, fixed tool list order |
@@ -40,6 +41,12 @@ All notable changes to AskMiao are documented in this file. The format is based 
 ---
 
 ## [Unreleased]
+
+## [8.5.1] - 2026-11-09
+
+### Fixed
+
+- **`deploy/gen-env.sh` wrote `deploy/.env` with a missing line break**: `backend/.env.example` does not end with a newline, so the script glued its last line to the first deployment setting as `UPLOADS_WATCHER_INTERVAL=30HOST=0.0.0.0`; the backend refused to start because of the invalid value, and `HOST=0.0.0.0` never took effect. The script now adds a line break before the deployment settings. If an existing `deploy/.env` has that line, split it into two lines.
 
 ## [8.5.0] - 2026-11-09
 

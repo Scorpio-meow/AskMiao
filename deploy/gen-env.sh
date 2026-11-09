@@ -22,6 +22,7 @@ esac
 umask 077
 {
   cat "$root/backend/.env.example"
+  echo
   cat <<OVERRIDES
 HOST=0.0.0.0
 ENVIRONMENT=production

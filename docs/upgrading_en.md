@@ -4,6 +4,7 @@
 
 > How to upgrade an existing deployment to a new release, with rollback steps and troubleshooting. See the [CHANGELOG](../CHANGELOG_en.md) for the full list of changes in each version.
 
+- [Upgrading from 8.5.0 to 8.5.1](#upgrading-from-850-to-851)
 - [Upgrading from 8.4.0 to 8.5.0](#upgrading-from-840-to-850)
 - [Upgrading from 8.3.0 to 8.4.0](#upgrading-from-830-to-840)
 - [Upgrading from 8.2.2 to 8.3.0](#upgrading-from-822-to-830)
@@ -43,6 +44,12 @@
   - [Step 5: verify the upgrade](#step-5-verify-the-upgrade)
   - [Rolling back to 2.2.x](#rolling-back-to-22x)
   - [Troubleshooting](#troubleshooting)
+
+---
+
+## Upgrading from 8.5.0 to 8.5.1
+
+For upgrading from 8.5.0 to 8.5.1 (2026-11-09); see the [CHANGELOG](../CHANGELOG_en.md#851---2026-11-09) for the full list of changes. This release only fixes `deploy/gen-env.sh`: no `.env` changes, and the database and API are unchanged, so switching to the new code is enough. Existing deployments do not run `gen-env.sh` again; if `deploy/.env` has a glued line such as `UPLOADS_WATCHER_INTERVAL=30HOST=0.0.0.0`, split it into two lines and restart. To roll back to 8.5.0, switch back to the older code.
 
 ---
 
