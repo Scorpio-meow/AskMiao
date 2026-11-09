@@ -6,6 +6,7 @@ All notable changes to AskMiao are documented in this file. The format is based 
 
 | Version | Release date | Highlights |
 |---|---|---|
+| [8.8.0](#880---2026-11-09) | 2026-11-09 | Agent mode can ask the user and wait for the answer; the research trace shows a progress note for each step; file create and edit results carry a structure check |
 | [8.7.0](#870---2026-11-09) | 2026-11-09 | Agent mode: the chat page switches between research and agent mode; agent mode lists a plan, works through it, and reads its files back, with the plan shown as a checklist; at most 30 model calls, and old tool results are cleared once they exceed a budget |
 | [8.6.0](#860---2026-11-09) | 2026-11-09 | Model output limits looked up automatically: Claude connections to Anthropic may leave the output token limit empty, and a vLLM output token limit above the model's context length no longer stops research |
 | [8.5.1](#851---2026-11-09) | 2026-11-09 | `deploy/gen-env.sh` adds the missing line break to `deploy/.env`, so the backend of a new deployment starts |
@@ -43,6 +44,14 @@ All notable changes to AskMiao are documented in this file. The format is based 
 ---
 
 ## [Unreleased]
+
+## [8.8.0] - 2026-11-09
+
+### Added
+
+- **Agent mode can ask questions**: when a request can be read several ways, or it needs something only the user knows, the research assistant asks with a new `ask_user` tool and pauses. The answer shows a question card where the user picks a suggested option or types an answer; the answer reaches the model as the user's own words, and URLs in it can be read. With no answer within 5 minutes, the research assistant carries on with what it has and states its assumptions. Adds `POST /api/chat/questions/{question_id}` and the SSE events `question` and `question_resolved`; see [API reference 2.17](docs/api_en.md#217-post-apichatquestionsquestion_id).
+- **Progress notes in the research trace**: text the model writes alongside its tool calls (for example 「先確認要整理的範圍」, "first confirm the scope") appears above the first research step of that turn, titles a running step, and is saved with the message. The agent system prompt asks the model to say what it is doing in one sentence when calling tools.
+- **Structure check after creating files**: create and edit results for conversation files carry a `check` with the page count, headings, paragraph and table counts, sheet rows, or slide titles read back from the file, so the research assistant can spot an empty sheet or a missing table without reading the file back.
 
 ## [8.7.0] - 2026-11-09
 

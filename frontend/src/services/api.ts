@@ -96,6 +96,7 @@ export interface Message {
     output_preview?: unknown;
     duration_seconds?: number;
     status?: string;
+    note?: string;
   }>;
   think?: string | null;
   role?: string;
@@ -103,8 +104,15 @@ export interface Message {
   error?: string;
   stopped?: boolean;
   pending_approval?: PendingToolApproval | null;
+  pending_question?: PendingQuestion | null;
   plan?: PlanItem[] | null;
   files?: ConversationFileEvent[];
+}
+export interface PendingQuestion {
+  question_id: string;
+  step: number;
+  question: string;
+  options: string[];
 }
 export interface PendingToolApproval {
   approval_id: string;
@@ -242,7 +250,7 @@ api.interceptors.response.use(
   }
 );
 export interface StreamEvent {
-  event: 'start' | 'step_start' | 'step_end' | 'approval_required' | 'approval_resolved' | 'plan' | 'file' | 'token' | 'think' | 'sources' | 'done' | 'error';
+  event: 'start' | 'step_start' | 'step_end' | 'approval_required' | 'approval_resolved' | 'question' | 'question_resolved' | 'plan' | 'file' | 'token' | 'think' | 'sources' | 'done' | 'error';
   data: any;
 }
 export interface ChatConnectionOption {
@@ -343,6 +351,13 @@ export const chatService = {
     const response = await api.post<{ approval_id: string; approved: boolean }>(
       `/chat/approvals/${encodeURIComponent(approvalId)}`,
       { approved }
+    );
+    return response.data;
+  },
+  async answerQuestion(questionId: string, answer: string): Promise<{ question_id: string; answered: boolean }> {
+    const response = await api.post<{ question_id: string; answered: boolean }>(
+      `/chat/questions/${encodeURIComponent(questionId)}`,
+      { answer }
     );
     return response.data;
   },

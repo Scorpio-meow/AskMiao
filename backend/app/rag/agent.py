@@ -15,7 +15,16 @@ from app.core.limits import (
     MAX_ATTACHMENT_TEXT_CHARS,
 )
 from app.models import AGENT_MODE, RESEARCH_MODE
-from app.rag.agent_mode import UPDATE_PLAN_TOOL, UPDATE_PLAN_TOOL_NAME, clear_old_tool_results, parse_plan
+from app.rag.agent_mode import (
+    ASK_USER_TOOL,
+    ASK_USER_TOOL_NAME,
+    UPDATE_PLAN_TOOL,
+    UPDATE_PLAN_TOOL_NAME,
+    clear_old_tool_results,
+    parse_plan,
+    parse_question,
+    turn_note,
+)
 from app import prompts
 from app.core.llm_client import LlmEndpoint, chat_completion, stream_completion
 from app.rag.file_tools import FILE_TOOL_NAMES
@@ -97,7 +106,7 @@ class ResearchAgent:
             [],
         )
         if agent_mode:
-            tools_def = [*tools_def, UPDATE_PLAN_TOOL]
+            tools_def = [*tools_def, UPDATE_PLAN_TOOL, ASK_USER_TOOL]
         base_prompt = prompts.AGENT_SYSTEM_PROMPT if agent_mode else prompts.SYSTEM_PROMPT
         system_prompt = base_prompt + prompts.SKILL_RULES if skill_names else base_prompt
         plan: Optional[List[Dict[str, str]]] = None
@@ -214,6 +223,7 @@ class ResearchAgent:
                     yield {"event": "token", "data": {"content": content}}
                 break
             messages.append(assistant_msg)
+            note = turn_note(assistant_msg.get("content"))
             for tc in tool_calls:
                 fn = tc.get("function", {})
                 fn_name = fn.get("name", "")
@@ -245,6 +255,8 @@ class ResearchAgent:
                     })
                     continue
                 step_num = len(research_trace) + 1
+                step_note, note = note, None
+                noted = {"note": step_note} if step_note else {}
                 logger.info("🔍 [Agent Step %s] 呼叫工具 %s", step_num, log_fields(tool=fn_name, arg_keys=",".join(map(str, args)) or None))
  
                 yield {
@@ -252,12 +264,30 @@ class ResearchAgent:
                     "data": {
                         "step": step_num,
                         "tool": fn_name,
-                        "arguments": args
+                        "arguments": args,
+                        **noted
                     }
                 }
                 tool_start = time.time()
                 tool_output = session.refuse_tool_call(fn_name, args)
                 skipped_status = "refused" if tool_output is not None else None
+                user_answer: Optional[str] = None
+                if tool_output is None and agent_mode and fn_name == ASK_USER_TOOL_NAME:
+                    question, question_error = parse_question(args)
+                    if question is None:
+                        tool_output = {"error": question_error}
+                    elif approval_user_id is None:
+                        tool_output = {"error": prompts.ASK_USER_UNAVAILABLE}
+                    else:
+                        question_id, pending = approval_broker.create_question(approval_user_id)
+                        yield {"event": "question", "data": {"question_id": question_id, "step": step_num, **question}}
+                        user_answer = await approval_broker.wait_answer(question_id, pending)
+                        yield {"event": "question_resolved", "data": {"question_id": question_id, "answered": user_answer is not None}}
+                        if user_answer is None:
+                            tool_output = {"error": prompts.ASK_USER_NO_ANSWER}
+                        else:
+                            tool_output = {"answer": user_answer}
+                            session.add_user_text(user_answer)
                 if tool_output is None:
                     approval = await asyncio.to_thread(self.tools.approval_requirement, fn_name, args, approval_user_id, conversation_id)
                     if session.is_preapproved(fn_name, args):
@@ -304,7 +334,8 @@ class ResearchAgent:
                     "arguments": args,
                     "output_preview": output_preview,
                     "duration_seconds": tool_duration,
-                    "status": "error" if "error" in tool_output else "success"
+                    "status": "error" if "error" in tool_output else "success",
+                    **noted
                 }
                 research_trace.append(step_info)
  
@@ -320,7 +351,8 @@ class ResearchAgent:
                     "tool_call_id": tool_call_id,
                     "name": fn_name,
                     "_is_error": "error" in tool_output,
-                    "content": session.tool_message_content(fn_name, tool_output)
+                    "content": prompts.ASK_USER_ANSWER.format(answer=user_answer) if user_answer is not None
+                    else session.tool_message_content(fn_name, tool_output)
                 })
         if not final_answer:
             if agent_mode:

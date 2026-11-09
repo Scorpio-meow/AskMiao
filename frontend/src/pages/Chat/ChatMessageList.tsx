@@ -65,6 +65,9 @@ export const ChatMessageList: React.FC<ChatMessageListProps> = ({
   const pendingApproval = streamingMessage?.pending_approval ?? null;
   const pendingApprovalId = pendingApproval?.approval_id ?? null;
   const [announcedApprovalId, setAnnouncedApprovalId] = useState(pendingApprovalId);
+  const pendingQuestion = streamingMessage?.pending_question ?? null;
+  const pendingQuestionId = pendingQuestion?.question_id ?? null;
+  const [announcedQuestionId, setAnnouncedQuestionId] = useState(pendingQuestionId);
   if (jumpButtonKey !== firstMessageKey) {
     setJumpButtonKey(firstMessageKey);
     setShowJumpButton(false);
@@ -77,6 +80,12 @@ export const ChatMessageList: React.FC<ChatMessageListProps> = ({
     setAnnouncedApprovalId(pendingApprovalId);
     if (pendingApproval) {
       setAnnouncement(approvalHeadline(pendingApproval));
+    }
+  }
+  if (announcedQuestionId !== pendingQuestionId) {
+    setAnnouncedQuestionId(pendingQuestionId);
+    if (pendingQuestion) {
+      setAnnouncement(`研究助理提問：${pendingQuestion.question}`);
     }
   }
   const scrollToBottom = useCallback((behavior: ScrollBehavior) => {

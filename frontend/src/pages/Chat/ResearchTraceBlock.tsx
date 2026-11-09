@@ -31,6 +31,8 @@ const getToolDisplayInfo = (toolName: string): ToolDisplayInfo => {
       return { label: '修改檔案（另存新版本）', icon: 'edit' };
     case 'delete_conversation_file':
       return { label: '刪除對話檔案', icon: 'delete' };
+    case 'ask_user':
+      return { label: '詢問使用者', icon: 'help' };
     default:
       return { label: toolName, icon: 'code' };
   }
@@ -133,7 +135,7 @@ export const ResearchTraceBlock: React.FC<ResearchTraceBlockProps> = ({
         </span>
         <span className={styles.titleText}>
           {hasRunningStep
-            ? `研究中：${activeToolInfo?.label || '執行中'}（步驟 ${activeStep.step}）`
+            ? `研究中：${activeStep.note || activeToolInfo?.label || '執行中'}（步驟 ${activeStep.step}）`
             : `研究過程（${trace.length} 個步驟）`}
         </span>
         {!hasRunningStep && failedCount > 0 && (
@@ -162,6 +164,7 @@ export const ResearchTraceBlock: React.FC<ResearchTraceBlockProps> = ({
               <li key={index} className={styles.stepItem}>
                 <StepStatus status={step.status} />
                 <div className={styles.stepBody}>
+                  {step.note && <p className={styles.note}>{step.note}</p>}
                   <div className={styles.stepHeader}>
                     <span className={styles.stepTitle}>
                       <Icon name={toolInfo.icon} size={14} className={styles.toolIcon} />

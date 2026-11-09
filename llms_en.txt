@@ -2,7 +2,7 @@
 
 [繁體中文](llms.txt) | [English](llms_en.txt)
 
-> An enterprise knowledge-base chat system that checks its own sources and cites them (version 8.7.0). The FastAPI backend answers with hybrid retrieval (FAISS + BM25 + Cross-Encoder) and a ReAct research agent, citing the chunks or web pages it used as `[n]`; the React frontend streams the research trace and citations over SSE.
+> An enterprise knowledge-base chat system that checks its own sources and cites them (version 8.8.0). The FastAPI backend answers with hybrid retrieval (FAISS + BM25 + Cross-Encoder) and a ReAct research agent, citing the chunks or web pages it used as `[n]`; the React frontend streams the research trace and citations over SSE.
 
 This file is for AI agents: read "System constraints" before changing code, and run the checks under "Verification" afterwards.
 
@@ -112,7 +112,7 @@ This file is for AI agents: read "System constraints" before changing code, and 
 - [Configuration reference](docs/configuration_en.md): every environment variable's default and effect, provider routing, threshold calibration, resource limits
 - [Deployment guide](docs/deployment_en.md): Docker Compose deployment, HTTPS, backups, and updates
 - [Troubleshooting](docs/troubleshooting_en.md): common errors at startup, sign-in, in the frontend, and with tools
-- [Upgrade guide](docs/upgrading_en.md): upgrading from 2.x to 3.0.0, from 3.0.0 to 4.0.0, from 4.0.0 to 5.0.0, from 5.0.0 to 6.0.0, from 6.0.0 to 7.0.0, from 7.0.0 to 8.0.0, from 8.0.x to 8.1.0, from 8.1.0 to 8.2.0, from 8.2.0 to 8.2.1, from 8.2.1 to 8.2.2, from 8.2.2 to 8.3.0, from 8.3.0 to 8.4.0, from 8.4.0 to 8.5.0, from 8.5.0 to 8.5.1, from 8.5.1 to 8.6.0, and from 8.6.0 to 8.7.0, and rolling back
+- [Upgrade guide](docs/upgrading_en.md): upgrading from 2.x to 3.0.0, from 3.0.0 to 4.0.0, from 4.0.0 to 5.0.0, from 5.0.0 to 6.0.0, from 6.0.0 to 7.0.0, from 7.0.0 to 8.0.0, from 8.0.x to 8.1.0, from 8.1.0 to 8.2.0, from 8.2.0 to 8.2.1, from 8.2.1 to 8.2.2, from 8.2.2 to 8.3.0, from 8.3.0 to 8.4.0, from 8.4.0 to 8.5.0, from 8.5.0 to 8.5.1, from 8.5.1 to 8.6.0, from 8.6.0 to 8.7.0, and from 8.7.0 to 8.8.0, and rolling back
 - [Architecture decision records](docs/adr/README_en.md): ADR-0001 to ADR-0007
 - [Changelog](CHANGELOG_en.md): changes in each release
 - [Contributing](.github/CONTRIBUTING_en.md): branches and commit messages, tests, dependencies, bilingual documentation, and intro site sync

@@ -16,6 +16,7 @@ export interface ResearchTraceStep {
   output_preview?: unknown;
   duration_seconds?: number;
   status?: 'success' | 'error' | string;
+  note?: string;
 }
 export interface SnackbarState {
   open: boolean;

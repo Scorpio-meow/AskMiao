@@ -158,3 +158,13 @@ def test_knowledge_base_preview_is_admin_only_and_falls_back_to_stored_text(sess
 def test_assistant_can_create_web_pages():
     assert ".html" in file_builders.CREATABLE_EXTENSIONS
     assert file_builders.build_file(".html", {"content": "<p>hi</p>"}) == b"<p>hi</p>"
+def test_created_files_report_their_structure_for_checking():
+    check = lambda filename, data: file_preview.structure_check(filename, data, CHAT_ATTACHMENT_EXTRACTION_LIMITS)
+    assert check("a.docx", file_builders.build_file(".docx", {"content": MARKDOWN})) == {"headings": ["出差規定"], "paragraphs": 2, "tables": 1}
+    assert check("a.xlsx", file_builders.build_file(".xlsx", {"sheets": [{"name": "表", "rows": [["項目", "上限"], ["住宿", 5500], ["膳雜", 80]]}]})) == {
+        "sheets": [{"name": "表", "rows": 3, "columns": 2, "truncated": False}]
+    }
+    assert check("a.pptx", file_builders.build_file(".pptx", {"slides": [{"title": "重點"}, {"title": "結論"}]})) == {"slides": 2, "titles": ["重點", "結論"]}
+    assert check("a.pdf", file_builders.build_file(".pdf", {"content": MARKDOWN})) == {"pages": 1}
+    assert check("a.md", "第一行\n第二行".encode()) == {"characters": 7, "lines": 2}
+    assert check("a.docx", b"not a docx")["problem"]

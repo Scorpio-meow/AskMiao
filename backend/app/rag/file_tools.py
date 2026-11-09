@@ -2,10 +2,11 @@ import asyncio
 from functools import lru_cache
 from typing import Any, Dict, List, Optional
 from app import prompts
-from app.core.limits import FILE_READ_PAGE_CHARS, FILE_TEXT_CACHE_ENTRIES
+from app.core.limits import CHAT_ATTACHMENT_EXTRACTION_LIMITS, FILE_READ_PAGE_CHARS, FILE_TEXT_CACHE_ENTRIES
 from app.models.database import SessionLocal
 from app.services import conversation_files as files
 from app.services import file_builders
+from app.services.file_preview import structure_check
 DELETE_FILE_TOOL_NAME = "delete_conversation_file"
 FILE_TOOL_NAMES = (
     "list_conversation_files",
@@ -131,6 +132,9 @@ def _save(user_id: int, conversation_id: int, filename: str, data: bytes, parent
             parent=parent,
             enforce_limits=True,
         ))
+async def _check(filename: str, data: bytes) -> Dict[str, Any]:
+    async with file_builders.extraction_slots:
+        return await asyncio.to_thread(structure_check, filename, data, CHAT_ATTACHMENT_EXTRACTION_LIMITS)
 async def _create(user_id: int, conversation_id: int, arguments: Dict[str, Any]) -> Dict[str, Any]:
     if not isinstance(arguments.get("filename"), str):
         raise files.ConversationFileError("filename 必須是含副檔名的檔名")
@@ -138,7 +142,12 @@ async def _create(user_id: int, conversation_id: int, arguments: Dict[str, Any])
     data = await asyncio.to_thread(file_builders.build_file, files.extension_of(filename), arguments)
     async with files.storage_lock:
         created = await asyncio.to_thread(_save, user_id, conversation_id, filename, data, None)
-    return {"action": "created", "file": created, "message": prompts.FILE_CREATED.format(file_id=created["id"], filename=created["filename"])}
+    return {
+        "action": "created",
+        "file": created,
+        "message": prompts.FILE_CREATED.format(file_id=created["id"], filename=created["filename"]),
+        "check": await _check(filename, data),
+    }
 async def _edit(user_id: int, conversation_id: int, arguments: Dict[str, Any]) -> Dict[str, Any]:
     source, filename, data = await asyncio.to_thread(_load, user_id, conversation_id, _file_id(arguments))
     async with file_builders.extraction_slots:
@@ -150,6 +159,7 @@ async def _edit(user_id: int, conversation_id: int, arguments: Dict[str, Any]) -
         "file": updated,
         "source_file_id": source["id"],
         "message": prompts.FILE_UPDATED.format(source_id=source["id"], file_id=updated["id"], filename=updated["filename"]),
+        "check": await _check(filename, edited),
     }
 def _delete(user_id: int, conversation_id: int, arguments: Dict[str, Any]) -> Dict[str, Any]:
     with SessionLocal() as db:

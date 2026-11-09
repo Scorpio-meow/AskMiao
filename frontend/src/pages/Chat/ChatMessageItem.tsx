@@ -6,6 +6,7 @@ import SourceBadges from './SourceBadges';
 import ResearchTraceBlock from './ResearchTraceBlock';
 import PlanChecklist from './PlanChecklist';
 import ToolApprovalCard from './ToolApprovalCard';
+import QuestionCard from './QuestionCard';
 import MarkdownContent from './MarkdownContent';
 import ConversationFileCard from './ConversationFileCard';
 import { describeAttachmentType, formatMessageTime, isImageAttachment, splitThinkContent } from './chatFormat';
@@ -142,6 +143,9 @@ const ChatMessageItemView: React.FC<ChatMessageItemProps> = ({
             )}
             {isStreaming && message.pending_approval && (
               <ToolApprovalCard key={message.pending_approval.approval_id} approval={message.pending_approval} />
+            )}
+            {isStreaming && message.pending_question && (
+              <QuestionCard key={message.pending_question.question_id} question={message.pending_question} />
             )}
             {thinkContent && (
               <ThinkBlock thinkContent={thinkContent} isOpen={isThinkingOpen} onToggle={() => onToggleThinking(thinkId)} />

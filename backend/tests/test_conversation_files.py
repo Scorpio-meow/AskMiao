@@ -158,6 +158,7 @@ def test_file_tools_create_read_edit_and_delete(session_factory):
     assert "住宿上限每晚 5,500 元" in first["content"] and first["next_offset"] is None
     edited = run_tool("edit_conversation_file", {"file_id": created["file"]["id"], "edits": [{"find": "5,500 元。", "replace": "6,000 元。"}]})
     assert (edited["action"], edited["file"]["filename"], edited["source_file_id"]) == ("updated", "旅費 v2.docx", created["file"]["id"])
+    assert created["check"] == edited["check"] == {"headings": ["出差規定"], "paragraphs": 3, "tables": 1}
     listed = run_tool("list_conversation_files", {})
     assert [f["filename"] for f in listed["files"]] == ["旅費.docx", "旅費 v2.docx"]
     requirement = ResearchToolRegistry().approval_requirement("delete_conversation_file", {"file_id": edited["file"]["id"]}, 1, 10)

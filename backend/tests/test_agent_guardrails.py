@@ -14,7 +14,9 @@ from app.models import Document as DbDocument
 from app.models import database as database_module
 from app.rag import agent as agent_module
 from app.rag.agent import ResearchAgent
-from app.rag.agent_mode import clear_old_tool_results
+from app.rag.agent_mode import clear_old_tool_results, turn_note
+from app.rag import tool_approval
+from app.rag.tool_approval import approval_broker
 from app.rag.retrievers.hybrid import RetrievedChunk
 from app.rag.tools import ResearchToolRegistry, is_web_fetch_domain_allowed
 from app.rag.types import Document
@@ -342,7 +344,7 @@ async def test_agent_mode_plans_without_adding_trace_steps(monkeypatch):
     ]).install(monkeypatch)
     events = await collect(research(agent, "整理特休規定", mode="agent"))
     assert llm.chat_messages[0][0]["content"] == prompts.AGENT_SYSTEM_PROMPT
-    assert [tool["function"]["name"] for tool in llm.chat_tools[0]] == ["update_plan"]
+    assert [tool["function"]["name"] for tool in llm.chat_tools[0]] == ["update_plan", "ask_user"]
     assert [e["data"] for e in events if e["event"] == "plan"] == [{"items": PLAN}]
     assert [(e["data"]["step"], e["data"]["tool"]) for e in events if e["event"] == "step_end"] == [(1, "search_knowledge_base")]
     plan_reply = next(m for m in llm.chat_messages[1] if m.get("role") == "tool")
@@ -400,3 +402,57 @@ async def test_only_agent_mode_clears_old_tool_results_before_calling_the_model(
     first, latest = [m["content"] for m in llm.chat_messages[2] if m.get("role") == "tool"]
     assert (first == prompts.TOOL_RESULT_CLEARED) is first_result_cleared
     assert latest != prompts.TOOL_RESULT_CLEARED
+def ask(question, options, note=""):
+    return {"role": "assistant", "content": note, "tool_calls": [{"id": "ask_1", "function": {"name": "ask_user", "arguments": {"question": question, "options": options}}}]}
+@pytest.mark.asyncio
+async def test_agent_asks_the_user_and_continues_with_the_answer(monkeypatch):
+    monkeypatch.setattr(settings, "ENABLE_WEB_SEARCH", True)
+    agent, registry = make_agent(monkeypatch)
+    web_calls = record_web_calls(monkeypatch, registry)
+    url = "https://intranet.example.com/attendance"
+    llm = ScriptedLLM([
+        ask("要整理哪個月份？", ["八月", "九月", "八月"], "先確認要整理的月份 [3]"),
+        tool_call("web_fetch", {"url": url}, "call_2"),
+        answer("已整理九月"),
+    ]).install(monkeypatch)
+    events = []
+    async for event in research(agent, "整理出勤", mode="agent", approval_user_id=7):
+        events.append(event)
+        if event["event"] == "question":
+            assert approval_broker.answer(event["data"]["question_id"], 8, "九月") is False
+            assert approval_broker.answer(event["data"]["question_id"], 7, f"九月，資料在 {url}") is True
+    question = next(e["data"] for e in events if e["event"] == "question")
+    assert (question["question"], question["options"], question["step"]) == ("要整理哪個月份？", ["八月", "九月"], 1)
+    assert [e["data"]["answered"] for e in events if e["event"] == "question_resolved"] == [True]
+    reply = next(m for m in llm.chat_messages[1] if m.get("role") == "tool")
+    assert reply["content"] == prompts.ASK_USER_ANSWER.format(answer=f"九月，資料在 {url}")
+    started = next(e["data"] for e in events if e["event"] == "step_start")
+    assert (started["tool"], started["note"]) == ("ask_user", "先確認要整理的月份")
+    assert web_calls == [("web_fetch", url)]
+@pytest.mark.asyncio
+async def test_unanswered_question_lets_the_agent_carry_on(monkeypatch):
+    monkeypatch.setattr(tool_approval, "APPROVAL_TIMEOUT_SECONDS", 0.01)
+    agent, _ = make_agent(monkeypatch)
+    llm = ScriptedLLM([ask("要整理哪個月份？", []), answer("先整理本月")]).install(monkeypatch)
+    events = await collect(research(agent, "整理出勤", mode="agent", approval_user_id=7))
+    assert [e["data"]["answered"] for e in events if e["event"] == "question_resolved"] == [False]
+    reply = next(m for m in llm.chat_messages[1] if m.get("role") == "tool")
+    assert reply["_is_error"] and prompts.ASK_USER_NO_ANSWER in reply["content"]
+@pytest.mark.asyncio
+@pytest.mark.parametrize("arguments", [{"question": " "}, {"question": "哪個月？", "options": ["一"] * 5}])
+async def test_malformed_question_goes_back_to_the_model(monkeypatch, arguments):
+    agent, _ = make_agent(monkeypatch)
+    llm = ScriptedLLM([tool_call("ask_user", arguments), answer("完成")]).install(monkeypatch)
+    events = await collect(research(agent, "整理出勤", mode="agent", approval_user_id=7))
+    assert not [e for e in events if e["event"] == "question"]
+    reply = next(m for m in llm.chat_messages[1] if m.get("role") == "tool")
+    assert "問題格式不正確" in reply["content"]
+@pytest.mark.parametrize("content, note", [
+    ("<think>\n使用者要整理規定\n</think>\n\n先查差旅規定 [1]", "先查差旅規定"),
+    ("<think>還在想要查哪份文件", None),
+    ("先查差旅規定<think>再想想", "先查差旅規定"),
+    ("", None),
+    ("查" * 400, "查" * 299 + "…"),
+])
+def test_progress_notes_hide_thinking_and_stay_short(content, note):
+    assert turn_note(content) == note

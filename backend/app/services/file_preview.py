@@ -12,6 +12,7 @@ from openpyxl import load_workbook
 from pptx import Presentation
 from pptx.shapes.picture import Picture
 from app.core.limits import (
+    FILE_CHECK_ITEMS,
     FILE_PREVIEW_ITEMS,
     FILE_PREVIEW_PAGE_DPI,
     FILE_PREVIEW_PAGE_MAX_PIXELS,
@@ -211,3 +212,26 @@ def build_preview(filename: str, data: bytes, limits: ExtractionLimits, allow_ht
         return _preview(filename, data, limits, allow_html)
     except ConversationFileError as e:
         return {"type": "unsupported", "reason": str(e)}
+def structure_check(filename: str, data: bytes, limits: ExtractionLimits) -> Dict[str, Any]:
+    preview = build_preview(filename, data, limits, False)
+    kind = preview["type"]
+    if kind == "pages":
+        return {"pages": preview["page_count"]}
+    if kind == "document":
+        blocks = preview["blocks"]
+        headings = ["".join(run["text"] for run in block["runs"]) for block in blocks if block["type"] == "heading"]
+        return {
+            "headings": headings[:FILE_CHECK_ITEMS],
+            "paragraphs": sum(block["type"] in ("paragraph", "list_item") for block in blocks),
+            "tables": sum(block["type"] == "table" for block in blocks),
+        }
+    if kind == "sheets":
+        return {"sheets": [
+            {"name": sheet["name"], "rows": len(sheet["rows"]), "columns": max((len(row) for row in sheet["rows"]), default=0), "truncated": sheet["truncated"]}
+            for sheet in preview["sheets"][:FILE_CHECK_ITEMS]
+        ]}
+    if kind == "slides":
+        return {"slides": len(preview["slides"]), "titles": [slide["title"] for slide in preview["slides"][:FILE_CHECK_ITEMS]]}
+    if kind == "unsupported":
+        return {"problem": preview["reason"]}
+    return {"characters": len(preview["text"]), "lines": preview["text"].count("\n") + 1}

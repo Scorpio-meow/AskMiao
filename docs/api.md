@@ -2,7 +2,7 @@
 
 [繁體中文](api.md) | [English](api_en.md)
 
-> 本文件說明 AskMiao 後端 **8.7.0** 的 REST 與 SSE 串流端點，內容依 `backend/app/api/` 的實際路由撰寫。設定 `ENABLE_API_DOCS=true` 時，後端另外在 `http://localhost:8001/docs`（Swagger UI）與 `http://localhost:8001/redoc` 提供互動測試，OpenAPI 規格位於 `/openapi.json`；這三個路徑不需要登入且會列出所有端點與參數，對外服務時請保持 `ENABLE_API_DOCS=false`（範本值），此時三者一律回傳 `404`。
+> 本文件說明 AskMiao 後端 **8.8.0** 的 REST 與 SSE 串流端點，內容依 `backend/app/api/` 的實際路由撰寫。設定 `ENABLE_API_DOCS=true` 時，後端另外在 `http://localhost:8001/docs`（Swagger UI）與 `http://localhost:8001/redoc` 提供互動測試，OpenAPI 規格位於 `/openapi.json`；這三個路徑不需要登入且會列出所有端點與參數，對外服務時請保持 `ENABLE_API_DOCS=false`（範本值），此時三者一律回傳 `404`。
 
 ## 目錄
 
@@ -60,6 +60,7 @@
 | GET | `/api/chat/models` | 登入 | 自己可用的 API 連線與模型 |
 | GET | `/api/chat/tools` | 登入 | Agent 目前可用的工具定義 |
 | POST | `/api/chat/approvals/{approval_id}` | 登入（限發問者） | 核准或拒絕等待中的工具呼叫 |
+| POST | `/api/chat/questions/{question_id}` | 登入（限發問者） | 回答代理模式中研究助理提出的問題 |
 | GET | `/api/chat/conversations` | 登入 | 自己的對話清單 |
 | POST | `/api/chat/conversations` | 登入 | 建立對話 |
 | GET | `/api/chat/conversations/{conversation_id}` | 登入 | 單一對話（不含訊息） |
@@ -355,11 +356,13 @@
 | 事件 | 時機 | `data` 欄位 |
 |---|---|---|
 | `start` | 使用者訊息已存入資料庫 | `conversation_id`、`user_message_id`、`attachment_file_ids`（依 `attachments` 的順序，存成對話檔案的附件為檔案編號，其餘為 `null`） |
-| `step_start` | 每次工具呼叫開始 | `step`（從 1 起算）、`tool`、`arguments` |
+| `step_start` | 每次工具呼叫開始 | `step`（從 1 起算）、`tool`、`arguments`；模型在這一輪呼叫工具時附帶說明文字時，該輪第一個步驟另有 `note` |
 | `approval_required` | 工具需要核准，Agent 暫停等待（見 [2.9](#29-post-apichatapprovalsapproval_id)） | `approval_id`、`step`、`tool`、`kind`、`tool_display_name`、`target`、`arguments` |
 | `approval_resolved` | 使用者回覆或等待逾時 | `approval_id`、`approved`（逾時為 `false`） |
+| `question` | 代理模式中模型以正確格式呼叫 `ask_user`，Agent 暫停等待回答（見 [2.17](#217-post-apichatquestionsquestion_id)） | `question_id`、`step`、`question`、`options`（可能是空陣列） |
+| `question_resolved` | 使用者回答或等待逾時 | `question_id`、`answered`（逾時為 `false`） |
 | `plan` | 代理模式中模型以正確格式呼叫 `update_plan` | `items`：整份計畫，每步為 `{step, status}`，`status` 為 `pending`、`in_progress` 或 `completed` |
-| `step_end` | 每次工具呼叫結束 | `step`、`tool`、`arguments`、`output_preview`（結果 JSON 的前 300 字）、`duration_seconds`、`status`（`success` / `error`） |
+| `step_end` | 每次工具呼叫結束 | `step`、`tool`、`arguments`、`output_preview`（結果 JSON 的前 300 字）、`duration_seconds`、`status`（`success` / `error`），以及 `step_start` 帶過的 `note` |
 | `file` | 對話檔案工具成功，緊接在該次 `step_end` 之後 | `action`（`created`、`updated`、`deleted`）、`file`（檔案物件，見 [2.10](#210-get-apichatconversationsconversation_idfiles)） |
 | `token` | 答案文字 | `content` |
 | `sources` | 答案完成後 | `sources`（來源名稱，去重）、`sources_detail`（見下表） |
@@ -623,6 +626,24 @@ data: {"message_id": 108, "conversation_id": 42, "answer": "特休假需先在�
 | `Referrer-Policy` | `no-referrer` |
 
 網頁在獨立的 opaque origin 中執行：腳本可以運作，但讀不到 AskMiao 的 Cookie 與 `localStorage`，也不能連線、送出表單或載入外部資源。這個回應有 `frame-ancestors`，因此不帶 `X-Frame-Options: DENY`；其他回應照常帶。
+
+### 2.17 POST /api/chat/questions/{question_id}
+
+回答代理模式中研究助理提出的問題。代理模式的模型呼叫 `ask_user` 時，`POST /api/chat/send` 的串流先送出 `question` 事件並暫停，等使用者以此端點回答，再送出 `question_resolved` 事件，見 [系統架構：代理模式](architecture.md#代理模式)。
+
+**請求主體**：`{"answer": "國外出差"}`，最多 2,000 字元；前後空白會先去掉
+
+**回應**：`200 OK` `{"question_id": "…", "answered": true}`
+
+| 狀態碼 | 情況 |
+|---|---|
+| `404` | `找不到等待回答的問題，可能已逾時或已回答`：`question_id` 不存在、已回答、已逾時、是核准項目的編號，或不是由目前登入者發問的串流所建立 |
+| `422` | 回答空白或超過 2,000 字元 |
+
+- 只有發問的使用者能回答，管理員也不能代為回答；問題與核准項目的編號不能互用。
+- 300 秒內沒有回答時，研究助理收到「使用者沒有回答」的結果，依現有資訊繼續並在回報中說明假設；使用者中斷串流時，等待中的問題一併取消。
+- 回答以使用者的話交給模型，不包成不可信資料；回答中的完整網址可以給 `web_fetch` 讀取。
+- 等待中的問題存在後端行程的記憶體中，後端重啟後失效。
 
 ---
 

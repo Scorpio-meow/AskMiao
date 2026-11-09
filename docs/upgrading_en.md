@@ -4,6 +4,7 @@
 
 > How to upgrade an existing deployment to a new release, with rollback steps and troubleshooting. See the [CHANGELOG](../CHANGELOG_en.md) for the full list of changes in each version.
 
+- [Upgrading from 8.7.0 to 8.8.0](#upgrading-from-870-to-880)
 - [Upgrading from 8.6.0 to 8.7.0](#upgrading-from-860-to-870)
 - [Upgrading from 8.5.1 to 8.6.0](#upgrading-from-851-to-860)
 - [Upgrading from 8.5.0 to 8.5.1](#upgrading-from-850-to-851)
@@ -46,6 +47,22 @@
   - [Step 5: verify the upgrade](#step-5-verify-the-upgrade)
   - [Rolling back to 2.2.x](#rolling-back-to-22x)
   - [Troubleshooting](#troubleshooting)
+
+---
+
+## Upgrading from 8.7.0 to 8.8.0
+
+For upgrading from 8.7.0 to 8.8.0 (2026-11-09); see the [CHANGELOG](../CHANGELOG_en.md#880---2026-11-09) for the full list of changes. This release needs no `.env` changes and does not change the database schema, so switching to the new code is enough; with `deploy/`, rebuild the images as usual.
+
+| Item | 8.7.0 | 8.8.0 | Action |
+|---|---|---|---|
+| Questions in agent mode | None | The research assistant can ask with `ask_user` and pause until the user answers on a question card | None; answers go to the new `POST /api/chat/questions/{question_id}`, which a reverse proxy forwarding `/api/` already covers |
+| SSE | — | New `question` and `question_resolved` events; `step_start` and `step_end` may carry a `note` | SSE clients only need to skip events and fields they do not know |
+| File tool results | — | `create_conversation_file` and `edit_conversation_file` results gain a `check` | None |
+
+A question can hold the stream for up to 300 seconds while it waits for an answer, as tool approvals already do; if a reverse proxy in front closes idle connections sooner than that, a waiting stream is cut off, so raise its timeout to 300 seconds or more.
+
+To roll back to 8.7.0, switch back to the older code. The `note` on research steps stored in messages is ignored and nothing else is affected; 8.7.0 has no `ask_user`, so agent mode no longer asks questions.
 
 ---
 

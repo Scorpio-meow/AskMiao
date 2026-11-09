@@ -2,7 +2,7 @@
 
 [繁體中文](architecture.md) | [English](architecture_en.md)
 
-> 本文件說明 AskMiao **8.7.0** 的架構、啟動流程、資料模型、文件處理與檢索管線、Agentic RAG 研究迴圈、LLM 呼叫層、外部工具整合、認證與安全設計，以及前端架構（本版變更見 [CHANGELOG](../CHANGELOG.md#870---2026-11-09)）。設計背後的取捨記錄在 [架構決策紀錄（ADR）](adr/README.md)。
+> 本文件說明 AskMiao **8.8.0** 的架構、啟動流程、資料模型、文件處理與檢索管線、Agentic RAG 研究迴圈、LLM 呼叫層、外部工具整合、認證與安全設計，以及前端架構（本版變更見 [CHANGELOG](../CHANGELOG.md#880---2026-11-09)）。設計背後的取捨記錄在 [架構決策紀錄（ADR）](adr/README.md)。
 
 ## 目錄
 
@@ -498,8 +498,11 @@ flowchart TB
 |---|---|---|
 | 系統提示詞 | `SYSTEM_PROMPT` | `AGENT_SYSTEM_PROMPT`：依「了解 → 計畫 → 執行 → 驗證 → 回報」進行，任務完成才結束；建檔或改檔後讀回核對；回報先說結果，再說沒完成或沒驗證的部分。回答、引用與資料安全的規則兩者共用（`ANSWER_RULES`、`SHARED_RULES`） |
 | 計畫 | 無 | 多一個 `update_plan` 工具，每次送出整份清單（最多 `MAX_PLAN_STEPS` 步，每步最多 `MAX_PLAN_STEP_CHARS` 字，狀態為 `pending`、`in_progress`、`completed`）。格式正確時送出 `plan` 事件，格式不對時把原因回給模型。計畫不算研究步驟，不會出現在 `research_trace` |
+| 提問 | 無 | 多一個 `ask_user` 工具（問題最多 `MAX_QUESTION_CHARS` 字、選項最多 `MAX_QUESTION_OPTIONS` 個）：送出 `question` 事件並暫停，使用者以 [`POST /api/chat/questions/{question_id}`](api.md#217-post-apichatquestionsquestion_id) 回答，最多等 300 秒。回答以使用者的話交給模型，不包成不可信資料，其中的完整網址可以給 `web_fetch` 讀取；逾時時請模型依現有資訊繼續並說明假設 |
 | 輪數上限 | 無 | 呼叫模型 `MAX_AGENT_TURNS` 輪後不再給工具，在訊息最後附上 `AGENT_TURN_LIMIT`，以串流請模型回報完成與未完成的部分 |
 | 脈絡 | 每筆工具結果最多 `MAX_TOOL_RESULT_CHARS` 字元 | 另外在每次呼叫模型前，所有工具結果合計超過 `AGENT_TOOL_RESULT_BUDGET_CHARS` 時，從最舊的開始換成 `TOOL_RESULT_CLEARED`，最新一筆一律保留；需要時模型可以再呼叫一次工具 |
+
+兩種模式共通的兩項：模型呼叫工具時附帶的文字，會成為該輪第一個研究步驟的 `note`（最多 `MAX_STEP_NOTE_CHARS` 字），顯示在研究過程中，執行中的步驟也以它當標題；建檔與改檔的工具結果附有 `check`，見 [對話檔案](#對話檔案)。代理模式的系統提示詞另外要求呼叫工具時用一句話說明進度，並先核對 `check`。
 
 前端在助理訊息的研究過程上方以清單顯示計畫（`PlanChecklist`），已完成數放在標題右側。助理訊息的 `context_used` 會另外存最後一次的計畫，重新開啟對話時仍看得到。模式選擇存在瀏覽器的 `localStorage`，不隨帳號同步。
 
@@ -550,6 +553,7 @@ flowchart TB
 | `.pdf` | `content` 的 Markdown 轉成 HTML 後以 PyMuPDF 的 `Story` 排版成 A4，中日韓文字用 PyMuPDF 內建字型，存檔前只保留用到的字形 | 只能以 `content` 整份重寫 |
 
 - **版本**：`edit_conversation_file` 的結果一律另存成新檔，檔名為 `<來源檔名> v<n><副檔名>`（來源本身是研究助理產生的第 m 版時，先去掉它結尾的「 vm」；使用者上傳的「報告 v3.docx」改出來是「報告 v3 v2.docx」），`version` 為同一系列目前最大版本加 1，原檔不變。`edits` 的每個 `find` 必須在檔案中剛好出現一次，否則整次修改失敗，不產生新版本。舊版 `.doc`、`.xls`、`.ppt` 不能修改，要以 `create_conversation_file` 另存成新格式。
+- **結構檢查**：建立與修改的結果附有 `check`，沿用預覽的解析（`file_preview.structure_check()`）：PDF 回傳頁數；Word 回傳標題（最多 `FILE_CHECK_ITEMS` 個）、段落數與表格數；Excel、CSV 回傳每張工作表的列數與欄數；PowerPoint 回傳頁數與各頁標題；其他文字檔回傳字數與行數；檔案無法解析時回傳 `problem`。讓研究助理不必另外讀回檔案，就能發現空白工作表或少了表格這類錯誤。
 - **讀取**：`read_conversation_file` 每次最多回傳 15,000 字元，以 `offset` 與回傳的 `next_offset` 分段讀；`.xlsx` 列出每個儲存格的位址與值，其他格式沿用聊天附件的文字擷取。擷取出的文字依檔案快取最近 8 個（`FILE_TEXT_CACHE_ENTRIES`），分段讀同一個檔案時不會每次重新解析；讀取與修改和聊天附件共用「整個行程同時最多解析 2 個檔案」的上限（`MAX_CONCURRENT_ATTACHMENT_EXTRACTIONS`）。讀取結果和其他工具結果一樣包在 `<untrusted_tool_result>` 內，檔案中的文字不會被當成指示。
 - **試算表公式**：`.xlsx` 的字串一律以文字寫入，開頭為 `=` 的值不會變成公式；`.csv` 中以 `=`、`+`、`-`、`@`、Tab 或 `\r` 開頭的字串前面加上 `'`。
 - **權限**：每個工具都在服務層檢查檔案屬於這個對話與這位使用者，不採信模型給的編號；`/api/chat/files/{file_id}` 只限檔案擁有者，其他人一律 `404`。刪除需要核准，所以檔案內容中的指示無法讓研究助理刪除檔案。

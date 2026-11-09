@@ -164,6 +164,8 @@ class ResearchSession:
                     "snippet": content[:SNIPPET_LENGTH],
                 })
             self._add_url_source(content)
+    def add_user_text(self, text: str) -> None:
+        self._add_url_source(text)
     def _add_url_source(self, *texts: Optional[str]) -> None:
         for text in texts:
             if text:

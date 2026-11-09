@@ -2,7 +2,7 @@
 
 [繁體中文](configuration.md) | [English](configuration_en.md)
 
-> 本文件逐一說明後端 `backend/.env` 與前端 `frontend/.env` 的每個設定、預設值與實際作用，適用於 **8.7.0**（從 8.6.0 升級見 [升級指南](upgrading.md#從-860-升級到-870)）。設定以 `backend/app/core/config.py` 的 `Settings` 為準，範本見 [`backend/.env.example`](../backend/.env.example)。
+> 本文件逐一說明後端 `backend/.env` 與前端 `frontend/.env` 的每個設定、預設值與實際作用，適用於 **8.8.0**（從 8.7.0 升級見 [升級指南](upgrading.md#從-870-升級到-880)）。設定以 `backend/app/core/config.py` 的 `Settings` 為準，範本見 [`backend/.env.example`](../backend/.env.example)。
 
 - [讀取規則](#讀取規則)
 - [必填設定](#必填設定)
@@ -96,7 +96,7 @@ python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().d
 
 新增連線時，表單依供應商預先帶入官方 API 位址與下列模型清單，可以再增刪：
 
-| 供應商 | 預先帶入的模型（8.7.0） |
+| 供應商 | 預先帶入的模型（8.8.0） |
 |---|---|
 | OpenAI | `gpt-6.1-sol`、`gpt-6-sol`、`gpt-6-luna`、`gpt-6-astra`、`gpt-5.6-sol`、`gpt-5.6-luna`、`gpt-5.6-terra`、`gpt-5.4`、`gpt-5.4-mini` |
 | Anthropic | `claude-opus-5-5`、`claude-fable-5-1`、`claude-sonnet-5-5`、`claude-haiku-5-5`、`claude-sonnet-5`、`claude-opus-5`、`claude-fable-5`、`claude-opus-4-8`、`claude-haiku-4-5` |
@@ -459,6 +459,12 @@ python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().d
 | `AGENT_TOOL_RESULT_BUDGET_CHARS` | 40,000 字元 | 代理模式中所有工具結果合計的上限，超過時從最舊的換成一行說明 |
 | `MAX_PLAN_STEPS` | 12 | 代理模式計畫最多幾步 |
 | `MAX_PLAN_STEP_CHARS` | 120 字元 | 計畫每一步的長度上限 |
+| `MAX_QUESTION_CHARS` | 300 字元 | 代理模式中 `ask_user` 問題的長度上限 |
+| `MAX_QUESTION_OPTIONS` | 4 | `ask_user` 最多幾個選項 |
+| `MAX_QUESTION_OPTION_CHARS` | 60 字元 | 每個選項的長度上限 |
+| `MAX_QUESTION_ANSWER_CHARS` | 2,000 字元 | 使用者回答的長度上限 |
+| `MAX_STEP_NOTE_CHARS` | 300 字元 | 研究步驟進度說明的長度上限，超過的部分截斷 |
+| `FILE_CHECK_ITEMS` | 20 | 建檔結構檢查最多列出幾個標題、工作表或投影片標題 |
 | `MAX_TOOL_NAME_CHARS` | 64 字元 | 交給模型的工具函式名稱長度（OpenAI 等供應商的上限）；由 OpenAPI operationId 或 MCP 產生的名稱超過時截斷並加上 8 碼雜湊，手動建立或匯入的名稱超過時回傳 `400` |
 | `MAX_OPENAPI_SCHEMA_REFS` | 200 | 解析 OpenAPI 規格時，每個參數或請求主體 schema 最多展開的 `$ref` 數；超過的參照與循環參照改以只含說明的物件 schema 取代 |
 | `MAX_OPENAPI_SCHEMA_DEPTH` | 32 | 解析 OpenAPI 規格時，參數或請求主體 schema 展開的巢狀層數（`$ref`、`properties`、`items`、`allOf` 等每進一層計一次）；更深的部分改以只含說明的物件 schema 取代 |

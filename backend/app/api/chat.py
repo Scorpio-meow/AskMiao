@@ -26,12 +26,12 @@ import logging
 logger = logging.getLogger(__name__)
 import json
 from app.core.config import settings
-from app.core.limits import CHAT_ATTACHMENT_EXTRACTION_LIMITS, FILE_VIEW_TOKEN_SECONDS, MAX_CONCURRENT_CHAT_STREAMS_PER_USER
+from app.core.limits import CHAT_ATTACHMENT_EXTRACTION_LIMITS, FILE_VIEW_TOKEN_SECONDS, MAX_CONCURRENT_CHAT_STREAMS_PER_USER, MAX_QUESTION_ANSWER_CHARS
 from app.services.file_builders import extraction_slots
 from app.services.file_preview import HTML_EXTENSIONS, build_preview, recent_pdfs, render_pdf_page
 from app.rag.tool_approval import approval_broker
 from app.services.llm_connections import chat_option, connections_for_user, resolve_chat_endpoint
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 router = APIRouter()
 chat_service = ChatService()
 _active_streams: Dict[int, int] = {}
@@ -149,7 +149,7 @@ async def send_message(
                 ):
                     ev = event_item.get("event")
                     data = event_item.get("data", {})
-                    if ev in ("approval_required", "approval_resolved"):
+                    if ev in ("approval_required", "approval_resolved", "question", "question_resolved"):
                         yield f"event: {ev}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
                     elif ev == "attachments_extracted":
                         await asyncio.to_thread(chat_service.save_attachment_texts, db, user_message_id, data["contents"])
@@ -234,6 +234,20 @@ async def resolve_tool_approval(
     if not approval_broker.resolve(approval_id, user_id, decision.approved):
         raise HTTPException(status_code=404, detail="找不到待核准的工具呼叫，可能已逾時或已處理")
     return {"approval_id": approval_id, "approved": decision.approved}
+class QuestionAnswer(BaseModel):
+    answer: str = Field(min_length=1, max_length=MAX_QUESTION_ANSWER_CHARS)
+@router.post("/questions/{question_id}")
+async def answer_agent_question(
+    question_id: str,
+    reply: QuestionAnswer,
+    user_id: int = Depends(get_current_user_id)
+):
+    answer = reply.answer.strip()
+    if not answer:
+        raise HTTPException(status_code=422, detail="回答不可空白")
+    if not approval_broker.answer(question_id, user_id, answer):
+        raise HTTPException(status_code=404, detail="找不到等待回答的問題，可能已逾時或已回答")
+    return {"question_id": question_id, "answered": True}
 @router.get("/conversations", response_model=List[ConversationResponse])
 def get_conversations(
     db: Session = Depends(get_db),

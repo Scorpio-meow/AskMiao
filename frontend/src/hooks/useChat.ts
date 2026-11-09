@@ -172,6 +172,7 @@ export function useChat(onError: (message: string) => void) {
       updateBotMessage(m => ({
         ...m,
         pending_approval: null,
+        pending_question: null,
         error: hasRunningStep(m.research_trace) ? TOOL_INTERRUPTED_MESSAGE : STREAM_INTERRUPTED_MESSAGE,
         research_trace: settleRunningSteps(m.research_trace)
       }));
@@ -224,6 +225,12 @@ export function useChat(onError: (message: string) => void) {
             updateBotMessage(m => (
               m.pending_approval?.approval_id === ev.data?.approval_id ? { ...m, pending_approval: null } : m
             ));
+          } else if (ev.event === 'question') {
+            updateBotMessage(m => ({ ...m, pending_question: ev.data }));
+          } else if (ev.event === 'question_resolved') {
+            updateBotMessage(m => (
+              m.pending_question?.question_id === ev.data?.question_id ? { ...m, pending_question: null } : m
+            ));
           } else if (ev.event === 'plan') {
             const items = ev.data?.items;
             updateBotMessage(m => ({ ...m, plan: Array.isArray(items) ? items : m.plan }));
@@ -261,6 +268,7 @@ export function useChat(onError: (message: string) => void) {
             updateBotMessage(m => ({
               ...m,
               pending_approval: null,
+              pending_question: null,
               error: ev.data?.detail || '處理訊息時發生錯誤',
               research_trace: settleRunningSteps(m.research_trace)
             }));
@@ -274,7 +282,7 @@ export function useChat(onError: (message: string) => void) {
       }
     } catch (err: any) {
       if (isAbortError(err)) {
-        updateBotMessage(m => ({ ...m, stopped: true, pending_approval: null, research_trace: settleRunningSteps(m.research_trace) }));
+        updateBotMessage(m => ({ ...m, stopped: true, pending_approval: null, pending_question: null, research_trace: settleRunningSteps(m.research_trace) }));
       } else if (!started) {
         setMessages(prev => prev.filter(m => m.id !== userMsgId && m.id !== botMsgId));
         throw err;

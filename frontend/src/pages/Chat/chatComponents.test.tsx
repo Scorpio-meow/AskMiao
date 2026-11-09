@@ -404,3 +404,26 @@ describe('PlanChecklist', () => {
     expect(html).not.toContain('任務計畫');
   });
 });
+describe('QuestionCard', () => {
+  const pending = { question_id: 'q1', step: 1, question: '要整理哪個月份？', options: ['八月', '九月'] };
+  it('asks the question with its options and a free answer box', () => {
+    const html = renderMessage({
+      id: 40,
+      content: '',
+      is_user: false,
+      pending_question: pending,
+      research_trace: [{ step: 1, tool: 'ask_user', status: 'running', note: '先確認要整理的月份' }],
+    }, { isStreaming: true });
+    const text = textOf(html);
+    expect(text).toContain('需要你的回答要整理哪個月份？');
+    expect(buttonNamed(html, '八月')).toBeTruthy();
+    expect(buttonNamed(html, '九月')).toBeTruthy();
+    expect(html).toContain('aria-label="輸入回答"');
+    expect(text).toContain('請勿在回答中提供密碼、金鑰等機密');
+    expect(text).toContain('研究中：先確認要整理的月份（步驟 1）');
+  });
+  it('leaves the question out once the answer stream has ended', () => {
+    const html = renderMessage({ id: 41, content: '完成', is_user: false, pending_question: pending });
+    expect(textOf(html)).not.toContain('需要你的回答');
+  });
+});

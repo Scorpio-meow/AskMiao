@@ -157,3 +157,22 @@ def test_existing_database_gets_the_column_with_backfill(tmp_path):
     assert tools == {"r": 0, "w": 1, "n": 0}
     assert servers == 1
     old.dispose()
+async def _create_question(user_id):
+    return approval_broker.create_question(user_id)
+def test_question_endpoint_answers_only_the_owners_question():
+    client = admin_client()
+    loop = asyncio.new_event_loop()
+    try:
+        others, _ = loop.run_until_complete(_create_question(user_id=999))
+        own, own_future = loop.run_until_complete(_create_question(user_id=1))
+        approval_id, _ = loop.run_until_complete(_create_pending(user_id=1))
+    finally:
+        loop.close()
+    assert client.post(f"/api/chat/questions/{others}", json={"answer": "九月"}).status_code == 404
+    assert client.post(f"/api/chat/questions/{approval_id}", json={"answer": "九月"}).status_code == 404
+    assert client.post(f"/api/chat/approvals/{own}", json={"approved": True}).status_code == 404
+    assert client.post(f"/api/chat/questions/{own}", json={"answer": "   "}).status_code == 422
+    assert client.post(f"/api/chat/questions/{own}", json={"answer": " 九月 "}).json() == {"question_id": own, "answered": True}
+    assert own_future.result() == "九月"
+    for token in (others, own, approval_id):
+        approval_broker.discard(token)

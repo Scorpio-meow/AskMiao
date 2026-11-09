@@ -1,6 +1,60 @@
+import re
 from typing import Any, Dict, List, Optional, Tuple
 from app import prompts
-from app.core.limits import MAX_PLAN_STEP_CHARS, MAX_PLAN_STEPS
+from app.core.limits import (
+    MAX_PLAN_STEP_CHARS,
+    MAX_PLAN_STEPS,
+    MAX_QUESTION_CHARS,
+    MAX_QUESTION_OPTION_CHARS,
+    MAX_QUESTION_OPTIONS,
+    MAX_STEP_NOTE_CHARS,
+)
+from app.rag.research_session import strip_citations, strip_tool_result_blocks
+THINK_BLOCK = re.compile(r"<think>.*?</think>", re.S)
+ASK_USER_TOOL_NAME = "ask_user"
+ASK_USER_TOOL = {
+    "type": "function",
+    "function": {
+        "name": ASK_USER_TOOL_NAME,
+        "description": prompts.ASK_USER,
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "question": {"type": "string", "description": prompts.QUESTION_TEXT.format(max_chars=MAX_QUESTION_CHARS)},
+                "options": {
+                    "type": "array",
+                    "maxItems": MAX_QUESTION_OPTIONS,
+                    "items": {"type": "string"},
+                    "description": prompts.QUESTION_OPTIONS.format(max_options=MAX_QUESTION_OPTIONS, max_chars=MAX_QUESTION_OPTION_CHARS),
+                },
+            },
+            "required": ["question"],
+        },
+    },
+}
+def _question_error(reason: str) -> str:
+    return prompts.QUESTION_INVALID.format(
+        reason=reason, max_chars=MAX_QUESTION_CHARS, max_options=MAX_QUESTION_OPTIONS, max_option_chars=MAX_QUESTION_OPTION_CHARS
+    )
+def parse_question(arguments: Dict[str, Any]) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
+    question = arguments.get("question")
+    if not isinstance(question, str) or not question.strip() or len(question.strip()) > MAX_QUESTION_CHARS:
+        return None, _question_error("問題空白或過長")
+    options = arguments.get("options") or []
+    if not isinstance(options, list) or len(options) > MAX_QUESTION_OPTIONS:
+        return None, _question_error("選項數量不符")
+    cleaned = []
+    for option in options:
+        if not isinstance(option, str) or not option.strip() or len(option.strip()) > MAX_QUESTION_OPTION_CHARS:
+            return None, _question_error("選項空白或過長")
+        cleaned.append(option.strip())
+    return {"question": question.strip(), "options": list(dict.fromkeys(cleaned))}, None
+def turn_note(content: Optional[str]) -> Optional[str]:
+    visible = THINK_BLOCK.sub("", content or "").split("<think>", 1)[0]
+    note = strip_citations(strip_tool_result_blocks(visible)).strip()
+    if not note:
+        return None
+    return note if len(note) <= MAX_STEP_NOTE_CHARS else note[:MAX_STEP_NOTE_CHARS - 1] + "…"
 UPDATE_PLAN_TOOL_NAME = "update_plan"
 PLAN_STATUSES = ("pending", "in_progress", "completed")
 UPDATE_PLAN_TOOL = {

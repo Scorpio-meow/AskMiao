@@ -2,7 +2,7 @@
 
 [繁體中文](api.md) | [English](api_en.md)
 
-> REST and SSE streaming endpoints of the AskMiao **8.7.0** backend, written against the actual routers in `backend/app/api/`. With `ENABLE_API_DOCS=true` the backend also serves interactive docs at `http://localhost:8001/docs` (Swagger UI) and `http://localhost:8001/redoc`, and the OpenAPI document at `/openapi.json`. These three paths need no sign-in and list every endpoint and parameter, so keep `ENABLE_API_DOCS=false` (the template value) for public deployments; all three then return `404`.
+> REST and SSE streaming endpoints of the AskMiao **8.8.0** backend, written against the actual routers in `backend/app/api/`. With `ENABLE_API_DOCS=true` the backend also serves interactive docs at `http://localhost:8001/docs` (Swagger UI) and `http://localhost:8001/redoc`, and the OpenAPI document at `/openapi.json`. These three paths need no sign-in and list every endpoint and parameter, so keep `ENABLE_API_DOCS=false` (the template value) for public deployments; all three then return `404`.
 
 ## Contents
 
@@ -62,6 +62,7 @@ API messages are in Traditional Chinese; the English glosses in this document ar
 | GET | `/api/chat/models` | Signed in | The caller's API connections and models |
 | GET | `/api/chat/tools` | Signed in | Tool definitions currently available to the agent |
 | POST | `/api/chat/approvals/{approval_id}` | Signed in (asking user only) | Approve or deny a pending tool call |
+| POST | `/api/chat/questions/{question_id}` | Signed in (asking user only) | Answer a question the research assistant asked in agent mode |
 | GET | `/api/chat/conversations` | Signed in | Your conversations |
 | POST | `/api/chat/conversations` | Signed in | Create a conversation |
 | GET | `/api/chat/conversations/{conversation_id}` | Signed in | One conversation (without messages) |
@@ -357,11 +358,13 @@ Each event is formatted as `event: <name>\ndata: <JSON>\n\n`, in this order:
 | Event | When | `data` fields |
 |---|---|---|
 | `start` | The user message has been saved | `conversation_id`, `user_message_id`, `attachment_file_ids` (in the order of `attachments`: the file id for attachments saved as conversation files, otherwise `null`) |
-| `step_start` | A tool call starts | `step` (from 1), `tool`, `arguments` |
+| `step_start` | A tool call starts | `step` (from 1), `tool`, `arguments`; the first step of a turn also has `note` when the model wrote text alongside its tool calls |
 | `approval_required` | The tool needs approval and the agent pauses (see [2.9](#29-post-apichatapprovalsapproval_id)) | `approval_id`, `step`, `tool`, `kind`, `tool_display_name`, `target`, `arguments` |
 | `approval_resolved` | The user answered or the wait timed out | `approval_id`, `approved` (`false` on timeout) |
+| `question` | In agent mode, the model called `ask_user` with a valid question and the agent waits for the answer (see [2.17](#217-post-apichatquestionsquestion_id)) | `question_id`, `step`, `question`, `options` (may be empty) |
+| `question_resolved` | The user answered or the wait timed out | `question_id`, `answered` (`false` on timeout) |
 | `plan` | In agent mode, the model called `update_plan` with a valid plan | `items`: the whole plan, each step `{step, status}` with `status` `pending`, `in_progress`, or `completed` |
-| `step_end` | A tool call ends | `step`, `tool`, `arguments`, `output_preview` (first 300 characters of the result JSON), `duration_seconds`, `status` (`success` / `error`) |
+| `step_end` | A tool call ends | `step`, `tool`, `arguments`, `output_preview` (first 300 characters of the result JSON), `duration_seconds`, `status` (`success` / `error`), and the `note` from `step_start` |
 | `file` | A conversation file tool succeeded, right after that call's `step_end` | `action` (`created`, `updated`, `deleted`), `file` (the file object; see [2.10](#210-get-apichatconversationsconversation_idfiles)) |
 | `token` | Answer text | `content` |
 | `sources` | After the answer | `sources` (deduplicated source names), `sources_detail` (see below) |
@@ -625,6 +628,24 @@ Open a web page file with `?token=`, for the frontend's `<iframe sandbox="allow-
 | `Referrer-Policy` | `no-referrer` |
 
 The page runs in its own opaque origin: scripts work, but they cannot read AskMiao's cookies or `localStorage`, make network requests, submit forms, or load external resources. This response carries `frame-ancestors`, so it is sent without `X-Frame-Options: DENY`; all other responses still carry it.
+
+### 2.17 POST /api/chat/questions/{question_id}
+
+Answer a question the research assistant asked in agent mode. When the model calls `ask_user` in agent mode, the `POST /api/chat/send` stream first sends a `question` event and pauses until the user answers through this endpoint, then sends `question_resolved`; see [Architecture: Agent mode](architecture_en.md#agent-mode).
+
+**Request body**: `{"answer": "國外出差"}`, at most 2,000 characters; surrounding whitespace is trimmed first
+
+**Response**: `200 OK` `{"question_id": "…", "answered": true}`
+
+| Status | When |
+|---|---|
+| `404` | `找不到等待回答的問題，可能已逾時或已回答` ("no question waiting for an answer; it may have timed out or been answered"): the `question_id` is unknown, already answered, timed out, belongs to an approval item, or was not created by a stream the signed-in user started |
+| `422` | The answer is blank or longer than 2,000 characters |
+
+- Only the asking user can answer; admins cannot answer on their behalf, and question and approval IDs are not interchangeable.
+- With no answer within 300 seconds, the research assistant gets a "the user did not answer" result, carries on with what it has, and states its assumptions in the report; when the user interrupts the stream, the pending question is cancelled with it.
+- The answer reaches the model as the user's own words, not wrapped as untrusted data; whole URLs in it may be read with `web_fetch`.
+- Pending questions live in the backend process's memory and are lost when the backend restarts.
 
 ---
 
