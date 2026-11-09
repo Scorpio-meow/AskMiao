@@ -17,6 +17,7 @@ from pptx.util import Inches
 from app.core.limits import (
     CHAT_ATTACHMENT_EXTRACTION_LIMITS,
     FILE_READ_PAGE_CHARS,
+    ExtractionLimits,
     MAX_FILE_EDITS,
     MAX_CONCURRENT_ATTACHMENT_EXTRACTIONS,
     MAX_FILE_TOOL_CONTENT_CHARS,
@@ -26,7 +27,7 @@ from app.core.limits import (
 )
 from app.services.conversation_files import ConversationFileError, extension_of
 from app.services.document_processor import DocumentProcessor, DocumentRejected
-CREATABLE_EXTENSIONS = (".md", ".txt", ".csv", ".json", ".docx", ".xlsx", ".pptx", ".pdf")
+CREATABLE_EXTENSIONS = (".md", ".txt", ".csv", ".json", ".html", ".docx", ".xlsx", ".pptx", ".pdf")
 TEXT_EXTENSIONS = (".md", ".txt", ".csv", ".json", ".html", ".htm", ".css", ".js", ".ts", ".py")
 TEXT_ENCODINGS = ("utf-8-sig", "big5", "gbk", "gb2312")
 FORMULA_PREFIXES = ("=", "+", "-", "@", "\t", "\r")
@@ -244,7 +245,7 @@ def _build_pptx(slides: List[Dict[str, Any]]) -> bytes:
     presentation.save(buffer)
     return buffer.getvalue()
 def build_file(extension: str, payload: Dict[str, Any]) -> bytes:
-    if extension in (".md", ".txt"):
+    if extension in (".md", ".txt", ".html"):
         return _text_field(payload, "content").encode("utf-8")
     if extension == ".json":
         content = _text_field(payload, "content")
@@ -271,14 +272,14 @@ def decode_text(data: bytes) -> str:
         except UnicodeDecodeError:
             continue
     raise ConversationFileError("無法辨識這個檔案的文字編碼")
-def _with_checked_file(data: bytes, extension: str, use: Callable[[str], Any]) -> Any:
+def with_checked_file(data: bytes, extension: str, limits: ExtractionLimits, use: Callable[[str], Any]) -> Any:
     with tempfile.TemporaryDirectory() as directory:
         path = os.path.join(directory, f"file{extension}")
         with open(path, "wb") as handle:
             handle.write(data)
         if extension in (".docx", ".xlsx", ".pptx"):
             try:
-                DocumentProcessor._check_ooxml_archive(path, CHAT_ATTACHMENT_EXTRACTION_LIMITS, builds_dom=True)
+                DocumentProcessor._check_ooxml_archive(path, limits, builds_dom=True)
             except DocumentRejected as e:
                 raise ConversationFileError(e.reason) from e
         return use(path)
@@ -307,8 +308,8 @@ def file_text(filename: str, data: bytes) -> str:
     if extension in TEXT_EXTENSIONS:
         return decode_text(data)
     if extension == ".xlsx":
-        return _with_checked_file(data, extension, _xlsx_text)
-    return _with_checked_file(data, extension, _extracted_text)
+        return with_checked_file(data, extension, CHAT_ATTACHMENT_EXTRACTION_LIMITS, _xlsx_text)
+    return with_checked_file(data, extension, CHAT_ATTACHMENT_EXTRACTION_LIMITS, _extracted_text)
 def read_page(text: str, offset: int) -> Dict[str, Any]:
     start = max(0, min(offset, len(text)))
     end = min(len(text), start + FILE_READ_PAGE_CHARS)
@@ -426,11 +427,11 @@ def edit_file(filename: str, data: bytes, payload: Dict[str, Any]) -> bytes:
         return _edit_text(decode_text(data), _edits_field(payload)).encode("utf-8-sig" if extension == ".csv" else "utf-8")
     if extension == ".docx":
         edits = _edits_field(payload)
-        return _with_checked_file(data, extension, lambda path: _edit_docx(path, edits))
+        return with_checked_file(data, extension, CHAT_ATTACHMENT_EXTRACTION_LIMITS, lambda path: _edit_docx(path, edits))
     if extension == ".pptx":
         edits = _edits_field(payload)
-        return _with_checked_file(data, extension, lambda path: _edit_pptx(path, edits))
+        return with_checked_file(data, extension, CHAT_ATTACHMENT_EXTRACTION_LIMITS, lambda path: _edit_pptx(path, edits))
     if extension == ".xlsx":
         cells = _cells_field(payload)
-        return _with_checked_file(data, extension, lambda path: _edit_xlsx(path, cells))
+        return with_checked_file(data, extension, CHAT_ATTACHMENT_EXTRACTION_LIMITS, lambda path: _edit_xlsx(path, cells))
     raise ConversationFileError(f"{extension} 只能讀取，不能部分修改；請改用 content／sheets／slides 整份重寫成新版本，或另存成其他格式")

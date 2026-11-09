@@ -11,6 +11,7 @@ interface ConversationFilesDialogProps {
   onClose: () => void;
   onDownload: (file: FileCardInfo) => void;
   onDelete: (file: FileCardInfo) => void;
+  onPreview: (file: FileCardInfo) => void;
 }
 const ORIGIN_LABELS: Record<ConversationFile['origin'], string> = {
   user: '你上傳',
@@ -22,6 +23,7 @@ export const ConversationFilesDialog: React.FC<ConversationFilesDialogProps> = (
   onClose,
   onDownload,
   onDelete,
+  onPreview,
 }) => {
   const [files, setFiles] = useState<ConversationFile[] | null>(null);
   const [error, setError] = useState('');
@@ -43,7 +45,7 @@ export const ConversationFilesDialog: React.FC<ConversationFilesDialogProps> = (
   const now = new Date();
   return (
     <Dialog open onClose={onClose} maxWidth="sm" fullWidth>
-      <DialogTitle subtitle="你上傳的文件與研究助理建立的檔案；修改會另存新版本，原檔保留" onClose={onClose}>
+      <DialogTitle onClose={onClose}>
         對話檔案
       </DialogTitle>
       <DialogContent>
@@ -61,12 +63,12 @@ export const ConversationFilesDialog: React.FC<ConversationFilesDialogProps> = (
               const created = file.created_at ? formatMessageTime(file.created_at, now) : null;
               return (
                 <li key={file.id} className={styles.item}>
-                  <ConversationFileCard file={file} deleted={false} onDownload={onDownload} onDelete={onDelete} />
+                  <ConversationFileCard file={file} deleted={false} onDownload={onDownload} onDelete={onDelete} onPreview={onPreview} />
                   <span className={styles.details}>
-                    #{file.id}
-                    {file.version > 1 ? ` · 第 ${file.version} 版` : ''}
-                    {` · ${ORIGIN_LABELS[file.origin]}`}
-                    {created ? ` · ${created.label}` : ''}
+                    <span>#{file.id}</span>
+                    {file.version > 1 && <span>第 {file.version} 版</span>}
+                    <span>{ORIGIN_LABELS[file.origin]}</span>
+                    {created && <span>{created.label}</span>}
                   </span>
                 </li>
               );

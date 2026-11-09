@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
+from fastapi.responses import Response
 from sqlalchemy.orm import Session
 from app.models.database import get_db
 from app.models import Document as DBDocument, RagChunk
@@ -8,7 +9,10 @@ from app.core.user_context import get_current_user_id
 from app.core.jwt_auth import get_current_admin_user
 from app.core.limits import ADMIN_UPLOAD_EXTRACTION_LIMITS, MAX_FILENAME_BYTES, MAX_FILES_PER_UPLOAD
 from app.rag.tools import invalidate_knowledge_base_description
+from app.services.conversation_files import ConversationFileError
 from app.services.document_processor import DocumentProcessor, DocumentRejected
+from app.services.file_builders import extraction_slots
+from app.services.file_preview import build_preview, render_pdf_page, text_preview
 from app.services.structured_data import ExtractionResult, record_chunks
 from app.services.system_models import page_ocr, system_model_target
 from pydantic import BaseModel
@@ -376,6 +380,44 @@ def get_documents(
     return [row._asdict() for row in db.query(*DOCUMENT_LIST_COLUMNS).all()]
 class DocumentSummaryUpdate(BaseModel):
     description: str
+def _document_source(db: Session, document_id: int) -> Tuple[DBDocument, Optional[str]]:
+    doc = db.query(DBDocument).filter(DBDocument.id == document_id).first()
+    if not doc:
+        raise HTTPException(status_code=404, detail="找不到這份文件")
+    path = os.path.join(UPLOAD_DIR, doc.filename)
+    return doc, path if os.path.isfile(path) else None
+def _read_file(path: str) -> bytes:
+    with open(path, "rb") as handle:
+        return handle.read()
+@router.get("/{document_id}/preview")
+async def preview_document(
+    document_id: int,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_admin_user)
+):
+    doc, path = await asyncio.to_thread(_document_source, db, document_id)
+    if path is None:
+        return {**text_preview(doc.content or ""), "notice": "伺服器上找不到原始檔，以下是擷取出的文字"}
+    async with extraction_slots:
+        data = await asyncio.to_thread(_read_file, path)
+        return await asyncio.to_thread(build_preview, doc.filename, data, ADMIN_UPLOAD_EXTRACTION_LIMITS, False)
+@router.get("/{document_id}/pages/{page}")
+async def document_page(
+    document_id: int,
+    page: int,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_admin_user)
+):
+    doc, path = await asyncio.to_thread(_document_source, db, document_id)
+    if path is None:
+        raise HTTPException(status_code=404, detail="伺服器上找不到原始檔")
+    async with extraction_slots:
+        data = await asyncio.to_thread(_read_file, path)
+        try:
+            image = await asyncio.to_thread(render_pdf_page, data, page)
+        except ConversationFileError:
+            raise HTTPException(status_code=404, detail="找不到這一頁")
+    return Response(content=image, media_type="image/png", headers={"Cache-Control": "private, no-store"})
 @router.post("/{document_id}/regenerate-summary")
 async def regenerate_document_summary(
     document_id: int,

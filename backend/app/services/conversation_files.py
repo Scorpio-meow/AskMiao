@@ -5,12 +5,14 @@ from urllib.parse import quote
 from sqlalchemy import func, or_
 from sqlalchemy.orm import Session, undefer
 from app.core.limits import (
+    FILE_VIEW_TOKEN_SECONDS,
     MAX_CONVERSATION_FILE_BYTES,
     MAX_CONVERSATION_FILES,
     MAX_FILENAME_BYTES,
     MAX_USER_ATTACHMENT_STORAGE_BYTES,
     MIB,
 )
+from app.core.tool_secrets import seal, unseal
 from app.models import Conversation, ConversationFile, Message
 storage_lock = asyncio.Lock()
 MEDIA_TYPES = {
@@ -33,6 +35,7 @@ MEDIA_TYPES = {
     ".py": "text/plain; charset=utf-8",
 }
 OCTET_STREAM = "application/octet-stream"
+VIEW_TOKEN_PURPOSE = "conversation_file_view"
 FORBIDDEN_FILENAME_CHARS = re.compile(r'[\x00-\x1f\x7f<>:"/\\|?*]')
 class ConversationFileError(Exception):
     pass
@@ -156,6 +159,13 @@ def delete_file(db: Session, file_id: int, user_id: int, conversation_id: Option
     db.delete(file)
     db.commit()
     return removed
+def view_token(user_id: int, file_id: int) -> str:
+    return seal({"purpose": VIEW_TOKEN_PURPOSE, "user_id": user_id, "file_id": file_id})
+def view_token_owner(token: str, file_id: int) -> Optional[int]:
+    payload = unseal(token, FILE_VIEW_TOKEN_SECONDS)
+    if not payload or payload.get("purpose") != VIEW_TOKEN_PURPOSE or payload.get("file_id") != file_id:
+        return None
+    return payload.get("user_id")
 def delete_files_for_conversations(db: Session, conversation_ids: Iterable[int]) -> None:
     ids = list(conversation_ids)
     if ids:

@@ -63,6 +63,7 @@ export interface ChatMessageItemProps {
   deletedFileIds: ReadonlySet<number>;
   onDownloadFile: (file: FileCardInfo) => void;
   onDeleteFile: (file: FileCardInfo) => void;
+  onPreviewFile: (file: FileCardInfo) => void;
 }
 export interface ChatMessageListProps {
   messages: Message[];
@@ -80,6 +81,7 @@ export interface ChatMessageListProps {
   deletedFileIds: ReadonlySet<number>;
   onDownloadFile: (file: FileCardInfo) => void;
   onDeleteFile: (file: FileCardInfo) => void;
+  onPreviewFile: (file: FileCardInfo) => void;
 }
 export type { ChatAttachment } from '../../services/api';
 import type { ChatAttachment } from '../../services/api';

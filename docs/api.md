@@ -2,7 +2,7 @@
 
 [繁體中文](api.md) | [English](api_en.md)
 
-> 本文件說明 AskMiao 後端 **8.4.0** 的 REST 與 SSE 串流端點，內容依 `backend/app/api/` 的實際路由撰寫。設定 `ENABLE_API_DOCS=true` 時，後端另外在 `http://localhost:8001/docs`（Swagger UI）與 `http://localhost:8001/redoc` 提供互動測試，OpenAPI 規格位於 `/openapi.json`；這三個路徑不需要登入且會列出所有端點與參數，對外服務時請保持 `ENABLE_API_DOCS=false`（範本值），此時三者一律回傳 `404`。
+> 本文件說明 AskMiao 後端 **8.5.0** 的 REST 與 SSE 串流端點，內容依 `backend/app/api/` 的實際路由撰寫。設定 `ENABLE_API_DOCS=true` 時，後端另外在 `http://localhost:8001/docs`（Swagger UI）與 `http://localhost:8001/redoc` 提供互動測試，OpenAPI 規格位於 `/openapi.json`；這三個路徑不需要登入且會列出所有端點與參數，對外服務時請保持 `ENABLE_API_DOCS=false`（範本值），此時三者一律回傳 `404`。
 
 ## 目錄
 
@@ -68,6 +68,10 @@
 | GET | `/api/chat/conversations/{conversation_id}/files` | 登入（限本人） | 對話檔案清單 |
 | GET | `/api/chat/files/{file_id}` | 登入（限本人） | 下載對話檔案 |
 | DELETE | `/api/chat/files/{file_id}` | 登入（限本人） | 刪除對話檔案 |
+| GET | `/api/chat/files/{file_id}/preview` | 登入（限本人） | 對話檔案的預覽內容 |
+| GET | `/api/chat/files/{file_id}/pages/{page}` | 登入（限本人） | PDF 對話檔案的一頁圖片 |
+| POST | `/api/chat/files/{file_id}/view-token` | 登入（限本人） | 網頁檔預覽用的短效權杖 |
+| GET | `/api/chat/files/{file_id}/view` | 預覽權杖 | 在隔離環境中開啟網頁檔 |
 | GET | `/api/llm-connections/providers` | 登入 | 可選的供應商與預設 API 位址、模型 |
 | GET | `/api/llm-connections` | 登入 | 自己的個人連線與開放給自己的共用連線 |
 | POST | `/api/llm-connections` | 登入 | 新增個人連線 |
@@ -80,6 +84,8 @@
 | POST | `/api/documents/{document_id}/regenerate-summary` | 管理員 | 重新生成 AI 摘要 |
 | PUT | `/api/documents/{document_id}/summary` | 管理員 | 手動修訂摘要 |
 | DELETE | `/api/documents/{document_id}` | 管理員 | 刪除文件 |
+| GET | `/api/documents/{document_id}/preview` | 管理員 | 知識庫文件的預覽內容 |
+| GET | `/api/documents/{document_id}/pages/{page}` | 管理員 | PDF 文件的一頁圖片 |
 | POST | `/api/documents/rebuild-index` | 管理員 | 從資料庫完整重建索引 |
 | POST | `/api/api-tools/parse-spec` | 管理員 | 解析 Swagger 2.0、OpenAPI 3.0～3.2、Arazzo 文件（可先套用 Overlay） |
 | POST | `/api/api-tools/import` | 管理員 | 批次匯入工具 |
@@ -559,7 +565,7 @@ data: {"message_id": 108, "conversation_id": 42, "answer": "特休假需先在�
 | `origin` | `user` 為使用者上傳的附件，`assistant` 為研究助理建立或修改 |
 | `version`、`parent_id` | 研究助理修改檔案時一律另存新版本：`parent_id` 是修改來源，`version` 依同一系列遞增，檔名加上 ` v<n>`；原檔不變 |
 
-研究助理可以建立 `.md`、`.txt`、`.csv`、`.json`、`.docx`、`.xlsx`、`.pptx`、`.pdf`，修改時用文字取代（文字檔、`.docx`、`.pptx`）、儲存格修改（`.xlsx`）或整份重寫，PDF 只能整份重寫；各格式的做法與上限見 [系統架構：對話檔案](architecture.md#對話檔案)。單一檔案最多 15 MiB，每個對話最多 100 個檔案，與附件共用每位使用者 200 MiB 的空間。
+研究助理可以建立 `.md`、`.txt`、`.csv`、`.json`、`.html`、`.docx`、`.xlsx`、`.pptx`、`.pdf`，修改時用文字取代（文字檔、`.docx`、`.pptx`）、儲存格修改（`.xlsx`）或整份重寫，PDF 只能整份重寫；各格式的做法與上限見 [系統架構：對話檔案](architecture.md#對話檔案)。單一檔案最多 15 MiB，每個對話最多 100 個檔案，與附件共用每位使用者 200 MiB 的空間。
 
 ### 2.11 GET /api/chat/files/{file_id}
 
@@ -579,6 +585,42 @@ data: {"message_id": 108, "conversation_id": 42, "answer": "特休假需先在�
 刪除自己的對話檔案，同一系列的其他版本不受影響。研究助理要刪除檔案時必須經過核准（見 [2.9](#29-post-apichatapprovalsapproval_id)），使用者自己以此端點刪除則不需要。
 
 **回應**：`200 OK` `{"file": {…}}`（被刪除的檔案物件）；檔案不存在或不屬於自己時回傳 `404` `找不到這個檔案`。
+
+### 2.13 GET /api/chat/files/{file_id}/preview
+
+取得自己的對話檔案的預覽內容。後端把檔案轉成結構化的 JSON，前端依 `type` 排版，不會把檔案內容當成 HTML 插入頁面；檔案不存在或不屬於自己時回傳 `404` `找不到這個檔案`。
+
+| `type` | 適用格式 | 其他欄位 |
+|---|---|---|
+| `pages` | `.pdf` | `page_count`；各頁圖片以 [2.14](#214-get-apichatfilesfile_idpagespage) 取得 |
+| `document` | `.docx` | `blocks`：`heading`（`level`、`runs`）、`paragraph`（`runs`）、`list_item`（`ordered`、`level`、`runs`）、`table`（`rows`、`truncated`），`runs` 為 `{text, bold, italic}`；`truncated` |
+| `sheets` | `.xlsx`、`.csv` | `sheets`：`{name, rows, truncated}`，儲存格一律轉成文字（公式顯示計算結果；沒有快取結果時為空白） |
+| `slides` | `.pptx` | `slides`：`{number, title, items, notes, images}`，`items` 為 `{type: "text", level, text}` 或表格；`images` 是這一頁的圖片數，預覽不含圖片；`truncated` |
+| `markdown`、`text` | `.md`、文字檔與其他可以解碼成文字的檔案 | `text`、`truncated` |
+| `html` | `.html`、`.htm` | 無；以 [2.15](#215-post-apichatfilesfile_idview-token) 取得隔離預覽的網址 |
+| `unsupported` | 其他二進位檔、損毀或有密碼的檔案 | `reason` |
+
+文字最多 200,000 字元，表格最多 500 列、50 欄，文件與簡報最多 5,000 個區塊，超過時 `truncated` 為 `true`。Office 檔案的解壓與 XML 預算與聊天附件相同，解析與聊天附件、對話檔案工具共用「整個行程同時最多解析 2 個檔案」的上限。
+
+### 2.14 GET /api/chat/files/{file_id}/pages/{page}
+
+把自己的 PDF 對話檔案的第 `page` 頁（從 1 起算）轉成 PNG 回傳，`Cache-Control: private, no-store`。解析度為 120 dpi，最長邊不超過 2,000 像素。不是 PDF、頁碼超出範圍、檔案不存在或不屬於自己時回傳 `404`。
+
+### 2.15 POST /api/chat/files/{file_id}/view-token
+
+為自己的網頁檔（`.html`、`.htm`）取得預覽用的短效權杖，回應為 `{"token": "…", "expires_in": 300}`。其他格式回傳 `400` `只有網頁檔（.html）可以預覽成網頁`。權杖以 `TOOL_SECRETS_KEY` 加密，只對這個檔案與這位使用者有效，5 分鐘後失效。
+
+### 2.16 GET /api/chat/files/{file_id}/view
+
+以 `?token=` 開啟網頁檔，給前端的 `<iframe sandbox="allow-scripts">` 使用，不需要 `Authorization` 標頭。權杖無效、過期、不是這個檔案或帳號已停用時回傳 `403` `預覽連結無效或已過期，請重新開啟預覽`。回應為 `text/html`，並帶：
+
+| 標頭 | 值 |
+|---|---|
+| `Content-Security-Policy` | `sandbox allow-scripts; default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data: blob:; font-src data:; media-src data: blob:; base-uri 'none'; form-action 'none'; frame-ancestors 'self' <ALLOWED_ORIGINS>` |
+| `Cache-Control` | `private, no-store` |
+| `Referrer-Policy` | `no-referrer` |
+
+網頁在獨立的 opaque origin 中執行：腳本可以運作，但讀不到 AskMiao 的 Cookie 與 `localStorage`，也不能連線、送出表單或載入外部資源。這個回應有 `frame-ancestors`，因此不帶 `X-Frame-Options: DENY`；其他回應照常帶。
 
 ---
 
@@ -720,6 +762,14 @@ data: {"message_id": 108, "conversation_id": 42, "answer": "特休假需先在�
 ```
 
 資料庫沒有文件時回傳 `{"message": "索引重建完成（沒有文件）", "document_count": 0, "chunk_count": 0, "qa_pairs_detected": 0, "records_detected": 0, "missing_source_files": [], "failed_documents": [], "timestamp": "..."}`。
+
+### 4.7 GET /api/documents/{document_id}/preview
+
+需要管理員權限。預覽知識庫文件的原始檔，格式與 [2.13](#213-get-apichatfilesfile_idpreview) 相同，但網頁檔以原始碼（`text`）顯示，不提供隔離預覽。`UPLOAD_DIR` 中找不到原始檔時，改回傳資料庫中擷取出的文字：`{"type": "text", "text": "…", "truncated": false, "notice": "伺服器上找不到原始檔，以下是擷取出的文字"}`。Office 檔案的解析預算與管理員上傳相同。文件不存在時回傳 `404` `找不到這份文件`。
+
+### 4.8 GET /api/documents/{document_id}/pages/{page}
+
+需要管理員權限。把 PDF 文件的第 `page` 頁轉成 PNG，規則同 [2.14](#214-get-apichatfilesfile_idpagespage)；找不到原始檔時回傳 `404` `伺服器上找不到原始檔`。
 
 ---
 

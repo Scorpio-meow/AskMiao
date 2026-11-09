@@ -1,6 +1,7 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import axios from 'axios';
-import api from '../services/api';
+import api, { documentService } from '../services/api';
+import FilePreviewPanel from '../components/FilePreviewPanel';
 import { describeRequestError } from '../utils/secureLogger';
 import { useDocuments, getApiErrorMessage } from '../hooks/useDocuments';
 import { useDocumentTitle } from '../hooks/useDocumentTitle';
@@ -49,6 +50,8 @@ function Documents() {
   const [selectedFiles, setSelectedFiles] = useState([]);
   const [deletingIds, setDeletingIds] = useState({});
   const [pendingDelete, setPendingDelete] = useState(null);
+  const [previewDoc, setPreviewDoc] = useState(null);
+  const previewSource = useMemo(() => (previewDoc ? documentService.documentPreview(previewDoc) : null), [previewDoc]);
   const [regeneratingStatus, setRegeneratingStatus] = useState({});
   const [pendingRegenerate, setPendingRegenerate] = useState(null);
   const [editingDocId, setEditingDocId] = useState(null);
@@ -619,6 +622,14 @@ function Documents() {
                   <div className={styles.docActions}>
                     <IconButton
                       size="sm"
+                      onClick={() => setPreviewDoc({ id: doc.id, filename: doc.filename })}
+                      aria-label={`預覽「${doc.filename}」`}
+                      title="預覽文件"
+                    >
+                      <Icon name="visibility" size={18} color="var(--color-primary)" />
+                    </IconButton>
+                    <IconButton
+                      size="sm"
                       onClick={() => requestRegenerateSummary(doc)}
                       disabled={regeneratingStatus[doc.id] || isDeleting}
                       aria-label={`重新生成「${doc.filename}」的 AI 大綱`}
@@ -848,6 +859,9 @@ function Documents() {
           </div>
         </DialogActions>
       </Dialog>
+      {previewDoc && previewSource && (
+        <FilePreviewPanel key={previewDoc.id} placement="peek" source={previewSource} onClose={() => setPreviewDoc(null)} />
+      )}
       <ConfirmDialog
         open={confirmRemoveOpen}
         title="確認清空待上傳清單？"

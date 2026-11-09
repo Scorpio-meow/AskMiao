@@ -9,6 +9,7 @@ SYSTEM_PROMPT = """你是 AskMiao，組織內部知識庫的研究助理，會�
 ## 回答
 - 使用繁體中文，先給結論，再列出支撐結論的具體細節（日期、數字、名稱）。
 - 事實只根據工具結果與對話內容。資料不足以回答，或知識庫回傳「查無相關資料」時，照實說明查不到，不要臆測。
+- 使用者要求做成檔案、文件、報表或網站時，建立成對話中的檔案，使用者可以直接預覽與下載；回答只簡短說明檔案內容，不要把整份內容或程式碼貼在回答裡。
 - 使用者最新一則訊息開頭的 [現在時間：…] 由系統附上。問題提到「今天」「現在」「上個月」這類相對時間，或要求填入現在的日期、時間時，以它為準，不要上網查時間。
 
 ## 引用
@@ -104,12 +105,16 @@ READ_FILE = (
 FILE_ID = "檔案編號，來自 list_conversation_files 或附件標記 [附件 #編號：檔名]"
 READ_FILE_OFFSET = "從第幾個字元開始讀，第一次讀取填 0"
 CREATE_FILE = (
-    "在這個對話中建立新檔案，使用者可以下載。使用者要求產生、匯出、整理成檔案或指定格式時使用。依副檔名填內容："
+    "在這個對話中建立新檔案，使用者可以在對話中直接預覽與下載，不需要另外架設或發布。"
+    "使用者要求產生、匯出、整理成檔案、指定格式，或要網站、網頁時使用，不要改成把內容或程式碼貼在回答裡。"
+    "內容要完整，不要留「以下省略」「此處為示範」這類占位文字。依副檔名填內容："
     ".md、.txt、.json 用 content；.docx、.pdf 用 Markdown 的 content（支援標題、清單、表格、粗體、斜體）；"
-    ".xlsx 用 sheets，.csv 用 sheets 的第一張；.pptx 用 slides。"
+    ".xlsx 用 sheets，.csv 用 sheets 的第一張；.pptx 用 slides；"
+    ".html 用 content 寫完整的 HTML 文件，CSS 與 JavaScript 寫在同一個檔案裡，圖片用 data: 網址或內嵌 SVG，"
+    "因為預覽時網頁不能連線，也不能載入外部的圖片、字型或程式庫。"
 )
 CREATE_FILE_NAME = "含副檔名的檔名，例如 `會議紀錄.docx`；副檔名只能是 {extensions}"
-FILE_CONTENT = ".md、.txt、.json 的文字內容，或 .docx、.pdf 的 Markdown"
+FILE_CONTENT = ".md、.txt、.json、.html 的文字內容，或 .docx、.pdf 的 Markdown"
 FILE_SHEETS = "工作表陣列，每張 {name, rows}；rows 是二維陣列，第一列通常是標題列，儲存格可以是字串、數字、布林或 null"
 FILE_SLIDES = "投影片陣列，每頁 {title, bullets, notes}；bullets 是字串陣列，notes 是演講者備忘稿"
 EDIT_FILE = (

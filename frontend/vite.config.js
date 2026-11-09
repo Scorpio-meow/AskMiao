@@ -55,6 +55,7 @@ function contentSecurityPolicy(env) {
           ["style-src 'self'", ...inlineHashes(html, 'style')].join(' '),
           "img-src 'self' data: blob:",
           ["connect-src 'self'", ...apiOrigins(env)].join(' '),
+          ["frame-src 'self'", ...apiOrigins(env)].join(' '),
           "object-src 'none'",
           "base-uri 'none'",
           "form-action 'self'",

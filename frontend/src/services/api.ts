@@ -22,6 +22,47 @@ export interface ConversationFile {
   parent_id: number | null;
   created_at: string | null;
 }
+export interface PreviewRun {
+  text: string;
+  bold: boolean;
+  italic: boolean;
+}
+export interface PreviewTable {
+  type: 'table';
+  rows: string[][];
+  truncated: boolean;
+}
+export type PreviewBlock =
+  | { type: 'heading'; level: number; runs: PreviewRun[] }
+  | { type: 'paragraph'; runs: PreviewRun[] }
+  | { type: 'list_item'; ordered: boolean; level: number; runs: PreviewRun[] }
+  | PreviewTable;
+export interface PreviewSheet {
+  name: string;
+  rows: string[][];
+  truncated: boolean;
+}
+export interface PreviewSlide {
+  number: number;
+  title: string;
+  notes: string;
+  images: number;
+  items: Array<{ type: 'text'; level: number; text: string } | PreviewTable>;
+}
+export type FilePreview =
+  | { type: 'pages'; page_count: number }
+  | { type: 'document'; blocks: PreviewBlock[]; truncated: boolean }
+  | { type: 'sheets'; sheets: PreviewSheet[] }
+  | { type: 'slides'; slides: PreviewSlide[]; truncated: boolean }
+  | { type: 'markdown' | 'text'; text: string; truncated: boolean; notice?: string }
+  | { type: 'html' }
+  | { type: 'unsupported'; reason: string };
+export interface PreviewSource {
+  filename: string;
+  load: () => Promise<FilePreview>;
+  page: (pageNumber: number, signal: AbortSignal) => Promise<Blob>;
+  viewUrl?: () => Promise<string>;
+}
 export interface ConversationFileEvent {
   action: 'created' | 'updated' | 'deleted';
   file: ConversationFile;
@@ -307,6 +348,17 @@ export const chatService = {
   },
   async deleteConversationFile(fileId: number): Promise<void> {
     await api.delete(`/chat/files/${fileId}`);
+  },
+  conversationFilePreview(file: { id: number; filename: string }): PreviewSource {
+    return {
+      filename: file.filename,
+      load: async () => (await api.get<FilePreview>(`/chat/files/${file.id}/preview`)).data,
+      page: async (pageNumber, signal) => (await api.get<Blob>(`/chat/files/${file.id}/pages/${pageNumber}`, { responseType: 'blob', signal })).data,
+      viewUrl: async () => {
+        const { data } = await api.post<{ token: string }>(`/chat/files/${file.id}/view-token`);
+        return `${API_BASE_URL}/chat/files/${file.id}/view?token=${encodeURIComponent(data.token)}`;
+      },
+    };
   }
 };
 export const documentService = {
@@ -337,6 +389,13 @@ export const documentService = {
   async deleteDocument(documentId: number): Promise<any> {
     const response = await api.delete<any>(`/documents/${documentId}`);
     return response.data;
+  },
+  documentPreview(doc: { id: number; filename: string }): PreviewSource {
+    return {
+      filename: doc.filename,
+      load: async () => (await api.get<FilePreview>(`/documents/${doc.id}/preview`)).data,
+      page: async (pageNumber, signal) => (await api.get<Blob>(`/documents/${doc.id}/pages/${pageNumber}`, { responseType: 'blob', signal })).data,
+    };
   }
 };
 export const adminService = {

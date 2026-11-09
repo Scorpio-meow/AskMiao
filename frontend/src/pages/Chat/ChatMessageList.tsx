@@ -47,6 +47,7 @@ export const ChatMessageList: React.FC<ChatMessageListProps> = ({
   deletedFileIds,
   onDownloadFile,
   onDeleteFile,
+  onPreviewFile,
 }) => {
   const promptsTitleId = useId();
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -200,6 +201,7 @@ export const ChatMessageList: React.FC<ChatMessageListProps> = ({
                   deletedFileIds={deletedFileIds}
                   onDownloadFile={onDownloadFile}
                   onDeleteFile={onDeleteFile}
+                  onPreviewFile={onPreviewFile}
                 />
               );
             })

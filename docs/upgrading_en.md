@@ -4,6 +4,7 @@
 
 > How to upgrade an existing deployment to a new release, with rollback steps and troubleshooting. See the [CHANGELOG](../CHANGELOG_en.md) for the full list of changes in each version.
 
+- [Upgrading from 8.4.0 to 8.5.0](#upgrading-from-840-to-850)
 - [Upgrading from 8.3.0 to 8.4.0](#upgrading-from-830-to-840)
 - [Upgrading from 8.2.2 to 8.3.0](#upgrading-from-822-to-830)
 - [Upgrading from 8.2.1 to 8.2.2](#upgrading-from-821-to-822)
@@ -42,6 +43,22 @@
   - [Step 5: verify the upgrade](#step-5-verify-the-upgrade)
   - [Rolling back to 2.2.x](#rolling-back-to-22x)
   - [Troubleshooting](#troubleshooting)
+
+---
+
+## Upgrading from 8.4.0 to 8.5.0
+
+For upgrading from 8.4.0 to 8.5.0 (2026-11-09); see the [CHANGELOG](../CHANGELOG_en.md#850---2026-11-09) for the full list of changes. This release needs no `.env` changes and does not change the database; backend dependencies are unchanged. With `deploy/`, rebuild the images (`docker compose build`) so the `web` image picks up the new `deploy/nginx.conf`.
+
+| Item | 8.4.0 | 8.5.0 | Action |
+|---|---|---|---|
+| File preview | Download only | Conversation files and knowledge base documents can be previewed in the interface; adds `GET /api/chat/files/{file_id}/preview`, `GET /api/chat/files/{file_id}/pages/{page}`, `GET /api/documents/{document_id}/preview`, and `GET /api/documents/{document_id}/pages/{page}` | None |
+| Web pages made by the research assistant | `.html` cannot be created | `.html` can be created and previewed in an isolated iframe; adds `POST /api/chat/files/{file_id}/view-token` and `GET /api/chat/files/{file_id}/view` | None; if a reverse proxy sits in front, do not add `X-Frame-Options: DENY` to every `/api/` response, or web page previews are blocked |
+| Web sources in answers | Clicking opens a new tab directly | A preview card opens first, and the page opens from the card | None |
+| `X-Frame-Options` | The backend and nginx add `DENY` to every response | The backend adds it only to responses without a CSP `frame-ancestors`; nginx adds it only to frontend pages | Deployments with a customized `deploy/nginx.conf` should move `X-Frame-Options` into `location /` |
+| Build-time CSP | No `frame-src` (falls back to `default-src 'self'`) | `frame-src 'self'` plus the origins of `VITE_API_BASE`/`VITE_API_URL` | Rebuild the frontend |
+
+To roll back to 8.4.0, switch back to the older code. `.html` files the research assistant created with 8.5.0 stay in the conversation files and can be downloaded while rolled back, but they cannot be previewed, and the research assistant cannot create new `.html` files.
 
 ---
 

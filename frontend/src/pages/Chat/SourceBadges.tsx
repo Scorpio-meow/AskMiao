@@ -3,6 +3,13 @@ import { SourceBadgesProps, SourceDetail } from './types';
 import { Popover, Icon } from '../../components/ui';
 import styles from './SourceBadges.module.css';
 const isWebUrl = (value: string) => value.startsWith('http://') || value.startsWith('https://');
+export const siteName = (url: string): string => {
+  try {
+    return new URL(url).hostname.replace(/^www\./, '');
+  } catch {
+    return url;
+  }
+};
 const SourceLabel: React.FC<{ citation?: number; icon: 'language' | 'description'; name: string; meta?: string }> = ({
   citation,
   icon,
@@ -63,11 +70,15 @@ export const SourceBadges: React.FC<SourceBadgesProps> = ({
             if (detail.url) {
               return (
                 <li key={idx} className={styles.sourceItem}>
-                  <a className={`${styles.source} ${styles.sourceWeb}`} href={detail.url} target="_blank" rel="noopener noreferrer">
-                    <SourceLabel citation={detail.citation} icon="language" name={detail.label || detail.source} />
-                    <span className={styles.externalIcon} aria-hidden="true">↗</span>
-                    {newTabNote}
-                  </a>
+                  <button
+                    type="button"
+                    className={`${styles.source} ${styles.sourceWeb}`}
+                    onClick={(e) => handleOpenDetail(e, detail)}
+                    aria-haspopup="dialog"
+                    aria-expanded={activeDetail === detail}
+                  >
+                    <SourceLabel citation={detail.citation} icon="language" name={detail.label || detail.source} meta={siteName(detail.url)} />
+                  </button>
                 </li>
               );
             }
@@ -108,7 +119,7 @@ export const SourceBadges: React.FC<SourceBadgesProps> = ({
         open={Boolean(anchorEl)}
         anchorEl={anchorEl}
         onClose={handleCloseDetail}
-        aria-label={activeDetail ? `來源詳情：${activeDetail.source}` : '來源詳情'}
+        aria-label={activeDetail ? `${activeDetail.url ? '網頁預覽' : '來源詳情'}：${activeDetail.label || activeDetail.source}` : '來源詳情'}
       >
         {activeDetail && (
           <div className={styles.popoverCard}>
@@ -116,10 +127,15 @@ export const SourceBadges: React.FC<SourceBadgesProps> = ({
               {activeDetail.citation !== undefined ? (
                 <span className={styles.citation}>{activeDetail.citation}</span>
               ) : (
-                <Icon name="description" size={16} className={styles.sourceIcon} />
+                <Icon name={activeDetail.url ? 'language' : 'description'} size={16} className={styles.sourceIcon} />
               )}
-              <span className={styles.popoverTitle}>{activeDetail.source}</span>
+              <span className={styles.popoverTitle}>{activeDetail.label || activeDetail.source}</span>
             </div>
+            {activeDetail.url && (
+              <div className={styles.popoverMeta}>
+                <span className={styles.siteName}>{siteName(activeDetail.url)}</span>
+              </div>
+            )}
             {(activeDetail.chunk !== undefined || (activeDetail.score !== undefined && activeDetail.score !== null)) && (
               <div className={styles.popoverMeta}>
                 {activeDetail.chunk !== undefined && <span>段落 {activeDetail.chunk}</span>}
@@ -132,6 +148,12 @@ export const SourceBadges: React.FC<SourceBadgesProps> = ({
               <div className={styles.snippet}>
                 {activeDetail.snippet}
               </div>
+            )}
+            {activeDetail.url && (
+              <a className={styles.openLink} href={activeDetail.url} target="_blank" rel="noopener noreferrer">
+                開啟網頁 <span aria-hidden="true">↗</span>
+                {newTabNote}
+              </a>
             )}
           </div>
         )}

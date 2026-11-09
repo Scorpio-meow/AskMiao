@@ -33,3 +33,13 @@
   color: var(--text-tertiary);
   text-decoration: line-through;
 }
+
+@media (max-width: 599px) {
+  .card {
+    flex-wrap: wrap;
+  }
+
+  .name {
+    flex: 1 1 calc(100% - 3rem);
+  }
+}

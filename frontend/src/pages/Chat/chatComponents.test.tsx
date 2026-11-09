@@ -6,6 +6,9 @@ import ChatMessageList from './ChatMessageList';
 import ChatSidebar from './ChatSidebar';
 import ResearchTraceBlock from './ResearchTraceBlock';
 import ToolApprovalCard from './ToolApprovalCard';
+import SourceBadges from './SourceBadges';
+import { PreviewContent } from '../../components/FilePreviewPanel';
+import type { FilePreview, PreviewSource } from '../../services/api';
 const noop = () => {};
 const ENTITIES: Record<string, string> = { '&quot;': '"', '&#x27;': "'", '&lt;': '<', '&gt;': '>', '&amp;': '&' };
 const stripTags = (html: string) => {
@@ -40,6 +43,7 @@ const renderMessage = (
       deletedFileIds={options.deletedFileIds ?? NO_DELETED_FILES}
       onDownloadFile={noop}
       onDeleteFile={noop}
+      onPreviewFile={noop}
     />
   );
 describe('ChatMessageItem', () => {
@@ -91,8 +95,9 @@ describe('ChatMessageItem', () => {
     const documentSource = buttonNamed(html, 'leave_rules.txt');
     expect(documentSource?.text).toBe('1leave_rules.txt段落 2');
     expect(documentSource?.attrs).toContain('aria-haspopup="dialog"');
-    expect(html).toMatch(/<a[^>]*href="https:\/\/example\.com\/leave"[^>]*target="_blank"[^>]*rel="noopener noreferrer"/);
-    expect(textOf(html)).toContain('（在新分頁開啟）');
+    const webSource = buttonNamed(html, 'https://example.com/leave');
+    expect(webSource?.text).toBe('2https://example.com/leaveexample.com');
+    expect(webSource?.attrs).toContain('aria-haspopup="dialog"');
   });
   it('falls back to plain source names from older answers', () => {
     const html = renderMessage({ id: 7, content: '舊回答', is_user: false, sources: ['舊文件.pdf'] });
@@ -207,6 +212,7 @@ const listProps = {
   deletedFileIds: NO_DELETED_FILES,
   onDownloadFile: noop,
   onDeleteFile: noop,
+  onPreviewFile: noop,
 };
 describe('ChatMessageList', () => {
   it('offers suggested prompts for a new conversation', () => {
@@ -284,7 +290,7 @@ describe('conversation files', () => {
   it('shows the files an answer created with download and delete buttons', () => {
     const html = renderMessage({ id: 20, content: '完成', is_user: false, files: [{ action: 'created', file: created }, { action: 'updated', file: updated }] });
     expect(textOf(html)).toContain('旅費.docx');
-    expect(textOf(html)).toContain('已存成新版本 · 2.0 KB');
+    expect(textOf(html)).toContain('已存成新版本2.0 KB');
     expect(buttons(html).map((button) => button.attrs.match(/aria-label="([^"]*)"/)?.[1])).toEqual(
       expect.arrayContaining(['下載 旅費.docx', '刪除 旅費.docx', '下載 旅費 v2.docx', '刪除 旅費 v2.docx'])
     );
@@ -315,5 +321,58 @@ describe('conversation files', () => {
     );
     expect(textOf(html)).toContain('建立檔案');
     expect(textOf(html)).toContain('報告.pdf');
+  });
+});
+const previewSource: PreviewSource = {
+  filename: '報告.docx',
+  load: async () => ({ type: 'unsupported', reason: '' }),
+  page: async () => new Blob(),
+};
+const renderPreview = (preview: FilePreview) => renderToStaticMarkup(<PreviewContent preview={preview} source={previewSource} />);
+describe('file preview', () => {
+  it('lays out a Word document with headings, numbered lists, bold text and tables', () => {
+    const html = renderPreview({
+      type: 'document',
+      truncated: false,
+      blocks: [
+        { type: 'heading', level: 1, runs: [{ text: '出差規定', bold: false, italic: false }] },
+        { type: 'paragraph', runs: [{ text: '上限 ', bold: false, italic: false }, { text: '5,500 元', bold: true, italic: false }] },
+        { type: 'list_item', ordered: true, level: 0, runs: [{ text: '申請', bold: false, italic: false }] },
+        { type: 'list_item', ordered: true, level: 0, runs: [{ text: '核准', bold: false, italic: false }] },
+        { type: 'table', rows: [['項目', '上限'], ['住宿', '5,500 元']], truncated: true },
+      ],
+    });
+    expect(html).toContain('<h3>出差規定</h3>');
+    expect(html).toContain('<strong>5,500 元</strong>');
+    expect(textOf(html)).toContain('1.申請');
+    expect(textOf(html)).toContain('2.核准');
+    expect(html).toContain('<th scope="col">項目</th>');
+    expect(textOf(html)).toContain('只顯示前面一部分');
+  });
+  it('shows sheets, slides, pages and unsupported files', () => {
+    expect(textOf(renderPreview({ type: 'sheets', sheets: [{ name: '表', rows: [['a', 'b'], ['1', '2']], truncated: false }] }))).toContain('ab12');
+    const slides = renderPreview({ type: 'slides', truncated: false, slides: [{ number: 1, title: '重點', notes: '提醒申請', images: 2, items: [{ type: 'text', level: 1, text: '住宿' }] }] });
+    expect(textOf(slides)).toContain('第 1 頁');
+    expect(textOf(slides)).toContain('2 張圖片');
+    expect(textOf(slides)).toContain('提醒申請');
+    expect(textOf(renderPreview({ type: 'pages', page_count: 3 })).match(/第 \d 頁/g)).toEqual(['第 1 頁', '第 2 頁', '第 3 頁']);
+    expect(textOf(renderPreview({ type: 'unsupported', reason: '這種檔案無法預覽，請下載後開啟' }))).toContain('請下載後開啟');
+    expect(textOf(renderPreview({ type: 'text', text: '原文', truncated: false, notice: '伺服器上找不到原始檔' }))).toContain('伺服器上找不到原始檔');
+  });
+  it('offers a preview button on file cards', () => {
+    const file = { id: 8, filename: '網頁.html', media_type: 'text/plain', size_bytes: 10, origin: 'assistant' as const, version: 1, parent_id: null, created_at: null };
+    const html = renderMessage({ id: 23, content: '完成', is_user: false, files: [{ action: 'created', file }] });
+    expect(buttons(html).some((button) => button.attrs.includes('預覽 網頁.html'))).toBe(true);
+  });
+});
+describe('web source preview', () => {
+  it('opens a preview card instead of leaving the chat straight away', () => {
+    const html = renderToStaticMarkup(
+      <SourceBadges sources={['新聞']} sourcesDetail={[{ citation: 1, source: '颱風假公告', url: 'https://www.example.gov.tw/news/1', snippet: '明天停班停課' }]} />
+    );
+    const button = buttonNamed(html, '颱風假公告');
+    expect(button?.attrs).toContain('aria-haspopup="dialog"');
+    expect(textOf(html)).toContain('example.gov.tw');
+    expect(html).not.toContain('href="https://www.example.gov.tw/news/1"');
   });
 });

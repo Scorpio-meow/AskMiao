@@ -156,3 +156,28 @@
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
+
+.siteName {
+  overflow-wrap: anywhere;
+}
+
+.openLink {
+  display: inline-flex;
+  align-items: center;
+  align-self: flex-start;
+  gap: var(--space-1);
+  color: var(--color-primary-text);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  text-decoration: none;
+}
+
+.openLink:hover {
+  text-decoration: underline;
+}
+
+.openLink:focus-visible {
+  border-radius: var(--radius-xs);
+  outline: 2px solid var(--border-focus);
+  outline-offset: 2px;
+}

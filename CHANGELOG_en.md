@@ -6,6 +6,7 @@ All notable changes to AskMiao are documented in this file. The format is based 
 
 | Version | Release date | Highlights |
 |---|---|---|
+| [8.5.0](#850---2026-11-09) | 2026-11-09 | File preview: conversation files and knowledge base documents can be previewed without downloading (PDF pages as images; Word, Excel, and PowerPoint as web pages); the research assistant can build web pages that are previewed in an isolated iframe; cited web pages first show a preview card |
 | [8.4.0](#840---2026-11-08) | 2026-11-08 | Conversation files: the research assistant creates, reads, edits (as new versions), and deletes Word, Excel, PowerPoint, PDF, and other files in a conversation, with user approval before any deletion; document attachments are stored as conversation files and can be downloaded again; the research assistant knows the current date and time |
 | [8.3.0](#830---2026-11-08) | 2026-11-08 | vLLM provider, prompts sent to the model collected in `prompts.py` and rewritten after an audit, tool descriptions matched to the code, fixed tool list order |
 | [8.2.2](#822---2026-11-07) | 2026-11-07 | How document upload rejection reasons are returned; no user-visible change |
@@ -39,6 +40,19 @@ All notable changes to AskMiao are documented in this file. The format is based 
 ---
 
 ## [Unreleased]
+
+## [8.5.0] - 2026-11-09
+
+### Added
+
+- **File preview**: conversation files (attachments and files the research assistant created) and knowledge-base documents can be previewed right in the interface without downloading them first. The preview opens in a side panel: in chat it sits to the right of the conversation, can be resized by dragging or expanded, and leaves the conversation readable and usable. The backend turns files into web content and images: PDFs are rendered page by page as images, each loaded only when scrolled to; Word keeps headings, lists, tables, bold, and italics; Excel and CSV are shown as tables (at most 500 rows and 50 columns); PowerPoint shows each slide's title, text, tables, and speaker notes; Markdown and text files are shown as usual. When a knowledge-base document's original file is not on the server, the extracted text is shown instead. New `GET /api/chat/files/{file_id}/preview`, `GET /api/chat/files/{file_id}/pages/{page}`, `GET /api/documents/{document_id}/preview`, and `GET /api/documents/{document_id}/pages/{page}`; see [API reference 2.13, 2.14, 4.7, and 4.8](docs/api_en.md#213-get-apichatfilesfile_idpreview).
+- **Web pages made by the research assistant**: the research assistant can create `.html` web pages (with CSS and JavaScript in the same file) that are previewed right in the conversation. The page runs in an isolated iframe: it is interactive, but cannot read AskMiao's sign-in state, make network requests, or load external resources; the preview URL uses a token that expires after 5 minutes (`POST /api/chat/files/{file_id}/view-token`, `GET /api/chat/files/{file_id}/view`). When the user asks for a file or a website, the system prompt and the tool description tell the research assistant to create a conversation file rather than only pasting code into the answer, and not to leave placeholders such as "this is an example" in the content. See [architecture: file and web page preview](docs/architecture_en.md#file-and-web-page-preview) for the design.
+- **URL preview cards**: clicking a web page among an answer's sources first shows a preview card with the title, site name, and summary, and the page opens from the card; the preview uses only data the answer already has and never connects to the site separately.
+
+### Changed
+
+- **Web sources no longer open a new tab directly**: clicking a web page in the sources used to open it in a new tab; now the preview card shows first, and the page opens from "Open web page" on the card.
+- **`X-Frame-Options` is added only to responses without `frame-ancestors`**: the backend used to add `X-Frame-Options: DENY` to every response, and now leaves it out when the response carries its own CSP `frame-ancestors` (currently only the isolated preview of web page files); `deploy/nginx.conf` now adds `X-Frame-Options` only to the frontend pages and leaves `/api/` to the backend; the build-time CSP adds `frame-src`. If a reverse proxy you run yourself adds `X-Frame-Options: DENY` to every `/api/` response, remove it so web page files can be previewed.
 
 ## [8.4.0] - 2026-11-08
 

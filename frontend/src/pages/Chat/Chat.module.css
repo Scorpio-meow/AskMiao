@@ -19,10 +19,16 @@
 
 .mainArea {
   display: flex;
-  flex-grow: 1;
+  flex: 1 1 0;
   flex-direction: column;
   min-width: 0;
   min-height: 0;
+}
+
+@media (min-width: 1100px) {
+  .mainArea {
+    min-width: 360px;
+  }
 }
 
 .noModelsNotice {

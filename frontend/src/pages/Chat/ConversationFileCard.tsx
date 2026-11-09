@@ -19,16 +19,24 @@ interface ConversationFileCardProps {
   deleted: boolean;
   onDownload?: (file: FileCardInfo) => void;
   onDelete?: (file: FileCardInfo) => void;
+  onPreview?: (file: FileCardInfo) => void;
 }
-export const ConversationFileCard: React.FC<ConversationFileCardProps> = ({ file, action, deleted, onDownload, onDelete }) => {
+export const ConversationFileCard: React.FC<ConversationFileCardProps> = ({ file, action, deleted, onDownload, onDelete, onPreview }) => {
   const status = deleted ? '已刪除' : action ? ACTION_LABELS[action] : '';
   const size = deleted ? '' : formatFileSize(file.size_bytes);
-  const meta = [status, size].filter(Boolean).join(' · ');
   return (
     <div className={`${styles.card} ${deleted ? styles.deleted : ''}`}>
       <span className={styles.badge}>{describeAttachmentType(file.filename).label}</span>
       <span className={styles.name}>{file.filename}</span>
-      {meta && <span className={styles.meta}>{meta}</span>}
+      {status && <span className={styles.meta}>{status}</span>}
+      {size && <span className={styles.meta}>{size}</span>}
+      {!deleted && onPreview && (
+        <Tooltip title="預覽">
+          <IconButton size="sm" onClick={() => onPreview(file)} aria-label={`預覽 ${file.filename}`}>
+            <Icon name="visibility" size={14} />
+          </IconButton>
+        </Tooltip>
+      )}
       {!deleted && onDownload && (
         <Tooltip title="下載">
           <IconButton size="sm" onClick={() => onDownload(file)} aria-label={`下載 ${file.filename}`}>

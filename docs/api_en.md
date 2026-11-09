@@ -2,7 +2,7 @@
 
 [繁體中文](api.md) | [English](api_en.md)
 
-> REST and SSE streaming endpoints of the AskMiao **8.4.0** backend, written against the actual routers in `backend/app/api/`. With `ENABLE_API_DOCS=true` the backend also serves interactive docs at `http://localhost:8001/docs` (Swagger UI) and `http://localhost:8001/redoc`, and the OpenAPI document at `/openapi.json`. These three paths need no sign-in and list every endpoint and parameter, so keep `ENABLE_API_DOCS=false` (the template value) for public deployments; all three then return `404`.
+> REST and SSE streaming endpoints of the AskMiao **8.5.0** backend, written against the actual routers in `backend/app/api/`. With `ENABLE_API_DOCS=true` the backend also serves interactive docs at `http://localhost:8001/docs` (Swagger UI) and `http://localhost:8001/redoc`, and the OpenAPI document at `/openapi.json`. These three paths need no sign-in and list every endpoint and parameter, so keep `ENABLE_API_DOCS=false` (the template value) for public deployments; all three then return `404`.
 
 ## Contents
 
@@ -70,6 +70,10 @@ API messages are in Traditional Chinese; the English glosses in this document ar
 | GET | `/api/chat/conversations/{conversation_id}/files` | Signed in (owner only) | List conversation files |
 | GET | `/api/chat/files/{file_id}` | Signed in (owner only) | Download a conversation file |
 | DELETE | `/api/chat/files/{file_id}` | Signed in (owner only) | Delete a conversation file |
+| GET | `/api/chat/files/{file_id}/preview` | Signed in (owner only) | Preview content of a conversation file |
+| GET | `/api/chat/files/{file_id}/pages/{page}` | Signed in (owner only) | One page of a PDF conversation file as an image |
+| POST | `/api/chat/files/{file_id}/view-token` | Signed in (owner only) | Short-lived token for previewing a web page file |
+| GET | `/api/chat/files/{file_id}/view` | Preview token | Open a web page file in an isolated environment |
 | GET | `/api/llm-connections/providers` | Signed in | Supported providers with their default API address and models |
 | GET | `/api/llm-connections` | Signed in | The caller's personal connections and the shared connections granted to them |
 | POST | `/api/llm-connections` | Signed in | Add a personal connection |
@@ -82,6 +86,8 @@ API messages are in Traditional Chinese; the English glosses in this document ar
 | POST | `/api/documents/{document_id}/regenerate-summary` | Admin | Regenerate the AI summary |
 | PUT | `/api/documents/{document_id}/summary` | Admin | Edit the summary |
 | DELETE | `/api/documents/{document_id}` | Admin | Delete a document |
+| GET | `/api/documents/{document_id}/preview` | Admin | Preview content of a knowledge-base document |
+| GET | `/api/documents/{document_id}/pages/{page}` | Admin | One page of a PDF document as an image |
 | POST | `/api/documents/rebuild-index` | Admin | Fully rebuild the index from the database |
 | POST | `/api/api-tools/parse-spec` | Admin | Parse a Swagger 2.0, OpenAPI 3.0–3.2, or Arazzo document (optionally applying Overlays) |
 | POST | `/api/api-tools/import` | Admin | Bulk-import tools |
@@ -561,7 +567,7 @@ The files in a conversation: document attachments the user uploaded and files th
 | `origin` | `user` for an attachment the user uploaded, `assistant` for a file the research assistant created or edited |
 | `version`, `parent_id` | The research assistant always saves an edit as a new version: `parent_id` is the file it was edited from, `version` increases within the same series, and ` v<n>` is added to the file name; the original file is unchanged |
 
-The research assistant can create `.md`, `.txt`, `.csv`, `.json`, `.docx`, `.xlsx`, `.pptx`, and `.pdf` files and edit them by replacing text (text files, `.docx`, `.pptx`), changing cells (`.xlsx`), or rewriting the whole file; a PDF can only be rewritten whole. See [Architecture: conversation files](architecture_en.md#conversation-files) for how each format is handled and its limits. A file is at most 15 MiB, a conversation holds at most 100 files, and they share each user's 200 MiB of storage with attachments.
+The research assistant can create `.md`, `.txt`, `.csv`, `.json`, `.html`, `.docx`, `.xlsx`, `.pptx`, and `.pdf` files and edit them by replacing text (text files, `.docx`, `.pptx`), changing cells (`.xlsx`), or rewriting the whole file; a PDF can only be rewritten whole. See [Architecture: conversation files](architecture_en.md#conversation-files) for how each format is handled and its limits. A file is at most 15 MiB, a conversation holds at most 100 files, and they share each user's 200 MiB of storage with attachments.
 
 ### 2.11 GET /api/chat/files/{file_id}
 
@@ -581,6 +587,42 @@ Returns `404` `找不到這個檔案` (file not found) when the file does not ex
 Delete one of your conversation files; other versions in the same series are not affected. The research assistant must get approval to delete a file (see [2.9](#29-post-apichatapprovalsapproval_id)); users deleting their own files through this endpoint need none.
 
 **Response**: `200 OK` `{"file": {…}}` (the deleted file object); `404` `找不到這個檔案` (file not found) when the file does not exist or is not yours.
+
+### 2.13 GET /api/chat/files/{file_id}/preview
+
+Get the preview content of one of your conversation files. The backend converts the file into structured JSON and the frontend lays it out by `type`, never inserting file content into the page as HTML; returns `404` `找不到這個檔案` (file not found) when the file does not exist or is not yours.
+
+| `type` | Formats | Other fields |
+|---|---|---|
+| `pages` | `.pdf` | `page_count`; each page's image is fetched with [2.14](#214-get-apichatfilesfile_idpagespage) |
+| `document` | `.docx` | `blocks`: `heading` (`level`, `runs`), `paragraph` (`runs`), `list_item` (`ordered`, `level`, `runs`), `table` (`rows`, `truncated`), where `runs` are `{text, bold, italic}`; `truncated` |
+| `sheets` | `.xlsx`, `.csv` | `sheets`: `{name, rows, truncated}`, with every cell converted to text (formulas show their computed result, or a blank when there is no cached result) |
+| `slides` | `.pptx` | `slides`: `{number, title, items, notes, images}`, where `items` are `{type: "text", level, text}` or tables and `images` is the number of images on the slide (the preview does not include images); `truncated` |
+| `markdown`, `text` | `.md`, text files, and other files that can be decoded as text | `text`, `truncated` |
+| `html` | `.html`, `.htm` | None; get the URL of the isolated preview with [2.15](#215-post-apichatfilesfile_idview-token) |
+| `unsupported` | Other binary files, and damaged or password-protected files | `reason` |
+
+Text is limited to 200,000 characters, tables to 500 rows and 50 columns, and documents and presentations to 5,000 blocks; beyond these, `truncated` is `true`. Office files use the same decompression and XML budget as chat attachments, and parsing shares the limit of 2 files parsed at once across the whole process with chat attachments and the conversation file tools.
+
+### 2.14 GET /api/chat/files/{file_id}/pages/{page}
+
+Render page `page` (counting from 1) of one of your PDF conversation files as a PNG, with `Cache-Control: private, no-store`. Pages are rendered at 120 dpi with the longest side at most 2,000 pixels. Returns `404` when the file is not a PDF, the page number is out of range, or the file does not exist or is not yours.
+
+### 2.15 POST /api/chat/files/{file_id}/view-token
+
+Get a short-lived preview token for one of your web page files (`.html`, `.htm`); the response is `{"token": "…", "expires_in": 300}`. Other formats return `400` `只有網頁檔（.html）可以預覽成網頁` ("only web page files (.html) can be previewed as web pages"). The token is encrypted with `TOOL_SECRETS_KEY`, is valid only for this file and this user, and expires after 5 minutes.
+
+### 2.16 GET /api/chat/files/{file_id}/view
+
+Open a web page file with `?token=`, for the frontend's `<iframe sandbox="allow-scripts">`; no `Authorization` header is needed. A token that is invalid, expired, or for another file, or a deactivated account, returns `403` `預覽連結無效或已過期，請重新開啟預覽` ("the preview link is invalid or has expired; open the preview again"). The response is `text/html` with these headers:
+
+| Header | Value |
+|---|---|
+| `Content-Security-Policy` | `sandbox allow-scripts; default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data: blob:; font-src data:; media-src data: blob:; base-uri 'none'; form-action 'none'; frame-ancestors 'self' <ALLOWED_ORIGINS>` |
+| `Cache-Control` | `private, no-store` |
+| `Referrer-Policy` | `no-referrer` |
+
+The page runs in its own opaque origin: scripts work, but they cannot read AskMiao's cookies or `localStorage`, make network requests, submit forms, or load external resources. This response carries `frame-ancestors`, so it is sent without `X-Frame-Options: DENY`; all other responses still carry it.
 
 ---
 
@@ -722,6 +764,14 @@ Rebuild the index from the documents in the database: every document is re-extra
 ```
 
 With no documents in the database it returns `{"message": "索引重建完成（沒有文件）", "document_count": 0, "chunk_count": 0, "qa_pairs_detected": 0, "records_detected": 0, "missing_source_files": [], "failed_documents": [], "timestamp": "..."}`.
+
+### 4.7 GET /api/documents/{document_id}/preview
+
+Requires admin access. Preview a knowledge-base document's original file in the same format as [2.13](#213-get-apichatfilesfile_idpreview), except that web page files are shown as source code (`text`) with no isolated preview. When the original file is not in `UPLOAD_DIR`, the text extracted into the database is returned instead: `{"type": "text", "text": "…", "truncated": false, "notice": "伺服器上找不到原始檔，以下是擷取出的文字"}` (`notice`: "the original file is not on the server; below is the extracted text"). Office files use the same parsing budget as admin uploads. Returns `404` `找不到這份文件` (document not found) when the document does not exist.
+
+### 4.8 GET /api/documents/{document_id}/pages/{page}
+
+Requires admin access. Render page `page` of a PDF document as a PNG, following the same rules as [2.14](#214-get-apichatfilesfile_idpagespage); returns `404` `伺服器上找不到原始檔` (original file not found on the server) when the original file is missing.
 
 ---
 

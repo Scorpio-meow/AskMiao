@@ -13,6 +13,7 @@ import { REASONING_EFFORT_OPTIONS, resolveReasoningEffort } from '../../utils/re
 import ChatMessageList from './ChatMessageList';
 import ChatInputArea from './ChatInputArea';
 import ConversationFilesDialog from './ConversationFilesDialog';
+import FilePreviewPanel from '../../components/FilePreviewPanel';
 import type { FileCardInfo } from './ConversationFileCard';
 import { findRetryQuestion } from './chatFormat';
 import { Snackbar, Alert, ConfirmDialog } from '../../components/ui';
@@ -57,6 +58,7 @@ export const ChatPage: React.FC = () => {
   const [deleting, setDeleting] = useState(false);
   const [filesOpen, setFilesOpen] = useState(false);
   const [pendingFileDelete, setPendingFileDelete] = useState<FileCardInfo | null>(null);
+  const [preview, setPreview] = useState<{ file: FileCardInfo; conversationId: number | undefined } | null>(null);
   const [deletingFile, setDeletingFile] = useState(false);
   const [removedFileIds, setRemovedFileIds] = useState<ReadonlySet<number>>(() => new Set());
   const [snackbar, setSnackbar] = useState<SnackbarState>({
@@ -88,6 +90,12 @@ export const ChatPage: React.FC = () => {
     deleteConversation,
     startNewConversation,
   } = useChat((message) => showSnackbar(message, 'error'));
+  const previewFile = preview && preview.conversationId === currentConversation?.id ? preview.file : null;
+  const previewSource = useMemo(() => (previewFile ? chatService.conversationFilePreview(previewFile) : null), [previewFile]);
+  const openPreview = useCallback((file: FileCardInfo) => {
+    setFilesOpen(false);
+    setPreview({ file, conversationId: currentConversation?.id });
+  }, [currentConversation?.id]);
   useDocumentTitle(currentConversation?.title || '聊天');
   const deletedFileIds = useMemo(() => {
     const ids = new Set(removedFileIds);
@@ -284,6 +292,7 @@ export const ChatPage: React.FC = () => {
           deletedFileIds={deletedFileIds}
           onDownloadFile={handleDownloadFile}
           onDeleteFile={setPendingFileDelete}
+          onPreviewFile={openPreview}
         />
         <ChatInputArea
           value={newMessage}
@@ -298,6 +307,15 @@ export const ChatPage: React.FC = () => {
           onRejectAttachments={(message) => showSnackbar(message, 'error')}
         />
       </div>
+      {previewFile && previewSource && (
+        <FilePreviewPanel
+          key={previewFile.id}
+          placement="split"
+          source={previewSource}
+          onClose={() => setPreview(null)}
+          onDownload={() => handleDownloadFile(previewFile)}
+        />
+      )}
       <ConfirmDialog
         open={Boolean(pendingDelete)}
         title="刪除這段對話？"
@@ -315,6 +333,7 @@ export const ChatPage: React.FC = () => {
           onClose={() => setFilesOpen(false)}
           onDownload={handleDownloadFile}
           onDelete={setPendingFileDelete}
+          onPreview={openPreview}
         />
       )}
       <ConfirmDialog

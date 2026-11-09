@@ -4,6 +4,7 @@
 
 > 本文件說明如何把既有部署升級到新版本，並附上回退步驟與常見問題。每個版本的完整變更見 [CHANGELOG](../CHANGELOG.md)。
 
+- [從 8.4.0 升級到 8.5.0](#從-840-升級到-850)
 - [從 8.3.0 升級到 8.4.0](#從-830-升級到-840)
 - [從 8.2.2 升級到 8.3.0](#從-822-升級到-830)
 - [從 8.2.1 升級到 8.2.2](#從-821-升級到-822)
@@ -42,6 +43,22 @@
   - [步驟 5：驗證升級結果](#步驟-5驗證升級結果)
   - [回退到 2.2.x](#回退到-22x)
   - [常見問題](#常見問題)
+
+---
+
+## 從 8.4.0 升級到 8.5.0
+
+適用於從 8.4.0 升級到 8.5.0（2026-11-09），完整變更見 [CHANGELOG](../CHANGELOG.md#850---2026-11-09)。這一版不需要修改 `.env`，資料庫也沒有變更；後端相依套件不變。以 `deploy/` 部署時要重新建置映像（`docker compose build`），`web` 映像會帶入新的 `deploy/nginx.conf`。
+
+| 項目 | 8.4.0 | 8.5.0 | 需要的動作 |
+|---|---|---|---|
+| 檔案預覽 | 只能下載 | 對話檔案與知識庫文件可以在介面上預覽；新增 `GET /api/chat/files/{file_id}/preview`、`GET /api/chat/files/{file_id}/pages/{page}`、`GET /api/documents/{document_id}/preview`、`GET /api/documents/{document_id}/pages/{page}` | 無 |
+| 研究助理做的網頁 | 不能建立 `.html` | 可以建立 `.html` 並在隔離的 iframe 中預覽；新增 `POST /api/chat/files/{file_id}/view-token` 與 `GET /api/chat/files/{file_id}/view` | 無；前方另有反向代理時，不要對 `/api/` 的回應一律加上 `X-Frame-Options: DENY`，否則網頁預覽會被擋 |
+| 回答中的網頁來源 | 按一下直接開新分頁 | 先顯示預覽卡，再從卡片開啟網頁 | 無 |
+| `X-Frame-Options` | 後端與 nginx 對所有回應加上 `DENY` | 後端只加在沒有 CSP `frame-ancestors` 的回應；nginx 只加在前端頁面 | 自行改過 `deploy/nginx.conf` 的部署，要把 `X-Frame-Options` 移到 `location /` |
+| 建置產物的 CSP | 沒有 `frame-src`（沿用 `default-src 'self'`） | `frame-src 'self'` 加上 `VITE_API_BASE`／`VITE_API_URL` 的來源 | 重新建置前端 |
+
+回退到 8.4.0 時換回舊版程式即可。研究助理在 8.5.0 建立的 `.html` 檔仍保留在對話檔案中，回退期間可以下載，但不能預覽，研究助理也不能再建立新的 `.html` 檔。
 
 ---
 

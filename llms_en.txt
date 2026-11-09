@@ -2,7 +2,7 @@
 
 [繁體中文](llms.txt) | [English](llms_en.txt)
 
-> An enterprise knowledge-base chat system that checks its own sources and cites them (version 8.4.0). The FastAPI backend answers with hybrid retrieval (FAISS + BM25 + Cross-Encoder) and a ReAct research agent, citing the chunks or web pages it used as `[n]`; the React frontend streams the research trace and citations over SSE.
+> An enterprise knowledge-base chat system that checks its own sources and cites them (version 8.5.0). The FastAPI backend answers with hybrid retrieval (FAISS + BM25 + Cross-Encoder) and a ReAct research agent, citing the chunks or web pages it used as `[n]`; the React frontend streams the research trace and citations over SSE.
 
 This file is for AI agents: read "System constraints" before changing code, and run the checks under "Verification" afterwards.
 
@@ -22,6 +22,7 @@ This file is for AI agents: read "System constraints" before changing code, and 
 - [backend/app/rag/tools.py](backend/app/rag/tools.py): built-in tools plus registration and execution of custom API / MCP tools, `approval_requirement()`
 - [backend/app/rag/tool_approval.py](backend/app/rag/tool_approval.py): `ToolApprovalBroker`, in-chat approval for tools with side effects (ADR-0006)
 - [backend/app/rag/file_tools.py](backend/app/rag/file_tools.py): definitions and execution of the conversation file tools (list, read, create, edit saved as a new version, delete); offered only when there is a conversation id, and deletion always needs approval
+- [backend/app/services/file_preview.py](backend/app/services/file_preview.py): previews of conversation files and knowledge-base documents (PDFs rendered page by page as images; Word, Excel, and PowerPoint converted to structured JSON); web page files open with a short-lived token under a `sandbox allow-scripts` CSP
 - [backend/app/services/conversation_files.py](backend/app/services/conversation_files.py) and [backend/app/services/file_builders.py](backend/app/services/file_builders.py): conversation file storage, permissions, versions, and the 200 MiB per-user storage (`storage_lock`), plus producing, editing, and reading md, txt, csv, json, docx, xlsx, pptx, and pdf files
 - [backend/app/rag/evaluator.py](backend/app/rag/evaluator.py) and [backend/scripts/evaluate_retrieval.py](backend/scripts/evaluate_retrieval.py): retrieval evaluation and relevance-threshold calibration
 - [backend/config/domain_profile.json](backend/config/domain_profile.json): domain words, record date fields, and summary fallback rules, strictly validated by `app/core/domain_profile.py`
@@ -67,6 +68,7 @@ This file is for AI agents: read "System constraints" before changing code, and 
 - [frontend/bun.lock](frontend/bun.lock): the pinned frontend dependencies; `frontend/bunfig.toml` sets `frozenLockfile = true`
 - [frontend/src/pages/AiTools/](frontend/src/pages/AiTools/): custom API tools, OpenAPI import, MCP servers, and Agent Skills management; `index.jsx` holds the tool lists, each dialog is its own component (mounted only while open), and `forms.js` converts between form fields and API data
 - [frontend/src/components/ui/](frontend/src/components/ui/): the component library built on the native `<dialog>` and ARIA
+- [frontend/src/components/FilePreviewPanel.tsx](frontend/src/components/FilePreviewPanel.tsx): the file preview side panel (to the right of the conversation on the chat page, docked to the right edge on the knowledge base page, resizable by dragging), which lays out the backend's preview JSON with React components and puts web page files in a `sandbox="allow-scripts"` iframe
 
 ### Intro site
 
@@ -110,7 +112,7 @@ This file is for AI agents: read "System constraints" before changing code, and 
 - [Configuration reference](docs/configuration_en.md): every environment variable's default and effect, provider routing, threshold calibration, resource limits
 - [Deployment guide](docs/deployment_en.md): Docker Compose deployment, HTTPS, backups, and updates
 - [Troubleshooting](docs/troubleshooting_en.md): common errors at startup, sign-in, in the frontend, and with tools
-- [Upgrade guide](docs/upgrading_en.md): upgrading from 2.x to 3.0.0, from 3.0.0 to 4.0.0, from 4.0.0 to 5.0.0, from 5.0.0 to 6.0.0, from 6.0.0 to 7.0.0, from 7.0.0 to 8.0.0, from 8.0.x to 8.1.0, from 8.1.0 to 8.2.0, from 8.2.0 to 8.2.1, from 8.2.1 to 8.2.2, from 8.2.2 to 8.3.0, and from 8.3.0 to 8.4.0, and rolling back
+- [Upgrade guide](docs/upgrading_en.md): upgrading from 2.x to 3.0.0, from 3.0.0 to 4.0.0, from 4.0.0 to 5.0.0, from 5.0.0 to 6.0.0, from 6.0.0 to 7.0.0, from 7.0.0 to 8.0.0, from 8.0.x to 8.1.0, from 8.1.0 to 8.2.0, from 8.2.0 to 8.2.1, from 8.2.1 to 8.2.2, from 8.2.2 to 8.3.0, from 8.3.0 to 8.4.0, and from 8.4.0 to 8.5.0, and rolling back
 - [Architecture decision records](docs/adr/README_en.md): ADR-0001 to ADR-0007
 - [Changelog](CHANGELOG_en.md): changes in each release
 - [Contributing](.github/CONTRIBUTING_en.md): branches and commit messages, tests, dependencies, bilingual documentation, and intro site sync

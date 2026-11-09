@@ -24,7 +24,7 @@
 
 `postgres` 與 `backend` 的時區由 `deploy/docker-compose.yml` 的 `TZ` 決定，使用者在其他時區時兩處一起改成當地的 IANA 時區名稱。
 
-三個容器都在 compose 的 `askmiao-net` 網路（子網路 `NETWORK_SUBNET`），`web` 固定使用 `WEB_CONTAINER_IP`。nginx 允許的請求本文最多 120 MiB，SSE 串流不經緩衝，讀寫逾時 900 秒（`deploy/nginx.conf`）。
+三個容器都在 compose 的 `askmiao-net` 網路（子網路 `NETWORK_SUBNET`），`web` 固定使用 `WEB_CONTAINER_IP`。nginx 允許的請求本文最多 120 MiB，SSE 串流不經緩衝，讀寫逾時 900 秒（`deploy/nginx.conf`）。前端頁面由 nginx 加上 `X-Frame-Options: DENY`；`/api/` 的反框架標頭由後端送出，因為網頁檔的隔離預覽（`/api/chat/files/{file_id}/view`）需要讓 AskMiao 自己以 iframe 嵌入。
 
 ## 需求
 
@@ -92,6 +92,7 @@ docker compose exec backend python scripts/create_user.py --username admin --ema
 
 - `PUBLIC_ORIGIN` 要填使用者實際開啟的 `https://` 網址，重新整理權杖的 Cookie 才會設定 `Secure`。
 - 前方的反向代理要允許與容器內 nginx 相同的 120 MiB 請求本文，關閉 SSE 回應的緩衝，並把讀取逾時設為 900 秒以上，否則長時間的研究會被中斷。
+- 前方的反向代理不要對 `/api/` 的回應一律加上 `X-Frame-Options: DENY`，否則研究助理做的網頁無法在對話中預覽。
 - 容器內的 nginx 以 `X-Forwarded-For: $remote_addr` 轉送，前方還有一層反向代理時，後端看到的來源位址都是那一層代理，速率限制與依位址的登入節流會由所有使用者共用。調整門檻時請參考 [設定參考：登入失敗節流](configuration.md#登入失敗節流)。
 
 ## 資料保存與備份

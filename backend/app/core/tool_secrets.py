@@ -27,6 +27,13 @@ def decrypt_json(stored: Optional[str]) -> Optional[Dict[str, Any]]:
     except InvalidToken as e:
         raise SafeClientError("無法以目前的 TOOL_SECRETS_KEY 解密工具憑證，請重新輸入") from e
     return json.loads(plaintext)
+def seal(payload: Dict[str, Any]) -> str:
+    return _fernet.encrypt(json.dumps(payload).encode("utf-8")).decode("ascii")
+def unseal(token: str, max_age_seconds: int) -> Optional[Dict[str, Any]]:
+    try:
+        return json.loads(_fernet.decrypt(token.encode("ascii"), ttl=max_age_seconds))
+    except (InvalidToken, UnicodeEncodeError, ValueError):
+        return None
 def decrypt_for_display(stored: Optional[str]) -> Tuple[Optional[Dict[str, Any]], bool]:
     try:
         return decrypt_json(stored), False

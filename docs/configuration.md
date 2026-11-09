@@ -2,7 +2,7 @@
 
 [繁體中文](configuration.md) | [English](configuration_en.md)
 
-> 本文件逐一說明後端 `backend/.env` 與前端 `frontend/.env` 的每個設定、預設值與實際作用，適用於 **8.4.0**（從 8.3.0 升級見 [升級指南](upgrading.md#從-830-升級到-840)）。設定以 `backend/app/core/config.py` 的 `Settings` 為準，範本見 [`backend/.env.example`](../backend/.env.example)。
+> 本文件逐一說明後端 `backend/.env` 與前端 `frontend/.env` 的每個設定、預設值與實際作用，適用於 **8.5.0**（從 8.4.0 升級見 [升級指南](upgrading.md#從-840-升級到-850)）。設定以 `backend/app/core/config.py` 的 `Settings` 為準，範本見 [`backend/.env.example`](../backend/.env.example)。
 
 - [讀取規則](#讀取規則)
 - [必填設定](#必填設定)
@@ -96,7 +96,7 @@ python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().d
 
 新增連線時，表單依供應商預先帶入官方 API 位址與下列模型清單，可以再增刪：
 
-| 供應商 | 預先帶入的模型（8.4.0） |
+| 供應商 | 預先帶入的模型（8.5.0） |
 |---|---|
 | OpenAI | `gpt-6.1-sol`、`gpt-6-sol`、`gpt-6-luna`、`gpt-6-astra`、`gpt-5.6-sol`、`gpt-5.6-luna`、`gpt-5.6-terra`、`gpt-5.4`、`gpt-5.4-mini` |
 | Anthropic | `claude-opus-5-5`、`claude-fable-5-1`、`claude-sonnet-5-5`、`claude-haiku-5-5`、`claude-sonnet-5`、`claude-opus-5`、`claude-fable-5`、`claude-opus-4-8`、`claude-haiku-4-5` |
@@ -443,6 +443,12 @@ python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().d
 | `MAX_GENERATED_PDF_PAGES` | 500 | 產生的 PDF 頁數，超過時不存檔並回傳錯誤 |
 | `FILE_READ_PAGE_CHARS` | 15,000 字元 | `read_conversation_file` 每次回傳的文字上限，其餘以 `next_offset` 分段讀取 |
 | `FILE_TEXT_CACHE_ENTRIES` | 8 | `read_conversation_file` 快取擷取文字的檔案數，同一個檔案分段讀取時不重新解析 |
+| `FILE_PREVIEW_TEXT_CHARS` | 200,000 字元 | 檔案預覽中 Markdown 與文字檔顯示的長度 |
+| `FILE_PREVIEW_ITEMS` | 5,000 | Word 預覽的區塊數，以及簡報預覽的文字與表格項目數 |
+| `FILE_PREVIEW_SHEET_ROWS`、`FILE_PREVIEW_SHEET_COLUMNS` | 500 列、50 欄 | 試算表、CSV 與文件內表格預覽的大小 |
+| `FILE_PREVIEW_PAGE_DPI`、`FILE_PREVIEW_PAGE_MAX_PIXELS` | 120 dpi、2,000 像素 | PDF 預覽每一頁轉成圖片的解析度，以及圖片最長邊的上限 |
+| `FILE_PREVIEW_PDF_CACHE_ENTRIES` | 2 | 預覽時留在記憶體中的 PDF 對話檔案數，逐頁轉圖時不必每頁都從資料庫重讀整個檔案（最多約 2 × 15 MiB） |
+| `FILE_VIEW_TOKEN_SECONDS` | 300 秒 | 網頁檔預覽權杖的有效時間 |
 
 **工具與出站請求**
 

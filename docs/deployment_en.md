@@ -24,7 +24,7 @@
 
 The time zone of `postgres` and `backend` comes from `TZ` in `deploy/docker-compose.yml`; if your users are in another time zone, change both to the local IANA time zone name.
 
-The three containers share the compose network `askmiao-net` (subnet `NETWORK_SUBNET`), and `web` always uses `WEB_CONTAINER_IP`. nginx accepts request bodies up to 120 MiB, does not buffer SSE streams, and uses 900-second read and send timeouts (`deploy/nginx.conf`).
+The three containers share the compose network `askmiao-net` (subnet `NETWORK_SUBNET`), and `web` always uses `WEB_CONTAINER_IP`. nginx accepts request bodies up to 120 MiB, does not buffer SSE streams, and uses 900-second read and send timeouts (`deploy/nginx.conf`). nginx adds `X-Frame-Options: DENY` to the frontend pages; for `/api/` the anti-framing headers come from the backend, because the isolated preview of web page files (`/api/chat/files/{file_id}/view`) must be embeddable in an iframe by AskMiao itself.
 
 ## Requirements
 
@@ -92,6 +92,7 @@ The `web` container serves plain HTTP. To serve AskMiao over HTTPS, terminate TL
 
 - Set `PUBLIC_ORIGIN` to the `https://` address users actually open, so the refresh-token cookie is marked `Secure`.
 - The reverse proxy in front must accept the same 120 MiB request bodies as the nginx in the container, must not buffer SSE responses, and needs a read timeout of at least 900 seconds, or long research runs are cut off.
+- The reverse proxy in front must not add `X-Frame-Options: DENY` to every `/api/` response, or web pages made by the research assistant cannot be previewed in the conversation.
 - The nginx in the container forwards `X-Forwarded-For: $remote_addr`. With another reverse proxy in front, the backend sees that proxy as the client address for everyone, so the rate limit and per-address login throttling are shared by all users. See [configuration reference: login throttling](configuration_en.md#login-throttling) when choosing the thresholds.
 
 ## Data and backups

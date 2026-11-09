@@ -2,7 +2,7 @@
 
 [繁體中文](configuration.md) | [English](configuration_en.md)
 
-> Every setting in the backend `backend/.env` and the frontend `frontend/.env`, with its default and what it actually does, as of **8.4.0** (to upgrade from 8.3.0, see the [upgrade guide](upgrading_en.md#upgrading-from-830-to-840)). The source of truth is `Settings` in `backend/app/core/config.py`; the template is [`backend/.env.example`](../backend/.env.example).
+> Every setting in the backend `backend/.env` and the frontend `frontend/.env`, with its default and what it actually does, as of **8.5.0** (to upgrade from 8.4.0, see the [upgrade guide](upgrading_en.md#upgrading-from-840-to-850)). The source of truth is `Settings` in `backend/app/core/config.py`; the template is [`backend/.env.example`](../backend/.env.example).
 
 - [How settings are read](#how-settings-are-read)
 - [Required settings](#required-settings)
@@ -96,7 +96,7 @@ Each account can only chat through two kinds of connection, and the model menu g
 
 When a new connection is created, the form fills in the provider's official API address and the models below, which can be edited:
 
-| Provider | Prefilled models (8.4.0) |
+| Provider | Prefilled models (8.5.0) |
 |---|---|
 | OpenAI | `gpt-6.1-sol`, `gpt-6-sol`, `gpt-6-luna`, `gpt-6-astra`, `gpt-5.6-sol`, `gpt-5.6-luna`, `gpt-5.6-terra`, `gpt-5.4`, `gpt-5.4-mini` |
 | Anthropic | `claude-opus-5-5`, `claude-fable-5-1`, `claude-sonnet-5-5`, `claude-haiku-5-5`, `claude-sonnet-5`, `claude-opus-5`, `claude-fable-5`, `claude-opus-4-8`, `claude-haiku-4-5` |
@@ -443,6 +443,12 @@ The limits below protect a single backend process and the operator's paid usage.
 | `MAX_GENERATED_PDF_PAGES` | 500 | Pages in a generated PDF; past it, the file is not saved and an error is returned |
 | `FILE_READ_PAGE_CHARS` | 15,000 characters | Text returned at most by each `read_conversation_file` call; the rest is read in parts with `next_offset` |
 | `FILE_TEXT_CACHE_ENTRIES` | 8 | Files whose extracted text `read_conversation_file` keeps cached, so reading one file in parts does not parse it again |
+| `FILE_PREVIEW_TEXT_CHARS` | 200,000 characters | Length of Markdown and text files shown in a file preview |
+| `FILE_PREVIEW_ITEMS` | 5,000 | Blocks in a Word preview, and text and table items in a presentation preview |
+| `FILE_PREVIEW_SHEET_ROWS`, `FILE_PREVIEW_SHEET_COLUMNS` | 500 rows, 50 columns | Size of previewed spreadsheets, CSV files, and tables inside documents |
+| `FILE_PREVIEW_PAGE_DPI`, `FILE_PREVIEW_PAGE_MAX_PIXELS` | 120 dpi, 2,000 pixels | Resolution at which each PDF page is rendered as an image for preview, and the cap on the image's longest side |
+| `FILE_PREVIEW_PDF_CACHE_ENTRIES` | 2 | PDF conversation files kept in memory for preview, so rendering page by page does not reread the whole file from the database for every page (about 2 × 15 MiB at most) |
+| `FILE_VIEW_TOKEN_SECONDS` | 300 seconds | Lifetime of the preview token for web page files |
 
 **Tools and outbound requests**
 

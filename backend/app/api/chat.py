@@ -2,16 +2,19 @@ from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import Response, StreamingResponse
 from sqlalchemy.orm import Session
 from app.models.database import get_db
-from app.models import Conversation, MessageCreate, ConversationResponse
+from app.models import Conversation, MessageCreate, ConversationResponse, User
 from app.services.chat_service import AttachmentQuotaExceeded, ChatService
 from app.services.conversation_files import (
     ConversationFileError,
     content_disposition,
     delete_file,
+    extension_of,
     get_file,
     list_files,
     storage_lock,
     summary,
+    view_token,
+    view_token_owner,
 )
 from app.core.rag_manager import get_rag_system
 from app.core.user_context import get_current_user_id
@@ -23,7 +26,9 @@ import logging
 logger = logging.getLogger(__name__)
 import json
 from app.core.config import settings
-from app.core.limits import MAX_CONCURRENT_CHAT_STREAMS_PER_USER
+from app.core.limits import CHAT_ATTACHMENT_EXTRACTION_LIMITS, FILE_VIEW_TOKEN_SECONDS, MAX_CONCURRENT_CHAT_STREAMS_PER_USER
+from app.services.file_builders import extraction_slots
+from app.services.file_preview import HTML_EXTENSIONS, build_preview, recent_pdfs, render_pdf_page
 from app.rag.tool_approval import approval_broker
 from app.services.llm_connections import chat_option, connections_for_user, resolve_chat_endpoint
 from pydantic import BaseModel
@@ -282,22 +287,87 @@ def list_conversation_files(
     if not owned:
         raise HTTPException(status_code=404, detail="找不到該對話")
     return {"files": [summary(file) for file in list_files(db, conversation_id, user_id)]}
+def _owned_file(db: Session, file_id: int, user_id: int, with_data: bool):
+    try:
+        return get_file(db, file_id, user_id, None, with_data=with_data)
+    except ConversationFileError:
+        raise HTTPException(status_code=404, detail="找不到這個檔案")
+def _preview_bytes(file) -> bytes:
+    if extension_of(file.filename) == ".pdf":
+        return recent_pdfs.get((file.id, str(file.created_at)), lambda: file.data)
+    return file.data
+def html_view_policy() -> str:
+    ancestors = " ".join(["'self'", *settings.allowed_origins_list])
+    return (
+        "sandbox allow-scripts; default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; "
+        f"img-src data: blob:; font-src data:; media-src data: blob:; base-uri 'none'; form-action 'none'; frame-ancestors {ancestors}"
+    )
 @router.get("/files/{file_id}")
 def download_conversation_file(
     file_id: int,
     db: Session = Depends(get_db),
     user_id: int = Depends(get_current_user_id)
 ):
-    try:
-        file = get_file(db, file_id, user_id, None, with_data=True)
-    except ConversationFileError:
-        raise HTTPException(status_code=404, detail="找不到這個檔案")
+    file = _owned_file(db, file_id, user_id, with_data=True)
     return Response(
         content=file.data,
         media_type=file.media_type,
         headers={
             "Content-Disposition": content_disposition(file.filename),
             "Cache-Control": "private, no-store",
+            "X-Content-Type-Options": "nosniff",
+        },
+    )
+@router.get("/files/{file_id}/preview")
+async def preview_conversation_file(
+    file_id: int,
+    db: Session = Depends(get_db),
+    user_id: int = Depends(get_current_user_id)
+):
+    file = await asyncio.to_thread(_owned_file, db, file_id, user_id, False)
+    async with extraction_slots:
+        data = await asyncio.to_thread(_preview_bytes, file)
+        return await asyncio.to_thread(build_preview, file.filename, data, CHAT_ATTACHMENT_EXTRACTION_LIMITS, True)
+@router.get("/files/{file_id}/pages/{page}")
+async def conversation_file_page(
+    file_id: int,
+    page: int,
+    db: Session = Depends(get_db),
+    user_id: int = Depends(get_current_user_id)
+):
+    file = await asyncio.to_thread(_owned_file, db, file_id, user_id, False)
+    async with extraction_slots:
+        data = await asyncio.to_thread(_preview_bytes, file)
+        try:
+            image = await asyncio.to_thread(render_pdf_page, data, page)
+        except ConversationFileError:
+            raise HTTPException(status_code=404, detail="找不到這一頁")
+    return Response(content=image, media_type="image/png", headers={"Cache-Control": "private, no-store"})
+@router.post("/files/{file_id}/view-token")
+def create_conversation_file_view_token(
+    file_id: int,
+    db: Session = Depends(get_db),
+    user_id: int = Depends(get_current_user_id)
+):
+    file = _owned_file(db, file_id, user_id, with_data=False)
+    if extension_of(file.filename) not in HTML_EXTENSIONS:
+        raise HTTPException(status_code=400, detail="只有網頁檔（.html）可以預覽成網頁")
+    return {"token": view_token(user_id, file.id), "expires_in": FILE_VIEW_TOKEN_SECONDS}
+@router.get("/files/{file_id}/view")
+def view_conversation_file(file_id: int, token: str, db: Session = Depends(get_db)):
+    owner = view_token_owner(token, file_id)
+    if owner is None or not db.query(User.id).filter(User.id == owner, User.is_active.is_(True)).first():
+        raise HTTPException(status_code=403, detail="預覽連結無效或已過期，請重新開啟預覽")
+    file = _owned_file(db, file_id, owner, with_data=True)
+    if extension_of(file.filename) not in HTML_EXTENSIONS:
+        raise HTTPException(status_code=404, detail="找不到這個檔案")
+    return Response(
+        content=file.data,
+        media_type="text/html; charset=utf-8",
+        headers={
+            "Content-Security-Policy": html_view_policy(),
+            "Cache-Control": "private, no-store",
+            "Referrer-Policy": "no-referrer",
             "X-Content-Type-Options": "nosniff",
         },
     )

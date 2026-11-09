@@ -71,7 +71,9 @@ export type IconName =
   | 'sparkles'
   | 'stop'
   | 'arrow-down'
-  | 'monitor';
+  | 'monitor'
+  | 'maximize'
+  | 'minimize';
 interface IconProps extends React.SVGProps<SVGSVGElement> {
   name: IconName;
   size?: number | string;
@@ -454,6 +456,24 @@ export const Icon: React.FC<IconProps> = ({
             <circle cx="12" cy="5" r="1.5" fill="currentColor" />
             <circle cx="12" cy="12" r="1.5" fill="currentColor" />
             <circle cx="12" cy="19" r="1.5" fill="currentColor" />
+          </>
+        );
+      case 'maximize':
+        return (
+          <>
+            <polyline points="15 3 21 3 21 9" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" fill="none" />
+            <polyline points="9 21 3 21 3 15" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" fill="none" />
+            <line x1="21" y1="3" x2="14" y2="10" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+            <line x1="3" y1="21" x2="10" y2="14" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+          </>
+        );
+      case 'minimize':
+        return (
+          <>
+            <polyline points="4 14 10 14 10 20" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" fill="none" />
+            <polyline points="20 10 14 10 14 4" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" fill="none" />
+            <line x1="14" y1="10" x2="21" y2="3" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+            <line x1="3" y1="21" x2="10" y2="14" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
           </>
         );
       case 'close':

@@ -27,6 +27,9 @@
 }
 
 .details {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
   color: var(--text-tertiary);
   font-size: var(--font-size-xs);
 }

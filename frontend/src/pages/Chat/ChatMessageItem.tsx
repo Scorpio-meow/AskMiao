@@ -41,6 +41,7 @@ const ChatMessageItemView: React.FC<ChatMessageItemProps> = ({
   deletedFileIds,
   onDownloadFile,
   onDeleteFile,
+  onPreviewFile,
 }) => {
   const isUser = message.is_user;
   const { thinkContent, mainContent } = useMemo(() => splitThinkContent(message.content || ''), [message.content]);
@@ -78,6 +79,7 @@ const ChatMessageItemView: React.FC<ChatMessageItemProps> = ({
               deleted={deletedFileIds.has(att.file_id)}
               onDownload={onDownloadFile}
               onDelete={onDeleteFile}
+              onPreview={onPreviewFile}
             />
           );
         }
@@ -175,6 +177,7 @@ const ChatMessageItemView: React.FC<ChatMessageItemProps> = ({
                       deleted={event.action === 'deleted' || deletedFileIds.has(event.file.id)}
                       onDownload={onDownloadFile}
                       onDelete={onDeleteFile}
+                      onPreview={onPreviewFile}
                     />
                   </div>
                 ))}
