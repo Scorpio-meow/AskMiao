@@ -11,11 +11,10 @@ const API_BASE_HINTS = {
   ollama: 'Ollama 的位址，例如 https://ollama.com',
   vllm: 'vLLM 伺服器的 /v1 位址，例如 http://localhost:8000/v1；伺服器要加上 --enable-auto-tool-choice 與 --tool-call-parser 才能呼叫工具',
 };
-const CLAUDE_MAX_OUTPUT_TOKENS_HINT = 'Claude 每次回應最多產生的 token 數（例如 16000），思考也計入，超過模型上限時自動取較小值；Foundry 只有 Claude 部署需要';
 const MAX_OUTPUT_TOKENS_HINTS = {
-  anthropic: CLAUDE_MAX_OUTPUT_TOKENS_HINT,
-  foundry: CLAUDE_MAX_OUTPUT_TOKENS_HINT,
-  vllm: '選填：每次回應最多產生的 token 數，思考也計入；留空時由 vLLM 依模型的上下文長度決定',
+  anthropic: '選填：每次回應最多產生的 token 數，思考也計入；留空時自動使用模型的輸出上限，超過時取較小值',
+  foundry: 'Claude 部署必填：每次回應最多產生的 token 數（例如 16000），思考也計入；Foundry 查不到模型上限',
+  vllm: '選填：每次回應最多產生的 token 數，思考也計入；留空，或被 vLLM 以長度不足拒絕時，改由 vLLM 依剩餘長度決定',
 };
 const SEARCH_THRESHOLD = 8;
 const presetOf = (providers, provider) => providers.find((preset) => preset.provider === provider);

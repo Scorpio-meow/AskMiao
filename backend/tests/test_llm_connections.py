@@ -142,7 +142,7 @@ def test_explicit_nulls_cannot_clear_required_fields(env):
     assert root.get("/api/admin/llm-connections").json()["connections"][0]["models"] == ["gpt-6-sol", "gpt-6-luna"]
 @pytest.mark.parametrize("overrides, message", [
     ({"provider": "anthropic", "api_key": None, "max_output_tokens": 8000}, "金鑰"),
-    ({"provider": "anthropic", "models": ["claude-opus-5-5"]}, "輸出 token 上限"),
+    ({"provider": "foundry", "api_base": "https://example.services.ai.azure.com", "models": ["claude-opus-5-5"]}, "輸出 token 上限"),
     ({"provider": "foundry", "api_base": "https://api.example.com", "models": ["claude-sonnet-5-5"], "max_output_tokens": 8000}, "services.ai.azure.com"),
     ({"models": [" ", ""]}, "模型"),
     ({"api_base": "ftp://api.example.com"}, "http"),
@@ -153,6 +153,10 @@ def test_invalid_connections_are_rejected(env, overrides, message):
     response = login("alice").post("/api/llm-connections", json=personal(**overrides))
     assert response.status_code in (400, 422)
     assert message in response.text
+def test_claude_connection_may_leave_the_output_limit_to_the_model(env):
+    login, _, _ = env
+    created = login("alice").post("/api/llm-connections", json=personal(provider="anthropic", api_base="https://api.example.com", models=["claude-opus-5-5"]))
+    assert created.status_code == 201 and created.json()["max_output_tokens"] is None
 def test_shared_connections_reach_only_the_accounts_the_admin_chose(env):
     login, _, ids = env
     root = login("root")
@@ -244,8 +248,11 @@ def test_vllm_shared_connection_needs_no_key_and_its_test_checks_tool_calling(en
     assert created.status_code == 201
     connection = created.json()
     assert connection["provider"] == "vllm" and connection["has_api_key"] is False
-    requests = []
+    lookups, requests = [], []
     def handler(request):
+        if request.method == "GET":
+            lookups.append(request.url.path)
+            return httpx.Response(200, json={"object": "list", "data": [{"id": "Qwen/Qwen3-32B", "max_model_len": 65536}]})
         requests.append((request.url.path, request.headers.get("Authorization"), json.loads(request.content)))
         return httpx.Response(400, json={"error": {
             "message": '"auto" tool choice requires --enable-auto-tool-choice and --tool-call-parser to be set',
@@ -255,6 +262,7 @@ def test_vllm_shared_connection_needs_no_key_and_its_test_checks_tool_calling(en
     monkeypatch.setattr(llm_client, "_http_client", httpx.AsyncClient(transport=httpx.MockTransport(handler)))
     result = root.post(f"/api/llm-connections/{connection['id']}/test", json={"model_name": "Qwen/Qwen3-32B"}).json()
     assert result == {"ok": False, "error": llm_client.VLLM_TOOLS_DISABLED_MESSAGE}
+    assert lookups == ["/v1/models"]
     path, authorization, payload = requests[0]
     assert path == "/v1/chat/completions" and authorization is None
     assert payload["tools"] == connections_service.CONNECTION_TEST_TOOLS

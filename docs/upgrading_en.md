@@ -4,6 +4,7 @@
 
 > How to upgrade an existing deployment to a new release, with rollback steps and troubleshooting. See the [CHANGELOG](../CHANGELOG_en.md) for the full list of changes in each version.
 
+- [Upgrading from 8.5.1 to 8.6.0](#upgrading-from-851-to-860)
 - [Upgrading from 8.5.0 to 8.5.1](#upgrading-from-850-to-851)
 - [Upgrading from 8.4.0 to 8.5.0](#upgrading-from-840-to-850)
 - [Upgrading from 8.3.0 to 8.4.0](#upgrading-from-830-to-840)
@@ -44,6 +45,20 @@
   - [Step 5: verify the upgrade](#step-5-verify-the-upgrade)
   - [Rolling back to 2.2.x](#rolling-back-to-22x)
   - [Troubleshooting](#troubleshooting)
+
+---
+
+## Upgrading from 8.5.1 to 8.6.0
+
+For upgrading from 8.5.1 to 8.6.0 (2026-11-09); see the [CHANGELOG](../CHANGELOG_en.md#860---2026-11-09) for the full list of changes. This release needs no `.env` changes and changes neither the database nor any API field, so switching to the new code is enough.
+
+| Item | 8.5.1 | 8.6.0 | Action |
+|---|---|---|---|
+| Output token limit for Claude through Anthropic | Required | Optional; when empty, the model's output limit from the Models API is used | None; limits already set keep working |
+| Output token limit for Claude deployments on Foundry | Required | Still required | None |
+| vLLM output token limit | Sent as `max_completion_tokens` as is; vLLM returns `400` when it exceeds the model's `max_model_len` | `max_model_len` is read from `{API address}/models` first (cached for 5 minutes), and a limit at or above it is not sent; a request carrying the limit that gets `400` is sent once more without it | The backend must reach vLLM's `/models` ("Fetch models from API" already uses it); if it cannot, the limit is sent as set |
+
+To roll back to 8.5.1, switch back to the older code. Claude connections created or cleared of their output token limit after the upgrade fail on 8.5.1 with 使用 Claude 模型前需設定輸出 token 上限 ("set an output token limit before using Claude"); set a limit on them before rolling back.
 
 ---
 

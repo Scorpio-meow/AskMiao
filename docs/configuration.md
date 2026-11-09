@@ -2,7 +2,7 @@
 
 [繁體中文](configuration.md) | [English](configuration_en.md)
 
-> 本文件逐一說明後端 `backend/.env` 與前端 `frontend/.env` 的每個設定、預設值與實際作用，適用於 **8.5.1**（從 8.5.0 升級見 [升級指南](upgrading.md#從-850-升級到-851)）。設定以 `backend/app/core/config.py` 的 `Settings` 為準，範本見 [`backend/.env.example`](../backend/.env.example)。
+> 本文件逐一說明後端 `backend/.env` 與前端 `frontend/.env` 的每個設定、預設值與實際作用，適用於 **8.6.0**（從 8.5.1 升級見 [升級指南](upgrading.md#從-851-升級到-860)）。設定以 `backend/app/core/config.py` 的 `Settings` 為準，範本見 [`backend/.env.example`](../backend/.env.example)。
 
 - [讀取規則](#讀取規則)
 - [必填設定](#必填設定)
@@ -92,11 +92,11 @@ python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().d
 | API 位址 | 例如 `https://api.openai.com/v1`、`https://api.anthropic.com`、`https://<資源名稱>.services.ai.azure.com`、`https://ollama.com`、`http://<主機>:8000/v1`（vLLM） |
 | API 金鑰 | Anthropic、Gemini、Foundry 必填，OpenAI 相容服務、Ollama 與 vLLM 選填；以 `TOOL_SECRETS_KEY` 加密存放，儲存後不會再從 API 讀出；編輯時留空即沿用原值，但變更供應商或 API 位址時不會沿用，需要重新輸入 |
 | 模型 | 這個連線可選的模型名稱（Foundry 為部署名稱），最多 50 個 |
-| 輸出 token 上限 | Claude（`anthropic`，或 Foundry 上的 Claude 部署）必填，與模型的輸出上限取較小值。Claude 的思考也計入這個上限，設得太小時回答會被截斷。vLLM 選填，見 [連接 vLLM](#連接-vllm) |
+| 輸出 token 上限 | Claude 直接連 Anthropic 時選填：留空時使用 Models API 查到的模型輸出上限，有填時與它取較小值；Foundry 上的 Claude 部署查不到模型上限，必填。Claude 的思考也計入這個上限，設得太小時回答會被截斷。vLLM 選填，見 [連接 vLLM](#連接-vllm) |
 
 新增連線時，表單依供應商預先帶入官方 API 位址與下列模型清單，可以再增刪：
 
-| 供應商 | 預先帶入的模型（8.5.1） |
+| 供應商 | 預先帶入的模型（8.6.0） |
 |---|---|
 | OpenAI | `gpt-6.1-sol`、`gpt-6-sol`、`gpt-6-luna`、`gpt-6-astra`、`gpt-5.6-sol`、`gpt-5.6-luna`、`gpt-5.6-terra`、`gpt-5.4`、`gpt-5.4-mini` |
 | Anthropic | `claude-opus-5-5`、`claude-fable-5-1`、`claude-sonnet-5-5`、`claude-haiku-5-5`、`claude-sonnet-5`、`claude-opus-5`、`claude-fable-5`、`claude-opus-4-8`、`claude-haiku-4-5` |
@@ -149,7 +149,7 @@ vllm serve Qwen/Qwen3-8B --enable-auto-tool-choice --tool-call-parser hermes --r
 
 - 需要 vLLM 0.23.0 以上。0.18.0 之前不接受 `none`（連線測試會失敗），0.21.0 之前不接受 `minimal`、`xhigh`、`max`，選到時回傳 `400`；0.21、0.22 雖然都接受，但 `none` 不會關閉思考。
 - 思考程度直接以 `reasoning_effort` 送出（`none` 至 `max`），由 vLLM 依模型的對話範本套用，例如 Qwen3 選 `none` 時關閉思考。
-- 輸出 token 上限選填，設定時以 `max_completion_tokens` 送出，思考內容也計入；留空時由 vLLM 依模型的上下文長度決定。
+- 輸出 token 上限選填，設定時以 `max_completion_tokens` 送出，思考內容也計入；留空時由 vLLM 依模型的上下文長度決定。有設定時，後端從 `{API 位址}/models` 讀取模型的上下文長度（`max_model_len`，每 5 分鐘重新讀取）；上限大於或等於上下文長度時不送出，改由 vLLM 依剩餘長度決定，避免 vLLM 回傳 `400`；讀不到上下文長度時照設定值送出。vLLM 0.23 會把這個上限從上下文長度預留給輸出，提示詞加上上限超過上下文長度時同樣回傳 `400`；帶著上限的請求收到 `400` 時，後端拿掉上限再送一次。
 - vLLM 以 `--api-key` 啟動時，在連線填入同一把金鑰；沒有設定時金鑰留空。
 - 模型名稱與 `vllm serve` 載入的模型（或 `--served-model-name`）相同，可以按「從 API 取得模型」讀取 `/v1/models`。
 - vLLM 通常架在內部網路，請由管理員設為共用連線；一般帳號的個人連線只能連到公開位址。
@@ -492,6 +492,7 @@ python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().d
 | `DNS_RESOLVE_TIMEOUT_SECONDS`、`DNS_RESOLVER_MAX_WORKERS`（`core/ssrf_protection.py`） | 5 秒；8 條與 4 條執行緒 | SSRF 驗證在兩個專用執行緒池中查詢 DNS：`web_fetch` 的使用者網址用 8 條（`DnsPool.USER_URL`），自訂 API 工具、HTTP MCP 與 OpenAPI 規格網址用 4 條（`DnsPool.CONFIGURED_ENDPOINT`），慢速網域占滿前者時不影響後者；逾時視為無法解析 |
 | `LLM_POOL_ACQUIRE_TIMEOUT_SECONDS`（`core/llm_client.py`） | 15 秒 | 等待 LLM 連線池名額的上限，與 `LLM_TIMEOUT` 分開，池被占滿時很快失敗 |
 | `MAX_DISCOVERED_MODELS` | 500 | 「從 API 取得模型」回傳的模型數，依名稱排序後取前 500 個 |
+| `VLLM_MODEL_LENGTH_CACHE_SECONDS` | 300 | vLLM 模型上下文長度的快取秒數，過期後重新讀取 `/models` |
 
 **文件解析**
 

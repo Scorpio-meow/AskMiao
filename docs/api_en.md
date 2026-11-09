@@ -2,7 +2,7 @@
 
 [繁體中文](api.md) | [English](api_en.md)
 
-> REST and SSE streaming endpoints of the AskMiao **8.5.1** backend, written against the actual routers in `backend/app/api/`. With `ENABLE_API_DOCS=true` the backend also serves interactive docs at `http://localhost:8001/docs` (Swagger UI) and `http://localhost:8001/redoc`, and the OpenAPI document at `/openapi.json`. These three paths need no sign-in and list every endpoint and parameter, so keep `ENABLE_API_DOCS=false` (the template value) for public deployments; all three then return `404`.
+> REST and SSE streaming endpoints of the AskMiao **8.6.0** backend, written against the actual routers in `backend/app/api/`. With `ENABLE_API_DOCS=true` the backend also serves interactive docs at `http://localhost:8001/docs` (Swagger UI) and `http://localhost:8001/redoc`, and the OpenAPI document at `/openapi.json`. These three paths need no sign-in and list every endpoint and parameter, so keep `ENABLE_API_DOCS=false` (the template value) for public deployments; all three then return `404`.
 
 ## Contents
 
@@ -633,7 +633,7 @@ The account's own personal connections (sign-in required). Connection object:
 | Field | Description |
 |---|---|
 | `id`, `name`, `provider`, `api_base`, `models` | Connection ID, name, provider (`openai`, `anthropic`, `gemini`, `foundry`, `ollama`, `vllm`), API address, model list |
-| `max_output_tokens` | Claude output token limit, `null` when unset |
+| `max_output_tokens` | Output token limit (used by Claude and vLLM), `null` when unset |
 | `has_api_key` | Whether a key is stored; the key itself is never returned |
 | `scope` | `personal` or `shared` |
 | `created_at`, `updated_at` | When the connection was created and last updated |
@@ -647,7 +647,7 @@ The account's own personal connections (sign-in required). Connection object:
 - `POST /api/llm-connections/{connection_id}/test`: body `{"model_name": "gpt-6-sol"}`; sends one short message with that model and returns `{"ok": true, "reply": "OK"}`, or `{"ok": false, "error": "reason"}` (still status `200`) when it fails. A connection that does not exist or that the caller may not test returns `404` `找不到這個 API 連線` ("connection not found"), and a `model_name` missing from the connection's model list returns `400` `這個 API 連線沒有提供此模型` ("model not offered by this connection"). A vLLM connection also sends one test tool to check that the server has tool calling turned on.
 - `POST /api/llm-connections/discover-models`: body with `provider` and `api_base`, plus `api_key` or `connection_id` (reuses that connection's stored key only when both `provider` and `api_base` match the connection, and otherwise queries without a key; owner only for personal connections, admins only for shared ones, and a connection that does not exist or is not permitted returns `404` `找不到這個 API 連線`, "connection not found"). Returns `{"models": [...]}` (sorted, at most 500) or `400` with the reason. It queries the OpenAI-compatible `{api_base}/models`, Gemini's `/v1beta/openai/models`, Claude's Models API, or Ollama's `/api/tags`; Foundry cannot list deployments and returns `400`. A member's query can likewise only reach public addresses; the timeout is `LLM_TAGS_TIMEOUT`.
 
-Saving checks that Anthropic, Gemini, and Foundry have a key; that Claude (including Claude deployments on Foundry) has `max_output_tokens`, and that Claude on Foundry uses a `*.services.ai.azure.com` endpoint; and that a member's `api_base` resolves to a public address. Failures return `400` with the reason; malformed fields return `422`.
+Saving checks that Anthropic, Gemini, and Foundry have a key; that Claude deployments on Foundry have `max_output_tokens` and use a `*.services.ai.azure.com` endpoint; and that a member's `api_base` resolves to a public address. Failures return `400` with the reason; malformed fields return `422`.
 
 ---
 

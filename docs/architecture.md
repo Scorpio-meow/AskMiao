@@ -2,7 +2,7 @@
 
 [繁體中文](architecture.md) | [English](architecture_en.md)
 
-> 本文件說明 AskMiao **8.5.1** 的架構、啟動流程、資料模型、文件處理與檢索管線、Agentic RAG 研究迴圈、LLM 呼叫層、外部工具整合、認證與安全設計，以及前端架構（本版變更見 [CHANGELOG](../CHANGELOG.md#851---2026-11-09)）。設計背後的取捨記錄在 [架構決策紀錄（ADR）](adr/README.md)。
+> 本文件說明 AskMiao **8.6.0** 的架構、啟動流程、資料模型、文件處理與檢索管線、Agentic RAG 研究迴圈、LLM 呼叫層、外部工具整合、認證與安全設計，以及前端架構（本版變更見 [CHANGELOG](../CHANGELOG.md#860---2026-11-09)）。設計背後的取捨記錄在 [架構決策紀錄（ADR）](adr/README.md)。
 
 ## 目錄
 
@@ -570,9 +570,9 @@ Office 檔案先經過與附件相同的 zip 炸彈檢查，對話檔案用聊�
 | Microsoft Foundry | `{API 位址}/openai/v1/responses`（`gpt-`、`o3`、`o4` 開頭，但 `gpt-oss`、`o3-mini` 除外）或 `/openai/v1/chat/completions`（其他模型，例如 `o1`、`gpt-oss`、`o3-mini`）；`claude-` 開頭的部署走 `{API 位址}/anthropic` | 同時帶 `api-key` 與 `Authorization` 標頭；模型名稱即部署名稱 |
 | OpenAI | `{API 位址}/chat/completions`；`gpt-6*` 走 `{API 位址}/responses` | 原生格式 |
 | Google Gemini | `{API 位址}/v1beta/openai/chat/completions` | 使用 OpenAI 相容端點 |
-| Anthropic Claude | 官方 `anthropic` SDK | system 訊息抽出；連續的工具結果併成一則 `tool_result`；工具呼叫回合原樣送回 `response.content`（含 thinking 區塊）；需要連線設定的輸出 token 上限；拒答（`refusal`）與工具參數被截斷時回報錯誤 |
+| Anthropic Claude | 官方 `anthropic` SDK | system 訊息抽出；連續的工具結果併成一則 `tool_result`；工具呼叫回合原樣送回 `response.content`（含 thinking 區塊）；輸出 token 上限取連線設定與 Models API 查到的模型上限中較小的值，連線沒有設定時直接用模型上限（Foundry 查不到，必須設定）；拒答（`refusal`）與工具參數被截斷時回報錯誤 |
 | Ollama | `{API 位址}/api/chat` | 圖片轉為 `images` 欄位；工具呼叫參數轉為物件；可設定 `OLLAMA_TEMPERATURE`、`OLLAMA_NUM_PREDICT`、`OLLAMA_NUM_CTX`（套用到所有 Ollama 連線） |
-| vLLM | `{API 位址}/chat/completions` | OpenAI 相容格式；`reasoning_effort` 直接傳送，輸出 token 上限以 `max_completion_tokens` 送出，串流以 `stream_options.include_usage` 取得用量；回應的 `reasoning` 隨工具呼叫回合原樣送回；伺服器沒有開啟工具呼叫時回報明確的錯誤 |
+| vLLM | `{API 位址}/chat/completions` | OpenAI 相容格式；`reasoning_effort` 直接傳送，輸出 token 上限以 `max_completion_tokens` 送出，大於或等於 `/models` 回報的 `max_model_len` 時不送出，帶著上限的請求收到 `400` 時拿掉上限重送一次，串流以 `stream_options.include_usage` 取得用量；回應的 `reasoning` 隨工具呼叫回合原樣送回；伺服器沒有開啟工具呼叫時回報明確的錯誤 |
 
 - **路由**：每次呼叫都使用一條 API 連線：聊天是使用者選的個人或共用連線，文件摘要與 PDF OCR 是管理員指定的系統模型。端點依連線的供應商與模型名稱決定，完整規則見 [設定參考：供應商路由](configuration.md#供應商路由)；`.env` 不設定任何模型供應商。
 - **推理程度**：`reasoning_effort` 依供應商對應後傳給模型（對應規則見 [API 參考](api.md)）；走 Chat Completions 的 `gpt-5.x` 模型（名稱含 `gpt-5.`）帶工具時一律送 `none`，原始的 `gpt-5`、`gpt-5-mini`、`gpt-5-nano` 不接受 `none`、`xhigh`、`max`，選 `none` 時改送 `minimal`，選 `xhigh`、`max` 時改送 `high`，其他情況送使用者選擇的程度；`gpt-6*` 與 Foundry 上走 Responses API 的模型（見上表）以 Responses API 同時支援工具與推理。

@@ -93,8 +93,6 @@ def resolve_chat_endpoint(db: Session, user_id: int, connection_id: int, model_n
     if model_name not in models_of(connection):
         raise SafeClientError("這個 API 連線沒有提供此模型")
     return endpoint_of(db, connection)
-def _is_claude_connection(provider: str, models: List[str]) -> bool:
-    return provider == "anthropic" or (provider == "foundry" and any(m.startswith("claude-") for m in models))
 async def validate_connection(
     provider: str,
     api_base: str,
@@ -105,10 +103,10 @@ async def validate_connection(
 ) -> None:
     if provider in PROVIDERS_REQUIRING_API_KEY and not has_api_key:
         raise SafeClientError("這個供應商需要 API 金鑰；變更供應商或 API 位址後不會沿用原本的金鑰，請重新輸入")
-    if _is_claude_connection(provider, models):
+    if provider == "foundry" and any(m.startswith("claude-") for m in models):
         if max_output_tokens is None:
-            raise SafeClientError("Claude 模型需要設定輸出 token 上限")
-        if provider == "foundry" and not (urlparse(api_base).hostname or "").endswith(FOUNDRY_ANTHROPIC_HOST_SUFFIX):
+            raise SafeClientError("Foundry 上的 Claude 部署需要設定輸出 token 上限")
+        if not (urlparse(api_base).hostname or "").endswith(FOUNDRY_ANTHROPIC_HOST_SUFFIX):
             raise SafeClientError(f"Foundry 上的 Claude 部署需要 Foundry 資源端點（*{FOUNDRY_ANTHROPIC_HOST_SUFFIX}）")
     if public_only:
         is_valid, reason, _ = await validate_url_ssrf(api_base, DnsPool.USER_URL)

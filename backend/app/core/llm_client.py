@@ -8,7 +8,7 @@ import httpx
 from urllib.parse import urlparse
 from typing import Any, AsyncIterator, Dict, List, Optional, Tuple, Union
 from app.core.config import settings
-from app.core.limits import MAX_DISCOVERED_MODELS
+from app.core.limits import MAX_DISCOVERED_MODELS, VLLM_MODEL_LENGTH_CACHE_SECONDS
 from app.core.security_logging import log_fields
 from app.core.ssrf_protection import DnsPool, SSRFSafeHttpx2Transport, SSRFSafeTransport
 logger = logging.getLogger(__name__)
@@ -16,7 +16,8 @@ _http_client: Optional[httpx.AsyncClient] = None
 _public_http_client: Optional[httpx.AsyncClient] = None
 _client_lock = asyncio.Lock()
 _anthropic_http_clients: Dict[bool, Any] = {}
-_anthropic_output_limits: Dict[Tuple[str, str], int] = {}
+_anthropic_output_limits: Dict[Tuple[str, str], Optional[int]] = {}
+_vllm_model_lengths: Dict[Tuple[str, str], Tuple[float, Optional[int]]] = {}
 @dataclass(frozen=True)
 class LlmEndpoint:
     provider: str
@@ -271,6 +272,32 @@ def _openai_payload(
         if stream:
             payload["stream_options"] = {"include_usage": True}
     return payload
+async def _vllm_model_length(endpoint: LlmEndpoint, model: str) -> Optional[int]:
+    key = (endpoint.api_base, model)
+    cached = _vllm_model_lengths.get(key)
+    if cached is not None and cached[0] > time.monotonic():
+        return cached[1]
+    _, headers = _openai_endpoint(endpoint)
+    try:
+        entries = await _http_models(endpoint, f"{endpoint.api_base.rstrip('/')}/models", headers)
+        length = next((entry.get("max_model_len") for entry in entries if entry.get("id") == model), None)
+    except (httpx.HTTPError, RuntimeError, ValueError):
+        logger.warning("讀取 vLLM 模型 %s 的上下文長度失敗，沿用連線設定的輸出 token 上限", model, exc_info=True)
+        length = None
+    length = length if isinstance(length, int) else None
+    _vllm_model_lengths[key] = (time.monotonic() + VLLM_MODEL_LENGTH_CACHE_SECONDS, length)
+    return length
+async def _vllm_output_tokens(endpoint: LlmEndpoint, model: str) -> Optional[int]:
+    limit = endpoint.max_output_tokens
+    if limit is None:
+        return None
+    length = await _vllm_model_length(endpoint, model)
+    return None if length is not None and limit >= length else limit
+def _drop_rejected_limit(payload: Dict[str, Any], status_code: int) -> bool:
+    if status_code != 400 or "max_completion_tokens" not in payload:
+        return False
+    logger.warning("vLLM 拒絕帶有輸出 token 上限 %s 的請求，拿掉上限後重送", payload.pop("max_completion_tokens"))
+    return True
 async def _openai_chat(
     endpoint: LlmEndpoint,
     messages: List[Dict[str, Any]],
@@ -281,13 +308,13 @@ async def _openai_chat(
 ) -> Tuple[Dict[str, Any], Dict[str, Any]]:
     provider = endpoint.provider
     url, headers = _openai_endpoint(endpoint)
+    max_output_tokens = await _vllm_output_tokens(endpoint, model) if provider == "vllm" else None
     client = await get_llm_http_client(endpoint.public_only)
-    response = await client.post(
-        url,
-        json=_openai_payload(provider, messages, model, tools, reasoning_effort, stream=False, max_output_tokens=endpoint.max_output_tokens),
-        headers=headers,
-        timeout=httpx.Timeout(timeout, pool=LLM_POOL_ACQUIRE_TIMEOUT_SECONDS)
-    )
+    payload = _openai_payload(provider, messages, model, tools, reasoning_effort, stream=False, max_output_tokens=max_output_tokens)
+    request_timeout = httpx.Timeout(timeout, pool=LLM_POOL_ACQUIRE_TIMEOUT_SECONDS)
+    response = await client.post(url, json=payload, headers=headers, timeout=request_timeout)
+    if _drop_rejected_limit(payload, response.status_code):
+        response = await client.post(url, json=payload, headers=headers, timeout=request_timeout)
     if response.status_code != 200:
         raise RuntimeError(_openai_error(provider, "API 錯誤", response.status_code, response.text))
     data = response.json()
@@ -306,33 +333,38 @@ async def _openai_stream(
 ) -> AsyncIterator[Union[str, LlmStreamStats]]:
     provider = endpoint.provider
     url, headers = _openai_endpoint(endpoint)
+    max_output_tokens = await _vllm_output_tokens(endpoint, model) if provider == "vllm" else None
     client = await get_llm_http_client(endpoint.public_only)
-    payload = _openai_payload(provider, messages, model, None, reasoning_effort, stream=True, max_output_tokens=endpoint.max_output_tokens)
-    async with client.stream("POST", url, json=payload, headers=headers) as response:
-        if response.status_code != 200:
-            body = await response.aread()
-            raise RuntimeError(_openai_error(provider, "串流錯誤", response.status_code, body.decode("utf-8", "replace")))
-        async for line in response.aiter_lines():
-            if not line.startswith("data: "):
-                continue
-            data = line[6:].strip()
-            if data == "[DONE]":
-                break
-            try:
-                event = json.loads(data)
-            except ValueError:
-                continue
-            if isinstance(event, dict) and event.get("usage"):
-                yield LlmStreamStats(_chat_completions_stats(event))
-            try:
-                choice = event["choices"][0]
-            except (TypeError, KeyError, IndexError):
-                continue
-            if choice.get("finish_reason"):
-                yield LlmStreamStats({"stop_reason": choice["finish_reason"]})
-            content = choice.get("delta", {}).get("content")
-            if content:
-                yield content
+    payload = _openai_payload(provider, messages, model, None, reasoning_effort, stream=True, max_output_tokens=max_output_tokens)
+    while True:
+        async with client.stream("POST", url, json=payload, headers=headers) as response:
+            if response.status_code != 200:
+                body = await response.aread()
+                if _drop_rejected_limit(payload, response.status_code):
+                    continue
+                raise RuntimeError(_openai_error(provider, "串流錯誤", response.status_code, body.decode("utf-8", "replace")))
+            async for line in response.aiter_lines():
+                if not line.startswith("data: "):
+                    continue
+                data = line[6:].strip()
+                if data == "[DONE]":
+                    break
+                try:
+                    event = json.loads(data)
+                except ValueError:
+                    continue
+                if isinstance(event, dict) and event.get("usage"):
+                    yield LlmStreamStats(_chat_completions_stats(event))
+                try:
+                    choice = event["choices"][0]
+                except (TypeError, KeyError, IndexError):
+                    continue
+                if choice.get("finish_reason"):
+                    yield LlmStreamStats({"stop_reason": choice["finish_reason"]})
+                content = choice.get("delta", {}).get("content")
+                if content:
+                    yield content
+            return
 def uses_responses_api(provider: str, model: str) -> bool:
     if provider == "foundry":
         return model.startswith(FOUNDRY_RESPONSES_MODEL_PREFIXES) and not model.startswith(CHAT_COMPLETIONS_ONLY_PREFIXES)
@@ -651,12 +683,10 @@ async def _anthropic_model_output_limit(endpoint: LlmEndpoint, model: str) -> Op
         _anthropic_output_limits[key] = info.max_tokens
     return _anthropic_output_limits[key]
 async def _anthropic_max_tokens(endpoint: LlmEndpoint, model: str) -> int:
-    if endpoint.max_output_tokens is None:
-        raise ValueError("使用 Claude 模型前需設定輸出 token 上限：請在 API 連線填寫「輸出 token 上限」，系統模型則設定在所指定的共用連線")
-    limit = await _anthropic_model_output_limit(endpoint, model)
-    if limit is None:
-        return endpoint.max_output_tokens
-    return min(endpoint.max_output_tokens, limit)
+    limits = [value for value in (endpoint.max_output_tokens, await _anthropic_model_output_limit(endpoint, model)) if value is not None]
+    if not limits:
+        raise ValueError("查不到這個 Claude 模型的輸出上限：請在 API 連線填寫「輸出 token 上限」，系統模型則設定在所指定的共用連線")
+    return min(limits)
 def _anthropic_system_text(content: Any) -> str:
     if isinstance(content, str):
         return content
@@ -765,7 +795,7 @@ def _anthropic_message(response) -> Dict[str, Any]:
     _raise_if_refused(response)
     tool_uses = [block for block in response.content if block.type == "tool_use"]
     if tool_uses and response.stop_reason == "max_tokens":
-        raise RuntimeError("Claude 的工具呼叫參數被輸出 token 上限截斷，請調高 API 連線的「輸出 token 上限」（系統模型請調整所指定的共用連線）")
+        raise RuntimeError("Claude 的工具呼叫參數被輸出 token 上限截斷：請調高 API 連線的「輸出 token 上限」（系統模型請調整所指定的共用連線）；已是模型的上限時，請要求分段產生或縮短內容")
     message: Dict[str, Any] = {
         "role": "assistant",
         "content": "".join(block.text for block in response.content if block.type == "text"),
@@ -881,15 +911,17 @@ async def stream_completion(
         call_log.failed(exc)
         raise
     call_log.finished()
-async def _http_model_ids(endpoint: LlmEndpoint, url: str, headers: Dict[str, str]) -> List[str]:
+async def _http_models(endpoint: LlmEndpoint, url: str, headers: Dict[str, str]) -> List[Dict[str, Any]]:
     client = await get_llm_http_client(endpoint.public_only)
     response = await client.get(url, headers=headers, timeout=httpx.Timeout(settings.LLM_TAGS_TIMEOUT, pool=LLM_POOL_ACQUIRE_TIMEOUT_SECONDS))
     if response.status_code != 200:
         raise RuntimeError(f"{endpoint.provider} 模型清單錯誤 ({response.status_code}): {response.text[:500]}")
     payload = response.json()
-    if endpoint.provider == "ollama":
-        return [item.get("name") for item in payload.get("models") or [] if item.get("name")]
-    return [item.get("id") for item in payload.get("data") or [] if item.get("id")]
+    items = payload.get("models" if endpoint.provider == "ollama" else "data") if isinstance(payload, dict) else None
+    return [item for item in items or [] if isinstance(item, dict)]
+async def _http_model_ids(endpoint: LlmEndpoint, url: str, headers: Dict[str, str]) -> List[str]:
+    key = "name" if endpoint.provider == "ollama" else "id"
+    return [item[key] for item in await _http_models(endpoint, url, headers) if item.get(key)]
 async def list_models(endpoint: LlmEndpoint) -> List[str]:
     base = endpoint.api_base.rstrip("/")
     if endpoint.provider == "foundry":

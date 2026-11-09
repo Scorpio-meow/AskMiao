@@ -2,7 +2,7 @@
 
 [繁體中文](api.md) | [English](api_en.md)
 
-> 本文件說明 AskMiao 後端 **8.5.1** 的 REST 與 SSE 串流端點，內容依 `backend/app/api/` 的實際路由撰寫。設定 `ENABLE_API_DOCS=true` 時，後端另外在 `http://localhost:8001/docs`（Swagger UI）與 `http://localhost:8001/redoc` 提供互動測試，OpenAPI 規格位於 `/openapi.json`；這三個路徑不需要登入且會列出所有端點與參數，對外服務時請保持 `ENABLE_API_DOCS=false`（範本值），此時三者一律回傳 `404`。
+> 本文件說明 AskMiao 後端 **8.6.0** 的 REST 與 SSE 串流端點，內容依 `backend/app/api/` 的實際路由撰寫。設定 `ENABLE_API_DOCS=true` 時，後端另外在 `http://localhost:8001/docs`（Swagger UI）與 `http://localhost:8001/redoc` 提供互動測試，OpenAPI 規格位於 `/openapi.json`；這三個路徑不需要登入且會列出所有端點與參數，對外服務時請保持 `ENABLE_API_DOCS=false`（範本值），此時三者一律回傳 `404`。
 
 ## 目錄
 
@@ -631,7 +631,7 @@ data: {"message_id": 108, "conversation_id": 42, "answer": "特休假需先在�
 | 欄位 | 說明 |
 |---|---|
 | `id`、`name`、`provider`、`api_base`、`models` | 連線 ID、名稱、供應商（`openai`、`anthropic`、`gemini`、`foundry`、`ollama`、`vllm`）、API 位址、模型清單 |
-| `max_output_tokens` | Claude 的輸出 token 上限，未設定為 `null` |
+| `max_output_tokens` | 輸出 token 上限（Claude 與 vLLM 使用），未設定為 `null` |
 | `has_api_key` | 是否已設定金鑰；金鑰本身不會回傳 |
 | `scope` | `personal` 或 `shared` |
 | `created_at`、`updated_at` | 建立與最後更新的時間 |
@@ -645,7 +645,7 @@ data: {"message_id": 108, "conversation_id": 42, "answer": "特休假需先在�
 - `POST /api/llm-connections/{connection_id}/test`：主體 `{"model_name": "gpt-6-sol"}`，以該模型送出一則很短的訊息；成功回傳 `{"ok": true, "reply": "OK"}`，失敗回傳 `{"ok": false, "error": "原因"}`（狀態碼仍為 `200`）。連線不存在或無權測試時回傳 `404` `找不到這個 API 連線`，`model_name` 不在該連線的模型清單內時回傳 `400` `這個 API 連線沒有提供此模型`。vLLM 連線另外附上一個測試用工具，確認伺服器已開啟工具呼叫。
 - `POST /api/llm-connections/discover-models`：主體 `provider`、`api_base`，加上 `api_key` 或 `connection_id`（只在 `provider` 與 `api_base` 都與該連線相同時沿用它已儲存的金鑰，否則不帶金鑰查詢；個人連線限本人，共用連線限管理員，連線不存在或無權使用時回傳 `404` `找不到這個 API 連線`）。回傳 `{"models": [...]}`（排序後最多 500 個），失敗時回傳 `400` 與原因。依供應商查詢 OpenAI 相容的 `{api_base}/models`、Gemini 的 `/v1beta/openai/models`、Claude 的 Models API 或 Ollama 的 `/api/tags`；Foundry 無法列出部署，回傳 `400`。一般帳號的查詢同樣只能連到公開位址，逾時為 `LLM_TAGS_TIMEOUT`。
 
-儲存時檢查：Anthropic、Gemini、Foundry 必須有金鑰；Claude（含 Foundry 上的 Claude 部署）必須設定 `max_output_tokens`，Foundry 上的 Claude 部署必須使用 `*.services.ai.azure.com` 端點；一般帳號的 `api_base` 必須能解析到公開位址。不符合時回傳 `400` 與原因，欄位格式錯誤回傳 `422`。
+儲存時檢查：Anthropic、Gemini、Foundry 必須有金鑰；Foundry 上的 Claude 部署必須設定 `max_output_tokens` 並使用 `*.services.ai.azure.com` 端點；一般帳號的 `api_base` 必須能解析到公開位址。不符合時回傳 `400` 與原因，欄位格式錯誤回傳 `422`。
 
 ---
 

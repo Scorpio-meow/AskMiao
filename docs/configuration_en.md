@@ -2,7 +2,7 @@
 
 [繁體中文](configuration.md) | [English](configuration_en.md)
 
-> Every setting in the backend `backend/.env` and the frontend `frontend/.env`, with its default and what it actually does, as of **8.5.1** (to upgrade from 8.5.0, see the [upgrade guide](upgrading_en.md#upgrading-from-850-to-851)). The source of truth is `Settings` in `backend/app/core/config.py`; the template is [`backend/.env.example`](../backend/.env.example).
+> Every setting in the backend `backend/.env` and the frontend `frontend/.env`, with its default and what it actually does, as of **8.6.0** (to upgrade from 8.5.1, see the [upgrade guide](upgrading_en.md#upgrading-from-851-to-860)). The source of truth is `Settings` in `backend/app/core/config.py`; the template is [`backend/.env.example`](../backend/.env.example).
 
 - [How settings are read](#how-settings-are-read)
 - [Required settings](#required-settings)
@@ -92,11 +92,11 @@ Each account can only chat through two kinds of connection, and the model menu g
 | API address | For example `https://api.openai.com/v1`, `https://api.anthropic.com`, `https://<resource>.services.ai.azure.com`, `https://ollama.com`, `http://<host>:8000/v1` (vLLM) |
 | API key | Required for Anthropic, Gemini, and Foundry, optional for OpenAI-compatible services, Ollama, and vLLM; encrypted with `TOOL_SECRETS_KEY` and never read back through the API; leave it blank when editing to keep the stored key, except that changing the provider or API address drops it and it must be entered again |
 | Models | The model names offered by this connection (deployment names for Foundry), up to 50 |
-| Output token limit | Required for Claude (`anthropic`, or Claude deployments on Foundry); the smaller of it and the model's own output limit is used. Claude's thinking counts toward this limit too, so a limit set too low cuts answers off. Optional for vLLM; see [Connecting vLLM](#connecting-vllm) |
+| Output token limit | Optional for Claude through Anthropic: when empty, the model's output limit from the Models API is used, and when set, the smaller of the two. Required for Claude deployments on Foundry, where the model limit cannot be looked up. Claude's thinking counts toward this limit too, so a limit set too low cuts answers off. Optional for vLLM; see [Connecting vLLM](#connecting-vllm) |
 
 When a new connection is created, the form fills in the provider's official API address and the models below, which can be edited:
 
-| Provider | Prefilled models (8.5.1) |
+| Provider | Prefilled models (8.6.0) |
 |---|---|
 | OpenAI | `gpt-6.1-sol`, `gpt-6-sol`, `gpt-6-luna`, `gpt-6-astra`, `gpt-5.6-sol`, `gpt-5.6-luna`, `gpt-5.6-terra`, `gpt-5.4`, `gpt-5.4-mini` |
 | Anthropic | `claude-opus-5-5`, `claude-fable-5-1`, `claude-sonnet-5-5`, `claude-haiku-5-5`, `claude-sonnet-5`, `claude-opus-5`, `claude-fable-5`, `claude-opus-4-8`, `claude-haiku-4-5` |
@@ -149,7 +149,7 @@ vllm serve Qwen/Qwen3-8B --enable-auto-tool-choice --tool-call-parser hermes --r
 
 - vLLM 0.23.0 or later is required. Before 0.18.0, `none` is rejected (so the connection test fails), and before 0.21.0, `minimal`, `xhigh`, and `max` are rejected with `400`; 0.21 and 0.22 accept every level, but `none` does not turn thinking off.
 - The reasoning level is sent as `reasoning_effort` (`none` through `max`), and vLLM applies it through the model's chat template; with Qwen3, for example, `none` turns thinking off.
-- The output token limit is optional; when set it is sent as `max_completion_tokens` and thinking counts toward it, and when empty vLLM decides from the model's context length.
+- The output token limit is optional; when set it is sent as `max_completion_tokens` and thinking counts toward it, and when empty vLLM decides from the model's context length. When it is set, the backend reads the model's context length (`max_model_len`) from `{API address}/models` and reads it again every 5 minutes; a limit at or above the context length is not sent, so vLLM uses whatever length remains instead of returning `400`. If the context length cannot be read, the limit is sent as set. vLLM 0.23 reserves the limit out of the context length for output and also returns `400` when the prompt plus the limit exceeds the context length; when a request carrying the limit gets `400`, the backend sends it once more without the limit.
 - When vLLM is started with `--api-key`, enter the same key in the connection; otherwise leave the key empty.
 - Model names match the model `vllm serve` loaded (or its `--served-model-name`), and "Get models from the API" reads them from `/v1/models`.
 - vLLM usually runs on the internal network, so an admin should set it up as a shared connection; members' personal connections can only reach public addresses.
@@ -492,6 +492,7 @@ The limits below protect a single backend process and the operator's paid usage.
 | `DNS_RESOLVE_TIMEOUT_SECONDS`, `DNS_RESOLVER_MAX_WORKERS` (`core/ssrf_protection.py`) | 5 seconds; 8 and 4 threads | SSRF validation resolves DNS in two dedicated thread pools: 8 threads for user-supplied URLs from `web_fetch` (`DnsPool.USER_URL`) and 4 for custom API tools, HTTP MCP, and OpenAPI spec URLs (`DnsPool.CONFIGURED_ENDPOINT`), so slow domains that fill the first pool do not affect the second; a timeout counts as unresolvable |
 | `LLM_POOL_ACQUIRE_TIMEOUT_SECONDS` (`core/llm_client.py`) | 15 seconds | Limit for waiting on an LLM connection pool slot, separate from `LLM_TIMEOUT`, so a saturated pool fails fast |
 | `MAX_DISCOVERED_MODELS` | 500 | Models returned by "Fetch models from API": the first 500 after sorting by name |
+| `VLLM_MODEL_LENGTH_CACHE_SECONDS` | 300 | Seconds a vLLM model's context length is cached before `/models` is read again |
 
 **Document parsing**
 

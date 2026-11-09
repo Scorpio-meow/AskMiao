@@ -6,6 +6,7 @@ All notable changes to AskMiao are documented in this file. The format is based 
 
 | Version | Release date | Highlights |
 |---|---|---|
+| [8.6.0](#860---2026-11-09) | 2026-11-09 | Model output limits looked up automatically: Claude connections to Anthropic may leave the output token limit empty, and a vLLM output token limit above the model's context length no longer stops research |
 | [8.5.1](#851---2026-11-09) | 2026-11-09 | `deploy/gen-env.sh` adds the missing line break to `deploy/.env`, so the backend of a new deployment starts |
 | [8.5.0](#850---2026-11-09) | 2026-11-09 | File preview: conversation files and knowledge base documents can be previewed without downloading (PDF pages as images; Word, Excel, and PowerPoint as web pages); the research assistant can build web pages that are previewed in an isolated iframe; cited web pages first show a preview card |
 | [8.4.0](#840---2026-11-08) | 2026-11-08 | Conversation files: the research assistant creates, reads, edits (as new versions), and deletes Word, Excel, PowerPoint, PDF, and other files in a conversation, with user approval before any deletion; document attachments are stored as conversation files and can be downloaded again; the research assistant knows the current date and time |
@@ -41,6 +42,16 @@ All notable changes to AskMiao are documented in this file. The format is based 
 ---
 
 ## [Unreleased]
+
+## [8.6.0] - 2026-11-09
+
+### Changed
+
+- **The Claude output token limit is optional**: for Claude through Anthropic, the connection's "output token limit" can be left empty, and the model's output limit from the Models API is used instead; when it is set, the smaller of the two is used as before. Claude deployments on Foundry cannot look up the model limit and still need one.
+
+### Fixed
+
+- **A vLLM output token limit above the model's context length no longer stops research**: when a vLLM connection sets an output token limit, the backend reads the model's context length (`max_model_len`) from `/models` and caches it for 5 minutes; a limit at or above it is not sent as `max_completion_tokens`, so vLLM uses whatever length remains. Before, vLLM returned `400` and the research assistant stopped on its first turn with 在執行自主研究時遇到連線異常 ("a connection error occurred during research"). If the context length cannot be read, the limit is sent as set. vLLM 0.23 also reserves the limit out of the context length for output, so once research piles up tool results the prompt plus the limit no longer fits and the final answer failed with `400`; a request carrying the limit that gets `400` is now sent once more without it.
 
 ## [8.5.1] - 2026-11-09
 

@@ -264,11 +264,17 @@ async def test_claude_max_tokens_on_foundry_uses_connection_limit():
     endpoint = LlmEndpoint("foundry", "https://example.services.ai.azure.com", "foundry-key", 32000, False)
     assert await llm_client._anthropic_max_tokens(endpoint, "claude-opus-5-5") == 32000
 @pytest.mark.asyncio
-async def test_claude_requires_max_output_tokens(claude):
-    claude(responses=[])
+async def test_claude_without_output_limit_uses_the_model_limit(claude):
+    end_turn = SimpleNamespace(stop_reason="end_turn", stop_details=None, content=[SimpleNamespace(type="text", text="OK")])
+    fake_messages = claude(responses=[end_turn], output_limits={"claude-haiku-4-5": 64000})
     endpoint = LlmEndpoint("anthropic", "https://api.anthropic.com", "test-key", None, False)
+    await llm_client.chat_completion([{"role": "user", "content": "你好"}], endpoint=endpoint, model_name="claude-haiku-4-5")
+    assert fake_messages.chat_calls[0]["max_tokens"] == 64000
+@pytest.mark.asyncio
+async def test_claude_on_foundry_requires_max_output_tokens():
+    endpoint = LlmEndpoint("foundry", "https://example.services.ai.azure.com", "foundry-key", None, False)
     with pytest.raises(ValueError, match="輸出 token 上限"):
-        await llm_client.chat_completion([{"role": "user", "content": "你好"}], endpoint=endpoint, model_name="claude-opus-5")
+        await llm_client._anthropic_max_tokens(endpoint, "claude-opus-5-5")
 def test_ollama_conversion_and_response_normalization():
     converted = llm_client._ollama_messages([
         {"role": "user", "content": [
@@ -539,7 +545,7 @@ async def test_list_models_reads_each_providers_model_endpoint(monkeypatch):
     with pytest.raises(ValueError, match="手動填寫"):
         await llm_client.list_models(LlmEndpoint("foundry", "https://x.services.ai.azure.com", "k", None, False))
     await client.aclose()
-LOCAL_VLLM = LlmEndpoint("vllm", "http://localhost:8000/v1", None, 4096, False)
+LOCAL_VLLM = LlmEndpoint("vllm", "http://localhost:8000/v1", None, None, False)
 @pytest.mark.parametrize("effort", llm_client.REASONING_EFFORT_VALUES)
 def test_vllm_payload_passes_every_reasoning_effort_and_the_output_limit(effort):
     payload = llm_client._openai_payload("vllm", [{"role": "user", "content": "hi"}], "Qwen/Qwen3-32B", [KB_TOOL], effort, stream=False, max_output_tokens=4096)
@@ -556,6 +562,69 @@ def test_openai_payload_ignores_the_output_limit_for_other_providers():
     payload = llm_client._openai_payload("openai", [{"role": "user", "content": "hi"}], "gpt-5.4", None, None, stream=True, max_output_tokens=4096)
     assert "max_completion_tokens" not in payload
     assert "stream_options" not in payload
+@pytest.fixture(autouse=True)
+def fresh_vllm_model_lengths(monkeypatch):
+    monkeypatch.setattr(llm_client, "_vllm_model_lengths", {})
+VLLM_MODELS = (200, {"object": "list", "data": [{"id": "Qwen/Qwen3-32B", "object": "model", "max_model_len": 65536}]})
+@pytest.mark.asyncio
+@pytest.mark.parametrize("limit, models_reply, expected, lookup_count", [
+    (131072, VLLM_MODELS, None, 1),
+    (65536, VLLM_MODELS, None, 1),
+    (8192, VLLM_MODELS, 8192, 1),
+    (8192, (200, {"object": "list", "data": [{"id": "Qwen/Qwen3-32B", "object": "model"}]}), 8192, 1),
+    (8192, (404, {"detail": "Not Found"}), 8192, 1),
+    (None, VLLM_MODELS, None, 0),
+])
+async def test_vllm_output_limit_gives_way_to_the_model_context_length(monkeypatch, limit, models_reply, expected, lookup_count):
+    lookups, payloads = [], []
+    def handler(request):
+        if request.method == "GET":
+            lookups.append(request.url.path)
+            return httpx.Response(models_reply[0], json=models_reply[1])
+        payloads.append(json.loads(request.content))
+        return httpx.Response(200, json={"choices": [{"finish_reason": "stop", "message": {"role": "assistant", "content": "好"}}]})
+    monkeypatch.setattr(llm_client, "_http_client", httpx.AsyncClient(transport=httpx.MockTransport(handler)))
+    endpoint = LlmEndpoint("vllm", "http://localhost:8000/v1", None, limit, False)
+    for _ in range(2):
+        await llm_client.chat_completion([{"role": "user", "content": "hi"}], endpoint=endpoint, model_name="Qwen/Qwen3-32B")
+    assert [payload.get("max_completion_tokens") for payload in payloads] == [expected, expected]
+    assert lookups == ["/v1/models"] * lookup_count
+@pytest.mark.asyncio
+async def test_vllm_resends_without_a_rejected_output_limit(monkeypatch):
+    sent = []
+    def handler(request):
+        if request.method == "GET":
+            return httpx.Response(VLLM_MODELS[0], json=VLLM_MODELS[1])
+        payload = json.loads(request.content)
+        sent.append(payload.get("max_completion_tokens"))
+        if "max_completion_tokens" in payload:
+            return httpx.Response(400, json={"error": {
+                "message": "This model's maximum context length is 65536 tokens. However, you requested 32768 output tokens and your prompt contains at least 40000 input tokens",
+                "type": "BadRequestError",
+                "code": 400,
+            }})
+        if payload["stream"]:
+            return httpx.Response(200, text='data: {"choices": [{"delta": {"content": "好"}}]}\n\ndata: [DONE]\n\n')
+        return httpx.Response(200, json={"choices": [{"finish_reason": "stop", "message": {"role": "assistant", "content": "好"}}]})
+    monkeypatch.setattr(llm_client, "_http_client", httpx.AsyncClient(transport=httpx.MockTransport(handler)))
+    endpoint = LlmEndpoint("vllm", "http://localhost:8000/v1", None, 32768, False)
+    reply = await llm_client.chat_completion([{"role": "user", "content": "hi"}], endpoint=endpoint, model_name="Qwen/Qwen3-32B")
+    chunks = [chunk async for chunk in llm_client.stream_completion([{"role": "user", "content": "hi"}], endpoint=endpoint, model_name="Qwen/Qwen3-32B", reasoning_effort="none")]
+    assert reply["content"] == "好" and chunks == ["好"]
+    assert sent == [32768, None, 32768, None]
+@pytest.mark.asyncio
+async def test_vllm_context_length_is_read_again_after_the_cache_expires(monkeypatch):
+    lengths = iter([131072, 65536])
+    def handler(request):
+        if request.method == "GET":
+            return httpx.Response(200, json={"data": [{"id": "Qwen/Qwen3-32B", "max_model_len": next(lengths)}]})
+        return httpx.Response(200, json={"choices": [{"finish_reason": "stop", "message": {"role": "assistant", "content": "好"}}]})
+    monkeypatch.setattr(llm_client, "_http_client", httpx.AsyncClient(transport=httpx.MockTransport(handler)))
+    endpoint = LlmEndpoint("vllm", "http://localhost:8000/v1", None, 100000, False)
+    assert await llm_client._vllm_output_tokens(endpoint, "Qwen/Qwen3-32B") == 100000
+    key = (endpoint.api_base, "Qwen/Qwen3-32B")
+    llm_client._vllm_model_lengths[key] = (0.0, llm_client._vllm_model_lengths[key][1])
+    assert await llm_client._vllm_output_tokens(endpoint, "Qwen/Qwen3-32B") is None
 @pytest.mark.asyncio
 async def test_vllm_chat_explains_a_server_without_tool_calling(monkeypatch):
     def handler(request):
