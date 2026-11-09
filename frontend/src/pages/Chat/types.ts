@@ -1,4 +1,4 @@
-import { ChatConnectionOption, Message, Conversation } from '../../services/api';
+import { ChatConnectionOption, ChatMode, Message, Conversation } from '../../services/api';
 import type { FileCardInfo } from './ConversationFileCard';
 export interface SourceDetail {
   source: string;
@@ -30,6 +30,8 @@ export interface ChatHeaderProps {
   onSelectChoice: (choice: string) => void;
   reasoningEffort: string;
   onSelectReasoningEffort: (effort: string) => void;
+  chatMode: ChatMode;
+  onSelectChatMode: (mode: ChatMode) => void;
   modelsLoading: boolean;
   onRefreshModels: () => void;
   currentConversation: Conversation | null;

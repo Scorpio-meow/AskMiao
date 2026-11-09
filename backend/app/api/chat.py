@@ -133,6 +133,7 @@ async def send_message(
             collected_sources = []
             collected_sources_detail = []
             collected_research_trace = []
+            collected_plan = None
             collected_files = []
             try:
                 async for event_item in rag_system.generate_response_stream(
@@ -143,7 +144,8 @@ async def send_message(
                     reasoning_effort=message_data.reasoning_effort,
                     attachments=message_data.attachments,
                     approval_user_id=user_id,
-                    conversation_id=conv_id
+                    conversation_id=conv_id,
+                    mode=message_data.mode
                 ):
                     ev = event_item.get("event")
                     data = event_item.get("data", {})
@@ -156,6 +158,9 @@ async def send_message(
                     elif ev == "step_end":
                         collected_research_trace.append(data)
                         yield f"event: step_end\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
+                    elif ev == "plan":
+                        collected_plan = data.get("items")
+                        yield f"event: plan\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
                     elif ev == "file":
                         collected_files.append(data)
                         yield f"event: file\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
@@ -173,10 +178,13 @@ async def send_message(
                             collected_sources_detail = data.get("sources_detail", [])
                         if not collected_research_trace:
                             collected_research_trace = data.get("research_trace", [])
+                        if collected_plan is None:
+                            collected_plan = data.get("plan")
                 context_payload = json.dumps({
                     "sources": collected_sources,
                     "sources_detail": collected_sources_detail,
                     "research_trace": collected_research_trace,
+                    "plan": collected_plan,
                     "files": collected_files
                 }, ensure_ascii=False)
                 bot_message = await asyncio.to_thread(
@@ -196,6 +204,7 @@ async def send_message(
                     "sources": collected_sources,
                     "sources_detail": collected_sources_detail,
                     "research_trace": collected_research_trace,
+                    "plan": collected_plan,
                     "files": collected_files
                 }
                 yield f"event: done\ndata: {json.dumps(done_payload, ensure_ascii=False)}\n\n"

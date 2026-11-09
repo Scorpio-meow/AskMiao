@@ -11,7 +11,7 @@ from app.rag import agent as agent_module
 from app.rag.agent import ResearchAgent
 from app.rag.tools import ResearchToolRegistry
 from app.services import chat_service as chat_service_module
-from app.services.chat_service import ChatService
+from app.services.chat_service import ChatService, _build_message_response
 @pytest.fixture
 def db(tmp_path):
     engine = create_engine(f"sqlite:///{tmp_path / 'chat.db'}", connect_args={"check_same_thread": False})
@@ -58,7 +58,8 @@ async def test_send_message_passes_database_history_to_rag(db, monkeypatch):
     captured = {}
     class FakeRag:
         async def generate_response_stream(self, query, conversation_history, *, endpoint, model_name,
-                                           reasoning_effort=None, attachments=None, approval_user_id=None, conversation_id=None):
+                                           reasoning_effort=None, attachments=None, approval_user_id=None, conversation_id=None, mode):
+            captured["mode"] = mode
             captured["endpoint"] = endpoint
             captured["model_name"] = model_name
             captured["query"] = query
@@ -77,6 +78,7 @@ async def test_send_message_passes_database_history_to_rag(db, monkeypatch):
         user_id=1,
     )
     body = "".join([chunk async for chunk in response.body_iterator])
+    assert captured["mode"] == "research"
     assert captured["query"] == "那滿一年呢？"
     assert (captured["endpoint"].api_base, captured["model_name"]) == ("https://ollama.example.com", "qwen3:8b")
     assert captured["history"] == [
@@ -161,3 +163,26 @@ async def test_answer_is_not_saved_when_conversation_is_deleted_mid_stream(db, m
     body = await send(db, add_connection(db), "問題")
     assert '"message_id": null' in body
     assert (db.query(Conversation).count(), db.query(Message).count()) == (0, 0)
+@pytest.mark.asyncio
+async def test_agent_mode_streams_and_saves_the_plan(db, monkeypatch):
+    plan = [{"step": "查規定", "status": "completed"}, {"step": "寫報告", "status": "in_progress"}]
+    captured = {}
+    class PlanningRag:
+        async def generate_response_stream(self, query, conversation_history, *, mode, **kwargs):
+            captured["mode"] = mode
+            yield {"event": "plan", "data": {"items": plan}}
+            yield {"event": "done", "data": {"answer": "完成", "sources": [], "plan": plan}}
+    monkeypatch.setattr(chat_api, "get_rag_system", lambda: PlanningRag())
+    response = await chat_api.send_message(
+        MessageCreate(content="整理規定", connection_id=add_connection(db), model_name="qwen3:8b", mode="agent"),
+        db=db,
+        user_id=1,
+    )
+    body = "".join([chunk async for chunk in response.body_iterator])
+    assert captured["mode"] == "agent"
+    assert f"event: plan\ndata: {json.dumps({'items': plan}, ensure_ascii=False)}" in body
+    saved = db.query(Message).filter(Message.is_user.is_(False)).one()
+    assert _build_message_response(saved).plan == plan
+def test_unknown_chat_mode_is_rejected():
+    with pytest.raises(ValueError):
+        MessageCreate(content="hi", connection_id=1, model_name="qwen3:8b", mode="autopilot")

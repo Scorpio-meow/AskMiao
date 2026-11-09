@@ -8,11 +8,13 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from app.core.config import settings
 from app.core.llm_client import LlmEndpoint
+from app import prompts
 from app.core.limits import MAX_KB_CATALOG_CHARS
 from app.models import Document as DbDocument
 from app.models import database as database_module
 from app.rag import agent as agent_module
 from app.rag.agent import ResearchAgent
+from app.rag.agent_mode import clear_old_tool_results
 from app.rag.retrievers.hybrid import RetrievedChunk
 from app.rag.tools import ResearchToolRegistry, is_web_fetch_domain_allowed
 from app.rag.types import Document
@@ -38,13 +40,17 @@ class ScriptedLLM:
         self.responses = list(responses)
         self.stream_text = stream_text
         self.chat_messages = []
+        self.chat_tools = []
         self.stream_calls = 0
+        self.stream_messages = []
     async def chat(self, messages, *, endpoint, model_name, tools=None, reasoning_effort=None):
         assert (endpoint, model_name) == (TEST_ENDPOINT, TEST_MODEL)
         self.chat_messages.append(list(messages))
+        self.chat_tools.append(tools)
         return self.responses.pop(0)
     async def stream(self, messages, *, endpoint, model_name, tools=None, reasoning_effort=None):
         self.stream_calls += 1
+        self.stream_messages.append(list(messages))
         yield self.stream_text
     def install(self, monkeypatch):
         monkeypatch.setattr(agent_module, "chat_completion", self.chat)
@@ -325,3 +331,72 @@ def test_target_document_lists_actual_filenames(monkeypatch):
         schema = next(t for t in tools_def if t["function"]["name"] == name)["function"]["parameters"]["properties"]["target_document"]
         assert schema["enum"] == ["posts.js", "rules.md"]
         assert "posts-export.json" not in schema["description"]
+PLAN = [{"step": "查特休規定", "status": "in_progress"}, {"step": "整理成表格", "status": "pending"}]
+@pytest.mark.asyncio
+async def test_agent_mode_plans_without_adding_trace_steps(monkeypatch):
+    agent, _ = make_agent(monkeypatch)
+    llm = ScriptedLLM([
+        tool_call("update_plan", {"items": PLAN}),
+        tool_call("search_knowledge_base", {"query": "特休"}, "call_2"),
+        answer("已整理完成 [1]"),
+    ]).install(monkeypatch)
+    events = await collect(research(agent, "整理特休規定", mode="agent"))
+    assert llm.chat_messages[0][0]["content"] == prompts.AGENT_SYSTEM_PROMPT
+    assert [tool["function"]["name"] for tool in llm.chat_tools[0]] == ["update_plan"]
+    assert [e["data"] for e in events if e["event"] == "plan"] == [{"items": PLAN}]
+    assert [(e["data"]["step"], e["data"]["tool"]) for e in events if e["event"] == "step_end"] == [(1, "search_knowledge_base")]
+    plan_reply = next(m for m in llm.chat_messages[1] if m.get("role") == "tool")
+    assert prompts.PLAN_UPDATED in plan_reply["content"]
+    assert events[-1]["data"]["plan"] == PLAN
+@pytest.mark.asyncio
+async def test_research_mode_keeps_its_prompt_and_has_no_plan_tool(monkeypatch):
+    agent, _ = make_agent(monkeypatch)
+    llm = ScriptedLLM([answer("你好")]).install(monkeypatch)
+    events = await collect(research(agent, "你好"))
+    assert llm.chat_messages[0][0]["content"] == prompts.SYSTEM_PROMPT
+    assert llm.chat_tools[0] == []
+    assert events[-1]["data"]["plan"] is None
+@pytest.mark.asyncio
+async def test_invalid_plan_goes_back_to_the_model(monkeypatch):
+    agent, _ = make_agent(monkeypatch)
+    llm = ScriptedLLM([
+        tool_call("update_plan", {"items": [{"step": "查資料", "status": "done"}]}),
+        answer("完成"),
+    ]).install(monkeypatch)
+    events = await collect(research(agent, "整理資料", mode="agent"))
+    assert not [e for e in events if e["event"] == "plan"]
+    plan_reply = next(m for m in llm.chat_messages[1] if m.get("role") == "tool")
+    assert plan_reply["_is_error"] and "計畫格式不正確" in plan_reply["content"]
+@pytest.mark.asyncio
+async def test_agent_mode_stops_at_the_turn_limit_and_reports_progress(monkeypatch):
+    monkeypatch.setattr(agent_module, "MAX_AGENT_TURNS", 2)
+    agent, _ = make_agent(monkeypatch)
+    llm = ScriptedLLM([
+        tool_call("search_knowledge_base", {"query": "特休"}),
+        tool_call("search_knowledge_base", {"query": "加班"}, "call_2"),
+    ]).install(monkeypatch)
+    events = await collect(research(agent, "整理所有人事規定", mode="agent"))
+    assert (len(llm.chat_messages), llm.stream_calls) == (2, 1)
+    assert llm.stream_messages[0][-1] == {"role": "user", "content": prompts.AGENT_TURN_LIMIT.format(limit=2)}
+    assert events[-1]["data"]["answer"] == "串流答案"
+def test_old_tool_results_are_cleared_oldest_first_within_the_budget():
+    messages = [{"role": "system", "content": "s"}] + [
+        {"role": "tool", "tool_call_id": f"c{i}", "content": text}
+        for i, text in enumerate(["短", "甲" * 1000, "乙" * 1000, "丙" * 1000])
+    ]
+    clear_old_tool_results(messages, 1500)
+    assert [m["content"] for m in messages[1:]] == ["短", prompts.TOOL_RESULT_CLEARED, prompts.TOOL_RESULT_CLEARED, "丙" * 1000]
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mode, first_result_cleared", [("agent", True), ("research", False)])
+async def test_only_agent_mode_clears_old_tool_results_before_calling_the_model(monkeypatch, mode, first_result_cleared):
+    monkeypatch.setattr(agent_module, "AGENT_TOOL_RESULT_BUDGET_CHARS", 10)
+    agent, _ = make_agent(monkeypatch)
+    llm = ScriptedLLM([
+        tool_call("search_knowledge_base", {"query": "特休"}),
+        tool_call("search_knowledge_base", {"query": "加班"}, "call_2"),
+        answer("完成"),
+    ]).install(monkeypatch)
+    await collect(research(agent, "整理人事規定", mode=mode))
+    first, latest = [m["content"] for m in llm.chat_messages[2] if m.get("role") == "tool"]
+    assert (first == prompts.TOOL_RESULT_CLEARED) is first_result_cleared
+    assert latest != prompts.TOOL_RESULT_CLEARED

@@ -2,7 +2,7 @@
 
 [繁體中文](api.md) | [English](api_en.md)
 
-> REST and SSE streaming endpoints of the AskMiao **8.6.0** backend, written against the actual routers in `backend/app/api/`. With `ENABLE_API_DOCS=true` the backend also serves interactive docs at `http://localhost:8001/docs` (Swagger UI) and `http://localhost:8001/redoc`, and the OpenAPI document at `/openapi.json`. These three paths need no sign-in and list every endpoint and parameter, so keep `ENABLE_API_DOCS=false` (the template value) for public deployments; all three then return `404`.
+> REST and SSE streaming endpoints of the AskMiao **8.7.0** backend, written against the actual routers in `backend/app/api/`. With `ENABLE_API_DOCS=true` the backend also serves interactive docs at `http://localhost:8001/docs` (Swagger UI) and `http://localhost:8001/redoc`, and the OpenAPI document at `/openapi.json`. These three paths need no sign-in and list every endpoint and parameter, so keep `ENABLE_API_DOCS=false` (the template value) for public deployments; all three then return `404`.
 
 ## Contents
 
@@ -323,6 +323,7 @@ Send a message and start the `ResearchAgent`. The response is a **Server-Sent Ev
 | `connection_id` | integer | Yes | — | API connection to use; it must be the caller's personal connection or a shared connection granted to them (see [2.2](#22-get-apichatmodels)), otherwise `400` `找不到這個 API 連線，或你沒有使用權限` ("connection not found or not allowed") |
 | `model_name` | string | Yes | — | Model to use; it must be in that connection's model list, otherwise `400` `這個 API 連線沒有提供此模型` ("model not offered by this connection"); never falls back to another connection or a system model |
 | `reasoning_effort` | string | No | `medium` | Reasoning level, mapped per provider before it is sent; see below |
+| `mode` | string | No | `research` | `research` is research mode; `agent` is agent mode, which uses the agent system prompt and adds an `update_plan` tool; see [Architecture: Agent mode](architecture_en.md#agent-mode). Other values return `422` |
 | `attachments` | array | No | `[]` | Attachments, at most 5; see the table below |
 
 `attachments[]` fields:
@@ -359,11 +360,12 @@ Each event is formatted as `event: <name>\ndata: <JSON>\n\n`, in this order:
 | `step_start` | A tool call starts | `step` (from 1), `tool`, `arguments` |
 | `approval_required` | The tool needs approval and the agent pauses (see [2.9](#29-post-apichatapprovalsapproval_id)) | `approval_id`, `step`, `tool`, `kind`, `tool_display_name`, `target`, `arguments` |
 | `approval_resolved` | The user answered or the wait timed out | `approval_id`, `approved` (`false` on timeout) |
+| `plan` | In agent mode, the model called `update_plan` with a valid plan | `items`: the whole plan, each step `{step, status}` with `status` `pending`, `in_progress`, or `completed` |
 | `step_end` | A tool call ends | `step`, `tool`, `arguments`, `output_preview` (first 300 characters of the result JSON), `duration_seconds`, `status` (`success` / `error`) |
 | `file` | A conversation file tool succeeded, right after that call's `step_end` | `action` (`created`, `updated`, `deleted`), `file` (the file object; see [2.10](#210-get-apichatconversationsconversation_idfiles)) |
 | `token` | Answer text | `content` |
 | `sources` | After the answer | `sources` (deduplicated source names), `sources_detail` (see below) |
-| `done` | The assistant message has been saved; it is not saved when the conversation was deleted during the stream | `message_id` (`null` when not saved), `conversation_id`, `answer`, `sources`, `sources_detail`, `research_trace` (every `step_end` payload), `files` (every `file` event payload) |
+| `done` | The assistant message has been saved; it is not saved when the conversation was deleted during the stream | `message_id` (`null` when not saved), `conversation_id`, `answer`, `sources`, `sources_detail`, `research_trace` (every `step_end` payload), `plan` (the last plan, `null` when there is none), `files` (every `file` event payload) |
 | `error` | An unexpected exception in the API layer; or no stream slot is free when the stream starts (this user already has 2 answers streaming), in which case it is sent before `start` and the stream ends | `detail` (a message with an error code), `error_id`, `request_id`; only `detail` when no stream slot is free |
 
 `sources_detail` lists only the entries the answer cites as `[n]`, in order of first citation; with no citations, `sources` and `sources_detail` are both empty. Fields depend on the source:
@@ -412,7 +414,7 @@ data: {"message_id": 108, "conversation_id": 42, "answer": "特休假需先在�
 - A failed model call or an interrupted stream is reported inside a `token` event with an error code (for example 在執行自主研究時遇到連線異常（錯誤代碼：…）, "a connection error occurred during research"), not as an `error` event; the code maps to the full exception in the server log.
 - The assistant message is saved only after the stream completes. If the client disconnects mid-stream (for example by pressing stop), that answer is not saved, while the user message already is.
 - A new conversation takes the first 50 characters of its first message as its title, followed by `...` when the message is longer.
-- The assistant message stores `sources`, `sources_detail`, and `research_trace` as JSON in its `context_used` database column; attachment details are stored in the user message's `context_used`. API responses carry only the parsed fields and no longer return the raw `context_used`.
+- The assistant message stores `sources`, `sources_detail`, `research_trace`, and `plan` as JSON in its `context_used` database column; attachment details are stored in the user message's `context_used`. API responses carry only the parsed fields and no longer return the raw `context_used`.
 - Each tool result is truncated to 20,000 characters before it enters the model context.
 - While streaming, the backend returns its database connection to the pool and takes one again at the end to save the answer.
 
@@ -520,7 +522,7 @@ Returns the newest `limit` messages in chronological order; page back with `offs
 ]
 ```
 
-A message's `sources`, `sources_detail`, `research_trace`, `files`, and `attachments` are parsed from the `context_used` database column; `context_used` in the response is always `null` (the raw value may hold image attachments' base64 and is not repeated). A user message's `attachments` keep the fields sent with it, and `content` holds the text extracted from the attachment (at most 50,000 characters each); attachments saved as conversation files carry `file_id` instead of `data_url`, while images and attachments of messages from earlier versions still carry `data_url`. An assistant message's `files` holds that answer's `file` events (`null` when there are none); the events stay even after a file is deleted, so the list in [2.10](#210-get-apichatconversationsconversation_idfiles) is authoritative. `reasoning_effort` is not stored and is always `null`.
+A message's `sources`, `sources_detail`, `research_trace`, `plan`, `files`, and `attachments` are parsed from the `context_used` database column; `context_used` in the response is always `null` (the raw value may hold image attachments' base64 and is not repeated). A user message's `attachments` keep the fields sent with it, and `content` holds the text extracted from the attachment (at most 50,000 characters each); attachments saved as conversation files carry `file_id` instead of `data_url`, while images and attachments of messages from earlier versions still carry `data_url`. An assistant message's `files` holds that answer's `file` events (`null` when there are none); the events stay even after a file is deleted, so the list in [2.10](#210-get-apichatconversationsconversation_idfiles) is authoritative. `reasoning_effort` is not stored and is always `null`.
 
 ### 2.8 DELETE /api/chat/conversations/{conversation_id}
 

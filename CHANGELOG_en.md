@@ -6,6 +6,7 @@ All notable changes to AskMiao are documented in this file. The format is based 
 
 | Version | Release date | Highlights |
 |---|---|---|
+| [8.7.0](#870---2026-11-09) | 2026-11-09 | Agent mode: the chat page switches between research and agent mode; agent mode lists a plan, works through it, and reads its files back, with the plan shown as a checklist; at most 30 model calls, and old tool results are cleared once they exceed a budget |
 | [8.6.0](#860---2026-11-09) | 2026-11-09 | Model output limits looked up automatically: Claude connections to Anthropic may leave the output token limit empty, and a vLLM output token limit above the model's context length no longer stops research |
 | [8.5.1](#851---2026-11-09) | 2026-11-09 | `deploy/gen-env.sh` adds the missing line break to `deploy/.env`, so the backend of a new deployment starts |
 | [8.5.0](#850---2026-11-09) | 2026-11-09 | File preview: conversation files and knowledge base documents can be previewed without downloading (PDF pages as images; Word, Excel, and PowerPoint as web pages); the research assistant can build web pages that are previewed in an isolated iframe; cited web pages first show a preview card |
@@ -42,6 +43,12 @@ All notable changes to AskMiao are documented in this file. The format is based 
 ---
 
 ## [Unreleased]
+
+## [8.7.0] - 2026-11-09
+
+### Added
+
+- **Agent mode**: the top of the chat page switches between 「查證」 (research) and 「代理」 (agent). Following Claude Code and Codex, agent mode works toward finishing a task: understand → plan → act → verify → report, reading files back after creating or editing them and reporting what is unfinished or unverified. The research assistant lists its plan with a new `update_plan` tool; the interface shows the checklist and the completed count above the research trace, and the plan is saved with the message. For long tasks, agent mode makes at most 30 model calls and then asks the model to report its progress, and when tool results together exceed 40,000 characters the oldest are replaced with a one-line note. Research mode is unchanged. `POST /api/chat/send` takes a new `mode`, SSE adds a `plan` event, and messages gain a `plan` field; see [Architecture: Agent mode](docs/architecture_en.md#agent-mode).
 
 ## [8.6.0] - 2026-11-09
 

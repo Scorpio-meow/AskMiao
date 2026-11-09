@@ -16,6 +16,8 @@ export const ChatHeader: React.FC<ChatHeaderProps> = ({
   onSelectChoice,
   reasoningEffort,
   onSelectReasoningEffort,
+  chatMode,
+  onSelectChatMode,
   modelsLoading,
   onRefreshModels,
   currentConversation,
@@ -86,6 +88,22 @@ export const ChatHeader: React.FC<ChatHeaderProps> = ({
             <Icon name="expand-more" size={16} />
           </span>
         </div>
+        <Tooltip title="查證：查資料後回答；代理：規劃並完成多步驟的任務" placement="bottom" className={styles.modeSelect}>
+          <div className={styles.selectWrapper}>
+            <select
+              className={styles.select}
+              value={chatMode}
+              onChange={(e) => onSelectChatMode(e.target.value === 'agent' ? 'agent' : 'research')}
+              aria-label="選擇對話模式"
+            >
+              <option value="research">查證</option>
+              <option value="agent">代理</option>
+            </select>
+            <span className={styles.selectIcon} aria-hidden="true">
+              <Icon name="expand-more" size={16} />
+            </span>
+          </div>
+        </Tooltip>
         <Tooltip title="設定模型思考與推理深度 (Reasoning Effort)" placement="bottom" className={styles.effortSelect}>
           <div className={styles.selectWrapper}>
             <select

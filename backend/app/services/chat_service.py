@@ -25,6 +25,7 @@ def _build_message_response(msg: Message) -> MessageResponse:
     sources = []
     sources_detail = []
     research_trace = []
+    plan = None
     attachments = []
     files = []
     if msg.context_used:
@@ -34,6 +35,7 @@ def _build_message_response(msg: Message) -> MessageResponse:
                 sources = parsed.get("sources", [])
                 sources_detail = parsed.get("sources_detail", [])
                 research_trace = parsed.get("research_trace", [])
+                plan = parsed.get("plan")
                 attachments = parsed.get("attachments", [])
                 files = parsed.get("files", [])
             elif isinstance(parsed, list):
@@ -51,6 +53,7 @@ def _build_message_response(msg: Message) -> MessageResponse:
         sources=sources,
         sources_detail=sources_detail,
         research_trace=research_trace,
+        plan=plan,
         files=files
     )
 def _stored_attachments(msg: Message) -> List[Dict]:

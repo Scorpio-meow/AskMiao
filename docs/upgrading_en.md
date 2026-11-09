@@ -4,6 +4,7 @@
 
 > How to upgrade an existing deployment to a new release, with rollback steps and troubleshooting. See the [CHANGELOG](../CHANGELOG_en.md) for the full list of changes in each version.
 
+- [Upgrading from 8.6.0 to 8.7.0](#upgrading-from-860-to-870)
 - [Upgrading from 8.5.1 to 8.6.0](#upgrading-from-851-to-860)
 - [Upgrading from 8.5.0 to 8.5.1](#upgrading-from-850-to-851)
 - [Upgrading from 8.4.0 to 8.5.0](#upgrading-from-840-to-850)
@@ -45,6 +46,22 @@
   - [Step 5: verify the upgrade](#step-5-verify-the-upgrade)
   - [Rolling back to 2.2.x](#rolling-back-to-22x)
   - [Troubleshooting](#troubleshooting)
+
+---
+
+## Upgrading from 8.6.0 to 8.7.0
+
+For upgrading from 8.6.0 to 8.7.0 (2026-11-09); see the [CHANGELOG](../CHANGELOG_en.md#870---2026-11-09) for the full list of changes. This release needs no `.env` changes and does not change the database schema, so switching to the new code is enough; with `deploy/`, rebuild the images as usual.
+
+| Item | 8.6.0 | 8.7.0 | Action |
+|---|---|---|---|
+| Chat mode | Research only | The top of the chat page switches between 「查證」 (research) and 「代理」 (agent); research is the default | None; research mode is unchanged |
+| `POST /api/chat/send` | No `mode` | A new optional `mode` (`research` or `agent`, `research` when omitted) | None for your own API clients |
+| SSE and messages | No plan | Agent mode sends `plan` events, and `done` and message objects gain a `plan` field | SSE clients only need to skip events they do not know |
+
+Agent mode lets the model call tools over many turns (at most 30), and small local models may not follow the plan; try it with the models you actually use before offering it to users.
+
+To roll back to 8.6.0, switch back to the older code. Plans stored in messages are ignored and nothing else is affected; 8.6.0 has no agent mode, so a request carrying `mode` has that field ignored and is answered in research mode.
 
 ---
 

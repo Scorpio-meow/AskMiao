@@ -54,12 +54,14 @@
   max-width: 18rem;
 }
 
-.effortSelect {
+.effortSelect,
+.modeSelect {
   display: inline-flex;
   min-width: 0;
 }
 
-.effortSelect .selectWrapper {
+.effortSelect .selectWrapper,
+.modeSelect .selectWrapper {
   width: 100%;
 }
 
@@ -128,11 +130,19 @@
 
   .controls {
     flex: 1 1 100%;
+    flex-wrap: wrap;
   }
 
-  .modelSelect,
+  .modelSelect {
+    flex: 1 1 100%;
+  }
+
   .effortSelect {
     flex: 1 1 0;
+  }
+
+  .modeSelect {
+    flex: none;
   }
 
   .modelSelect .select {

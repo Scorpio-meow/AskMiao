@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
-import api, { chatService, ChatAttachment, Conversation, Message } from '../services/api';
+import api, { chatService, ChatAttachment, ChatMode, Conversation, Message } from '../services/api';
 export interface ModelChoice {
   connectionId: number;
   model: string;
@@ -126,6 +126,7 @@ export function useChat(onError: (message: string) => void) {
     content: string,
     choice: ModelChoice,
     reasoningEffort: string,
+    mode: ChatMode,
     attachments?: ChatAttachment[]
   ) => {
     if (!content.trim() && (!attachments || attachments.length === 0)) return;
@@ -188,6 +189,7 @@ export function useChat(onError: (message: string) => void) {
         choice.connectionId,
         choice.model,
         reasoningEffort,
+        mode,
         (ev) => {
           if (ev.event === 'start') {
             started = true;
@@ -222,6 +224,9 @@ export function useChat(onError: (message: string) => void) {
             updateBotMessage(m => (
               m.pending_approval?.approval_id === ev.data?.approval_id ? { ...m, pending_approval: null } : m
             ));
+          } else if (ev.event === 'plan') {
+            const items = ev.data?.items;
+            updateBotMessage(m => ({ ...m, plan: Array.isArray(items) ? items : m.plan }));
           } else if (ev.event === 'file') {
             const fileEvent = ev.data;
             updateBotMessage(m => ({ ...m, files: [...(m.files || []), fileEvent] }));
@@ -247,6 +252,7 @@ export function useChat(onError: (message: string) => void) {
               sources: doneData.sources || m.sources,
               sources_detail: doneData.sources_detail || m.sources_detail,
               research_trace: doneData.research_trace || m.research_trace,
+              plan: doneData.plan || m.plan,
               files: doneData.files || m.files
             }));
             streamConversationId = doneData.conversation_id ?? streamConversationId;

@@ -4,6 +4,7 @@ import { ChatMessageItemProps, ResearchTraceStep } from './types';
 import ThinkBlock from './ThinkBlock';
 import SourceBadges from './SourceBadges';
 import ResearchTraceBlock from './ResearchTraceBlock';
+import PlanChecklist from './PlanChecklist';
 import ToolApprovalCard from './ToolApprovalCard';
 import MarkdownContent from './MarkdownContent';
 import ConversationFileCard from './ConversationFileCard';
@@ -133,6 +134,9 @@ const ChatMessageItemView: React.FC<ChatMessageItemProps> = ({
           <div className={styles.assistantColumn}>
             <span className="sr-only">AskMiao 回覆：</span>
             {attachmentGallery}
+            {message.plan && message.plan.length > 0 && (
+              <PlanChecklist plan={message.plan} isStreaming={isStreaming && !isSettled} />
+            )}
             {hasTrace && (
               <ResearchTraceBlock trace={trace} hasContent={hasText} isStreaming={isStreaming} />
             )}

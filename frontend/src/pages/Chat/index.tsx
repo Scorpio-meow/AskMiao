@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef, useId } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
-import { chatService, ChatConnectionOption, Conversation, Message } from '../../services/api';
+import { chatService, ChatConnectionOption, ChatMode, Conversation, Message } from '../../services/api';
 import { useChat } from '../../hooks/useChat';
 import { useDocumentTitle } from '../../hooks/useDocumentTitle';
 import { copyText } from '../../utils/clipboard';
@@ -26,6 +26,7 @@ const describeSendError = (err: unknown): string => {
 const isNotFound = (err: unknown): boolean => (err as { response?: { status?: number } })?.response?.status === 404;
 const MODEL_STORAGE_KEY = 'askmiao_selected_model';
 const REASONING_EFFORT_STORAGE_KEY = 'askmiao_reasoning_effort';
+const CHAT_MODE_STORAGE_KEY = 'askmiao_chat_mode';
 const readStorage = (key: string): string | null => {
   try {
     return localStorage.getItem(key);
@@ -52,6 +53,7 @@ export const ChatPage: React.FC = () => {
     const saved = readStorage(REASONING_EFFORT_STORAGE_KEY);
     return REASONING_EFFORT_OPTIONS.some((opt) => opt.value === saved) ? saved! : 'medium';
   });
+  const [chatMode, setChatMode] = useState<ChatMode>(() => (readStorage(CHAT_MODE_STORAGE_KEY) === 'agent' ? 'agent' : 'research'));
   const [modelsLoading, setModelsLoading] = useState(false);
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
   const [pendingDelete, setPendingDelete] = useState<Conversation | null>(null);
@@ -161,6 +163,10 @@ export const ChatPage: React.FC = () => {
   const availableChoices = (connections || []).flatMap((connection) => connection.models.map((model) => choiceKey(connection.id, model)));
   const selectedModel = availableChoices.includes(selectedChoice) ? parseChoice(selectedChoice) : null;
   const effectiveReasoningEffort = resolveReasoningEffort(selectedModel?.model || '', reasoningEffort);
+  const handleSelectChatMode = (mode: ChatMode) => {
+    setChatMode(mode);
+    writeStorage(CHAT_MODE_STORAGE_KEY, mode);
+  };
   const handleSelectReasoningEffort = (effort: string) => {
     setReasoningEffort(effort);
     writeStorage(REASONING_EFFORT_STORAGE_KEY, effort);
@@ -188,7 +194,7 @@ export const ChatPage: React.FC = () => {
     setNewMessage('');
     setAttachments([]);
     try {
-      await sendChatMessage(toSend, selectedModel, effectiveReasoningEffort, toSendAttachments);
+      await sendChatMessage(toSend, selectedModel, effectiveReasoningEffort, chatMode, toSendAttachments);
     } catch (err) {
       setNewMessage((current) => current || toSend);
       setAttachments((current) => (current.length > 0 ? current : toSendAttachments));
@@ -198,7 +204,7 @@ export const ChatPage: React.FC = () => {
   const handleRetry = (failedMessage: Message) => {
     const question = findRetryQuestion(messages, failedMessage);
     if (!question || sending || !selectedModel) return;
-    sendChatMessage(question.content, selectedModel, effectiveReasoningEffort, question.attachments).catch((err) => {
+    sendChatMessage(question.content, selectedModel, effectiveReasoningEffort, chatMode, question.attachments).catch((err) => {
       showSnackbar(`訊息沒有送出：${describeSendError(err)}`, 'error');
     });
   };
@@ -263,6 +269,8 @@ export const ChatPage: React.FC = () => {
           onSelectChoice={handleSelectChoice}
           reasoningEffort={effectiveReasoningEffort}
           onSelectReasoningEffort={handleSelectReasoningEffort}
+          chatMode={chatMode}
+          onSelectChatMode={handleSelectChatMode}
           modelsLoading={modelsLoading}
           onRefreshModels={loadAvailableModels}
           currentConversation={currentConversation}

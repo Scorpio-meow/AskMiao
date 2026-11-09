@@ -376,3 +376,31 @@ describe('web source preview', () => {
     expect(html).not.toContain('href="https://www.example.gov.tw/news/1"');
   });
 });
+describe('PlanChecklist', () => {
+  const plan: Message['plan'] = [
+    { step: '查特休規定', status: 'completed' },
+    { step: '整理成表格', status: 'in_progress' },
+    { step: '讀回檔案核對', status: 'pending' },
+  ];
+  it('shows the plan above the research trace with its progress', () => {
+    const html = renderMessage({ id: 30, content: '', is_user: false, plan, research_trace: [{ step: 1, tool: 'search_knowledge_base', status: 'success' }] }, { isStreaming: true });
+    const text = textOf(html);
+    expect(text).toContain('計畫1/3 步已完成');
+    expect(text).toContain('查特休規定（已完成）');
+    expect(text).toContain('整理成表格（進行中）');
+    expect(text).toContain('讀回檔案核對（尚未開始）');
+    expect(html.indexOf('任務計畫')).toBeLessThan(html.indexOf('研究過程'));
+  });
+  it('spins only while the step is still running', () => {
+    const planHtml = (message: Message) => {
+      const html = renderMessage(message, { isStreaming: true });
+      return html.slice(html.indexOf('任務計畫'), html.indexOf('</section>'));
+    };
+    expect(planHtml({ id: 31, content: '', is_user: false, plan })).toContain('aria-label="載入中"');
+    expect(planHtml({ id: 32, content: '中斷', is_user: false, plan, stopped: true })).not.toContain('aria-label="載入中"');
+  });
+  it('renders nothing for a message without a plan', () => {
+    const html = renderMessage({ id: 33, content: '你好', is_user: false });
+    expect(html).not.toContain('任務計畫');
+  });
+});

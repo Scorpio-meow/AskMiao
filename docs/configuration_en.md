@@ -2,7 +2,7 @@
 
 [繁體中文](configuration.md) | [English](configuration_en.md)
 
-> Every setting in the backend `backend/.env` and the frontend `frontend/.env`, with its default and what it actually does, as of **8.6.0** (to upgrade from 8.5.1, see the [upgrade guide](upgrading_en.md#upgrading-from-851-to-860)). The source of truth is `Settings` in `backend/app/core/config.py`; the template is [`backend/.env.example`](../backend/.env.example).
+> Every setting in the backend `backend/.env` and the frontend `frontend/.env`, with its default and what it actually does, as of **8.7.0** (to upgrade from 8.6.0, see the [upgrade guide](upgrading_en.md#upgrading-from-860-to-870)). The source of truth is `Settings` in `backend/app/core/config.py`; the template is [`backend/.env.example`](../backend/.env.example).
 
 - [How settings are read](#how-settings-are-read)
 - [Required settings](#required-settings)
@@ -96,7 +96,7 @@ Each account can only chat through two kinds of connection, and the model menu g
 
 When a new connection is created, the form fills in the provider's official API address and the models below, which can be edited:
 
-| Provider | Prefilled models (8.6.0) |
+| Provider | Prefilled models (8.7.0) |
 |---|---|
 | OpenAI | `gpt-6.1-sol`, `gpt-6-sol`, `gpt-6-luna`, `gpt-6-astra`, `gpt-5.6-sol`, `gpt-5.6-luna`, `gpt-5.6-terra`, `gpt-5.4`, `gpt-5.4-mini` |
 | Anthropic | `claude-opus-5-5`, `claude-fable-5-1`, `claude-sonnet-5-5`, `claude-haiku-5-5`, `claude-sonnet-5`, `claude-opus-5`, `claude-fable-5`, `claude-opus-4-8`, `claude-haiku-4-5` |
@@ -455,6 +455,10 @@ The limits below protect a single backend process and the operator's paid usage.
 | Constant | Value | Description |
 |---|---|---|
 | `MAX_TOOL_RESULT_CHARS` | 20,000 characters | Each tool call's result is truncated to this length before it enters the model context |
+| `MAX_AGENT_TURNS` | 30 | Model calls allowed in agent mode before the model is asked to report its progress |
+| `AGENT_TOOL_RESULT_BUDGET_CHARS` | 40,000 characters | Combined tool results allowed in agent mode; above it the oldest are replaced with a one-line note |
+| `MAX_PLAN_STEPS` | 12 | Steps allowed in an agent mode plan |
+| `MAX_PLAN_STEP_CHARS` | 120 characters | Length of each plan step |
 | `MAX_TOOL_NAME_CHARS` | 64 characters | Length of the tool function names given to the model (the limit of OpenAI and other providers); names generated from an OpenAPI operationId or an MCP tool are truncated with an 8-character hash appended, and longer names created by hand or sent to import return `400` |
 | `MAX_OPENAPI_SCHEMA_REFS` | 200 | `$ref`s expanded at most per parameter or request body schema when an OpenAPI spec is parsed; references past this count and cyclic references are replaced by an object schema holding only a description |
 | `MAX_OPENAPI_SCHEMA_DEPTH` | 32 | Nesting depth expanded per parameter or request body schema when an OpenAPI spec is parsed (each step into `$ref`, `properties`, `items`, `allOf`, and so on counts as one level); anything deeper is replaced by an object schema holding only a description |

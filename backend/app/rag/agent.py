@@ -9,9 +9,13 @@ import time
 from datetime import datetime
 from typing import Any, AsyncGenerator, Callable, Dict, List, Optional
 from app.core.limits import (
+    AGENT_TOOL_RESULT_BUDGET_CHARS,
     CHAT_ATTACHMENT_EXTRACTION_LIMITS,
+    MAX_AGENT_TURNS,
     MAX_ATTACHMENT_TEXT_CHARS,
 )
+from app.models import AGENT_MODE, RESEARCH_MODE
+from app.rag.agent_mode import UPDATE_PLAN_TOOL, UPDATE_PLAN_TOOL_NAME, clear_old_tool_results, parse_plan
 from app import prompts
 from app.core.llm_client import LlmEndpoint, chat_completion, stream_completion
 from app.rag.file_tools import FILE_TOOL_NAMES
@@ -82,15 +86,21 @@ class ResearchAgent:
         reasoning_effort: Optional[str] = "medium",
         attachments: Optional[List[Any]] = None,
         approval_user_id: Optional[int] = None,
-        conversation_id: Optional[int] = None
+        conversation_id: Optional[int] = None,
+        mode: str = RESEARCH_MODE
     ) -> AsyncGenerator[Dict[str, Any], None]:
         start_time = time.time()
+        agent_mode = mode == AGENT_MODE
         tools_def = await asyncio.to_thread(self.tools.get_tool_definitions, approval_user_id, conversation_id)
         skill_names = next(
             (t["function"]["parameters"]["properties"]["name"]["enum"] for t in tools_def if t["function"]["name"] == "activate_skill"),
             [],
         )
-        system_prompt = prompts.SYSTEM_PROMPT + prompts.SKILL_RULES if skill_names else prompts.SYSTEM_PROMPT
+        if agent_mode:
+            tools_def = [*tools_def, UPDATE_PLAN_TOOL]
+        base_prompt = prompts.AGENT_SYSTEM_PROMPT if agent_mode else prompts.SYSTEM_PROMPT
+        system_prompt = base_prompt + prompts.SKILL_RULES if skill_names else base_prompt
+        plan: Optional[List[Dict[str, str]]] = None
         research_trace: List[Dict[str, Any]] = []
         explicit_skill = None
         explicit_match = EXPLICIT_SKILL_PATTERN.match(query)
@@ -179,6 +189,11 @@ class ResearchAgent:
         final_answer = ""
         turns_used = 0
         while True:
+            if agent_mode:
+                if turns_used >= MAX_AGENT_TURNS:
+                    messages.append({"role": "user", "content": prompts.AGENT_TURN_LIMIT.format(limit=MAX_AGENT_TURNS)})
+                    break
+                clear_old_tool_results(messages, AGENT_TOOL_RESULT_BUDGET_CHARS)
             turns_used += 1
             try:
                 assistant_msg = await chat_completion(
@@ -213,6 +228,22 @@ class ResearchAgent:
                     args = raw_args or {}
                 if not isinstance(args, dict):
                     args = {}
+                if agent_mode and fn_name == UPDATE_PLAN_TOOL_NAME:
+                    new_plan, plan_error = parse_plan(args)
+                    if new_plan is None:
+                        plan_output: Dict[str, Any] = {"error": plan_error}
+                    else:
+                        plan = new_plan
+                        plan_output = {"message": prompts.PLAN_UPDATED}
+                        yield {"event": "plan", "data": {"items": plan}}
+                    messages.append({
+                        "role": "tool",
+                        "tool_call_id": tc.get("id") or f"call_plan_{turns_used}",
+                        "name": fn_name,
+                        "_is_error": new_plan is None,
+                        "content": session.tool_message_content(fn_name, plan_output)
+                    })
+                    continue
                 step_num = len(research_trace) + 1
                 logger.info("🔍 [Agent Step %s] 呼叫工具 %s", step_num, log_fields(tool=fn_name, arg_keys=",".join(map(str, args)) or None))
  
@@ -292,6 +323,8 @@ class ResearchAgent:
                     "content": session.tool_message_content(fn_name, tool_output)
                 })
         if not final_answer:
+            if agent_mode:
+                clear_old_tool_results(messages, AGENT_TOOL_RESULT_BUDGET_CHARS)
             tool_result_filter = ToolResultFilter()
             try:
                 async for chunk in stream_completion(
@@ -328,6 +361,7 @@ class ResearchAgent:
                 "sources": sources,
                 "sources_detail": sources_detail,
                 "research_trace": research_trace,
+                "plan": plan,
                 "turns_used": turns_used,
                 "total_time": total_time,
                 "retrieval_strategy": "agentic_react"

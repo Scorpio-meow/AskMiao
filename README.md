@@ -10,7 +10,7 @@
 
 [繁體中文](README.md) | [English](README_en.md)
 
-[![Version](https://img.shields.io/badge/version-8.6.0-2563eb?style=flat)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-8.7.0-2563eb?style=flat)](CHANGELOG.md)
 [![Python](https://img.shields.io/badge/Python-3.12+-3776AB?style=flat&logo=python&logoColor=white)](https://www.python.org/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-005571?style=flat&logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
 [![React](https://img.shields.io/badge/React-19.3-61DAFB?style=flat&logo=react&logoColor=black)](https://react.dev/)
@@ -81,6 +81,7 @@
 - **研究歷程**：每一步的工具、參數、結果摘要與耗時以 SSE 即時推送，前端以可摺疊的時間軸呈現。
 - **多模態提問**：對話可附圖片與檔案（每則最多 5 個、單檔 15 MiB、合計 20 MiB），圖片以 `image_url` 交給視覺模型，文字類附件抽取內容併入提問。
 - **對話檔案**：研究助理可以在對話中建立 Word、Excel、PowerPoint、PDF、Markdown、CSV 等檔案與網頁；修改上傳的文件時另存新版本，原檔不變。檔案在該則回答下方或標題列的「對話檔案」清單中預覽與下載，網頁在隔離的 iframe 中直接執行；研究助理要刪除檔案時先經發問者核准。
+- **代理模式**：聊天頁可以切換「查證」與「代理」。代理模式參考 Claude Code、Codex，先列計畫、逐步執行並讀回檔案核對，介面即時顯示計畫清單與完成數；最多呼叫模型 30 輪，用完時回報進度。
 - **預覽**：對話檔案與知識庫文件不必下載就能預覽（PDF 逐頁轉圖，Word、Excel、PowerPoint 轉成網頁）；回答引用的網頁先以預覽卡顯示標題、網站與摘要。
 - **對話前文**：每次提問從資料庫帶入最近 `CONVERSATION_HISTORY_MESSAGES` 則訊息，後端重啟不會遺失上下文。
 
@@ -636,7 +637,7 @@ bun run build        # 產出 build/
 | [設定參考](docs/configuration.md) | 每個環境變數的預設值與作用、供應商路由、門檻校準、前端設定 |
 | [部署指南](docs/deployment.md) | 以 Docker Compose 部署到主機、HTTPS、備份與更新 |
 | [疑難排解](docs/troubleshooting.md) | 啟動、登入、前端與工具的常見錯誤與處理方式 |
-| [升級指南](docs/upgrading.md) | 從 2.x 升級到 3.0.0，以及之後各版（到 8.5.1 升級到 8.6.0）的步驟、回退方式與常見問題 |
+| [升級指南](docs/upgrading.md) | 從 2.x 升級到 3.0.0，以及之後各版（到 8.6.0 升級到 8.7.0）的步驟、回退方式與常見問題 |
 | [架構決策紀錄（ADR）](docs/adr/README.md) | 重大設計的背景、取捨與後續修訂 |
 | [llms.txt](llms.txt) | 給 AI Agent 讀的檔案地圖、系統約束與驗證方式 |
 | [版本變更紀錄](CHANGELOG.md) | 每個版本的新增、變更、移除與修正 |
@@ -644,7 +645,7 @@ bun run build        # 產出 build/
 
 ## 版本資訊
 
-- **目前版本**：8.6.0（2026-11-09），變更內容見 [CHANGELOG](CHANGELOG.md)。
+- **目前版本**：8.7.0（2026-11-09），變更內容見 [CHANGELOG](CHANGELOG.md)。
 - **版本規則**：遵循 [語意化版本](https://semver.org/lang/zh-TW/)。不相容的變更（例如新增必填設定、改變 API 權限或索引格式）升主版號。
 - **版本號位置**：後端 `backend/app/__init__.py` 的 `__version__`（OpenAPI 文件與 MCP 交握都引用它）、前端 `frontend/package.json`，發行時與 `CHANGELOG.md` 一併更新。
 

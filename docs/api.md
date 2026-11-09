@@ -2,7 +2,7 @@
 
 [繁體中文](api.md) | [English](api_en.md)
 
-> 本文件說明 AskMiao 後端 **8.6.0** 的 REST 與 SSE 串流端點，內容依 `backend/app/api/` 的實際路由撰寫。設定 `ENABLE_API_DOCS=true` 時，後端另外在 `http://localhost:8001/docs`（Swagger UI）與 `http://localhost:8001/redoc` 提供互動測試，OpenAPI 規格位於 `/openapi.json`；這三個路徑不需要登入且會列出所有端點與參數，對外服務時請保持 `ENABLE_API_DOCS=false`（範本值），此時三者一律回傳 `404`。
+> 本文件說明 AskMiao 後端 **8.7.0** 的 REST 與 SSE 串流端點，內容依 `backend/app/api/` 的實際路由撰寫。設定 `ENABLE_API_DOCS=true` 時，後端另外在 `http://localhost:8001/docs`（Swagger UI）與 `http://localhost:8001/redoc` 提供互動測試，OpenAPI 規格位於 `/openapi.json`；這三個路徑不需要登入且會列出所有端點與參數，對外服務時請保持 `ENABLE_API_DOCS=false`（範本值），此時三者一律回傳 `404`。
 
 ## 目錄
 
@@ -321,6 +321,7 @@
 | `connection_id` | integer | 是 | — | 要使用的 API 連線，必須是自己的個人連線或開放給自己的共用連線（見 [2.2](#22-get-apichatmodels)），否則回傳 `400` `找不到這個 API 連線，或你沒有使用權限` |
 | `model_name` | string | 是 | — | 要使用的模型，必須在該連線的模型清單內，否則回傳 `400` `這個 API 連線沒有提供此模型`；不會改用其他連線或系統模型 |
 | `reasoning_effort` | string | 否 | `medium` | 推理程度，依供應商對應後傳給模型，見下方說明 |
+| `mode` | string | 否 | `research` | `research` 為查證模式；`agent` 為代理模式，改用代理的系統提示詞並多一個 `update_plan` 工具，見 [系統架構：代理模式](architecture.md#代理模式)；其他值回傳 `422` |
 | `attachments` | array | 否 | `[]` | 附件，最多 5 個，見下表 |
 
 `attachments[]` 欄位：
@@ -357,11 +358,12 @@
 | `step_start` | 每次工具呼叫開始 | `step`（從 1 起算）、`tool`、`arguments` |
 | `approval_required` | 工具需要核准，Agent 暫停等待（見 [2.9](#29-post-apichatapprovalsapproval_id)） | `approval_id`、`step`、`tool`、`kind`、`tool_display_name`、`target`、`arguments` |
 | `approval_resolved` | 使用者回覆或等待逾時 | `approval_id`、`approved`（逾時為 `false`） |
+| `plan` | 代理模式中模型以正確格式呼叫 `update_plan` | `items`：整份計畫，每步為 `{step, status}`，`status` 為 `pending`、`in_progress` 或 `completed` |
 | `step_end` | 每次工具呼叫結束 | `step`、`tool`、`arguments`、`output_preview`（結果 JSON 的前 300 字）、`duration_seconds`、`status`（`success` / `error`） |
 | `file` | 對話檔案工具成功，緊接在該次 `step_end` 之後 | `action`（`created`、`updated`、`deleted`）、`file`（檔案物件，見 [2.10](#210-get-apichatconversationsconversation_idfiles)） |
 | `token` | 答案文字 | `content` |
 | `sources` | 答案完成後 | `sources`（來源名稱，去重）、`sources_detail`（見下表） |
-| `done` | 助理訊息已存入資料庫；串流期間對話已被刪除時不儲存 | `message_id`（未儲存時為 `null`）、`conversation_id`、`answer`、`sources`、`sources_detail`、`research_trace`（所有 `step_end` 的內容）、`files`（所有 `file` 事件的內容） |
+| `done` | 助理訊息已存入資料庫；串流期間對話已被刪除時不儲存 | `message_id`（未儲存時為 `null`）、`conversation_id`、`answer`、`sources`、`sources_detail`、`research_trace`（所有 `step_end` 的內容）、`plan`（最後一次的計畫，沒有時為 `null`）、`files`（所有 `file` 事件的內容） |
 | `error` | API 層發生未預期例外；或串流開始時已沒有可用的串流名額（這位使用者已有 2 個回答正在串流），此時在 `start` 之前送出並結束串流 | `detail`（含錯誤代碼的訊息）、`error_id`、`request_id`；沒有串流名額時只有 `detail` |
 
 `sources_detail` 只列答案以 `[n]` 實際引用的條目，依第一次引用的順序排列；沒有任何引用時 `sources` 與 `sources_detail` 都是空陣列。每筆的欄位依來源而定：
@@ -410,7 +412,7 @@ data: {"message_id": 108, "conversation_id": 42, "answer": "特休假需先在�
 - 模型呼叫失敗或串流中斷時，錯誤會以 `token` 事件夾帶錯誤代碼送出（例如 `在執行自主研究時遇到連線異常（錯誤代碼：…）`），而不是 `error` 事件；伺服器日誌可依代碼查到完整例外。
 - 助理訊息在串流完成後才寫入資料庫。用戶端中途中斷連線（例如按下「停止」）時，這次的回答不會儲存，使用者訊息則已存入。
 - 新對話的標題是第一則訊息的前 50 字，超過 50 字時再加上 `...`。
-- 助理訊息的 `sources`、`sources_detail` 與 `research_trace` 會以 JSON 存入訊息的 `context_used` 資料庫欄位；附件資訊則存在使用者訊息的 `context_used`。API 回應只提供解析後的欄位，不再回傳原始的 `context_used`。
+- 助理訊息的 `sources`、`sources_detail`、`research_trace` 與 `plan` 會以 JSON 存入訊息的 `context_used` 資料庫欄位；附件資訊則存在使用者訊息的 `context_used`。API 回應只提供解析後的欄位，不再回傳原始的 `context_used`。
 - 每次工具結果放進模型脈絡前最多 20,000 字元，超過的部分截斷。
 - 串流期間後端會先把資料庫連線還給連線池，結束時再取得連線儲存回答。
 
@@ -518,7 +520,7 @@ data: {"message_id": 108, "conversation_id": 42, "answer": "特休假需先在�
 ]
 ```
 
-訊息物件的 `sources`、`sources_detail`、`research_trace`、`files` 與 `attachments` 由資料庫的 `context_used` 欄位解析而來；回應中的 `context_used` 一律為 `null`（原始內容可能含圖片附件的 base64，不再重複輸出）。使用者訊息的 `attachments` 保留送出時的欄位，`content` 為附件抽出的文字（每個最多 50,000 字元）；存成對話檔案的附件改帶 `file_id`、沒有 `data_url`，圖片與舊版訊息的附件仍帶 `data_url`。助理訊息的 `files` 是這次回答的 `file` 事件（沒有時為 `null`）；檔案之後被刪除時，事件仍會保留，以 [2.10](#210-get-apichatconversationsconversation_idfiles) 的清單為準。`reasoning_effort` 不會儲存，一律為 `null`。
+訊息物件的 `sources`、`sources_detail`、`research_trace`、`plan`、`files` 與 `attachments` 由資料庫的 `context_used` 欄位解析而來；回應中的 `context_used` 一律為 `null`（原始內容可能含圖片附件的 base64，不再重複輸出）。使用者訊息的 `attachments` 保留送出時的欄位，`content` 為附件抽出的文字（每個最多 50,000 字元）；存成對話檔案的附件改帶 `file_id`、沒有 `data_url`，圖片與舊版訊息的附件仍帶 `data_url`。助理訊息的 `files` 是這次回答的 `file` 事件（沒有時為 `null`）；檔案之後被刪除時，事件仍會保留，以 [2.10](#210-get-apichatconversationsconversation_idfiles) 的清單為準。`reasoning_effort` 不會儲存，一律為 `null`。
 
 ### 2.8 DELETE /api/chat/conversations/{conversation_id}
 

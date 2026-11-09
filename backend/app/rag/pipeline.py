@@ -63,7 +63,8 @@ class RAGPipeline:
         reasoning_effort: Optional[str] = "medium",
         attachments: Optional[List[Any]] = None,
         approval_user_id: Optional[int] = None,
-        conversation_id: Optional[int] = None
+        conversation_id: Optional[int] = None,
+        mode: str
     ) -> AsyncGenerator[Dict[str, Any], None]:
         async for event_item in self.agent.stream_research(
             query=query,
@@ -73,6 +74,7 @@ class RAGPipeline:
             reasoning_effort=reasoning_effort,
             attachments=attachments,
             approval_user_id=approval_user_id,
-            conversation_id=conversation_id
+            conversation_id=conversation_id,
+            mode=mode
         ):
             yield event_item

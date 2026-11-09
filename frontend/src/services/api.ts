@@ -67,6 +67,11 @@ export interface ConversationFileEvent {
   action: 'created' | 'updated' | 'deleted';
   file: ConversationFile;
 }
+export type ChatMode = 'research' | 'agent';
+export interface PlanItem {
+  step: string;
+  status: 'pending' | 'in_progress' | 'completed';
+}
 export interface Message {
   id?: number;
   content: string;
@@ -98,6 +103,7 @@ export interface Message {
   error?: string;
   stopped?: boolean;
   pending_approval?: PendingToolApproval | null;
+  plan?: PlanItem[] | null;
   files?: ConversationFileEvent[];
 }
 export interface PendingToolApproval {
@@ -236,7 +242,7 @@ api.interceptors.response.use(
   }
 );
 export interface StreamEvent {
-  event: 'start' | 'step_start' | 'step_end' | 'approval_required' | 'approval_resolved' | 'file' | 'token' | 'think' | 'sources' | 'done' | 'error';
+  event: 'start' | 'step_start' | 'step_end' | 'approval_required' | 'approval_resolved' | 'plan' | 'file' | 'token' | 'think' | 'sources' | 'done' | 'error';
   data: any;
 }
 export interface ChatConnectionOption {
@@ -257,6 +263,7 @@ export const chatService = {
     connection_id: number,
     model_name: string,
     reasoning_effort: string,
+    mode: ChatMode,
     onEvent: (event: StreamEvent) => void,
     signal?: AbortSignal,
     attachments?: ChatAttachment[]
@@ -274,6 +281,7 @@ export const chatService = {
       connection_id,
       model_name,
       reasoning_effort,
+      mode,
       attachments: payloadAttachments
     });
     const send = (token: string | null) => fetch(`${API_BASE_URL}/chat/send`, {

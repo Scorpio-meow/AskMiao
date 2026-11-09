@@ -186,6 +186,9 @@ LLM_PROVIDER_PATTERN = r"^(openai|anthropic|gemini|foundry|ollama|vllm)$"
 MAX_LLM_CONNECTION_MODELS = 50
 SYSTEM_MODEL_PURPOSES = ("document_summary", "pdf_ocr")
 REASONING_EFFORT_PATTERN = f"^({'|'.join(REASONING_EFFORT_VALUES)})$"
+RESEARCH_MODE = "research"
+AGENT_MODE = "agent"
+CHAT_MODE_PATTERN = f"^({RESEARCH_MODE}|{AGENT_MODE})$"
 class LlmConnectionValidator(BaseModel):
     @field_validator("name", "api_base", check_fields=False)
     @classmethod
@@ -287,6 +290,7 @@ class MessageCreate(BaseModel):
     connection_id: int
     model_name: str = Field(min_length=1, max_length=200)
     reasoning_effort: Optional[str] = "medium"
+    mode: str = Field(default=RESEARCH_MODE, pattern=CHAT_MODE_PATTERN)
     attachments: Optional[List[FileAttachment]] = Field(default=[], max_length=MAX_CHAT_ATTACHMENTS)
     @model_validator(mode="after")
     def validate_attachment_total(self) -> "MessageCreate":
@@ -306,6 +310,7 @@ class MessageResponse(BaseModel):
     sources: Optional[List[str]] = None
     sources_detail: Optional[List[Dict[str, Any]]] = None
     research_trace: Optional[List[Dict[str, Any]]] = None
+    plan: Optional[List[Dict[str, Any]]] = None
     files: Optional[List[Dict[str, Any]]] = None
 class ConversationResponse(BaseModel):
     id: int
