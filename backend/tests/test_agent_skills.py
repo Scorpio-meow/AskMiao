@@ -15,6 +15,7 @@ from app.models import AgentSkill
 from app.models.database import SessionLocal
 from app.rag.agent import ResearchAgent
 from app.rag.research_session import ResearchSession
+from app.rag import tools as tools_module
 from app.rag.tools import ResearchToolRegistry
 from app.services import agent_skills
 from app.services.agent_skills import SkillError, parse_skill_md, read_skill_folder, read_skill_upload
@@ -405,3 +406,20 @@ async def test_unknown_slash_command_is_left_as_is(skills_dir):
         [e async for e in research(agent, "/unknown 你好")]
     assert "## 技能" not in captured["messages"][0]["content"]
     assert captured["messages"][-1]["content"].split("\n\n", 1)[1] == "/unknown 你好"
+@pytest.mark.asyncio
+async def test_slash_command_loads_a_skill_left_out_of_a_full_catalog(skills_dir, monkeypatch):
+    install_via_api(skills_dir)
+    catalog = tool(ResearchToolRegistry().get_tool_definitions(), "activate_skill")["function"]["description"]
+    monkeypatch.setattr(tools_module, "MAX_SKILL_CATALOG_CHARS", len(catalog))
+    assert upload(client_for(ADMIN_USER), "SKILL.md", skill_md("alpha-notes")).status_code == 200
+    registry = ResearchToolRegistry()
+    assert tool(registry.get_tool_definitions(), "activate_skill")["function"]["parameters"]["properties"]["name"]["enum"] == ["alpha-notes"]
+    captured = {}
+    async def fake_chat_completion(messages, **kwargs):
+        captured["tools"] = kwargs["tools"]
+        return {"role": "assistant", "content": "完成"}
+    with patch("app.rag.agent.chat_completion", fake_chat_completion):
+        events = [e async for e in research(ResearchAgent(tool_registry=registry), "/pdf-processing 幫我整理這份 PDF")]
+    assert events[-1]["data"]["research_trace"][0] == {**events[-1]["data"]["research_trace"][0], "tool": "activate_skill", "status": "success"}
+    assert tool(captured["tools"], "activate_skill")["function"]["parameters"]["properties"]["name"]["enum"] == ["pdf-processing"]
+    assert tool(captured["tools"], "read_skill_resource")["function"]["parameters"]["properties"]["skill"]["enum"] == ["pdf-processing"]

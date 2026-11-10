@@ -182,7 +182,7 @@ def test_only_delete_needs_approval(session_factory):
 @pytest.mark.asyncio
 async def test_agent_reports_file_events_and_waits_for_delete_approval(session_factory, monkeypatch):
     registry = ResearchToolRegistry()
-    monkeypatch.setattr(registry, "get_tool_definitions", lambda user_id=None, conversation_id=None: [])
+    monkeypatch.setattr(registry, "get_tool_definitions", lambda user_id=None, conversation_id=None, requested_skill=None: [])
     ScriptedLLM([
         tool_call("create_conversation_file", {"filename": "摘要.md", "content": "# 摘要"}, "c1"),
         tool_call("delete_conversation_file", {"file_id": 1}, "c2"),

@@ -18,6 +18,7 @@ from app.core.security import RateLimitMiddleware, SecurityHeadersMiddleware
 from app.core import security_logging
 from app.core.security_logging import configure_log_handler, log_fields, log_formatter, log_security_event, rotating_log_file_handler
 from app.rag.tools import ResearchToolRegistry
+from test_llm_providers import completion_stream
 LOCAL_OLLAMA = LlmEndpoint("ollama", "http://localhost:11434", None, None, False)
 OPENAI = LlmEndpoint("openai", "https://api.openai.com/v1", "sk-test-secret", None, False)
 SECRET_PROMPT = "請保密的提問內容"
@@ -173,13 +174,10 @@ async def test_llm_timeout_logs_which_phase_failed_and_the_timeout(monkeypatch, 
 @pytest.mark.asyncio
 async def test_openai_chat_logs_usage_without_secrets(monkeypatch, formatted_logs):
     def handler(request):
-        return httpx.Response(200, json={
-            "choices": [{"message": {"role": "assistant", "content": "", "tool_calls": [
-                {"id": "c1", "type": "function", "function": {"name": "search_knowledge_base", "arguments": "{}"}}
-            ]}, "finish_reason": "tool_calls"}],
-            "usage": {"prompt_tokens": 50, "completion_tokens": 7, "prompt_tokens_details": {"cached_tokens": 32},
-                      "completion_tokens_details": {"reasoning_tokens": 4}},
-        })
+        return completion_stream({"role": "assistant", "content": "", "tool_calls": [
+            {"id": "c1", "type": "function", "function": {"name": "search_knowledge_base", "arguments": "{}"}}
+        ]}, "tool_calls", {"prompt_tokens": 50, "completion_tokens": 7, "prompt_tokens_details": {"cached_tokens": 32},
+                          "completion_tokens_details": {"reasoning_tokens": 4}})
     monkeypatch.setattr(llm_client, "_http_client", httpx.AsyncClient(transport=httpx.MockTransport(handler)))
     await llm_client.chat_completion([{"role": "user", "content": "hi"}], endpoint=OPENAI, model_name="gpt-5.4")
     done = _llm_lines(formatted_logs)[-1]

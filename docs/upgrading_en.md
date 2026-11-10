@@ -4,6 +4,7 @@
 
 > How to upgrade an existing deployment to a new release, with rollback steps and troubleshooting. See the [CHANGELOG](../CHANGELOG_en.md) for the full list of changes in each version.
 
+- [Upgrading from 8.9.0 to 8.9.1](#upgrading-from-890-to-891)
 - [Upgrading from 8.8.0 to 8.9.0](#upgrading-from-880-to-890)
 - [Upgrading from 8.7.0 to 8.8.0](#upgrading-from-870-to-880)
 - [Upgrading from 8.6.0 to 8.7.0](#upgrading-from-860-to-870)
@@ -48,6 +49,20 @@
   - [Step 5: verify the upgrade](#step-5-verify-the-upgrade)
   - [Rolling back to 2.2.x](#rolling-back-to-22x)
   - [Troubleshooting](#troubleshooting)
+
+---
+
+## Upgrading from 8.9.0 to 8.9.1
+
+For upgrading from 8.9.0 to 8.9.1 (2026-11-10); see the [CHANGELOG](../CHANGELOG_en.md#891---2026-11-10) for the full list of changes. This release needs no `.env` changes and changes neither the database nor the API, so switching to the new code is enough; with `deploy/`, rebuild the images as usual.
+
+| Item | 8.9.0 | 8.9.1 | Action |
+|---|---|---|---|
+| Model calls | Each research round calls the model without streaming, and `LLM_TIMEOUT` limits the whole answer | Every call is read as a stream, and `LLM_TIMEOUT` is the longest wait to connect or between two pieces of data | None; deployments that raised `LLM_TIMEOUT` for long answers can lower it again. A self-hosted OpenAI-compatible server must support streaming (vLLM and Ollama do) |
+| No answer | A failed model call after the research trace had steps only went to the log, and the answer could be empty | The answer ends with the error code; with no text at all it says 「模型沒有產生回答內容」 ("the model produced no answer") | None |
+| `/skill-name` | With the skill catalog past `MAX_SKILL_CATALOG_CHARS`, a skill that did not fit was not loaded even when named | The named skill goes first in the catalog and is always loaded | None |
+
+To roll back to 8.9.0, switch back to the older code.
 
 ---
 

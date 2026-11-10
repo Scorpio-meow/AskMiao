@@ -441,7 +441,9 @@ class ResearchToolRegistry:
             doc_descriptions.append(line)
             filenames.append(filename)
         return prompts.KNOWLEDGE_BASE_SEARCH + prompts.KNOWLEDGE_BASE_CATALOG.format(catalog="\n".join(doc_descriptions)), filenames
-    def get_tool_definitions(self, user_id: Optional[int] = None, conversation_id: Optional[int] = None) -> List[Dict[str, Any]]:
+    def get_tool_definitions(
+        self, user_id: Optional[int] = None, conversation_id: Optional[int] = None, requested_skill: Optional[str] = None
+    ) -> List[Dict[str, Any]]:
         kb_desc, doc_names = self._generate_knowledge_base_description()
         target_document_schema: Dict[str, Any] = {
             "type": "string",
@@ -548,7 +550,7 @@ class ResearchToolRegistry:
         if conversation_id is not None:
             base_tools.extend(file_tool_definitions())
         try:
-            base_tools.extend(self._skill_tool_definitions(user_id))
+            base_tools.extend(self._skill_tool_definitions(user_id, requested_skill))
         except Exception as e:
             logger.warning(f"載入 Agent Skills 失敗: {e}")
         try:
@@ -680,13 +682,13 @@ class ResearchToolRegistry:
             ]
         finally:
             db.close()
-    def _skill_tool_definitions(self, user_id: Optional[int]) -> List[Dict[str, Any]]:
+    def _skill_tool_definitions(self, user_id: Optional[int], requested_skill: Optional[str]) -> List[Dict[str, Any]]:
         header = prompts.SKILL_CATALOG
         entries: List[str] = []
         names: List[str] = []
         script_names: List[str] = []
         used = len(header) + len("<available_skills>\n</available_skills>")
-        for skill in self._enabled_skills(user_id):
+        for skill in sorted(self._enabled_skills(user_id), key=lambda skill: skill.name != requested_skill):
             entry = f"  <skill>\n    <name>{skill.name}</name>\n    <description>{skill.description}</description>\n  </skill>\n"
             if used + len(entry) > MAX_SKILL_CATALOG_CHARS:
                 logger.warning(f"技能目錄超過 {MAX_SKILL_CATALOG_CHARS} 字，未列入技能：{skill.name}")

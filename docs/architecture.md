@@ -2,7 +2,7 @@
 
 [繁體中文](architecture.md) | [English](architecture_en.md)
 
-> 本文件說明 AskMiao **8.9.0** 的架構、啟動流程、資料模型、文件處理與檢索管線、Agentic RAG 研究迴圈、LLM 呼叫層、外部工具整合、認證與安全設計，以及前端架構（本版變更見 [CHANGELOG](../CHANGELOG.md#890---2026-11-09)）。設計背後的取捨記錄在 [架構決策紀錄（ADR）](adr/README.md)。
+> 本文件說明 AskMiao **8.9.1** 的架構、啟動流程、資料模型、文件處理與檢索管線、Agentic RAG 研究迴圈、LLM 呼叫層、外部工具整合、認證與安全設計，以及前端架構（本版變更見 [CHANGELOG](../CHANGELOG.md#890---2026-11-09)）。設計背後的取捨記錄在 [架構決策紀錄（ADR）](adr/README.md)。
 
 ## 目錄
 
@@ -494,7 +494,7 @@ flowchart TB
 - **檔案**：使用者要求做成檔案、文件、報表或網站時，建立成對話檔案，回答只簡短說明，不把整份內容或程式碼貼在回答裡；檔案工具的說明另外要求內容完整，不留「以下省略」這類占位文字。
 - **引用**：只能使用本次工具結果中的 citation 編號，句末標註 `[n]`；查無資料時照實說明，不得臆測。
 - **資料安全**：工具結果只當資料；不得把對話、知識庫或工具結果中的資料拼進網址或搜尋字串。
-- **技能**（只在有啟用的技能時加上）：技能內容可以照做，但不能推翻資料安全與引用規則；何時載入技能寫在 `activate_skill` 的說明中。訊息以 `/技能名稱` 開頭時，後端在第一次呼叫模型前就把該技能附加到系統提示。
+- **技能**（只在有啟用的技能時加上）：技能內容可以照做，但不能推翻資料安全與引用規則；何時載入技能寫在 `activate_skill` 的說明中。訊息以 `/技能名稱` 開頭時，後端在第一次呼叫模型前就把該技能附加到系統提示，並把它排在技能目錄第一個，不會因為 `MAX_SKILL_CATALOG_CHARS` 被擠出目錄。
 
 ### 代理模式
 
@@ -510,6 +510,8 @@ flowchart TB
 | 脈絡 | 每筆工具結果最多 `MAX_TOOL_RESULT_CHARS` 字元 | 另外在每次呼叫模型前，所有工具結果合計超過 `AGENT_TOOL_RESULT_BUDGET_CHARS` 時，從最舊的開始換成 `TOOL_RESULT_CLEARED`，最新一筆一律保留；需要時模型可以再呼叫一次工具 |
 
 兩種模式共通的兩項：模型呼叫工具時附帶的文字，會成為該輪第一個研究步驟的 `note`（最多 `MAX_STEP_NOTE_CHARS` 字），顯示在研究過程中，執行中的步驟也以它當標題；建檔與改檔的工具結果附有 `check`，見 [對話檔案](#對話檔案)。代理模式的系統提示詞另外要求呼叫工具時用一句話說明進度，並先核對 `check`。
+
+研究迴圈不會沒有交代就結束：某一輪呼叫模型失敗而研究過程已經有步驟時，在訊息最後附上 `ANSWER_NOW`，以串流請模型根據已取得的資料回答，回答最後再加上 `MODEL_CALL_FAILED` 與錯誤代碼；模型回傳空內容時同樣附上 `ANSWER_NOW` 重新生成，仍然沒有文字就以 `NO_ANSWER` 作為回答。
 
 前端在助理訊息的研究過程上方以清單顯示計畫（`PlanChecklist`），已完成數放在標題右側。助理訊息的 `context_used` 會另外存最後一次的計畫，重新開啟對話時仍看得到。模式選擇存在瀏覽器的 `localStorage`，不隨帳號同步。
 
@@ -607,8 +609,8 @@ Office 檔案先經過與附件相同的 zip 炸彈檢查，對話檔案用聊�
 
 - **路由**：每次呼叫都使用一條 API 連線：聊天是使用者選的個人或共用連線，文件摘要與 PDF OCR 是管理員指定的系統模型。端點依連線的供應商與模型名稱決定，完整規則見 [設定參考：供應商路由](configuration.md#供應商路由)；`.env` 不設定任何模型供應商。
 - **推理程度**：`reasoning_effort` 依供應商對應後傳給模型（對應規則見 [API 參考](api.md)）；走 Chat Completions 的 `gpt-5.x` 模型（名稱含 `gpt-5.`）帶工具時一律送 `none`，原始的 `gpt-5`、`gpt-5-mini`、`gpt-5-nano` 不接受 `none`、`xhigh`、`max`，選 `none` 時改送 `minimal`，選 `xhigh`、`max` 時改送 `high`，其他情況送使用者選擇的程度；`gpt-6*` 與 Foundry 上走 Responses API 的模型（見上表）以 Responses API 同時支援工具與推理。
-- **兩種呼叫**：`chat_completion` 用在研究迴圈的每一輪（非串流，回傳 `content` 與 `tool_calls`）；`stream_completion` 只在需要重新生成最終答案時使用，Claude 串流時以 `tool_choice: none` 避免再觸發工具。
-- **逾時**：共用的 httpx 用戶端以 `LLM_TIMEOUT` 為逾時，等待連線池名額另以 15 秒為上限（池被占滿時很快失敗），每次請求各自設定的逾時也保留這個上限。
+- **兩種呼叫**：`chat_completion` 用在研究迴圈的每一輪，回傳 `content` 與 `tool_calls`；`stream_completion` 只在需要重新生成最終答案時使用，Claude 與 Responses API 串流時以 `tool_choice: none` 避免再觸發工具。兩者都以串流向供應商取回內容：`chat_completion` 邊收邊把文字、推理內容與分段送來的工具呼叫參數組回完整的訊息，所以很長的工具呼叫（例如整份網頁）只要模型持續有輸出就不會逾時。vLLM 與 OpenAI 的串流以 `stream_options.include_usage` 取得用量。
+- **逾時**：`LLM_TIMEOUT` 是建立連線與兩段資料之間最多等待的秒數，不是整次呼叫的時限；等待連線池名額另以 15 秒為上限（池被占滿時很快失敗），每次請求各自設定的逾時也保留這個上限。
 - **日誌**：每次呼叫在開始與結束時各寫一行，結束的那一行記下耗時、成功或失敗與供應商回傳的 token 用量；逾時時記下例外類別（`ConnectTimeout`、`ReadTimeout`、`PoolTimeout` 分別代表連線、等待回應、等待連線池名額）與當次的逾時秒數，串流另記第一段文字抵達的時間。欄位見 [日誌與請求追蹤](#日誌與請求追蹤)。
 - **影像輸入**：只接受內嵌的 `data:` URL，遠端圖片網址一律拒絕，避免模型供應商代為擷取使用者指定的任意位址。聊天附件只有 PNG、JPEG、GIF、WebP 以圖片交給模型；SVG 以文字讀取；其他圖片格式（例如 BMP、TIFF）不讀取，並告知模型請使用者改用 PNG、JPEG、GIF 或 WebP。
 - **模型清單**：建立連線時可「從 API 取得模型」，依供應商查詢模型清單，逾時為 `LLM_TAGS_TIMEOUT`；送出訊息時指定的模型必須在該連線的模型清單內。
@@ -858,7 +860,7 @@ Agent Skills 的內容例外：技能由管理員上傳，`activate_skill` 與 `
 | 未執行的工具呼叫 | `app.rag.agent` | `INFO` | 研究迴圈擋下或沒有執行的呼叫：`tool`、`status`（`refused` 為研究規則拒絕、`not_approved` 為使用者未核准或逾時、`approval_unavailable` 為沒有可核准的使用者）、`duration_ms`（含等待核准的時間） |
 | 速率限制 | `app.core.security` | `WARNING` | 每個來源 IP 在一個視窗內兩行：第一次被擋時（`ip`、`path`、`limit`、`period_s`）與視窗結束時（`blocked`、各路徑次數，最多 `MAX_RATE_LIMIT_LOGGED_PATHS` 條） |
 
-模型逾時的例外類別可以看出卡在哪一段：`ConnectTimeout` 是連不上，`PoolTimeout` 是等不到連線池名額，`ReadTimeout` 是請求已送出但在 `timeout_s` 內沒收到回應（非串流）或兩段文字之間等太久（串流，看 `first_chunk_ms` 是否已有值）。Ollama 成功時的 `load_ms`、`prompt_eval_ms`、`eval_ms` 分別是載入模型、讀入提示與產生回答的時間。
+模型逾時的例外類別可以看出卡在哪一段：`ConnectTimeout` 是連不上，`PoolTimeout` 是等不到連線池名額，`ReadTimeout` 是請求已送出，但連續 `timeout_s` 秒沒收到任何資料（重新生成最終答案時，看 `first_chunk_ms` 是否已有值，可分辨是遲遲沒開始還是中途停住）。Ollama 成功時的 `load_ms`、`prompt_eval_ms`、`eval_ms` 分別是載入模型、讀入提示與產生回答的時間。
 
 以上日誌不記錄密碼、API 金鑰、JWT、Cookie、`Authorization` 標頭與查詢參數的值，也不記錄提示、對話或文件內容，只記參數名稱、字數與用量；研究迴圈的 `[Agent Step n] 呼叫工具` 同樣只記參數名稱，檢索器的 `Retrieval` 一行只記查詢字數（`query_chars`）與各階段的片段數。查問題時先以錯誤代碼或時間找到一行，再以方括號中的請求 ID 搜尋同一個請求的所有紀錄。
 

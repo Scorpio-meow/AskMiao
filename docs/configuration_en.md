@@ -2,7 +2,7 @@
 
 [繁體中文](configuration.md) | [English](configuration_en.md)
 
-> Every setting in the backend `backend/.env` and the frontend `frontend/.env`, with its default and what it actually does, as of **8.9.0** (to upgrade from 8.8.0, see the [upgrade guide](upgrading_en.md#upgrading-from-880-to-890)). The source of truth is `Settings` in `backend/app/core/config.py`; the template is [`backend/.env.example`](../backend/.env.example).
+> Every setting in the backend `backend/.env` and the frontend `frontend/.env`, with its default and what it actually does, as of **8.9.1** (to upgrade from 8.9.0, see the [upgrade guide](upgrading_en.md#upgrading-from-890-to-891)). The source of truth is `Settings` in `backend/app/core/config.py`; the template is [`backend/.env.example`](../backend/.env.example).
 
 - [How settings are read](#how-settings-are-read)
 - [Required settings](#required-settings)
@@ -73,7 +73,7 @@ Chat only uses the [API connections](#api-connections) available to the account,
 
 | Variable | Code default | Template | Description |
 |---|---|---|---|
-| `LLM_TIMEOUT` | `120` | `120` | LLM call timeout in seconds, for chat, connection tests, document summaries, and PDF OCR; waiting for a connection-pool slot has a separate fixed 15-second limit (see [resource limits](#resource-limits)) |
+| `LLM_TIMEOUT` | `120` | `120` | LLM call timeout in seconds: the longest wait to connect or between two pieces of data; every call reads its reply as a stream, so a model that keeps writing does not time out. Applies to chat, connection tests, document summaries, and PDF OCR; waiting for a connection-pool slot has a separate fixed 15-second limit (see [resource limits](#resource-limits)) |
 | `LLM_TAGS_TIMEOUT` | `10` | — | Timeout in seconds for "Fetch models from API" |
 | `OLLAMA_TEMPERATURE` | empty | `0.3` | `temperature` for every Ollama connection; the model default when unset |
 | `OLLAMA_NUM_PREDICT` | empty | `2048` | `num_predict` for every Ollama connection; the model default when unset |
@@ -96,7 +96,7 @@ Each account can only chat through two kinds of connection, and the model menu g
 
 When a new connection is created, the form fills in the provider's official API address and the models below, which can be edited:
 
-| Provider | Prefilled models (8.9.0) |
+| Provider | Prefilled models (8.9.1) |
 |---|---|
 | OpenAI | `gpt-6.1-sol`, `gpt-6-sol`, `gpt-6-luna`, `gpt-6-astra`, `gpt-5.6-sol`, `gpt-5.6-luna`, `gpt-5.6-terra`, `gpt-5.4`, `gpt-5.4-mini` |
 | Anthropic | `claude-opus-5-5`, `claude-fable-5-1`, `claude-sonnet-5-5`, `claude-haiku-5-5`, `claude-sonnet-5`, `claude-opus-5`, `claude-fable-5`, `claude-opus-4-8`, `claude-haiku-4-5` |
@@ -543,7 +543,7 @@ The OOXML checks run before parsing and use the sizes the ZIP members declare. p
 | `MAX_SKILL_NAME_CHARS`, `MAX_SKILL_DESCRIPTION_CHARS`, `MAX_SKILL_COMPATIBILITY_CHARS` (`services/agent_skills.py`) | 64, 1,024, 500 characters | Length of `name`, `description`, and `compatibility` in `SKILL.md`; a longer `name` rejects the install, while the other two only add a warning |
 | `MAX_SKILL_RESOURCE_LISTING` | 100 | Files listed to the model when a skill is activated |
 | `MAX_SKILL_RESOURCE_CHARS` | 20,000 characters | The `SKILL.md` body returned on activation and each `read_skill_resource` result; the rest is truncated |
-| `MAX_SKILL_CATALOG_CHARS` | 8,000 characters | Length of the skill catalog (names and descriptions) in the `activate_skill` tool description; skills that do not fit are left out with a warning in the log |
+| `MAX_SKILL_CATALOG_CHARS` | 8,000 characters | Length of the skill catalog (names and descriptions) in the `activate_skill` tool description; skills that do not fit are left out with a warning in the log; a skill named with `/skill-name` in the message goes first and is always listed |
 | `MAX_SKILL_SCRIPT_SECONDS` | 60 seconds | Time limit for each `run_skill_script` run; on timeout the whole process group is killed and the result's `timed_out` is `true` |
 | `MAX_SKILL_SCRIPT_OUTPUT_CHARS` | 20,000 characters | How much of the script's `stdout` and of its `stderr` is kept, each; beyond it the output is truncated and `output_truncated` is set |
 | `MAX_SKILL_SCRIPT_ARGS`, `MAX_SKILL_SCRIPT_ARG_CHARS` | 20 arguments, 1,000 characters | Number of command-line arguments and length of each; past either, the script does not run |

@@ -2,7 +2,7 @@
 
 [繁體中文](api.md) | [English](api_en.md)
 
-> REST and SSE streaming endpoints of the AskMiao **8.9.0** backend, written against the actual routers in `backend/app/api/`. With `ENABLE_API_DOCS=true` the backend also serves interactive docs at `http://localhost:8001/docs` (Swagger UI) and `http://localhost:8001/redoc`, and the OpenAPI document at `/openapi.json`. These three paths need no sign-in and list every endpoint and parameter, so keep `ENABLE_API_DOCS=false` (the template value) for public deployments; all three then return `404`.
+> REST and SSE streaming endpoints of the AskMiao **8.9.1** backend, written against the actual routers in `backend/app/api/`. With `ENABLE_API_DOCS=true` the backend also serves interactive docs at `http://localhost:8001/docs` (Swagger UI) and `http://localhost:8001/redoc`, and the OpenAPI document at `/openapi.json`. These three paths need no sign-in and list every endpoint and parameter, so keep `ENABLE_API_DOCS=false` (the template value) for public deployments; all three then return `404`.
 
 ## Contents
 
@@ -418,7 +418,7 @@ data: {"message_id": 108, "conversation_id": 42, "answer": "特休假需先在�
 **Behavior details**
 
 - When the model stops calling tools, its answer arrives in **one** `token` event; only when the model returns empty content is the answer streamed over several `token` events.
-- A failed model call or an interrupted stream is reported inside a `token` event with an error code (for example 在執行自主研究時遇到連線異常（錯誤代碼：…）, "a connection error occurred during research"), not as an `error` event; the code maps to the full exception in the server log.
+- A failed model call or an interrupted stream is reported inside a `token` event with an error code (for example 在執行自主研究時遇到連線異常（錯誤代碼：…）, "a connection error occurred during research"), not as an `error` event; the code maps to the full exception in the server log. When the research trace already has steps, the model is asked to answer from what it has gathered and the answer ends with [模型呼叫失敗，回答可能不完整（錯誤代碼：…）] ("the model call failed, the answer may be incomplete"); when the model produces no text at all, the answer is [模型沒有產生回答內容，請重新提問或改用其他模型] ("the model produced no answer; ask again or switch models").
 - The assistant message is saved only after the stream completes. If the client disconnects mid-stream (for example by pressing stop), that answer is not saved, while the user message already is.
 - A new conversation takes the first 50 characters of its first message as its title, followed by `...` when the message is longer.
 - The assistant message stores `sources`, `sources_detail`, `research_trace`, and `plan` as JSON in its `context_used` database column; attachment details are stored in the user message's `context_used`. API responses carry only the parsed fields and no longer return the raw `context_used`.

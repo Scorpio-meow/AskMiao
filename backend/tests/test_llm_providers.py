@@ -175,7 +175,7 @@ CLAUDE_TOOL_USE_CONTENT = [
 FIXED_NOW = datetime(2026, 11, 8, 23, 7, tzinfo=timezone(timedelta(hours=8)))
 def claude_agent(monkeypatch):
     registry = ResearchToolRegistry(retriever=StaticRetriever())
-    monkeypatch.setattr(registry, "get_tool_definitions", lambda user_id=None, conversation_id=None: [KB_TOOL])
+    monkeypatch.setattr(registry, "get_tool_definitions", lambda user_id=None, conversation_id=None, requested_skill=None: [KB_TOOL])
     monkeypatch.setattr(agent_module, "local_now", lambda: FIXED_NOW)
     return ResearchAgent(tool_registry=registry)
 async def final_result(events):
@@ -301,14 +301,14 @@ def test_ollama_conversion_and_response_normalization():
     assert json.loads(normalized["tool_calls"][0]["function"]["arguments"]) == {"query": "特休"}
 @pytest.mark.parametrize("effort, expected", [("none", False), ("low", "low"), ("high", "high")])
 def test_ollama_payload_maps_reasoning_effort_to_think(effort, expected):
-    payload = llm_client._ollama_payload([{"role": "user", "content": "hi"}], "qwen3:8b", None, stream=False, reasoning_effort=effort)
+    payload = llm_client._ollama_payload([{"role": "user", "content": "hi"}], "qwen3:8b", None, reasoning_effort=effort)
     assert payload["think"] is expected if isinstance(expected, bool) else payload["think"] == expected
 def test_ollama_payload_omits_think_without_reasoning_effort():
-    payload = llm_client._ollama_payload([{"role": "user", "content": "hi"}], "qwen3:8b", None, stream=False, reasoning_effort=None)
+    payload = llm_client._ollama_payload([{"role": "user", "content": "hi"}], "qwen3:8b", None, reasoning_effort=None)
     assert "think" not in payload
 def test_openai_compatible_payload_strips_private_fields():
     messages = [{"role": "assistant", "content": "hi", "_anthropic_content": ["raw"]}]
-    payload = llm_client._openai_payload("gemini", messages, "gemini-3.8-flash", None, None, stream=True, max_output_tokens=None)
+    payload = llm_client._openai_payload("gemini", messages, "gemini-3.8-flash", None, None, max_output_tokens=None)
     assert payload["messages"] == [{"role": "assistant", "content": "hi"}]
     assert "reasoning_effort" not in payload
     assert "tools" not in payload
@@ -322,7 +322,7 @@ def test_openai_compatible_payload_strips_private_fields():
     ("max", "high"),
 ])
 def test_gemini_payload_maps_reasoning_effort_to_supported_levels(effort, expected):
-    payload = llm_client._openai_payload("gemini", [{"role": "user", "content": "hi"}], "gemini-3.8-flash", None, effort, stream=False, max_output_tokens=None)
+    payload = llm_client._openai_payload("gemini", [{"role": "user", "content": "hi"}], "gemini-3.8-flash", None, effort, max_output_tokens=None)
     assert payload["reasoning_effort"] == expected
 @pytest.mark.asyncio
 async def test_llm_requests_keep_the_pool_acquire_timeout(monkeypatch):
@@ -367,7 +367,7 @@ def test_responses_payload_converts_messages_tools_and_effort():
         ]},
         {"role": "tool", "tool_call_id": "call_a", "name": "search_knowledge_base", "content": "{\"documents\": []}", "_is_error": False},
     ]
-    payload = llm_client._responses_payload(messages, "gpt-6.1-sol", [KB_TOOL], "none", stream=False)
+    payload = llm_client._responses_payload(messages, "gpt-6.1-sol", [KB_TOOL], "none", allow_tool_calls=True)
     assert payload["input"] == [
         {"role": "system", "content": "系統提示"},
         {"role": "user", "content": [
@@ -425,7 +425,7 @@ def test_responses_endpoint_per_provider():
     assert foundry_headers["api-key"] == "foundry-key"
 def test_responses_streaming_payload_declares_tools_but_forbids_calling_them():
     messages = [{"role": "system", "content": [{"type": "text", "text": "系統"}, {"type": "text", "text": "提示"}]}]
-    payload = llm_client._responses_payload(messages, "gpt-6-astra", [KB_TOOL], "high", stream=True)
+    payload = llm_client._responses_payload(messages, "gpt-6-astra", [KB_TOOL], "high", allow_tool_calls=False)
     assert payload["tool_choice"] == "none"
     assert payload["tools"][0]["name"] == "search_knowledge_base"
     assert payload["input"] == [{"role": "system", "content": "系統\n提示"}]
@@ -444,8 +444,8 @@ def test_foundry_claude_rejects_azure_openai_resource_endpoint():
         llm_client._anthropic_client(endpoint)
 def test_foundry_chat_completions_skips_reasoning_effort_for_non_openai_models():
     messages = [{"role": "user", "content": "hi"}]
-    kimi = llm_client._openai_payload("foundry", messages, "Kimi-K2.6", None, "high", stream=False, max_output_tokens=None)
-    gpt = llm_client._openai_payload("foundry", messages, "gpt-oss-120b", None, "high", stream=False, max_output_tokens=None)
+    kimi = llm_client._openai_payload("foundry", messages, "Kimi-K2.6", None, "high", max_output_tokens=None)
+    gpt = llm_client._openai_payload("foundry", messages, "gpt-oss-120b", None, "high", max_output_tokens=None)
     assert "reasoning_effort" not in kimi
     assert gpt["reasoning_effort"] == "high"
 @pytest.mark.parametrize("model, tools, effort, expected", [
@@ -460,7 +460,7 @@ def test_foundry_chat_completions_skips_reasoning_effort_for_non_openai_models()
     ("gpt-5-mini", None, "max", "high"),
 ])
 def test_chat_completions_sends_none_effort_only_to_gpt5_point_releases(model, tools, effort, expected):
-    payload = llm_client._openai_payload("openai", [{"role": "user", "content": "hi"}], model, tools, effort, stream=False, max_output_tokens=None)
+    payload = llm_client._openai_payload("openai", [{"role": "user", "content": "hi"}], model, tools, effort, max_output_tokens=None)
     assert payload["reasoning_effort"] == expected
 @pytest.mark.parametrize("effort, expected", [
     ("none", False),
@@ -472,7 +472,7 @@ def test_chat_completions_sends_none_effort_only_to_gpt5_point_releases(model, t
     ("max", "high"),
 ])
 def test_ollama_payload_maps_reasoning_effort_to_think_values(effort, expected):
-    payload = llm_client._ollama_payload([{"role": "user", "content": "hi"}], "gpt-oss:20b", None, stream=False, reasoning_effort=effort)
+    payload = llm_client._ollama_payload([{"role": "user", "content": "hi"}], "gpt-oss:20b", None, reasoning_effort=effort)
     assert payload["think"] == expected
 def test_ollama_options_include_num_ctx_only_when_configured(monkeypatch):
     monkeypatch.setattr(settings, "OLLAMA_TEMPERATURE", None)
@@ -524,7 +524,7 @@ def test_openai_compatible_payload_keeps_provider_extra_fields_on_tool_calls():
         {"id": "call_1", "type": "function", "function": {"name": "search_knowledge_base", "arguments": "{}"},
          "extra_content": {"google": {"thought_signature": "sig-abc"}}},
     ]}
-    payload = llm_client._openai_payload("gemini", [assistant], "gemini-3.8-flash", [KB_TOOL], "high", stream=False, max_output_tokens=None)
+    payload = llm_client._openai_payload("gemini", [assistant], "gemini-3.8-flash", [KB_TOOL], "high", max_output_tokens=None)
     assert payload["messages"][0]["tool_calls"][0]["extra_content"] == {"google": {"thought_signature": "sig-abc"}}
 @pytest.mark.asyncio
 async def test_list_models_reads_each_providers_model_endpoint(monkeypatch):
@@ -546,22 +546,29 @@ async def test_list_models_reads_each_providers_model_endpoint(monkeypatch):
         await llm_client.list_models(LlmEndpoint("foundry", "https://x.services.ai.azure.com", "k", None, False))
     await client.aclose()
 LOCAL_VLLM = LlmEndpoint("vllm", "http://localhost:8000/v1", None, None, False)
+def sse(events):
+    return "".join(f"data: {json.dumps(event, ensure_ascii=False)}\n\n" for event in events) + "data: [DONE]\n\n"
+def completion_stream(message, finish_reason="stop", usage=None):
+    calls = [{"index": index, **call} for index, call in enumerate(message.get("tool_calls") or [])]
+    delta = {**message, "tool_calls": calls} if calls else message
+    events = [{"choices": [{"delta": delta, "finish_reason": finish_reason}]}] + ([{"choices": [], "usage": usage}] if usage else [])
+    return httpx.Response(200, text=sse(events))
 @pytest.mark.parametrize("effort", llm_client.REASONING_EFFORT_VALUES)
 def test_vllm_payload_passes_every_reasoning_effort_and_the_output_limit(effort):
-    payload = llm_client._openai_payload("vllm", [{"role": "user", "content": "hi"}], "Qwen/Qwen3-32B", [KB_TOOL], effort, stream=False, max_output_tokens=4096)
+    payload = llm_client._openai_payload("vllm", [{"role": "user", "content": "hi"}], "Qwen/Qwen3-32B", [KB_TOOL], effort, max_output_tokens=4096)
     assert payload["reasoning_effort"] == effort
     assert payload["max_completion_tokens"] == 4096
     assert payload["tool_choice"] == "auto"
-    assert "stream_options" not in payload
 def test_vllm_payload_omits_unset_options_and_asks_for_stream_usage():
-    payload = llm_client._openai_payload("vllm", [{"role": "user", "content": "hi"}], "Qwen/Qwen3-32B", None, None, stream=True, max_output_tokens=None)
+    payload = llm_client._openai_payload("vllm", [{"role": "user", "content": "hi"}], "Qwen/Qwen3-32B", None, None, max_output_tokens=None)
     assert payload["stream_options"] == {"include_usage": True}
     assert "reasoning_effort" not in payload
     assert "max_completion_tokens" not in payload
 def test_openai_payload_ignores_the_output_limit_for_other_providers():
-    payload = llm_client._openai_payload("openai", [{"role": "user", "content": "hi"}], "gpt-5.4", None, None, stream=True, max_output_tokens=4096)
+    payload = llm_client._openai_payload("openai", [{"role": "user", "content": "hi"}], "gpt-5.4", None, None, max_output_tokens=4096)
     assert "max_completion_tokens" not in payload
-    assert "stream_options" not in payload
+    assert payload["stream_options"] == {"include_usage": True}
+    assert "stream_options" not in llm_client._openai_payload("gemini", [{"role": "user", "content": "hi"}], "gemini-3.8-flash", None, None, max_output_tokens=None)
 @pytest.fixture(autouse=True)
 def fresh_vllm_model_lengths(monkeypatch):
     monkeypatch.setattr(llm_client, "_vllm_model_lengths", {})
@@ -582,7 +589,7 @@ async def test_vllm_output_limit_gives_way_to_the_model_context_length(monkeypat
             lookups.append(request.url.path)
             return httpx.Response(models_reply[0], json=models_reply[1])
         payloads.append(json.loads(request.content))
-        return httpx.Response(200, json={"choices": [{"finish_reason": "stop", "message": {"role": "assistant", "content": "好"}}]})
+        return completion_stream({"role": "assistant", "content": "好"})
     monkeypatch.setattr(llm_client, "_http_client", httpx.AsyncClient(transport=httpx.MockTransport(handler)))
     endpoint = LlmEndpoint("vllm", "http://localhost:8000/v1", None, limit, False)
     for _ in range(2):
@@ -641,15 +648,15 @@ async def test_vllm_chat_explains_a_server_without_tool_calling(monkeypatch):
 async def test_vllm_tool_round_trip_keeps_reasoning_for_the_next_request(monkeypatch):
     sent = []
     replies = [
-        {"choices": [{"finish_reason": "tool_calls", "message": {
+        completion_stream({
             "role": "assistant", "content": None, "reasoning": "先查知識庫",
             "tool_calls": [{"id": "call_1", "type": "function", "function": {"name": "search_knowledge_base", "arguments": "{\"query\": \"特休\"}"}}],
-        }}], "usage": {"prompt_tokens": 20, "completion_tokens": 8}},
-        {"choices": [{"finish_reason": "stop", "message": {"role": "assistant", "content": "特休依年資計算"}}]},
+        }, "tool_calls", {"prompt_tokens": 20, "completion_tokens": 8}),
+        completion_stream({"role": "assistant", "content": "特休依年資計算"}),
     ]
     def handler(request):
         sent.append((request.url.path, json.loads(request.content)))
-        return httpx.Response(200, json=replies[len(sent) - 1])
+        return replies[len(sent) - 1]
     monkeypatch.setattr(llm_client, "_http_client", httpx.AsyncClient(transport=httpx.MockTransport(handler)))
     messages = [{"role": "user", "content": "特休怎麼算"}]
     first = await llm_client.chat_completion(messages, endpoint=LOCAL_VLLM, model_name="Qwen/Qwen3-32B", tools=[KB_TOOL], reasoning_effort="high")
@@ -686,3 +693,108 @@ async def test_vllm_lists_models_from_its_openai_models_endpoint(monkeypatch):
     monkeypatch.setattr(llm_client, "_http_client", httpx.AsyncClient(transport=httpx.MockTransport(handler)))
     assert await llm_client.list_models(LOCAL_VLLM) == ["Qwen/Qwen3-32B"]
     assert paths == ["/v1/models"]
+def install_http(monkeypatch, body):
+    payloads = []
+    def handler(request):
+        payloads.append(json.loads(request.content))
+        return httpx.Response(200, text=body)
+    monkeypatch.setattr(llm_client, "_http_client", httpx.AsyncClient(transport=httpx.MockTransport(handler)))
+    return payloads
+@pytest.mark.asyncio
+async def test_chat_is_streamed_and_rebuilds_tool_calls_from_deltas(monkeypatch):
+    payloads = install_http(monkeypatch, sse([
+        {"choices": [{"delta": {"role": "assistant", "reasoning": "先查"}}]},
+        {"choices": [{"delta": {"reasoning": "知識庫"}}]},
+        {"choices": [{"delta": {"tool_calls": [{"index": 0, "id": "call_1", "type": "function", "function": {"name": "search_knowledge_base", "arguments": "{\"query\""}}]}}]},
+        {"choices": [{"delta": {"tool_calls": [{"index": 0, "function": {"arguments": ": \"特休\"}"}}]}}]},
+        {"choices": [{"delta": {"tool_calls": [{"index": 1, "id": "call_2", "type": "function", "function": {"name": "web_search", "arguments": "{}"}}]}, "finish_reason": "tool_calls"}]},
+        {"choices": [], "usage": {"prompt_tokens": 20, "completion_tokens": 8}},
+    ]))
+    message = await llm_client.chat_completion([{"role": "user", "content": "特休怎麼算"}], endpoint=LOCAL_VLLM, model_name="Qwen/Qwen3-32B", tools=[KB_TOOL])
+    assert payloads[0]["stream"] is True
+    assert message == {"role": "assistant", "content": None, "reasoning": "先查知識庫", "tool_calls": [
+        {"id": "call_1", "type": "function", "function": {"name": "search_knowledge_base", "arguments": "{\"query\": \"特休\"}"}},
+        {"id": "call_2", "type": "function", "function": {"name": "web_search", "arguments": "{}"}},
+    ]}
+def test_streamed_tool_calls_without_a_matching_index_stay_apart_and_keep_extra_fields():
+    message = {}
+    for delta in (
+        {"tool_calls": [{"id": "a", "type": "function", "function": {"name": "x", "arguments": "{}"}, "extra_content": {"google": {"thought_signature": "sig"}}}]},
+        {"tool_calls": [{"id": "b", "type": "function", "function": {"name": "y", "arguments": "{}"}}]},
+        {"tool_calls": [{"index": 0, "id": "c", "type": "function", "function": {"name": "z", "arguments": "{}"}}]},
+    ):
+        llm_client._merge_delta(message, delta)
+    assert [(call["id"], call["function"]["name"]) for call in message["tool_calls"]] == [("a", "x"), ("b", "y"), ("c", "z")]
+    assert message["tool_calls"][0]["extra_content"] == {"google": {"thought_signature": "sig"}}
+def test_blank_fields_in_later_tool_call_chunks_continue_the_same_call():
+    message = {}
+    for delta in (
+        {"tool_calls": [{"index": 0, "id": "call_1", "type": "function", "function": {"name": "search_knowledge_base", "arguments": "{\"query\""}}]},
+        {"tool_calls": [{"index": 0, "id": "", "type": "", "function": {"name": "", "arguments": ": \"特休\"}"}}]},
+    ):
+        llm_client._merge_delta(message, delta)
+    assert message["tool_calls"] == [
+        {"id": "call_1", "type": "function", "function": {"name": "search_knowledge_base", "arguments": "{\"query\": \"特休\"}"}},
+    ]
+@pytest.mark.asyncio
+async def test_error_inside_a_chat_stream_is_raised(monkeypatch):
+    install_http(monkeypatch, sse([{"choices": [{"delta": {"content": "特"}}]}, {"error": {"message": "engine died"}}]))
+    with pytest.raises(RuntimeError, match="engine died"):
+        await llm_client.chat_completion([{"role": "user", "content": "hi"}], endpoint=LOCAL_VLLM, model_name="Qwen/Qwen3-32B")
+OPENAI_RESPONSES = LlmEndpoint("openai", "https://api.openai.com/v1", "openai-key", None, False)
+@pytest.mark.asyncio
+async def test_responses_chat_reads_the_completed_response_from_the_stream(monkeypatch):
+    output = [{"type": "function_call", "id": "fc_1", "call_id": "call_a", "name": "search_knowledge_base", "arguments": "{\"query\": \"特休\"}"}]
+    payloads = install_http(monkeypatch, sse([
+        {"type": "response.output_item.added", "item": output[0]},
+        {"type": "response.completed", "response": {"status": "completed", "output": output}},
+    ]))
+    message = await llm_client.chat_completion([{"role": "user", "content": "特休怎麼算"}], endpoint=OPENAI_RESPONSES, model_name="gpt-6.1-sol", tools=[KB_TOOL])
+    assert (payloads[0]["stream"], payloads[0]["tool_choice"]) == (True, "auto")
+    assert message["tool_calls"] == [{"id": "call_a", "type": "function", "function": {"name": "search_knowledge_base", "arguments": "{\"query\": \"特休\"}"}}]
+@pytest.mark.asyncio
+async def test_responses_chat_explains_an_incomplete_stream(monkeypatch):
+    install_http(monkeypatch, sse([{"type": "response.incomplete", "response": {"status": "incomplete", "incomplete_details": {"reason": "max_output_tokens"}}}]))
+    with pytest.raises(RuntimeError, match="max_output_tokens"):
+        await llm_client.chat_completion([{"role": "user", "content": "hi"}], endpoint=OPENAI_RESPONSES, model_name="gpt-6.1-sol")
+@pytest.mark.asyncio
+async def test_ollama_chat_is_streamed_and_keeps_thinking_with_the_tool_calls(monkeypatch):
+    lines = [
+        {"message": {"role": "assistant", "content": "", "thinking": "先查"}, "done": False},
+        {"message": {"role": "assistant", "content": "", "thinking": "知識庫"}, "done": False},
+        {"message": {"role": "assistant", "content": "", "tool_calls": [{"function": {"name": "search_knowledge_base", "arguments": {"query": "特休"}}}]}, "done": False},
+        {"message": {"role": "assistant", "content": ""}, "done": True, "done_reason": "stop"},
+    ]
+    payloads = install_http(monkeypatch, "".join(json.dumps(line, ensure_ascii=False) + "\n" for line in lines))
+    message = await llm_client.chat_completion([{"role": "user", "content": "特休怎麼算"}], endpoint=LOCAL_OLLAMA, model_name="qwen3:8b", tools=[KB_TOOL])
+    assert payloads[0]["stream"] is True
+    assert message[llm_client.OLLAMA_THINKING_KEY] == "先查知識庫"
+    assert [json.loads(call["function"]["arguments"]) for call in message["tool_calls"]] == [{"query": "特休"}]
+@pytest.mark.asyncio
+async def test_streamed_chat_reads_to_the_end_so_the_connection_is_reused(monkeypatch):
+    bodies = {
+        "/v1/chat/completions": sse([{"choices": [{"delta": {"content": "好"}, "finish_reason": "stop"}]}]),
+        "/v1/responses": sse([{"type": "response.completed", "response": {"status": "completed", "output": []}}]),
+    }
+    connections = []
+    async def serve(reader, writer):
+        connections.append(writer)
+        try:
+            while True:
+                head = await reader.readuntil(b"\r\n\r\n")
+                await reader.readexactly(int(re.search(rb"(?i)content-length: (\d+)", head).group(1)))
+                body = bodies[head.split(b" ")[1].decode()].encode()
+                writer.write(b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nTransfer-Encoding: chunked\r\n\r\n%x\r\n%s\r\n0\r\n\r\n" % (len(body), body))
+                await writer.drain()
+        except asyncio.IncompleteReadError:
+            writer.close()
+    server = await asyncio.start_server(serve, "127.0.0.1", 0)
+    base = f"http://127.0.0.1:{server.sockets[0].getsockname()[1]}/v1"
+    client = httpx.AsyncClient()
+    monkeypatch.setattr(llm_client, "_http_client", client)
+    for endpoint, model in ((LlmEndpoint("vllm", base, None, None, False), "Qwen/Qwen3-32B"), (LlmEndpoint("openai", base, "k", None, False), "gpt-6.1-sol")):
+        for _ in range(2):
+            await llm_client.chat_completion([{"role": "user", "content": "hi"}], endpoint=endpoint, model_name=model)
+    await client.aclose()
+    server.close()
+    assert len(connections) == 1

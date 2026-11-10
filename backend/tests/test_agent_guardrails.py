@@ -49,7 +49,10 @@ class ScriptedLLM:
         assert (endpoint, model_name) == (TEST_ENDPOINT, TEST_MODEL)
         self.chat_messages.append(list(messages))
         self.chat_tools.append(tools)
-        return self.responses.pop(0)
+        response = self.responses.pop(0)
+        if isinstance(response, Exception):
+            raise response
+        return response
     async def stream(self, messages, *, endpoint, model_name, tools=None, reasoning_effort=None):
         self.stream_calls += 1
         self.stream_messages.append(list(messages))
@@ -60,7 +63,7 @@ class ScriptedLLM:
         return self
 def make_agent(monkeypatch, retriever=None):
     registry = ResearchToolRegistry(retriever=retriever or StaticRetriever())
-    monkeypatch.setattr(registry, "get_tool_definitions", lambda user_id=None, conversation_id=None: [])
+    monkeypatch.setattr(registry, "get_tool_definitions", lambda user_id=None, conversation_id=None, requested_skill=None: [])
     return ResearchAgent(tool_registry=registry), registry
 def record_web_calls(monkeypatch, registry):
     calls = []
@@ -95,6 +98,19 @@ async def test_empty_answer_falls_back_to_streaming(monkeypatch):
     events = await collect(research(agent, "特休怎麼算"))
     assert (len(llm.chat_messages), llm.stream_calls) == (2, 1)
     assert events[-1]["data"]["answer"] == "依年資計算"
+@pytest.mark.asyncio
+@pytest.mark.parametrize("second, stream_text, expected", [
+    (answer(""), "", prompts.NO_ANSWER),
+    (TimeoutError(), "", prompts.MODEL_CALL_FAILED.format(error_id="e1")),
+    (TimeoutError(), "依年資計算", "依年資計算\n\n" + prompts.MODEL_CALL_FAILED.format(error_id="e1")),
+])
+async def test_a_run_never_ends_without_telling_the_user(monkeypatch, second, stream_text, expected):
+    agent, _ = make_agent(monkeypatch)
+    monkeypatch.setattr(agent_module, "log_and_get_error_id", lambda *args: "e1")
+    llm = ScriptedLLM([tool_call("search_knowledge_base", {"query": "特休"}), second], stream_text=stream_text).install(monkeypatch)
+    events = await collect(research(agent, "特休怎麼算"))
+    assert llm.stream_messages[0][-1] == {"role": "user", "content": prompts.ANSWER_NOW}
+    assert "".join(e["data"]["content"] for e in events if e["event"] == "token") == events[-1]["data"]["answer"] == expected
 @pytest.mark.asyncio
 async def test_echoed_tool_results_are_removed_from_answers(monkeypatch):
     agent, _ = make_agent(monkeypatch)
@@ -304,7 +320,7 @@ async def test_malformed_tool_arguments_do_not_abort_the_answer(monkeypatch, arg
 async def test_tool_definitions_are_loaded_off_the_event_loop(monkeypatch):
     agent, registry = make_agent(monkeypatch)
     loaded_in = []
-    monkeypatch.setattr(registry, "get_tool_definitions", lambda user_id=None, conversation_id=None: loaded_in.append(threading.get_ident()) or [])
+    monkeypatch.setattr(registry, "get_tool_definitions", lambda user_id=None, conversation_id=None, requested_skill=None: loaded_in.append(threading.get_ident()) or [])
     ScriptedLLM([answer("你好")]).install(monkeypatch)
     await collect(research(agent, "你好"))
     assert loaded_in and loaded_in[0] != threading.get_ident()
@@ -487,7 +503,7 @@ def delegate(*titles):
     return tool_call("delegate_research", {"tasks": [{"title": title, "instructions": f"查{title}的規定"} for title in titles]})
 def subagent_agent(monkeypatch):
     agent, registry = make_agent(monkeypatch)
-    monkeypatch.setattr(registry, "get_tool_definitions", lambda user_id=None, conversation_id=None: [tool_def("search_knowledge_base"), tool_def("create_conversation_file")])
+    monkeypatch.setattr(registry, "get_tool_definitions", lambda user_id=None, conversation_id=None, requested_skill=None: [tool_def("search_knowledge_base"), tool_def("create_conversation_file")])
     return agent
 @pytest.mark.asyncio
 async def test_subagents_research_in_parallel_and_share_citations(monkeypatch):

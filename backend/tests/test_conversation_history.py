@@ -129,7 +129,7 @@ def test_recent_history_attachment_text_is_bounded_from_the_newest(db, monkeypat
 @pytest.mark.asyncio
 async def test_follow_up_question_sees_earlier_attachment_text(db, monkeypatch):
     registry = ResearchToolRegistry()
-    monkeypatch.setattr(registry, "get_tool_definitions", lambda user_id=None, conversation_id=None: [])
+    monkeypatch.setattr(registry, "get_tool_definitions", lambda user_id=None, conversation_id=None, requested_skill=None: [])
     agent = ResearchAgent(tool_registry=registry)
     sent = []
     async def fake_chat_completion(messages, **kwargs):

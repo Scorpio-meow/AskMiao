@@ -6,6 +6,7 @@ All notable changes to AskMiao are documented in this file. The format is based 
 
 | Version | Release date | Highlights |
 |---|---|---|
+| [8.9.1](#891---2026-11-10) | 2026-11-10 | Model calls are read as streams, so long answers and long tool calls no longer time out; a failed model call or an empty answer is reported to the user; `/skill-name` is no longer affected by the skill catalog length limit |
 | [8.9.0](#890---2026-11-09) | 2026-11-09 | Organization and personal long-term instructions; approvals can cover the rest of a question; agent mode can hand sub-tasks to parallel subagents |
 | [8.8.0](#880---2026-11-09) | 2026-11-09 | Agent mode can ask the user and wait for the answer; the research trace shows a progress note for each step; file create and edit results carry a structure check |
 | [8.7.0](#870---2026-11-09) | 2026-11-09 | Agent mode: the chat page switches between research and agent mode; agent mode lists a plan, works through it, and reads its files back, with the plan shown as a checklist; at most 30 model calls, and old tool results are cleared once they exceed a budget |
@@ -45,6 +46,14 @@ All notable changes to AskMiao are documented in this file. The format is based 
 ---
 
 ## [Unreleased]
+
+## [8.9.1] - 2026-11-10
+
+### Fixed
+
+- **Long answers and long tool calls no longer time out**: each research round used to call the model without streaming, so `LLM_TIMEOUT` (120 seconds by default) limited the whole answer; when agent mode wrote a whole web page in one tool call, the call timed out while the model was still writing and the answer stopped after its first step. Model calls to every provider are now read as streams, and the full message is rebuilt from the text, reasoning, and tool-call arguments as they arrive in pieces, so `LLM_TIMEOUT` is now the longest wait to connect or between two pieces of data. OpenAI streams also report token usage, and an error received in the middle of a stream is raised instead of becoming an empty answer.
+- **Research no longer ends without a word**: when a model call failed after the research trace already had steps, the error only went to the log, and if the regenerated answer was empty the page just showed 「AI 已完成回答」 ("the AI has finished answering"). The model is now told to stop calling tools and answer from what it has gathered, and the answer ends with the error code; when the model returns empty content it is asked the same way, and if there is still no text the answer says 「模型沒有產生回答內容」 ("the model produced no answer").
+- **A skill named with `/skill-name` pushed out of the skill catalog**: with enough enabled skills to pass `MAX_SKILL_CATALOG_CHARS` (8,000 characters), a skill that did not fit was ignored even when named with `/skill-name`. The named skill now goes first in the catalog and is always loaded, and reading its files and running its scripts work too.
 
 ## [8.9.0] - 2026-11-09
 

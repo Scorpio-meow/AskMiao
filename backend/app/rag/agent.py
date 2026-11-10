@@ -222,7 +222,9 @@ class ResearchAgent:
     ) -> AsyncGenerator[Dict[str, Any], None]:
         start_time = time.time()
         agent_mode = mode == AGENT_MODE
-        tools_def = await asyncio.to_thread(self.tools.get_tool_definitions, approval_user_id, conversation_id)
+        explicit_match = EXPLICIT_SKILL_PATTERN.match(query)
+        requested_skill = explicit_match.group(1) if explicit_match else None
+        tools_def = await asyncio.to_thread(self.tools.get_tool_definitions, approval_user_id, conversation_id, requested_skill)
         skill_names = next(
             (t["function"]["parameters"]["properties"]["name"]["enum"] for t in tools_def if t["function"]["name"] == "activate_skill"),
             [],
@@ -234,9 +236,8 @@ class ResearchAgent:
         plan: Optional[List[Dict[str, str]]] = None
         research_trace: List[Dict[str, Any]] = []
         explicit_skill = None
-        explicit_match = EXPLICIT_SKILL_PATTERN.match(query)
-        if explicit_match and explicit_match.group(1) in skill_names:
-            explicit_skill = explicit_match.group(1)
+        if explicit_match and requested_skill in skill_names:
+            explicit_skill = requested_skill
             query = query[explicit_match.end():].strip() or query
             yield {"event": "step_start", "data": {"step": 1, "tool": "activate_skill", "arguments": {"name": explicit_skill}}}
             skill_start = time.time()
@@ -318,6 +319,7 @@ class ResearchAgent:
         if explicit_skill and research_trace[0]["status"] == "success":
             session.record_tool_output("activate_skill", skill_output)
         final_answer = ""
+        failure_id: Optional[str] = None
         turns_used = 0
         next_step = itertools.count(len(research_trace) + 1).__next__
         while True:
@@ -337,6 +339,9 @@ class ResearchAgent:
                     err_msg = f"在執行自主研究時遇到連線異常（錯誤代碼：{error_id}）"
                     yield {"event": "token", "data": {"content": err_msg}}
                     final_answer = err_msg
+                else:
+                    failure_id = error_id
+                    messages.append({"role": "user", "content": prompts.ANSWER_NOW})
                 break
             tool_calls = assistant_msg.get("tool_calls")
             if not tool_calls:
@@ -344,6 +349,8 @@ class ResearchAgent:
                 if content.strip():
                     final_answer = content
                     yield {"event": "token", "data": {"content": content}}
+                else:
+                    messages.append({"role": "user", "content": prompts.ANSWER_NOW})
                 break
             messages.append(assistant_msg)
             note = turn_note(assistant_msg.get("content"))
@@ -504,6 +511,10 @@ class ResearchAgent:
             else:
                 err_msg = ""
             tail = tool_result_filter.flush() + err_msg
+            if failure_id:
+                tail += ("\n\n" if (final_answer + tail).strip() else "") + prompts.MODEL_CALL_FAILED.format(error_id=failure_id)
+            elif not (final_answer + tail).strip():
+                tail = prompts.NO_ANSWER
             if tail:
                 final_answer += tail
                 yield {"event": "token", "data": {"content": tail}}

@@ -2,7 +2,7 @@
 
 [繁體中文](api.md) | [English](api_en.md)
 
-> 本文件說明 AskMiao 後端 **8.9.0** 的 REST 與 SSE 串流端點，內容依 `backend/app/api/` 的實際路由撰寫。設定 `ENABLE_API_DOCS=true` 時，後端另外在 `http://localhost:8001/docs`（Swagger UI）與 `http://localhost:8001/redoc` 提供互動測試，OpenAPI 規格位於 `/openapi.json`；這三個路徑不需要登入且會列出所有端點與參數，對外服務時請保持 `ENABLE_API_DOCS=false`（範本值），此時三者一律回傳 `404`。
+> 本文件說明 AskMiao 後端 **8.9.1** 的 REST 與 SSE 串流端點，內容依 `backend/app/api/` 的實際路由撰寫。設定 `ENABLE_API_DOCS=true` 時，後端另外在 `http://localhost:8001/docs`（Swagger UI）與 `http://localhost:8001/redoc` 提供互動測試，OpenAPI 規格位於 `/openapi.json`；這三個路徑不需要登入且會列出所有端點與參數，對外服務時請保持 `ENABLE_API_DOCS=false`（範本值），此時三者一律回傳 `404`。
 
 ## 目錄
 
@@ -416,7 +416,7 @@ data: {"message_id": 108, "conversation_id": 42, "answer": "特休假需先在�
 **行為細節**
 
 - 模型不再呼叫工具時，該次答案會以**一個** `token` 事件整段送出；只有模型回傳空內容時，才會以多個 `token` 事件逐段串流。
-- 模型呼叫失敗或串流中斷時，錯誤會以 `token` 事件夾帶錯誤代碼送出（例如 `在執行自主研究時遇到連線異常（錯誤代碼：…）`），而不是 `error` 事件；伺服器日誌可依代碼查到完整例外。
+- 模型呼叫失敗或串流中斷時，錯誤會以 `token` 事件夾帶錯誤代碼送出（例如 `在執行自主研究時遇到連線異常（錯誤代碼：…）`），而不是 `error` 事件；伺服器日誌可依代碼查到完整例外。研究過程已有步驟時，改請模型根據已取得的資料回答，回答最後附上 `[模型呼叫失敗，回答可能不完整（錯誤代碼：…）]`；模型沒有產生任何文字時，回答為 `[模型沒有產生回答內容，請重新提問或改用其他模型]`。
 - 助理訊息在串流完成後才寫入資料庫。用戶端中途中斷連線（例如按下「停止」）時，這次的回答不會儲存，使用者訊息則已存入。
 - 新對話的標題是第一則訊息的前 50 字，超過 50 字時再加上 `...`。
 - 助理訊息的 `sources`、`sources_detail`、`research_trace` 與 `plan` 會以 JSON 存入訊息的 `context_used` 資料庫欄位；附件資訊則存在使用者訊息的 `context_used`。API 回應只提供解析後的欄位，不再回傳原始的 `context_used`。
