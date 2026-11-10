@@ -9,7 +9,7 @@ import ChatSidebar from './ChatSidebar';
 import ResearchTraceBlock from './ResearchTraceBlock';
 import ToolApprovalCard from './ToolApprovalCard';
 import SourceBadges from './SourceBadges';
-import { PreviewContent } from '../../components/FilePreviewPanel';
+import { PreviewContent, desktopFrame } from '../../components/FilePreviewPanel';
 import type { FilePreview, PreviewSource } from '../../services/api';
 const noop = () => {};
 const ENTITIES: Record<string, string> = { '&quot;': '"', '&#x27;': "'", '&lt;': '<', '&gt;': '>', '&amp;': '&' };
@@ -362,6 +362,20 @@ describe('file preview', () => {
     expect(textOf(renderPreview({ type: 'pages', page_count: 3 })).match(/第 \d 頁/g)).toEqual(['第 1 頁', '第 2 頁', '第 3 頁']);
     expect(textOf(renderPreview({ type: 'unsupported', reason: '這種檔案無法預覽，請下載後開啟' }))).toContain('請下載後開啟');
     expect(textOf(renderPreview({ type: 'text', text: '原文', truncated: false, notice: '伺服器上找不到原始檔' }))).toContain('伺服器上找不到原始檔');
+  });
+  it('shows a web page with preview and source tabs, a desktop layout switch and a reload button', () => {
+    const page: FilePreview = { type: 'html', text: '<h1>首頁</h1>', truncated: false };
+    const html = renderToStaticMarkup(<PreviewContent preview={page} source={{ ...previewSource, viewUrl: async () => '/view' }} />);
+    expect(buttons(html).filter((button) => button.attrs.includes('role="tab"')).map((button) => button.text)).toEqual(['預覽', '原始碼']);
+    expect(buttons(html).find((button) => button.attrs.includes('aria-label="電腦版面"'))?.attrs).toContain('aria-pressed="false"');
+    expect(buttons(html).some((button) => button.attrs.includes('aria-label="重新載入網頁"'))).toBe(true);
+    expect(textOf(html)).toContain('載入網頁…');
+    expect(textOf(renderPreview(page))).toContain('無法開啟網頁預覽');
+  });
+  it('scales the desktop layout down to the panel width and leaves wide panels alone', () => {
+    expect(desktopFrame(640, 400)).toEqual({ width: '1280px', height: '800px', transform: 'scale(0.5)' });
+    expect(desktopFrame(1600, 900)).toBeUndefined();
+    expect(desktopFrame(0, 0)).toBeUndefined();
   });
   it('offers a preview button on file cards', () => {
     const file = { id: 8, filename: '網頁.html', media_type: 'text/plain', size_bytes: 10, origin: 'assistant' as const, version: 1, parent_id: null, created_at: null };

@@ -187,7 +187,9 @@ CREATE_FILE = (
     ".md、.txt、.json 用 content；.docx、.pdf 用 Markdown 的 content（支援標題、清單、表格、粗體、斜體）；"
     ".xlsx 用 sheets，.csv 用 sheets 的第一張；.pptx 用 slides；"
     ".html 用 content 寫完整的 HTML 文件，CSS 與 JavaScript 寫在同一個檔案裡，圖片用 data: 網址或內嵌 SVG，"
-    "因為預覽時網頁不能連線，也不能載入外部的圖片、字型或程式庫。"
+    "因為預覽時網頁不能連線，也不能載入外部的圖片、字型或程式庫；"
+    "有多個頁面時也做在同一個檔案裡，用頁內錨點或 JavaScript 切換，不要連到其他檔案，預覽打不開；"
+    "不要用 localStorage、sessionStorage 或 Cookie，預覽時讀寫會出錯。"
 )
 CREATE_FILE_NAME = "含副檔名的檔名，例如 `會議紀錄.docx`；副檔名只能是 {extensions}"
 FILE_CONTENT = ".md、.txt、.json、.html 的文字內容，或 .docx、.pdf 的 Markdown"

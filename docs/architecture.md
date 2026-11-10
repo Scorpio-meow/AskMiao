@@ -2,7 +2,7 @@
 
 [繁體中文](architecture.md) | [English](architecture_en.md)
 
-> 本文件說明 AskMiao **8.11.0** 的架構、啟動流程、資料模型、文件處理與檢索管線、Agentic RAG 研究迴圈、LLM 呼叫層、外部工具整合、認證與安全設計，以及前端架構（本版變更見 [CHANGELOG](../CHANGELOG.md#890---2026-11-09)）。設計背後的取捨記錄在 [架構決策紀錄（ADR）](adr/README.md)。
+> 本文件說明 AskMiao **8.12.0** 的架構、啟動流程、資料模型、文件處理與檢索管線、Agentic RAG 研究迴圈、LLM 呼叫層、外部工具整合、認證與安全設計，以及前端架構（本版變更見 [CHANGELOG](../CHANGELOG.md#890---2026-11-09)）。設計背後的取捨記錄在 [架構決策紀錄（ADR）](adr/README.md)。
 
 ## 目錄
 
@@ -589,7 +589,7 @@ flowchart TB
 
 Office 檔案先經過與附件相同的 zip 炸彈檢查，對話檔案用聊天附件的預算、知識庫文件用管理員上傳的預算；解析與 PDF 轉圖都在執行緒中進行，並與附件擷取、檔案工具共用 `extraction_slots`（同時最多 2 個）；檔案內容在取得名額之後才讀進記憶體，排隊中的請求不會先佔住一份完整檔案。對話檔案中最近 2 份 PDF 的內容留在記憶體（`FILE_PREVIEW_PDF_CACHE_ENTRIES`），逐頁轉圖時不必每頁都從資料庫重讀整個檔案。關閉預覽時，前端會取消還沒完成的頁面請求。知識庫文件的原始檔不在 `UPLOAD_DIR` 時，改顯示資料庫中擷取出的文字。
 
-**研究助理做的網頁**：`create_conversation_file` 可以建立 `.html`。預覽時前端先以 `POST /api/chat/files/{file_id}/view-token` 取得以 `TOOL_SECRETS_KEY`（Fernet）加密、5 分鐘失效、只對這個檔案與使用者有效的權杖，再把 `<iframe sandbox="allow-scripts">` 指向 `GET /api/chat/files/{file_id}/view?token=…`。這個回應的 CSP 以 `sandbox allow-scripts` 讓網頁落在 opaque origin，讀不到 AskMiao 的 Cookie 與 `localStorage`；`default-src 'none'` 只允許內嵌的腳本與樣式、`data:` 圖片與字型，`fetch`、表單與外部資源一律被擋；`frame-ancestors` 只允許 AskMiao 自己與 `ALLOWED_ORIGINS` 嵌入。正式環境的前端 CSP 有 `frame-src 'self'`（另加 `VITE_API_BASE`／`VITE_API_URL` 的來源），網頁就算以腳本把 iframe 導向外部網址也會被瀏覽器擋下，無法把內容送出去。不以 `srcdoc` 或 `blob:` 嵌入，因為它們會繼承前端的 CSP，網頁的內嵌腳本無法執行。
+**研究助理做的網頁**：`create_conversation_file` 可以建立 `.html`。預覽時前端先以 `POST /api/chat/files/{file_id}/view-token` 取得以 `TOOL_SECRETS_KEY`（Fernet）加密、5 分鐘失效、只對這個檔案與使用者有效的權杖，再把 `<iframe sandbox="allow-scripts">` 指向 `GET /api/chat/files/{file_id}/view?token=…`。這個回應的 CSP 以 `sandbox allow-scripts` 讓網頁落在 opaque origin，讀不到 AskMiao 的 Cookie 與 `localStorage`；`default-src 'none'` 只允許內嵌的腳本與樣式、`data:` 圖片與字型，`fetch`、表單與外部資源一律被擋；`frame-ancestors` 只允許 AskMiao 自己與 `ALLOWED_ORIGINS` 嵌入。正式環境的前端 CSP 有 `frame-src 'self'`（另加 `VITE_API_BASE`／`VITE_API_URL` 的來源），網頁就算以腳本把 iframe 導向外部網址也會被瀏覽器擋下，無法把內容送出去。不以 `srcdoc` 或 `blob:` 嵌入，因為它們會繼承前端的 CSP，網頁的內嵌腳本無法執行。網頁在面板中滿版顯示，上方有「預覽」與「原始碼」兩個分頁（原始碼來自預覽 JSON 的 `text`，切換分頁不會重新載入網頁）。「電腦版面」把 iframe 的寬度固定為 1,280 像素，再以 CSS `transform: scale()` 縮小到面板寬度，窄面板也能看到電腦上的版面；面板比 1,280 像素寬時不縮放。「重新載入」會重新取得權杖再載入。網頁連到其他檔案或外部網站時，iframe 會離開原本的頁面而且無法顯示；前端在 iframe 第二次觸發 `load` 時顯示提示與「回到網頁」。`CREATE_FILE` 的工具說明也要求模型把多個頁面做在同一個檔案裡，並且不要用 `localStorage`、`sessionStorage` 或 Cookie（在 opaque origin 中讀寫會丟出 `SecurityError`）。
 
 **網址預覽卡**：回答的參考來源中，網頁來源（`web_search`、`web_fetch`）改為按一下先開啟預覽卡，顯示標題、網站名稱與摘要，再由卡片上的「開啟網頁」在新分頁開啟。回答內文的 `[n]` 也是按鈕（`remarkCitations.ts` 把文字中的 `[n]` 轉成標記，`MarkdownContent` 依 `sources_detail` 的 `citation` 找到來源），按一下開啟同一張預覽卡，知識庫來源顯示段落、相關度與片段；`sources_detail` 中沒有的編號、程式碼與連結文字中的 `[n]` 維持原樣，回答串流中來源還沒送達時也顯示原本的文字。預覽卡只使用 `sources_detail` 已有的資料，不會為了預覽另外連線到該網站。
 

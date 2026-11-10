@@ -4,6 +4,7 @@
 
 > How to upgrade an existing deployment to a new release, with rollback steps and troubleshooting. See the [CHANGELOG](../CHANGELOG_en.md) for the full list of changes in each version.
 
+- [Upgrading from 8.11.0 to 8.12.0](#upgrading-from-8110-to-8120)
 - [Upgrading from 8.10.0 to 8.11.0](#upgrading-from-8100-to-8110)
 - [Upgrading from 8.9.1 to 8.10.0](#upgrading-from-891-to-8100)
 - [Upgrading from 8.9.0 to 8.9.1](#upgrading-from-890-to-891)
@@ -51,6 +52,20 @@
   - [Step 5: verify the upgrade](#step-5-verify-the-upgrade)
   - [Rolling back to 2.2.x](#rolling-back-to-22x)
   - [Troubleshooting](#troubleshooting)
+
+---
+
+## Upgrading from 8.11.0 to 8.12.0
+
+For upgrading from 8.11.0 to 8.12.0 (2026-11-10); see the [CHANGELOG](../CHANGELOG_en.md#8120---2026-11-10) for the full list of changes. No `.env` changes and no database changes; with `deploy/`, rebuild the images as usual, and update the frontend and the backend together.
+
+| Item | 8.11.0 | 8.12.0 | What to do |
+|---|---|---|---|
+| Response of `GET /api/chat/files/{file_id}/preview` for web page files | `{"type": "html"}` | `{"type": "html", "text": "…", "truncated": false}` | Code that calls this endpoint can use `text` directly; code that only looks at `type` is unaffected |
+| Web page preview | Padding and a border, laid out at the panel width | Fills the panel, with a desktop layout switch, a source tab, reload, and "back to the page" | Nothing |
+| `CREATE_FILE` tool description | Requires CSS, JavaScript, and images in the same file | Also requires multiple pages in one file and no `localStorage`, `sessionStorage`, or cookies | Nothing |
+
+To roll back to 8.11.0, switch back to the older code; roll the frontend and the backend back together, because with only the backend rolled back the newer frontend's source tab is empty.
 
 ---
 

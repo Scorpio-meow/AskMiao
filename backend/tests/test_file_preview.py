@@ -36,7 +36,8 @@ def test_large_tables_are_cut_and_marked(monkeypatch):
 def test_text_markdown_html_and_binary_files():
     assert preview("a.md", MARKDOWN.encode())["type"] == "markdown"
     assert preview("LICENSE", b"MIT License") == {"type": "text", "text": "MIT License", "truncated": False}
-    assert preview("a.html", b"<h1>x</h1>") == {"type": "html"}
+    assert preview("a.html", b"<h1>x</h1>") == {"type": "html", "text": "<h1>x</h1>", "truncated": False}
+    assert preview("a.html", b"caf\xe9 <b>x</b>") == {"type": "html", "text": "caf� <b>x</b>", "truncated": False}
     assert preview("a.html", b"<h1>x</h1>", allow_html=False)["text"] == "<h1>x</h1>"
     assert preview("a.bin", bytes(range(256)))["type"] == "unsupported"
     assert preview("a.pdf", b"not a pdf") == {"type": "unsupported", "reason": "PDF 檔案損毀，無法預覽"}

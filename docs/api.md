@@ -2,7 +2,7 @@
 
 [繁體中文](api.md) | [English](api_en.md)
 
-> 本文件說明 AskMiao 後端 **8.11.0** 的 REST 與 SSE 串流端點，內容依 `backend/app/api/` 的實際路由撰寫。設定 `ENABLE_API_DOCS=true` 時，後端另外在 `http://localhost:8001/docs`（Swagger UI）與 `http://localhost:8001/redoc` 提供互動測試，OpenAPI 規格位於 `/openapi.json`；這三個路徑不需要登入且會列出所有端點與參數，對外服務時請保持 `ENABLE_API_DOCS=false`（範本值），此時三者一律回傳 `404`。
+> 本文件說明 AskMiao 後端 **8.12.0** 的 REST 與 SSE 串流端點，內容依 `backend/app/api/` 的實際路由撰寫。設定 `ENABLE_API_DOCS=true` 時，後端另外在 `http://localhost:8001/docs`（Swagger UI）與 `http://localhost:8001/redoc` 提供互動測試，OpenAPI 規格位於 `/openapi.json`；這三個路徑不需要登入且會列出所有端點與參數，對外服務時請保持 `ENABLE_API_DOCS=false`（範本值），此時三者一律回傳 `404`。
 
 ## 目錄
 
@@ -611,7 +611,7 @@ data: {"message_id": 108, "conversation_id": 42, "answer": "特休假需先在�
 | `sheets` | `.xlsx`、`.csv` | `sheets`：`{name, rows, truncated}`，儲存格一律轉成文字（公式顯示計算結果；沒有快取結果時為空白） |
 | `slides` | `.pptx` | `slides`：`{number, title, items, notes, images}`，`items` 為 `{type: "text", level, text}` 或表格；`images` 是這一頁的圖片數，預覽不含圖片；`truncated` |
 | `markdown`、`text` | `.md`、文字檔與其他可以解碼成文字的檔案 | `text`、`truncated` |
-| `html` | `.html`、`.htm` | 無；以 [2.15](#215-post-apichatfilesfile_idview-token) 取得隔離預覽的網址 |
+| `html` | `.html`、`.htm` | `text`（原始碼，以 UTF-8 解讀，無法解讀的位元組顯示為 `�`）、`truncated`；網頁畫面以 [2.15](#215-post-apichatfilesfile_idview-token) 取得隔離預覽的網址 |
 | `unsupported` | 其他二進位檔、損毀或有密碼的檔案 | `reason` |
 
 文字最多 200,000 字元，表格最多 500 列、50 欄，文件與簡報最多 5,000 個區塊，超過時 `truncated` 為 `true`。Office 檔案的解壓與 XML 預算與聊天附件相同，解析與聊天附件、對話檔案工具共用「整個行程同時最多解析 2 個檔案」的上限。

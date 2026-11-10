@@ -200,7 +200,7 @@ def _preview(filename: str, data: bytes, limits: ExtractionLimits, allow_html: b
     if extension == ".pptx":
         return with_checked_file(data, extension, limits, _pptx_slides)
     if allow_html and extension in HTML_EXTENSIONS:
-        return {"type": "html"}
+        return {"type": "html", **_clip(data.decode("utf-8-sig", errors="replace"))}
     text = _decoded(data)
     if extension == ".csv":
         return _csv_sheets(filename, text)

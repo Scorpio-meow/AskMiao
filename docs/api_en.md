@@ -2,7 +2,7 @@
 
 [繁體中文](api.md) | [English](api_en.md)
 
-> REST and SSE streaming endpoints of the AskMiao **8.11.0** backend, written against the actual routers in `backend/app/api/`. With `ENABLE_API_DOCS=true` the backend also serves interactive docs at `http://localhost:8001/docs` (Swagger UI) and `http://localhost:8001/redoc`, and the OpenAPI document at `/openapi.json`. These three paths need no sign-in and list every endpoint and parameter, so keep `ENABLE_API_DOCS=false` (the template value) for public deployments; all three then return `404`.
+> REST and SSE streaming endpoints of the AskMiao **8.12.0** backend, written against the actual routers in `backend/app/api/`. With `ENABLE_API_DOCS=true` the backend also serves interactive docs at `http://localhost:8001/docs` (Swagger UI) and `http://localhost:8001/redoc`, and the OpenAPI document at `/openapi.json`. These three paths need no sign-in and list every endpoint and parameter, so keep `ENABLE_API_DOCS=false` (the template value) for public deployments; all three then return `404`.
 
 ## Contents
 
@@ -613,7 +613,7 @@ Get the preview content of one of your conversation files. The backend converts 
 | `sheets` | `.xlsx`, `.csv` | `sheets`: `{name, rows, truncated}`, with every cell converted to text (formulas show their computed result, or a blank when there is no cached result) |
 | `slides` | `.pptx` | `slides`: `{number, title, items, notes, images}`, where `items` are `{type: "text", level, text}` or tables and `images` is the number of images on the slide (the preview does not include images); `truncated` |
 | `markdown`, `text` | `.md`, text files, and other files that can be decoded as text | `text`, `truncated` |
-| `html` | `.html`, `.htm` | None; get the URL of the isolated preview with [2.15](#215-post-apichatfilesfile_idview-token) |
+| `html` | `.html`, `.htm` | `text` (the source, read as UTF-8, with undecodable bytes shown as `�`) and `truncated`; for the rendered page, get the URL of the isolated preview with [2.15](#215-post-apichatfilesfile_idview-token) |
 | `unsupported` | Other binary files, and damaged or password-protected files | `reason` |
 
 Text is limited to 200,000 characters, tables to 500 rows and 50 columns, and documents and presentations to 5,000 blocks; beyond these, `truncated` is `true`. Office files use the same decompression and XML budget as chat attachments, and parsing shares the limit of 2 files parsed at once across the whole process with chat attachments and the conversation file tools.

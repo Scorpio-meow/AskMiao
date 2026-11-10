@@ -1,7 +1,7 @@
 import React, { useEffect, useId, useRef, useState } from 'react';
 import type { FilePreview, PreviewBlock, PreviewRun, PreviewSheet, PreviewSlide, PreviewSource } from '../services/api';
 import { describeRequestError } from '../utils/secureLogger';
-import { Alert, Icon, IconButton, Spinner, Tab, Tabs, Tooltip } from './ui';
+import { Alert, Button, Icon, IconButton, Spinner, Tab, Tabs, Tooltip } from './ui';
 import MarkdownContent from '../pages/Chat/MarkdownContent';
 import styles from './FilePreviewPanel.module.css';
 const PAGE_LOAD_DELAY_MS = 300;
@@ -10,6 +10,7 @@ const PANEL_MIN_WIDTH = 320;
 const SPLIT_MAIN_MIN_WIDTH = 360;
 const PEEK_PAGE_GAP = 96;
 const RESIZE_STEP = 32;
+const DESKTOP_PAGE_WIDTH = 1280;
 const LEVEL_CLASSES = [styles.level0, styles.level1, styles.level2, styles.level3, styles.level4];
 const levelClass = (level: number) => LEVEL_CLASSES[Math.min(Math.max(level, 0), LEVEL_CLASSES.length - 1)];
 const Loading: React.FC<{ label: string }> = ({ label }) => (
@@ -175,28 +176,102 @@ const PdfPage: React.FC<{ source: PreviewSource; pageNumber: number }> = ({ sour
     </figure>
   );
 };
-const HtmlFrame: React.FC<{ source: PreviewSource }> = ({ source }) => {
-  const [url, setUrl] = useState<string | null>(null);
-  const [failed, setFailed] = useState(false);
+type HtmlPreviewData = Extract<FilePreview, { type: 'html' }>;
+export const desktopFrame = (width: number, height: number): React.CSSProperties | undefined => {
+  if (width <= 0 || width >= DESKTOP_PAGE_WIDTH) return undefined;
+  const scale = width / DESKTOP_PAGE_WIDTH;
+  return { width: `${DESKTOP_PAGE_WIDTH}px`, height: `${height / scale}px`, transform: `scale(${scale})` };
+};
+const HtmlView: React.FC<{ preview: HtmlPreviewData; source: PreviewSource }> = ({ preview, source }) => {
+  const area = useRef<HTMLDivElement>(null);
+  const [mode, setMode] = useState<'page' | 'source'>('page');
+  const [desktop, setDesktop] = useState(false);
+  const [attempt, setAttempt] = useState(0);
+  const [link, setLink] = useState<{ attempt: number; url: string } | null>(null);
+  const [failedAttempt, setFailedAttempt] = useState<number | null>(null);
+  const [loads, setLoads] = useState(0);
+  const [size, setSize] = useState<{ width: number; height: number } | null>(null);
+  const url = link?.attempt === attempt ? link.url : null;
+  const failed = failedAttempt === attempt;
   useEffect(() => {
     let active = true;
     if (!source.viewUrl) return undefined;
     source.viewUrl()
       .then((value) => {
-        if (active) setUrl(value);
+        if (active) setLink({ attempt, url: value });
       })
       .catch((err) => {
         console.warn('開啟網頁預覽失敗', describeRequestError(err));
-        if (active) setFailed(true);
+        if (active) setFailedAttempt(attempt);
       });
     return () => {
       active = false;
     };
-  }, [source]);
-  if (failed || !source.viewUrl) return <Alert severity="error">無法開啟網頁預覽，請稍後再試</Alert>;
-  if (!url) return <Loading label="準備網頁預覽…" />;
+  }, [source, attempt]);
+  useEffect(() => {
+    const element = area.current;
+    if (!element || typeof ResizeObserver === 'undefined') return undefined;
+    const observer = new ResizeObserver(([entry]) => {
+      if (entry.contentRect.width > 0) setSize({ width: entry.contentRect.width, height: entry.contentRect.height });
+    });
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, []);
+  const reload = () => {
+    setLoads(0);
+    setAttempt((value) => value + 1);
+  };
+  const frameStyle = desktop && size ? desktopFrame(size.width, size.height) : undefined;
   return (
-    <iframe className={styles.frame} src={url} sandbox="allow-scripts" referrerPolicy="no-referrer" title={`${source.filename} 的網頁預覽`} />
+    <div className={styles.htmlView}>
+      <div className={styles.frameBar}>
+        <Tabs value={mode} onChange={(_, value) => setMode(value)} className={styles.frameTabs}>
+          <Tab label="預覽" value="page" />
+          <Tab label="原始碼" value="source" />
+        </Tabs>
+        {mode === 'page' && (
+          <div className={styles.frameActions}>
+            <Tooltip title={desktop ? '改回符合面板寬度' : '用電腦版面顯示，縮小到面板寬度'}>
+              <IconButton size="sm" className={desktop ? styles.toggleOn : ''} onClick={() => setDesktop((value) => !value)} aria-label="電腦版面" aria-pressed={desktop}>
+                <Icon name="monitor" size={16} />
+              </IconButton>
+            </Tooltip>
+            <Tooltip title="重新載入">
+              <IconButton size="sm" onClick={reload} aria-label="重新載入網頁">
+                <Icon name="refresh" size={16} />
+              </IconButton>
+            </Tooltip>
+          </div>
+        )}
+      </div>
+      {mode === 'page' && loads > 1 && (
+        <div className={styles.frameNotice} role="status">
+          <span>網頁換頁了。預覽只能顯示這一個檔案，連到其他頁面或網站的連結打不開。</span>
+          <Button size="sm" variant="outline" onClick={reload}>回到網頁</Button>
+        </div>
+      )}
+      <div ref={area} className={styles.frameArea} hidden={mode !== 'page'}>
+        {(failed || !source.viewUrl) && <div className={styles.frameStatus}><Alert severity="error">無法開啟網頁預覽，請按重新載入再試一次</Alert></div>}
+        {!failed && source.viewUrl && loads === 0 && <div className={styles.frameStatus}><Loading label="載入網頁…" /></div>}
+        {url && (
+          <iframe
+            className={`${styles.frame} ${frameStyle ? styles.frameScaled : ''}`}
+            style={frameStyle}
+            src={url}
+            sandbox="allow-scripts"
+            referrerPolicy="no-referrer"
+            title={`${source.filename} 的網頁預覽`}
+            onLoad={() => setLoads((value) => value + 1)}
+          />
+        )}
+      </div>
+      {mode === 'source' && (
+        <div className={styles.sourceArea}>
+          <pre className={styles.text}>{preview.text}</pre>
+          {preview.truncated && <p className={styles.note}>內容很長，只顯示前面一部分；完整內容請下載檔案。</p>}
+        </div>
+      )}
+    </div>
   );
 };
 export const PreviewContent: React.FC<{ preview: FilePreview; source: PreviewSource }> = ({ preview, source }) => {
@@ -214,7 +289,7 @@ export const PreviewContent: React.FC<{ preview: FilePreview; source: PreviewSou
     case 'slides':
       return <SlidesView slides={preview.slides} truncated={preview.truncated} />;
     case 'html':
-      return <HtmlFrame source={source} />;
+      return <HtmlView preview={preview} source={source} />;
     case 'unsupported':
       return <Alert severity="info">{preview.reason}</Alert>;
     default:
@@ -353,7 +428,7 @@ export const FilePreviewPanel: React.FC<FilePreviewPanelProps> = ({ source, plac
           </IconButton>
         </Tooltip>
       </header>
-      <div className={styles.body}>
+      <div className={preview?.type === 'html' ? `${styles.body} ${styles.bodyFlush}` : styles.body}>
         {error && <Alert severity="error">{error}</Alert>}
         {!error && !preview && <Loading label="載入預覽…" />}
         {preview && <PreviewContent preview={preview} source={source} />}

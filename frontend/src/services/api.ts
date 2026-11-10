@@ -55,7 +55,7 @@ export type FilePreview =
   | { type: 'sheets'; sheets: PreviewSheet[] }
   | { type: 'slides'; slides: PreviewSlide[]; truncated: boolean }
   | { type: 'markdown' | 'text'; text: string; truncated: boolean; notice?: string }
-  | { type: 'html' }
+  | { type: 'html'; text: string; truncated: boolean }
   | { type: 'unsupported'; reason: string };
 export interface PreviewSource {
   filename: string;

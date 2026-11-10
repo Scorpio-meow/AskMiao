@@ -6,6 +6,7 @@ All notable changes to AskMiao are documented in this file. The format is based 
 
 | Version | Release date | Highlights |
 |---|---|---|
+| [8.12.0](#8120---2026-11-10) | 2026-11-10 | Web page previews fill the panel and gain a desktop layout, a source tab, and reload; when a link cannot open, one click returns to the page |
 | [8.11.0](#8110---2026-11-10) | 2026-11-10 | The `[n]` marks in the answer text can be clicked to open the same preview card as the source list |
 | [8.10.0](#8100---2026-11-10) | 2026-11-10 | A 「上網」 (web) switch beside the input box lets users decide per question whether the assistant may go online; with it on, a knowledge-base miss is followed by a web search |
 | [8.9.1](#891---2026-11-10) | 2026-11-10 | Model calls are read as streams, so long answers and long tool calls no longer time out; a failed model call or an empty answer is reported to the user; `/skill-name` is no longer affected by the skill catalog length limit |
@@ -48,6 +49,19 @@ All notable changes to AskMiao are documented in this file. The format is based 
 ---
 
 ## [Unreleased]
+
+## [8.12.0] - 2026-11-10
+
+### Added
+
+- **Desktop layout for web page previews**: when previewing a web page file (`.html`), the "電腦版面" (desktop layout) switch in the toolbar lays the page out 1,280 pixels wide and shrinks it to the panel width, so a narrow panel still shows the layout a desktop browser would. It grows as the panel is dragged wider or expanded; panels wider than 1,280 pixels are not scaled.
+- **Source tab for web page previews**: the preview has two tabs, "預覽" (preview) and "原始碼" (source); switching does not reload the page. `GET /api/chat/files/{file_id}/preview` now also returns `text` (up to 200,000 characters) and `truncated` for web page files; the source is read as UTF-8, the same bytes the preview frame receives.
+- **Reload and back to the page**: the toolbar has a "重新載入" (reload) button. When a page links to another file or an external site, the preview cannot show the target; it now shows a notice with a "回到網頁" (back to the page) button, so there is no need to close and reopen the preview.
+
+### Changed
+
+- **Web page previews fill the panel**: the page no longer has padding and a border around it and takes the whole preview panel; while loading it shows "載入網頁…".
+- **Tool description for creating web pages**: `CREATE_FILE` tells the research assistant to keep multiple pages in one file (switching with in-page anchors or JavaScript) and not to use `localStorage`, `sessionStorage`, or cookies, because in the isolated preview links to other files do not open and reading or writing that storage throws.
 
 ## [8.11.0] - 2026-11-10
 
