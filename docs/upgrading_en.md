@@ -4,6 +4,7 @@
 
 > How to upgrade an existing deployment to a new release, with rollback steps and troubleshooting. See the [CHANGELOG](../CHANGELOG_en.md) for the full list of changes in each version.
 
+- [Upgrading from 8.10.0 to 8.11.0](#upgrading-from-8100-to-8110)
 - [Upgrading from 8.9.1 to 8.10.0](#upgrading-from-891-to-8100)
 - [Upgrading from 8.9.0 to 8.9.1](#upgrading-from-890-to-891)
 - [Upgrading from 8.8.0 to 8.9.0](#upgrading-from-880-to-890)
@@ -50,6 +51,12 @@
   - [Step 5: verify the upgrade](#step-5-verify-the-upgrade)
   - [Rolling back to 2.2.x](#rolling-back-to-22x)
   - [Troubleshooting](#troubleshooting)
+
+---
+
+## Upgrading from 8.10.0 to 8.11.0
+
+For upgrading from 8.10.0 to 8.11.0 (2026-11-10); see the [CHANGELOG](../CHANGELOG_en.md#8110---2026-11-10) for the full list of changes. This release changes only the frontend: no `.env` changes, and neither the database nor the API changes; with `deploy/`, rebuild the images as usual. To roll back to 8.10.0, switch back to the older code; the `[n]` marks in answers become plain text again.
 
 ---
 

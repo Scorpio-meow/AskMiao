@@ -6,6 +6,7 @@ All notable changes to AskMiao are documented in this file. The format is based 
 
 | Version | Release date | Highlights |
 |---|---|---|
+| [8.11.0](#8110---2026-11-10) | 2026-11-10 | The `[n]` marks in the answer text can be clicked to open the same preview card as the source list |
 | [8.10.0](#8100---2026-11-10) | 2026-11-10 | A 「上網」 (web) switch beside the input box lets users decide per question whether the assistant may go online; with it on, a knowledge-base miss is followed by a web search |
 | [8.9.1](#891---2026-11-10) | 2026-11-10 | Model calls are read as streams, so long answers and long tool calls no longer time out; a failed model call or an empty answer is reported to the user; `/skill-name` is no longer affected by the skill catalog length limit |
 | [8.9.0](#890---2026-11-09) | 2026-11-09 | Organization and personal long-term instructions; approvals can cover the rest of a question; agent mode can hand sub-tasks to parallel subagents |
@@ -47,6 +48,12 @@ All notable changes to AskMiao are documented in this file. The format is based 
 ---
 
 ## [Unreleased]
+
+## [8.11.0] - 2026-11-10
+
+### Added
+
+- **Previews for inline citations**: the `[n]` marks in the answer text become small numbered buttons that open the same preview card as the source list: web sources show the title, site name, snippet, and "Open web page", and knowledge-base sources show the paragraph, relevance, and snippet; Esc closes the card. Adjacent marks such as `[2][5]` are separate buttons. `[n]` inside code or link text, numbers missing from the source list, and marks shown while the answer is still streaming and the sources have not arrived stay as plain text.
 
 ## [8.10.0] - 2026-11-10
 

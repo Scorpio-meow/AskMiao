@@ -115,50 +115,57 @@ export const SourceBadges: React.FC<SourceBadgesProps> = ({
             );
           })}
       </ul>
-      <Popover
-        open={Boolean(anchorEl)}
-        anchorEl={anchorEl}
-        onClose={handleCloseDetail}
-        aria-label={activeDetail ? `${activeDetail.url ? '網頁預覽' : '來源詳情'}：${activeDetail.label || activeDetail.source}` : '來源詳情'}
-      >
-        {activeDetail && (
-          <div className={styles.popoverCard}>
-            <div className={styles.popoverHeader}>
-              {activeDetail.citation !== undefined ? (
-                <span className={styles.citation}>{activeDetail.citation}</span>
-              ) : (
-                <Icon name={activeDetail.url ? 'language' : 'description'} size={16} className={styles.sourceIcon} />
-              )}
-              <span className={styles.popoverTitle}>{activeDetail.label || activeDetail.source}</span>
-            </div>
-            {activeDetail.url && (
-              <div className={styles.popoverMeta}>
-                <span className={styles.siteName}>{siteName(activeDetail.url)}</span>
-              </div>
-            )}
-            {(activeDetail.chunk !== undefined || (activeDetail.score !== undefined && activeDetail.score !== null)) && (
-              <div className={styles.popoverMeta}>
-                {activeDetail.chunk !== undefined && <span>段落 {activeDetail.chunk}</span>}
-                {activeDetail.score !== undefined && activeDetail.score !== null && (
-                  <span className={styles.score}>相關度 {Math.round(activeDetail.score * 100)}%</span>
-                )}
-              </div>
-            )}
-            {activeDetail.snippet && (
-              <div className={styles.snippet}>
-                {activeDetail.snippet}
-              </div>
-            )}
-            {activeDetail.url && (
-              <a className={styles.openLink} href={activeDetail.url} target="_blank" rel="noopener noreferrer">
-                開啟網頁 <span aria-hidden="true">↗</span>
-                {newTabNote}
-              </a>
-            )}
-          </div>
-        )}
-      </Popover>
+      <SourcePopover detail={activeDetail} anchorEl={anchorEl} onClose={handleCloseDetail} />
     </div>
   );
 };
+export const SourcePopover: React.FC<{ detail: SourceDetail | null; anchorEl: HTMLElement | null; onClose: () => void }> = ({
+  detail,
+  anchorEl,
+  onClose,
+}) => (
+  <Popover
+    open={Boolean(anchorEl && detail)}
+    anchorEl={anchorEl}
+    onClose={onClose}
+    aria-label={detail ? `${detail.url ? '網頁預覽' : '來源詳情'}：${detail.label || detail.source}` : '來源詳情'}
+  >
+    {detail && (
+      <div className={styles.popoverCard}>
+        <div className={styles.popoverHeader}>
+          {detail.citation !== undefined ? (
+            <span className={styles.citation}>{detail.citation}</span>
+          ) : (
+            <Icon name={detail.url ? 'language' : 'description'} size={16} className={styles.sourceIcon} />
+          )}
+          <span className={styles.popoverTitle}>{detail.label || detail.source}</span>
+        </div>
+        {detail.url && (
+          <div className={styles.popoverMeta}>
+            <span className={styles.siteName}>{siteName(detail.url)}</span>
+          </div>
+        )}
+        {(detail.chunk !== undefined || (detail.score !== undefined && detail.score !== null)) && (
+          <div className={styles.popoverMeta}>
+            {detail.chunk !== undefined && <span>段落 {detail.chunk}</span>}
+            {detail.score !== undefined && detail.score !== null && (
+              <span className={styles.score}>相關度 {Math.round(detail.score * 100)}%</span>
+            )}
+          </div>
+        )}
+        {detail.snippet && (
+          <div className={styles.snippet}>
+            {detail.snippet}
+          </div>
+        )}
+        {detail.url && (
+          <a className={styles.openLink} href={detail.url} target="_blank" rel="noopener noreferrer">
+            開啟網頁 <span aria-hidden="true">↗</span>
+            <span className="sr-only">（在新分頁開啟）</span>
+          </a>
+        )}
+      </div>
+    )}
+  </Popover>
+);
 export default SourceBadges;

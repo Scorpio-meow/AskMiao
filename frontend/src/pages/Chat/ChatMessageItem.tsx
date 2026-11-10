@@ -156,7 +156,7 @@ const ChatMessageItemView: React.FC<ChatMessageItemProps> = ({
                 <span>AI 正在分析您的問題...</span>
               </div>
             ) : hasText ? (
-              <MarkdownContent content={mainContent} />
+              <MarkdownContent content={mainContent} citations={message.sources_detail} />
             ) : null}
             {message.error && (
               <div className={styles.errorBlock}>

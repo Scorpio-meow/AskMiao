@@ -1,6 +1,9 @@
-import React, { memo } from 'react';
+import React, { createContext, memo, useContext, useState } from 'react';
 import ReactMarkdown, { Components } from 'react-markdown';
 import remarkGfmSafe from './remarkGfmSafe';
+import remarkCitations from './remarkCitations';
+import { SourcePopover } from './SourceBadges';
+import type { SourceDetail } from './types';
 import styles from './MarkdownContent.module.css';
 const SOCIAL_PLATFORM_DOMAINS = ['threads.com', 'threads.net', 'instagram.com', 'twitter.com', 'x.com'];
 const ACTION_BUTTON_KEYWORDS = ['貼文', '查看', '前往', '開啟', '↗'];
@@ -8,7 +11,8 @@ const POST_TIME_PREFIX_REGEX = /^(上午|下午|\d{1,2}:\d{2}|\d{4}[-/年]\d{1,2
 const POST_AUTHOR_PREFIX_REGEX = /^(?:(\d+)[\.:\s]+)?(@?[\w\.-]+)/;
 const POST_LINK_PREFIX_REGEX = /^(連結|來源)[：:]\s*/;
 const POST_CONTENT_PREFIX_REGEX = /^(內容)[：:]\s*/;
-const REMARK_PLUGINS = [remarkGfmSafe];
+const REMARK_PLUGINS = [remarkGfmSafe, remarkCitations];
+const CitationContext = createContext<SourceDetail[] | undefined>(undefined);
 const isSocialUrl = (href?: string): boolean => {
   if (!href) return false;
   try {
@@ -117,7 +121,33 @@ function parsePipeDelimitedPost(children: React.ReactNode): React.ReactNode | nu
     </div>
   );
 }
+const CitationRef: React.FC<{ citation: number; children: React.ReactNode }> = ({ citation, children }) => {
+  const details = useContext(CitationContext);
+  const [anchorEl, setAnchorEl] = useState<HTMLElement | null>(null);
+  const detail = details?.find((item) => item.citation === citation);
+  if (!detail) return <>{children}</>;
+  return (
+    <>
+      <button
+        type="button"
+        className={styles.citationRef}
+        onClick={(event) => setAnchorEl(event.currentTarget)}
+        aria-haspopup="dialog"
+        aria-expanded={anchorEl !== null}
+        aria-label={`來源 ${citation}：${detail.label || detail.source}`}
+      >
+        {citation}
+      </button>
+      <SourcePopover detail={detail} anchorEl={anchorEl} onClose={() => setAnchorEl(null)} />
+    </>
+  );
+};
 const MARKDOWN_COMPONENTS: Components = {
+  sup: ({ node, children, ...props }) => {
+    const citation = node?.properties?.dataCitation;
+    if (citation === undefined) return <sup {...props}>{children}</sup>;
+    return <CitationRef citation={Number(citation)}>{children}</CitationRef>;
+  },
   a: ({ node, href, children, ...props }) => {
     const external = parseExternalLink(href);
     const isSocial = isSocialUrl(href);
@@ -175,12 +205,14 @@ const MARKDOWN_COMPONENTS: Components = {
     return <li {...props}>{children}</li>;
   },
 };
-export const MarkdownContent = memo(function MarkdownContent({ content }: { content: string }) {
+export const MarkdownContent = memo(function MarkdownContent({ content, citations }: { content: string; citations?: SourceDetail[] }) {
   return (
     <div className={styles.markdownBody}>
-      <ReactMarkdown remarkPlugins={REMARK_PLUGINS} components={MARKDOWN_COMPONENTS}>
-        {content}
-      </ReactMarkdown>
+      <CitationContext.Provider value={citations}>
+        <ReactMarkdown remarkPlugins={REMARK_PLUGINS} components={MARKDOWN_COMPONENTS}>
+          {content}
+        </ReactMarkdown>
+      </CitationContext.Provider>
     </div>
   );
 });

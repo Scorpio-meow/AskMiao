@@ -2,7 +2,7 @@
 
 [繁體中文](architecture.md) | [English](architecture_en.md)
 
-> The architecture of AskMiao **8.10.0**: layers, startup, data model, document processing and retrieval, the agentic RAG research loop, the LLM layer, external tool integration, authentication and security, and the frontend (see the [changelog](../CHANGELOG_en.md#890---2026-11-09) for this release's changes). The trade-offs behind these designs are recorded in the [Architecture Decision Records](adr/README_en.md).
+> The architecture of AskMiao **8.11.0**: layers, startup, data model, document processing and retrieval, the agentic RAG research loop, the LLM layer, external tool integration, authentication and security, and the frontend (see the [changelog](../CHANGELOG_en.md#890---2026-11-09) for this release's changes). The trade-offs behind these designs are recorded in the [Architecture Decision Records](adr/README_en.md).
 
 ## Contents
 
@@ -591,7 +591,7 @@ Office files first go through the same zip bomb checks as attachments, with the 
 
 **Web pages made by the research assistant**: `create_conversation_file` can create `.html` files. To preview one, the frontend first gets a token from `POST /api/chat/files/{file_id}/view-token`, encrypted with `TOOL_SECRETS_KEY` (Fernet), valid for 5 minutes and only for this file and user, then points an `<iframe sandbox="allow-scripts">` at `GET /api/chat/files/{file_id}/view?token=…`. That response's CSP uses `sandbox allow-scripts` to put the page in an opaque origin, so it cannot read AskMiao's cookies or `localStorage`; `default-src 'none'` allows only inline scripts and styles plus `data:` images and fonts, so `fetch`, forms, and external resources are all blocked; `frame-ancestors` lets only AskMiao itself and `ALLOWED_ORIGINS` embed it. The production frontend CSP has `frame-src 'self'` (plus the origin from `VITE_API_BASE`/`VITE_API_URL`), so even if the page's scripts navigate the iframe to an external URL, the browser blocks it and the content cannot be sent out. The page is not embedded with `srcdoc` or a `blob:` URL, because those inherit the frontend's CSP and the page's inline scripts could not run.
 
-**URL preview cards**: among an answer's sources, clicking a web source (`web_search`, `web_fetch`) now first opens a preview card showing the title, site name, and summary, and "Open web page" on the card opens the page in a new tab. The preview card uses only the data already in `sources_detail` and never connects to the site just for the preview.
+**URL preview cards**: among an answer's sources, clicking a web source (`web_search`, `web_fetch`) now first opens a preview card showing the title, site name, and summary, and "Open web page" on the card opens the page in a new tab. The `[n]` marks in the answer text are buttons too (`remarkCitations.ts` turns `[n]` in text into marks, and `MarkdownContent` looks the source up by `citation` in `sources_detail`); clicking one opens the same preview card, which for knowledge-base sources shows the paragraph, relevance, and snippet. Numbers missing from `sources_detail`, and `[n]` inside code or link text, stay as they are, as do all marks while the answer is still streaming and the sources have not arrived. The preview card uses only the data already in `sources_detail` and never connects to the site just for the preview.
 
 ---
 

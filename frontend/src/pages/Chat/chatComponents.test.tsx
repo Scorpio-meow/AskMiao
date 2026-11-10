@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { renderToStaticMarkup } from 'react-dom/server';
 import type { Message } from '../../services/api';
 import ChatInputArea from './ChatInputArea';
+import MarkdownContent from './MarkdownContent';
 import ChatMessageItem from './ChatMessageItem';
 import ChatMessageList from './ChatMessageList';
 import ChatSidebar from './ChatSidebar';
@@ -486,5 +487,26 @@ describe('ChatInputArea web switch', () => {
   });
   it('is hidden when the server has web search turned off', () => {
     expect(webSwitch(renderInput(false, true))).toBeUndefined();
+  });
+});
+describe('MarkdownContent citations', () => {
+  const citations = [
+    { citation: 2, source: 'https://opensource.googleblog.com/egm', label: 'Introducing the Elephant-Goldfish Model', url: 'https://opensource.googleblog.com/egm', snippet: '摘要' },
+    { citation: 5, source: 'leave.txt', chunk: 0, score: 0.9, snippet: '特休依年資計算' },
+  ];
+  const content = '大象負責規格 [2][5]，未知的 [7] 照原樣，程式碼 `a[2]` 不動，連結 [看 [2]](https://example.com) 也不動。';
+  it('turns known [n] marks into buttons that open the source preview', () => {
+    const html = renderToStaticMarkup(<MarkdownContent content={content} citations={citations} />);
+    const labels = buttons(html).map((button) => button.attrs.match(/aria-label="([^"]*)"/)?.[1]);
+    expect(labels).toEqual(['來源 2：Introducing the Elephant-Goldfish Model', '來源 5：leave.txt']);
+    expect(buttons(html).every((button) => button.attrs.includes('aria-haspopup="dialog"'))).toBe(true);
+    expect(textOf(html)).toContain('未知的 [7] 照原樣');
+    expect(html).toContain('<code>a[2]</code>');
+    expect(textOf(html)).toContain('看 [2]');
+  });
+  it('keeps plain [n] while the sources have not arrived', () => {
+    const html = renderToStaticMarkup(<MarkdownContent content={content} />);
+    expect(buttons(html)).toEqual([]);
+    expect(textOf(html)).toContain('大象負責規格 [2][5]');
   });
 });

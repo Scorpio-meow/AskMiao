@@ -250,3 +250,30 @@
   margin-bottom: var(--space-2);
   list-style: none;
 }
+
+.citationRef {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 20px;
+  height: 20px;
+  margin: 0 1px;
+  padding: 0 var(--space-1);
+  border: none;
+  border-radius: var(--radius-xs);
+  background-color: var(--bg-surface-secondary);
+  color: var(--text-secondary);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+  vertical-align: 0.15em;
+  cursor: pointer;
+  transition: background-color var(--transition-fast), color var(--transition-fast);
+}
+
+.citationRef:hover,
+.citationRef[aria-expanded="true"] {
+  background-color: var(--color-primary-light);
+  color: var(--color-primary-text);
+}

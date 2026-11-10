@@ -2,7 +2,7 @@
 
 [繁體中文](architecture.md) | [English](architecture_en.md)
 
-> 本文件說明 AskMiao **8.10.0** 的架構、啟動流程、資料模型、文件處理與檢索管線、Agentic RAG 研究迴圈、LLM 呼叫層、外部工具整合、認證與安全設計，以及前端架構（本版變更見 [CHANGELOG](../CHANGELOG.md#890---2026-11-09)）。設計背後的取捨記錄在 [架構決策紀錄（ADR）](adr/README.md)。
+> 本文件說明 AskMiao **8.11.0** 的架構、啟動流程、資料模型、文件處理與檢索管線、Agentic RAG 研究迴圈、LLM 呼叫層、外部工具整合、認證與安全設計，以及前端架構（本版變更見 [CHANGELOG](../CHANGELOG.md#890---2026-11-09)）。設計背後的取捨記錄在 [架構決策紀錄（ADR）](adr/README.md)。
 
 ## 目錄
 
@@ -591,7 +591,7 @@ Office 檔案先經過與附件相同的 zip 炸彈檢查，對話檔案用聊�
 
 **研究助理做的網頁**：`create_conversation_file` 可以建立 `.html`。預覽時前端先以 `POST /api/chat/files/{file_id}/view-token` 取得以 `TOOL_SECRETS_KEY`（Fernet）加密、5 分鐘失效、只對這個檔案與使用者有效的權杖，再把 `<iframe sandbox="allow-scripts">` 指向 `GET /api/chat/files/{file_id}/view?token=…`。這個回應的 CSP 以 `sandbox allow-scripts` 讓網頁落在 opaque origin，讀不到 AskMiao 的 Cookie 與 `localStorage`；`default-src 'none'` 只允許內嵌的腳本與樣式、`data:` 圖片與字型，`fetch`、表單與外部資源一律被擋；`frame-ancestors` 只允許 AskMiao 自己與 `ALLOWED_ORIGINS` 嵌入。正式環境的前端 CSP 有 `frame-src 'self'`（另加 `VITE_API_BASE`／`VITE_API_URL` 的來源），網頁就算以腳本把 iframe 導向外部網址也會被瀏覽器擋下，無法把內容送出去。不以 `srcdoc` 或 `blob:` 嵌入，因為它們會繼承前端的 CSP，網頁的內嵌腳本無法執行。
 
-**網址預覽卡**：回答的參考來源中，網頁來源（`web_search`、`web_fetch`）改為按一下先開啟預覽卡，顯示標題、網站名稱與摘要，再由卡片上的「開啟網頁」在新分頁開啟。預覽卡只使用 `sources_detail` 已有的資料，不會為了預覽另外連線到該網站。
+**網址預覽卡**：回答的參考來源中，網頁來源（`web_search`、`web_fetch`）改為按一下先開啟預覽卡，顯示標題、網站名稱與摘要，再由卡片上的「開啟網頁」在新分頁開啟。回答內文的 `[n]` 也是按鈕（`remarkCitations.ts` 把文字中的 `[n]` 轉成標記，`MarkdownContent` 依 `sources_detail` 的 `citation` 找到來源），按一下開啟同一張預覽卡，知識庫來源顯示段落、相關度與片段；`sources_detail` 中沒有的編號、程式碼與連結文字中的 `[n]` 維持原樣，回答串流中來源還沒送達時也顯示原本的文字。預覽卡只使用 `sources_detail` 已有的資料，不會為了預覽另外連線到該網站。
 
 ---
 
