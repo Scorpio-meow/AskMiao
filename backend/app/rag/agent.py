@@ -35,7 +35,7 @@ from app import prompts
 from app.core.llm_client import LlmEndpoint, chat_completion, stream_completion
 from app.rag.file_tools import FILE_TOOL_NAMES
 from app.services.file_builders import extraction_slots
-from app.rag.tools import ResearchToolRegistry
+from app.rag.tools import WEB_TOOL_NAMES, ResearchToolRegistry
 from app.services.agent_skills import SKILL_NAME_PATTERN
 from app.rag.research_session import ResearchSession, ToolResultFilter, strip_citations, strip_tool_result_blocks
 from app.rag.tool_approval import approval_broker
@@ -218,7 +218,8 @@ class ResearchAgent:
         approval_user_id: Optional[int] = None,
         conversation_id: Optional[int] = None,
         mode: str = RESEARCH_MODE,
-        instructions: str = ""
+        instructions: str = "",
+        allow_web: bool
     ) -> AsyncGenerator[Dict[str, Any], None]:
         start_time = time.time()
         agent_mode = mode == AGENT_MODE
@@ -229,10 +230,15 @@ class ResearchAgent:
             (t["function"]["parameters"]["properties"]["name"]["enum"] for t in tools_def if t["function"]["name"] == "activate_skill"),
             [],
         )
+        web_rules = ""
+        if any(t["function"]["name"] in WEB_TOOL_NAMES for t in tools_def):
+            web_rules = prompts.WEB_ALLOWED if allow_web else prompts.WEB_TURNED_OFF
+        if not allow_web:
+            tools_def = [t for t in tools_def if t["function"]["name"] not in WEB_TOOL_NAMES]
         if agent_mode:
             tools_def = [*tools_def, UPDATE_PLAN_TOOL, ASK_USER_TOOL, DELEGATE_TOOL]
         base_prompt = prompts.AGENT_SYSTEM_PROMPT if agent_mode else prompts.SYSTEM_PROMPT
-        system_prompt = (base_prompt + prompts.SKILL_RULES if skill_names else base_prompt) + instructions
+        system_prompt = (base_prompt + prompts.SKILL_RULES if skill_names else base_prompt) + web_rules + instructions
         plan: Optional[List[Dict[str, str]]] = None
         research_trace: List[Dict[str, Any]] = []
         explicit_skill = None
@@ -316,6 +322,8 @@ class ResearchAgent:
             [effective_query]
             + [m["content"] for m in history if m.get("role") == "user" and isinstance(m.get("content"), str)]
         )
+        if not allow_web:
+            session.block_web()
         if explicit_skill and research_trace[0]["status"] == "success":
             session.record_tool_output("activate_skill", skill_output)
         final_answer = ""

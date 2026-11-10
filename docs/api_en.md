@@ -2,7 +2,7 @@
 
 [繁體中文](api.md) | [English](api_en.md)
 
-> REST and SSE streaming endpoints of the AskMiao **8.9.1** backend, written against the actual routers in `backend/app/api/`. With `ENABLE_API_DOCS=true` the backend also serves interactive docs at `http://localhost:8001/docs` (Swagger UI) and `http://localhost:8001/redoc`, and the OpenAPI document at `/openapi.json`. These three paths need no sign-in and list every endpoint and parameter, so keep `ENABLE_API_DOCS=false` (the template value) for public deployments; all three then return `404`.
+> REST and SSE streaming endpoints of the AskMiao **8.10.0** backend, written against the actual routers in `backend/app/api/`. With `ENABLE_API_DOCS=true` the backend also serves interactive docs at `http://localhost:8001/docs` (Swagger UI) and `http://localhost:8001/redoc`, and the OpenAPI document at `/openapi.json`. These three paths need no sign-in and list every endpoint and parameter, so keep `ENABLE_API_DOCS=false` (the template value) for public deployments; all three then return `404`.
 
 ## Contents
 
@@ -329,6 +329,7 @@ Send a message and start the `ResearchAgent`. The response is a **Server-Sent Ev
 | `model_name` | string | Yes | — | Model to use; it must be in that connection's model list, otherwise `400` `這個 API 連線沒有提供此模型` ("model not offered by this connection"); never falls back to another connection or a system model |
 | `reasoning_effort` | string | No | `medium` | Reasoning level, mapped per provider before it is sent; see below |
 | `mode` | string | No | `research` | `research` is research mode; `agent` is agent mode, which uses the agent system prompt and adds an `update_plan` tool; see [Architecture: Agent mode](architecture_en.md#agent-mode). Other values return `422` |
+| `allow_web` | boolean | No | `true` | Whether this question may go online (the 「上網」 switch beside the chat input box): with `true`, `web_search` and `web_fetch` are offered and the system prompt asks the model to search the web when the knowledge base has nothing and the question may be about public information; with `false` they are not offered, calls to them are refused, and the system prompt tells the model the user turned the web off. With `ENABLE_WEB_SEARCH=false` on the server neither is offered and no web rule is added |
 | `attachments` | array | No | `[]` | Attachments, at most 5; see the table below |
 
 `attachments[]` fields:
@@ -434,9 +435,12 @@ Requires sign-in. Returns the API connections the account may use with their mod
   "connections": [
     {"id": 3, "name": "My OpenAI", "provider": "openai", "scope": "personal", "models": ["gpt-6-sol"]},
     {"id": 1, "name": "Company Ollama", "provider": "ollama", "scope": "shared", "models": ["qwen3:8b"]}
-  ]
+  ],
+  "web_search_enabled": true
 }
 ```
+
+`web_search_enabled` is the server's `ENABLE_WEB_SEARCH`; the frontend shows the 「上網」 switch beside the input box only when it is `true`.
 
 ### 2.3 GET /api/chat/tools
 

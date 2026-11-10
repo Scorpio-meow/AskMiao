@@ -28,6 +28,9 @@ export const ChatInputArea: React.FC<ChatInputAreaProps> = ({
   onAddAttachments,
   onRemoveAttachment,
   onRejectAttachments,
+  webSearchAvailable,
+  allowWeb,
+  onToggleAllowWeb,
 }) => {
   const suggestionsId = useId();
   const hintId = useId();
@@ -277,17 +280,37 @@ export const ChatInputArea: React.FC<ChatInputAreaProps> = ({
             accept=".png,.jpg,.jpeg,.webp,.gif,.pdf,.doc,.docx,.ppt,.pptx,.xls,.xlsx,.csv,.txt,.md,.json,.js,.ts,.py,.html,.css"
             onChange={handleFileInputChange}
           />
-          <Tooltip title="上傳檔案或圖片（也可以貼上截圖或拖曳檔案）" className={styles.attachSlot}>
-            <button
-              type="button"
-              className={styles.attachButton}
-              onClick={() => fileInputRef.current?.click()}
-              disabled={disabled}
-              aria-label="上傳檔案或圖片"
-            >
-              <Icon name="upload" size={18} />
-            </button>
-          </Tooltip>
+          <div className={styles.toolSlot}>
+            <Tooltip title="上傳檔案或圖片（也可以貼上截圖或拖曳檔案）" className={styles.attachSlot}>
+              <button
+                type="button"
+                className={styles.attachButton}
+                onClick={() => fileInputRef.current?.click()}
+                disabled={disabled}
+                aria-label="上傳檔案或圖片"
+              >
+                <Icon name="upload" size={18} />
+              </button>
+            </Tooltip>
+            {webSearchAvailable && (
+              <Tooltip
+                title={allowWeb ? '允許搜尋網路與讀取網頁，點一下關閉' : '目前不搜尋網路、不讀取網頁，點一下允許'}
+                className={styles.attachSlot}
+              >
+                <button
+                  type="button"
+                  className={`${styles.webToggle} ${allowWeb ? styles.webToggleOn : ''}`}
+                  onClick={onToggleAllowWeb}
+                  disabled={disabled}
+                  aria-pressed={allowWeb}
+                  aria-label="上網查資料"
+                >
+                  <Icon name="language" size={16} />
+                  <span className={styles.webToggleLabel}>上網</span>
+                </button>
+              </Tooltip>
+            )}
+          </div>
           {streamingHere ? (
             <Tooltip title="停止產生回答" className={styles.sendSlot}>
               <button

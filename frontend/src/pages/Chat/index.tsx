@@ -27,6 +27,7 @@ const isNotFound = (err: unknown): boolean => (err as { response?: { status?: nu
 const MODEL_STORAGE_KEY = 'askmiao_selected_model';
 const REASONING_EFFORT_STORAGE_KEY = 'askmiao_reasoning_effort';
 const CHAT_MODE_STORAGE_KEY = 'askmiao_chat_mode';
+const ALLOW_WEB_STORAGE_KEY = 'askmiao_allow_web';
 const readStorage = (key: string): string | null => {
   try {
     return localStorage.getItem(key);
@@ -54,6 +55,8 @@ export const ChatPage: React.FC = () => {
     return REASONING_EFFORT_OPTIONS.some((opt) => opt.value === saved) ? saved! : 'medium';
   });
   const [chatMode, setChatMode] = useState<ChatMode>(() => (readStorage(CHAT_MODE_STORAGE_KEY) === 'agent' ? 'agent' : 'research'));
+  const [allowWeb, setAllowWeb] = useState(() => readStorage(ALLOW_WEB_STORAGE_KEY) !== 'false');
+  const [webSearchEnabled, setWebSearchEnabled] = useState(false);
   const [modelsLoading, setModelsLoading] = useState(false);
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
   const [pendingDelete, setPendingDelete] = useState<Conversation | null>(null);
@@ -143,9 +146,10 @@ export const ChatPage: React.FC = () => {
   const loadAvailableModels = useCallback(async () => {
     setModelsLoading(true);
     try {
-      const options = await chatService.getConnections();
-      const choices = options.flatMap((connection) => connection.models.map((model) => choiceKey(connection.id, model)));
-      setConnections(options);
+      const options = await chatService.getChatOptions();
+      const choices = options.connections.flatMap((connection) => connection.models.map((model) => choiceKey(connection.id, model)));
+      setConnections(options.connections);
+      setWebSearchEnabled(options.web_search_enabled);
       if (!choices.includes(selectedChoiceRef.current)) {
         setSelectedChoice(choices[0] || '');
       }
@@ -166,6 +170,10 @@ export const ChatPage: React.FC = () => {
   const handleSelectChatMode = (mode: ChatMode) => {
     setChatMode(mode);
     writeStorage(CHAT_MODE_STORAGE_KEY, mode);
+  };
+  const handleToggleAllowWeb = () => {
+    setAllowWeb(!allowWeb);
+    writeStorage(ALLOW_WEB_STORAGE_KEY, String(!allowWeb));
   };
   const handleSelectReasoningEffort = (effort: string) => {
     setReasoningEffort(effort);
@@ -194,7 +202,7 @@ export const ChatPage: React.FC = () => {
     setNewMessage('');
     setAttachments([]);
     try {
-      await sendChatMessage(toSend, selectedModel, effectiveReasoningEffort, chatMode, toSendAttachments);
+      await sendChatMessage(toSend, selectedModel, effectiveReasoningEffort, chatMode, allowWeb, toSendAttachments);
     } catch (err) {
       setNewMessage((current) => current || toSend);
       setAttachments((current) => (current.length > 0 ? current : toSendAttachments));
@@ -204,7 +212,7 @@ export const ChatPage: React.FC = () => {
   const handleRetry = (failedMessage: Message) => {
     const question = findRetryQuestion(messages, failedMessage);
     if (!question || sending || !selectedModel) return;
-    sendChatMessage(question.content, selectedModel, effectiveReasoningEffort, chatMode, question.attachments).catch((err) => {
+    sendChatMessage(question.content, selectedModel, effectiveReasoningEffort, chatMode, allowWeb, question.attachments).catch((err) => {
       showSnackbar(`訊息沒有送出：${describeSendError(err)}`, 'error');
     });
   };
@@ -313,6 +321,9 @@ export const ChatPage: React.FC = () => {
           onAddAttachments={(newAtts) => setAttachments((prev) => [...prev, ...newAtts])}
           onRemoveAttachment={(idx) => setAttachments((prev) => prev.filter((_, i) => i !== idx))}
           onRejectAttachments={(message) => showSnackbar(message, 'error')}
+          webSearchAvailable={webSearchEnabled}
+          allowWeb={allowWeb}
+          onToggleAllowWeb={handleToggleAllowWeb}
         />
       </div>
       {previewFile && previewSource && (

@@ -6,6 +6,7 @@ All notable changes to AskMiao are documented in this file. The format is based 
 
 | Version | Release date | Highlights |
 |---|---|---|
+| [8.10.0](#8100---2026-11-10) | 2026-11-10 | A 「上網」 (web) switch beside the input box lets users decide per question whether the assistant may go online; with it on, a knowledge-base miss is followed by a web search |
 | [8.9.1](#891---2026-11-10) | 2026-11-10 | Model calls are read as streams, so long answers and long tool calls no longer time out; a failed model call or an empty answer is reported to the user; `/skill-name` is no longer affected by the skill catalog length limit |
 | [8.9.0](#890---2026-11-09) | 2026-11-09 | Organization and personal long-term instructions; approvals can cover the rest of a question; agent mode can hand sub-tasks to parallel subagents |
 | [8.8.0](#880---2026-11-09) | 2026-11-09 | Agent mode can ask the user and wait for the answer; the research trace shows a progress note for each step; file create and edit results carry a structure check |
@@ -46,6 +47,16 @@ All notable changes to AskMiao are documented in this file. The format is based 
 ---
 
 ## [Unreleased]
+
+## [8.10.0] - 2026-11-10
+
+### Added
+
+- **「上網」 (web) switch**: the chat input box gains a 「上網」 switch to the right of the upload button, so users decide per question whether the research assistant may search the web and read web pages. It is on by default and the choice is remembered in the browser; when it is off, the web tools are not offered to the model, calls to them are refused anyway (subagents included), and the system prompt tells the model the user turned the web off and should be asked to turn it on when web data is needed. The switch is hidden when the server has `ENABLE_WEB_SEARCH=false`. `POST /api/chat/send` takes an optional `allow_web` (default `true`), and `GET /api/chat/models` also returns `web_search_enabled`.
+
+### Changed
+
+- **A knowledge-base miss is followed by a web search**: the answer rules used to say that a 「查無相關資料」 ("no relevant data") result from the knowledge base must be reported as not found, so the research assistant stopped after the knowledge base and asked whether to search the web. Now, with the web allowed, when the knowledge base has nothing and the question may be about public information (external products, open-source projects, technical terms, current events), it searches the web next and says it found nothing only when the web has nothing either.
 
 ## [8.9.1] - 2026-11-10
 

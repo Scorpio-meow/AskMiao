@@ -127,6 +127,7 @@ export function useChat(onError: (message: string) => void) {
     choice: ModelChoice,
     reasoningEffort: string,
     mode: ChatMode,
+    allowWeb: boolean,
     attachments?: ChatAttachment[]
   ) => {
     if (!content.trim() && (!attachments || attachments.length === 0)) return;
@@ -191,6 +192,7 @@ export function useChat(onError: (message: string) => void) {
         choice.model,
         reasoningEffort,
         mode,
+        allowWeb,
         (ev) => {
           if (ev.event === 'start') {
             started = true;

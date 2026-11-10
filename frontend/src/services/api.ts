@@ -261,10 +261,14 @@ export interface ChatConnectionOption {
   scope: 'personal' | 'shared';
   models: string[];
 }
+export interface ChatOptions {
+  connections: ChatConnectionOption[];
+  web_search_enabled: boolean;
+}
 export const chatService = {
-  async getConnections(): Promise<ChatConnectionOption[]> {
-    const response = await api.get<{ connections: ChatConnectionOption[] }>('/chat/models');
-    return response.data.connections;
+  async getChatOptions(): Promise<ChatOptions> {
+    const response = await api.get<ChatOptions>('/chat/models');
+    return response.data;
   },
   async sendMessageStream(
     content: string,
@@ -273,6 +277,7 @@ export const chatService = {
     model_name: string,
     reasoning_effort: string,
     mode: ChatMode,
+    allowWeb: boolean,
     onEvent: (event: StreamEvent) => void,
     signal?: AbortSignal,
     attachments?: ChatAttachment[]
@@ -291,6 +296,7 @@ export const chatService = {
       model_name,
       reasoning_effort,
       mode,
+      allow_web: allowWeb,
       attachments: payloadAttachments
     });
     const send = (token: string | null) => fetch(`${API_BASE_URL}/chat/send`, {

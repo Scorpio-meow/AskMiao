@@ -87,6 +87,7 @@ class ResearchSession:
     def __init__(self, user_texts: Iterable[str]):
         self.boundary_id = secrets.token_hex(4)
         self.kb_content_returned = False
+        self.web_blocked = False
         self._url_sources: Set[str] = set()
         for text in user_texts:
             if text:
@@ -105,7 +106,11 @@ class ResearchSession:
         if name == SKILL_SCRIPT_TOOL_NAME:
             return str(arguments.get("skill", "")) in self.preapproved_script_skills
         return name in self.preapproved_tools or approval_key(name, arguments) in self.preapproved_tools
+    def block_web(self) -> None:
+        self.web_blocked = True
     def refuse_tool_call(self, name: str, arguments: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        if name in WEB_TOOL_NAMES and self.web_blocked:
+            return {"error": prompts.WEB_TURNED_OFF_TOOL}
         if name in WEB_TOOL_NAMES and settings.BLOCK_WEB_TOOLS_AFTER_KB and self.kb_content_returned:
             return {"error": "本次提問已讀取知識庫內容，依系統設定（BLOCK_WEB_TOOLS_AFTER_KB）不再使用聯網工具，請以已取得的資料回答"}
         if name == "activate_skill" and arguments.get("name") in self.activated_skills:

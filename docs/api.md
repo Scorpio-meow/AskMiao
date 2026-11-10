@@ -2,7 +2,7 @@
 
 [繁體中文](api.md) | [English](api_en.md)
 
-> 本文件說明 AskMiao 後端 **8.9.1** 的 REST 與 SSE 串流端點，內容依 `backend/app/api/` 的實際路由撰寫。設定 `ENABLE_API_DOCS=true` 時，後端另外在 `http://localhost:8001/docs`（Swagger UI）與 `http://localhost:8001/redoc` 提供互動測試，OpenAPI 規格位於 `/openapi.json`；這三個路徑不需要登入且會列出所有端點與參數，對外服務時請保持 `ENABLE_API_DOCS=false`（範本值），此時三者一律回傳 `404`。
+> 本文件說明 AskMiao 後端 **8.10.0** 的 REST 與 SSE 串流端點，內容依 `backend/app/api/` 的實際路由撰寫。設定 `ENABLE_API_DOCS=true` 時，後端另外在 `http://localhost:8001/docs`（Swagger UI）與 `http://localhost:8001/redoc` 提供互動測試，OpenAPI 規格位於 `/openapi.json`；這三個路徑不需要登入且會列出所有端點與參數，對外服務時請保持 `ENABLE_API_DOCS=false`（範本值），此時三者一律回傳 `404`。
 
 ## 目錄
 
@@ -327,6 +327,7 @@
 | `model_name` | string | 是 | — | 要使用的模型，必須在該連線的模型清單內，否則回傳 `400` `這個 API 連線沒有提供此模型`；不會改用其他連線或系統模型 |
 | `reasoning_effort` | string | 否 | `medium` | 推理程度，依供應商對應後傳給模型，見下方說明 |
 | `mode` | string | 否 | `research` | `research` 為查證模式；`agent` 為代理模式，改用代理的系統提示詞並多一個 `update_plan` 工具，見 [系統架構：代理模式](architecture.md#代理模式)；其他值回傳 `422` |
+| `allow_web` | boolean | 否 | `true` | 這次提問能不能上網（聊天頁輸入框旁的「上網」開關）：`true` 時提供 `web_search` 與 `web_fetch`，系統提示詞要求知識庫查不到而問題可能是公開資訊時接著上網查；`false` 時不提供，呼叫也會被拒絕，系統提示詞告訴模型使用者關閉了上網。伺服器 `ENABLE_WEB_SEARCH=false` 時兩者都不提供，也不附上網路規則 |
 | `attachments` | array | 否 | `[]` | 附件，最多 5 個，見下表 |
 
 `attachments[]` 欄位：
@@ -432,9 +433,12 @@ data: {"message_id": 108, "conversation_id": 42, "answer": "特休假需先在�
   "connections": [
     {"id": 3, "name": "我的 OpenAI", "provider": "openai", "scope": "personal", "models": ["gpt-6-sol"]},
     {"id": 1, "name": "公司 Ollama", "provider": "ollama", "scope": "shared", "models": ["qwen3:8b"]}
-  ]
+  ],
+  "web_search_enabled": true
 }
 ```
+
+`web_search_enabled` 是伺服器的 `ENABLE_WEB_SEARCH`；前端在它為 `true` 時才在輸入框旁顯示「上網」開關。
 
 ### 2.3 GET /api/chat/tools
 

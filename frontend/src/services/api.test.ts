@@ -28,13 +28,13 @@ describe('chatService.sendMessageStream', () => {
     const fetchMock = vi.fn().mockResolvedValue(sseResponse());
     vi.stubGlobal('fetch', fetchMock);
     const events: unknown[] = [];
-    await chatService.sendMessageStream('你好', null, 3, 'gpt-6-sol', 'medium', 'agent', (event) => events.push(event));
+    await chatService.sendMessageStream('你好', null, 3, 'gpt-6-sol', 'medium', 'agent', false, (event) => events.push(event));
     expect(refresh).toHaveBeenCalledTimes(1);
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(authorizationOf(fetchMock.mock.calls[0])).toBe('Bearer fresh-token');
     expect(storage.get('access_token')).toBe('fresh-token');
     expect(events).toEqual([{ event: 'done', data: { answer: '好' } }]);
-    expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toMatchObject({ connection_id: 3, model_name: 'gpt-6-sol', mode: 'agent' });
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toMatchObject({ connection_id: 3, model_name: 'gpt-6-sol', mode: 'agent', allow_web: false });
   });
   it('refreshes once and resends when the server rejects the token', async () => {
     const valid = tokenExpiringIn(3600);
@@ -44,7 +44,7 @@ describe('chatService.sendMessageStream', () => {
       .mockResolvedValueOnce(new Response('{"detail":"權杖已被撤銷"}', { status: 401 }))
       .mockResolvedValueOnce(sseResponse());
     vi.stubGlobal('fetch', fetchMock);
-    await chatService.sendMessageStream('你好', null, 3, 'gpt-6-sol', 'medium', 'research', () => { });
+    await chatService.sendMessageStream('你好', null, 3, 'gpt-6-sol', 'medium', 'research', true, () => { });
     expect(fetchMock.mock.calls.map(authorizationOf)).toEqual([`Bearer ${valid}`, 'Bearer fresh-token']);
   });
 });

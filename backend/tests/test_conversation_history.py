@@ -60,8 +60,9 @@ async def test_send_message_passes_database_history_to_rag(db, monkeypatch):
     captured = {}
     class FakeRag:
         async def generate_response_stream(self, query, conversation_history, *, endpoint, model_name,
-                                           reasoning_effort=None, attachments=None, approval_user_id=None, conversation_id=None, mode, instructions):
+                                           reasoning_effort=None, attachments=None, approval_user_id=None, conversation_id=None, mode, instructions, allow_web):
             captured["mode"] = mode
+            captured["allow_web"] = allow_web
             captured["instructions"] = instructions
             captured["endpoint"] = endpoint
             captured["model_name"] = model_name
@@ -81,7 +82,7 @@ async def test_send_message_passes_database_history_to_rag(db, monkeypatch):
         user_id=1,
     )
     body = "".join([chunk async for chunk in response.body_iterator])
-    assert (captured["mode"], captured["instructions"]) == ("research", "")
+    assert (captured["mode"], captured["instructions"], captured["allow_web"]) == ("research", "", True)
     assert captured["query"] == "那滿一年呢？"
     assert (captured["endpoint"].api_base, captured["model_name"]) == ("https://ollama.example.com", "qwen3:8b")
     assert captured["history"] == [
@@ -189,6 +190,9 @@ async def test_agent_mode_streams_and_saves_the_plan(db, monkeypatch):
 def test_unknown_chat_mode_is_rejected():
     with pytest.raises(ValueError):
         MessageCreate(content="hi", connection_id=1, model_name="qwen3:8b", mode="autopilot")
+def test_the_web_switch_defaults_to_on_for_older_clients():
+    assert MessageCreate(content="hi", connection_id=1, model_name="qwen3:8b").allow_web is True
+    assert MessageCreate(content="hi", connection_id=1, model_name="qwen3:8b", allow_web=False).allow_web is False
 @pytest.mark.asyncio
 async def test_send_message_passes_organization_and_personal_instructions(db, monkeypatch):
     set_instructions(db, None, "  回答附上負責單位  ")

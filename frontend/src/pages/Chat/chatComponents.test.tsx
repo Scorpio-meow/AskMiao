@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { renderToStaticMarkup } from 'react-dom/server';
 import type { Message } from '../../services/api';
+import ChatInputArea from './ChatInputArea';
 import ChatMessageItem from './ChatMessageItem';
 import ChatMessageList from './ChatMessageList';
 import ChatSidebar from './ChatSidebar';
@@ -460,5 +461,30 @@ describe('ResearchTraceBlock with subagents', () => {
       ],
     }, { isStreaming: true });
     expect(textOf(html)).toContain('研究中：查國內規定（步驟 2）');
+  });
+});
+describe('ChatInputArea web switch', () => {
+  const renderInput = (webSearchAvailable: boolean, allowWeb: boolean) => renderToStaticMarkup(
+    <ChatInputArea
+      value=""
+      onChange={noop}
+      onSend={noop}
+      onStop={noop}
+      sending={false}
+      streamingHere={false}
+      webSearchAvailable={webSearchAvailable}
+      allowWeb={allowWeb}
+      onToggleAllowWeb={noop}
+    />
+  );
+  const webSwitch = (html: string) => buttons(html).find((button) => button.attrs.includes('aria-label="上網查資料"'));
+  it('sits right after the upload button and shows whether the web is allowed', () => {
+    const labels = (html: string) => buttons(html).map((button) => button.attrs.match(/aria-label="([^"]*)"/)?.[1]);
+    expect(labels(renderInput(true, true)).slice(0, 2)).toEqual(['上傳檔案或圖片', '上網查資料']);
+    expect(webSwitch(renderInput(true, true))?.attrs).toContain('aria-pressed="true"');
+    expect(webSwitch(renderInput(true, false))?.attrs).toContain('aria-pressed="false"');
+  });
+  it('is hidden when the server has web search turned off', () => {
+    expect(webSwitch(renderInput(false, true))).toBeUndefined();
   });
 });

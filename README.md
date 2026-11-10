@@ -10,7 +10,7 @@
 
 [繁體中文](README.md) | [English](README_en.md)
 
-[![Version](https://img.shields.io/badge/version-8.9.1-2563eb?style=flat)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-8.10.0-2563eb?style=flat)](CHANGELOG.md)
 [![Python](https://img.shields.io/badge/Python-3.12+-3776AB?style=flat&logo=python&logoColor=white)](https://www.python.org/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-005571?style=flat&logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
 [![React](https://img.shields.io/badge/React-19.3-61DAFB?style=flat&logo=react&logoColor=black)](https://react.dev/)
@@ -75,7 +75,7 @@
   |---|---|
   | `search_knowledge_base` | 檢索知識庫片段，可用 `target_document` 限定文件 |
   | `filter_and_count_records` | 依日期、作者、關鍵字精確統計結構化記錄（例如某月的貼文總數） |
-  | `web_search` | 聯網搜尋，設定 `OLLAMA_API_KEY` 時優先使用 Ollama Web Search，否則使用 DuckDuckGo |
+  | `web_search` | 聯網搜尋，設定 `OLLAMA_API_KEY` 時優先使用 Ollama Web Search，否則使用 DuckDuckGo；使用者可以用輸入框旁的「上網」開關關掉聯網工具 |
   | `web_fetch` | 深入閱讀網頁全文，只能讀取使用者訊息或本次工具結果中原樣出現過的網址 |
 
 - **研究歷程**：每一步的工具、參數、結果摘要與耗時以 SSE 即時推送，前端以可摺疊的時間軸呈現。
@@ -637,7 +637,7 @@ bun run build        # 產出 build/
 | [設定參考](docs/configuration.md) | 每個環境變數的預設值與作用、供應商路由、門檻校準、前端設定 |
 | [部署指南](docs/deployment.md) | 以 Docker Compose 部署到主機、HTTPS、備份與更新 |
 | [疑難排解](docs/troubleshooting.md) | 啟動、登入、前端與工具的常見錯誤與處理方式 |
-| [升級指南](docs/upgrading.md) | 從 2.x 升級到 3.0.0，以及之後各版（到 8.9.0 升級到 8.9.1）的步驟、回退方式與常見問題 |
+| [升級指南](docs/upgrading.md) | 從 2.x 升級到 3.0.0，以及之後各版（到 8.9.1 升級到 8.10.0）的步驟、回退方式與常見問題 |
 | [架構決策紀錄（ADR）](docs/adr/README.md) | 重大設計的背景、取捨與後續修訂 |
 | [llms.txt](llms.txt) | 給 AI Agent 讀的檔案地圖、系統約束與驗證方式 |
 | [版本變更紀錄](CHANGELOG.md) | 每個版本的新增、變更、移除與修正 |
@@ -645,7 +645,7 @@ bun run build        # 產出 build/
 
 ## 版本資訊
 
-- **目前版本**：8.9.1（2026-11-10），變更內容見 [CHANGELOG](CHANGELOG.md)。
+- **目前版本**：8.10.0（2026-11-10），變更內容見 [CHANGELOG](CHANGELOG.md)。
 - **版本規則**：遵循 [語意化版本](https://semver.org/lang/zh-TW/)。不相容的變更（例如新增必填設定、改變 API 權限或索引格式）升主版號。
 - **版本號位置**：後端 `backend/app/__init__.py` 的 `__version__`（OpenAPI 文件與 MCP 交握都引用它）、前端 `frontend/package.json`，發行時與 `CHANGELOG.md` 一併更新。
 

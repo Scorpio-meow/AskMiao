@@ -299,6 +299,7 @@ class MessageCreate(BaseModel):
     model_name: str = Field(min_length=1, max_length=200)
     reasoning_effort: Optional[str] = "medium"
     mode: str = Field(default=RESEARCH_MODE, pattern=CHAT_MODE_PATTERN)
+    allow_web: bool = True
     attachments: Optional[List[FileAttachment]] = Field(default=[], max_length=MAX_CHAT_ATTACHMENTS)
     @model_validator(mode="after")
     def validate_attachment_total(self) -> "MessageCreate":

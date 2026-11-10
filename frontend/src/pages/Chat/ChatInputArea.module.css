@@ -287,9 +287,15 @@
   transition: background-color var(--transition-fast), color var(--transition-fast);
 }
 
-.attachSlot {
+.toolSlot {
   display: inline-flex;
   grid-area: attach;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.attachSlot {
+  display: inline-flex;
 }
 
 .sendSlot {
@@ -308,6 +314,40 @@
 }
 
 .attachButton:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.webToggle {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: var(--space-1);
+  height: 36px;
+  padding: 0 var(--space-3);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-full);
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  cursor: pointer;
+  transition: background-color var(--transition-fast), border-color var(--transition-fast), color var(--transition-fast);
+}
+
+.webToggle:hover:not(:disabled) {
+  background-color: var(--bg-surface-hover);
+  color: var(--text-primary);
+}
+
+.webToggleOn,
+.webToggleOn:hover:not(:disabled) {
+  border-color: var(--color-primary);
+  background-color: var(--color-primary-light);
+  color: var(--color-primary-text);
+}
+
+.webToggle:disabled {
   opacity: 0.4;
   cursor: not-allowed;
 }
@@ -386,6 +426,16 @@
   .hintRow {
     margin-top: var(--space-1);
   }
+
+  .webToggle {
+    justify-content: center;
+    width: 36px;
+    padding: 0;
+  }
+
+  .webToggleLabel {
+    display: none;
+  }
 }
 
 @media (pointer: coarse) {
@@ -393,6 +443,11 @@
   .attachButton,
   .sendButton {
     width: 44px;
+    height: 44px;
+  }
+
+  .webToggle {
+    min-width: 44px;
     height: 44px;
   }
 

@@ -101,6 +101,9 @@ export interface ChatInputAreaProps {
   onAddAttachments?: (attachments: ChatAttachment[]) => void;
   onRemoveAttachment?: (index: number) => void;
   onRejectAttachments?: (message: string) => void;
+  webSearchAvailable: boolean;
+  allowWeb: boolean;
+  onToggleAllowWeb: () => void;
 }
 export interface SourceBadgesProps {
   sources?: string[];

@@ -54,7 +54,7 @@ def get_available_models(
     db: Session = Depends(get_db),
     user_id: int = Depends(get_current_user_id)
 ):
-    return {"connections": [chat_option(c) for c in connections_for_user(db, user_id)]}
+    return {"connections": [chat_option(c) for c in connections_for_user(db, user_id)], "web_search_enabled": settings.ENABLE_WEB_SEARCH}
 @router.get("/tools")
 def get_available_tools(user_id: int = Depends(get_current_user_id)):
     try:
@@ -148,7 +148,8 @@ async def send_message(
                     approval_user_id=user_id,
                     conversation_id=conv_id,
                     mode=message_data.mode,
-                    instructions=instructions
+                    instructions=instructions,
+                    allow_web=message_data.allow_web
                 ):
                     ev = event_item.get("event")
                     data = event_item.get("data", {})

@@ -186,7 +186,7 @@ async def test_agent_tool_round_trip_with_claude_preserves_raw_content(claude, m
         SimpleNamespace(stop_reason="tool_use", stop_details=None, content=CLAUDE_TOOL_USE_CONTENT),
         SimpleNamespace(stop_reason="end_turn", stop_details=None, content=[SimpleNamespace(type="text", text="特休依年資計算 [1]")]),
     ])
-    result = await final_result(claude_agent(monkeypatch).stream_research("特休怎麼算？", endpoint=CLAUDE, model_name="claude-opus-5"))
+    result = await final_result(claude_agent(monkeypatch).stream_research("特休怎麼算？", endpoint=CLAUDE, model_name="claude-opus-5", allow_web=True))
     first_call, second_call = fake_messages.chat_calls
     assert first_call["model"] == "claude-opus-5"
     assert first_call["system"] == [{"type": "text", "text": prompts.SYSTEM_PROMPT, "cache_control": {"type": "ephemeral"}}]
@@ -206,7 +206,7 @@ async def test_claude_streams_final_answer_when_answer_is_empty(claude, monkeypa
         ],
         stream_chunks=["特休", "依年資計算"],
     )
-    result = await final_result(claude_agent(monkeypatch).stream_research("特休怎麼算？", endpoint=CLAUDE, model_name="claude-opus-5"))
+    result = await final_result(claude_agent(monkeypatch).stream_research("特休怎麼算？", endpoint=CLAUDE, model_name="claude-opus-5", allow_web=True))
     first_call, _ = fake_messages.chat_calls
     (stream_call,) = fake_messages.answer_stream_calls
     assert stream_call["tool_choice"] == {"type": "none"}

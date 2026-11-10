@@ -65,7 +65,8 @@ class RAGPipeline:
         approval_user_id: Optional[int] = None,
         conversation_id: Optional[int] = None,
         mode: str,
-        instructions: str
+        instructions: str,
+        allow_web: bool
     ) -> AsyncGenerator[Dict[str, Any], None]:
         async for event_item in self.agent.stream_research(
             query=query,
@@ -77,6 +78,7 @@ class RAGPipeline:
             approval_user_id=approval_user_id,
             conversation_id=conversation_id,
             mode=mode,
-            instructions=instructions
+            instructions=instructions,
+            allow_web=allow_web
         ):
             yield event_item

@@ -4,6 +4,7 @@
 
 > How to upgrade an existing deployment to a new release, with rollback steps and troubleshooting. See the [CHANGELOG](../CHANGELOG_en.md) for the full list of changes in each version.
 
+- [Upgrading from 8.9.1 to 8.10.0](#upgrading-from-891-to-8100)
 - [Upgrading from 8.9.0 to 8.9.1](#upgrading-from-890-to-891)
 - [Upgrading from 8.8.0 to 8.9.0](#upgrading-from-880-to-890)
 - [Upgrading from 8.7.0 to 8.8.0](#upgrading-from-870-to-880)
@@ -49,6 +50,19 @@
   - [Step 5: verify the upgrade](#step-5-verify-the-upgrade)
   - [Rolling back to 2.2.x](#rolling-back-to-22x)
   - [Troubleshooting](#troubleshooting)
+
+---
+
+## Upgrading from 8.9.1 to 8.10.0
+
+For upgrading from 8.9.1 to 8.10.0 (2026-11-10); see the [CHANGELOG](../CHANGELOG_en.md#8100---2026-11-10) for the full list of changes. This release needs no `.env` changes and leaves the database unchanged; with `deploy/`, rebuild the images as usual.
+
+| Item | 8.9.1 | 8.10.0 | Action |
+|---|---|---|---|
+| Web access | With `ENABLE_WEB_SEARCH` on, the web tools are always offered | Users can turn them off with the 「上網」 switch beside the input box, on by default; `POST /api/chat/send` takes an optional `allow_web` (default `true`), and `GET /api/chat/models` also returns `web_search_enabled` | None; API clients that do not send `allow_web` behave as before |
+| Knowledge-base miss | Reported as not found, asking the user whether to search the web | With the web allowed, followed by a web search; reported as not found only when the web has nothing either | None; to keep the research assistant offline, set `ENABLE_WEB_SEARCH=false` or ask users to turn the switch off |
+
+To roll back to 8.9.1, switch back to the older code; the switch state remembered in browsers and `allow_web` are ignored.
 
 ---
 

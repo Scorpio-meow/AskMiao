@@ -10,6 +10,7 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 from app.api import admin as admin_api
 from app.api import chat as chat_api
+from app.core.config import settings
 from app.api import llm_connections as connections_api
 from app.core import llm_client, ssrf_protection
 from app.core.error_response import SafeClientError
@@ -89,7 +90,7 @@ def test_personal_connections_are_private_and_keys_are_never_returned(env):
     assert bob.get("/api/llm-connections").json() == {"personal": [], "shared": []}
     assert bob.put(f"/api/llm-connections/{body['id']}", json={"name": "搶走"}).status_code == 404
     assert bob.delete(f"/api/llm-connections/{body['id']}").status_code == 404
-    assert bob.get("/api/chat/models").json() == {"connections": []}
+    assert bob.get("/api/chat/models").json() == {"connections": [], "web_search_enabled": settings.ENABLE_WEB_SEARCH}
     alice = login("alice")
     assert [c["name"] for c in alice.get("/api/llm-connections").json()["personal"]] == ["改名"]
     assert alice.delete(f"/api/llm-connections/{body['id']}").status_code == 200

@@ -47,7 +47,8 @@ async def test_research_agent_run():
     result = await final_result(agent.stream_research(
         query="請幫我查詢特休規定",
         endpoint=LlmEndpoint("openai", "http://127.0.0.1:9", None, None, False),
-        model_name="gpt-5.6-luna"
+        model_name="gpt-5.6-luna",
+        allow_web=True
     ))
     assert "answer" in result
     assert "sources" in result

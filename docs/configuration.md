@@ -2,7 +2,7 @@
 
 [繁體中文](configuration.md) | [English](configuration_en.md)
 
-> 本文件逐一說明後端 `backend/.env` 與前端 `frontend/.env` 的每個設定、預設值與實際作用，適用於 **8.9.1**（從 8.9.0 升級見 [升級指南](upgrading.md#從-890-升級到-891)）。設定以 `backend/app/core/config.py` 的 `Settings` 為準，範本見 [`backend/.env.example`](../backend/.env.example)。
+> 本文件逐一說明後端 `backend/.env` 與前端 `frontend/.env` 的每個設定、預設值與實際作用，適用於 **8.10.0**（從 8.9.1 升級見 [升級指南](upgrading.md#從-891-升級到-8100)）。設定以 `backend/app/core/config.py` 的 `Settings` 為準，範本見 [`backend/.env.example`](../backend/.env.example)。
 
 - [讀取規則](#讀取規則)
 - [必填設定](#必填設定)
@@ -96,7 +96,7 @@ python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().d
 
 新增連線時，表單依供應商預先帶入官方 API 位址與下列模型清單，可以再增刪：
 
-| 供應商 | 預先帶入的模型（8.9.1） |
+| 供應商 | 預先帶入的模型（8.10.0） |
 |---|---|
 | OpenAI | `gpt-6.1-sol`、`gpt-6-sol`、`gpt-6-luna`、`gpt-6-astra`、`gpt-5.6-sol`、`gpt-5.6-luna`、`gpt-5.6-terra`、`gpt-5.4`、`gpt-5.4-mini` |
 | Anthropic | `claude-opus-5-5`、`claude-fable-5-1`、`claude-sonnet-5-5`、`claude-haiku-5-5`、`claude-sonnet-5`、`claude-opus-5`、`claude-fable-5`、`claude-opus-4-8`、`claude-haiku-4-5` |
@@ -158,7 +158,7 @@ vllm serve Qwen/Qwen3-8B --enable-auto-tool-choice --tool-call-parser hermes --r
 
 | 變數 | 程式預設值 | 範本值 | 說明 |
 |---|---|---|---|
-| `ENABLE_WEB_SEARCH` | —（必填） | `true` | 同時控制 `web_search` 與 `web_fetch`；`false` 時兩者不會出現在工具清單中，呼叫也會被拒絕 |
+| `ENABLE_WEB_SEARCH` | —（必填） | `true` | 同時控制 `web_search` 與 `web_fetch`；`false` 時兩者不會出現在工具清單中，呼叫也會被拒絕，聊天頁也不顯示「上網」開關。`true` 時使用者可以用輸入框旁的「上網」開關決定每次提問能不能上網 |
 | `CONVERSATION_HISTORY_MESSAGES` | —（必填，≥ 0） | `6` | 提問時從資料庫帶入的前文訊息數（使用者與助理訊息合計，前文一律從使用者訊息開始）；`0` 表示不帶前文 |
 | `WEB_FETCH_ALLOWED_DOMAINS` | —（必填） | `*` | `web_fetch` 可讀取的網域，含子網域，逗號分隔；明確寫 `*` 才表示不限制 |
 | `BLOCK_WEB_TOOLS_AFTER_KB` | —（必填） | `true` | 同一次提問中，知識庫工具回傳過內容後，拒絕之後的 `web_search` 與 `web_fetch` |

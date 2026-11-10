@@ -32,7 +32,7 @@ async def collect(events):
 TEST_ENDPOINT = LlmEndpoint("ollama", "http://127.0.0.1:9", None, None, False)
 TEST_MODEL = "test-model"
 def research(agent, query, **kwargs):
-    return agent.stream_research(query, endpoint=TEST_ENDPOINT, model_name=TEST_MODEL, **kwargs)
+    return agent.stream_research(query, endpoint=TEST_ENDPOINT, model_name=TEST_MODEL, **{"allow_web": True, **kwargs})
 def tool_call(name, arguments, call_id="call_1"):
     return {"role": "assistant", "content": "", "tool_calls": [{"id": call_id, "function": {"name": name, "arguments": arguments}}]}
 def answer(text):
@@ -474,6 +474,25 @@ def test_progress_notes_hide_thinking_and_stay_short(content, note):
     assert turn_note(content) == note
 def tool_def(name):
     return {"type": "function", "function": {"name": name, "description": name, "parameters": {"type": "object", "properties": {}}}}
+@pytest.mark.asyncio
+@pytest.mark.parametrize("allow_web", [True, False])
+async def test_the_web_switch_decides_whether_web_tools_are_offered(monkeypatch, allow_web):
+    agent, registry = make_agent(monkeypatch)
+    monkeypatch.setattr(registry, "get_tool_definitions", lambda user_id=None, conversation_id=None, requested_skill=None: [tool_def(name) for name in ("search_knowledge_base", "web_search", "web_fetch")])
+    calls = record_web_calls(monkeypatch, registry)
+    llm = ScriptedLLM([tool_call("web_search", {"query": "elephant-goldfish-model"}), answer("好")]).install(monkeypatch)
+    events = await collect(research(agent, "elephant-goldfish-model 是什麼", allow_web=allow_web))
+    offered = [tool["function"]["name"] for tool in llm.chat_tools[0]]
+    assert offered == (["search_knowledge_base", "web_search", "web_fetch"] if allow_web else ["search_knowledge_base"])
+    assert llm.chat_messages[0][0]["content"].endswith(prompts.WEB_ALLOWED if allow_web else prompts.WEB_TURNED_OFF)
+    assert calls == ([("web_search", "elephant-goldfish-model")] if allow_web else [])
+    assert step_statuses(events) == [("web_search", "success" if allow_web else "error")]
+@pytest.mark.asyncio
+async def test_no_web_rules_when_the_server_has_no_web_tools(monkeypatch):
+    agent, _ = make_agent(monkeypatch)
+    llm = ScriptedLLM([answer("好")]).install(monkeypatch)
+    await collect(research(agent, "你好", allow_web=True))
+    assert llm.chat_messages[0][0]["content"] == prompts.SYSTEM_PROMPT
 class RoutedLLM:
     def __init__(self, main, subagents, failing=()):
         self.main = list(main)
