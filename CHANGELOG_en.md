@@ -6,6 +6,7 @@ All notable changes to AskMiao are documented in this file. The format is based 
 
 | Version | Release date | Highlights |
 |---|---|---|
+| [8.12.2](#8122---2026-11-11) | 2026-11-11 | The research assistant always searches the knowledge base before answering, instead of relying only on AI document outlines and summaries or on attached images |
 | [8.12.1](#8121---2026-11-11) | 2026-11-11 | The conversation column widens with the window on wide screens (48rem to 72rem); the input box and the no-model notice match its width |
 | [8.12.0](#8120---2026-11-10) | 2026-11-10 | Web page previews fill the panel and gain a desktop layout, a source tab, and reload; when a link cannot open, one click returns to the page |
 | [8.11.0](#8110---2026-11-10) | 2026-11-10 | The `[n]` marks in the answer text can be clicked to open the same preview card as the source list |
@@ -50,6 +51,13 @@ All notable changes to AskMiao are documented in this file. The format is based 
 ---
 
 ## [Unreleased]
+
+## [8.12.2] - 2026-11-11
+
+### Fixed
+
+- **Search the source before answering**: the AI outlines and summaries in the knowledge base catalog are now marked as only for choosing which document to search, not as an answer source; the system prompts for both research and agent modes require retrieving source passages before answering, so the assistant no longer answers from catalog summaries without citations.
+- **Attachments do not replace the knowledge base**: when an attached image or file names a case, project, department, or document, the assistant searches the knowledge base with those names and treats the knowledge base as the primary source and the attachment as secondary.
 
 ## [8.12.1] - 2026-11-11
 

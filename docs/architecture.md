@@ -2,7 +2,7 @@
 
 [繁體中文](architecture.md) | [English](architecture_en.md)
 
-> 本文件說明 AskMiao **8.12.1** 的架構、啟動流程、資料模型、文件處理與檢索管線、Agentic RAG 研究迴圈、LLM 呼叫層、外部工具整合、認證與安全設計，以及前端架構（本版變更見 [CHANGELOG](../CHANGELOG.md#890---2026-11-09)）。設計背後的取捨記錄在 [架構決策紀錄（ADR）](adr/README.md)。
+> 本文件說明 AskMiao **8.12.2** 的架構、啟動流程、資料模型、文件處理與檢索管線、Agentic RAG 研究迴圈、LLM 呼叫層、外部工具整合、認證與安全設計，以及前端架構（本版變更見 [CHANGELOG](../CHANGELOG.md#8122---2026-11-11)）。設計背後的取捨記錄在 [架構決策紀錄（ADR）](adr/README.md)。
 
 ## 目錄
 
