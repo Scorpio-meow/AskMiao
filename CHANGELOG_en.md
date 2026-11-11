@@ -6,6 +6,7 @@ All notable changes to AskMiao are documented in this file. The format is based 
 
 | Version | Release date | Highlights |
 |---|---|---|
+| [8.12.1](#8121---2026-11-11) | 2026-11-11 | The conversation column widens with the window on wide screens (48rem to 72rem); the input box and the no-model notice match its width |
 | [8.12.0](#8120---2026-11-10) | 2026-11-10 | Web page previews fill the panel and gain a desktop layout, a source tab, and reload; when a link cannot open, one click returns to the page |
 | [8.11.0](#8110---2026-11-10) | 2026-11-10 | The `[n]` marks in the answer text can be clicked to open the same preview card as the source list |
 | [8.10.0](#8100---2026-11-10) | 2026-11-10 | A 「上網」 (web) switch beside the input box lets users decide per question whether the assistant may go online; with it on, a knowledge-base miss is followed by a web search |
@@ -49,6 +50,16 @@ All notable changes to AskMiao are documented in this file. The format is based 
 ---
 
 ## [Unreleased]
+
+## [8.12.1] - 2026-11-11
+
+### Changed
+
+- **Conversation width follows the window**: the maximum width of the conversation, the input box, and the "no model configured" notice changes from a fixed 48rem to 85% of the chat area width, between 48rem and 72rem, so wide screens fit more text per line.
+
+### Fixed
+
+- **Attachment name clamping**: the two-line clamp of attachment names in the input box adds the standard `line-clamp` property instead of relying only on `-webkit-line-clamp`.
 
 ## [8.12.0] - 2026-11-10
 

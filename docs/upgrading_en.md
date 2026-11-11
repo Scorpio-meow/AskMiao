@@ -4,6 +4,7 @@
 
 > How to upgrade an existing deployment to a new release, with rollback steps and troubleshooting. See the [CHANGELOG](../CHANGELOG_en.md) for the full list of changes in each version.
 
+- [Upgrading from 8.12.0 to 8.12.1](#upgrading-from-8120-to-8121)
 - [Upgrading from 8.11.0 to 8.12.0](#upgrading-from-8110-to-8120)
 - [Upgrading from 8.10.0 to 8.11.0](#upgrading-from-8100-to-8110)
 - [Upgrading from 8.9.1 to 8.10.0](#upgrading-from-891-to-8100)
@@ -52,6 +53,12 @@
   - [Step 5: verify the upgrade](#step-5-verify-the-upgrade)
   - [Rolling back to 2.2.x](#rolling-back-to-22x)
   - [Troubleshooting](#troubleshooting)
+
+---
+
+## Upgrading from 8.12.0 to 8.12.1
+
+For upgrading from 8.12.0 to 8.12.1 (2026-11-11); see the [CHANGELOG](../CHANGELOG_en.md#8121---2026-11-11) for the full list of changes. This release changes only frontend styles: no `.env` changes, and neither the database nor the API changes; with `deploy/`, rebuild the images as usual. To roll back to 8.12.0, switch back to the older code; the conversation column returns to a fixed 48rem width.
 
 ---
 

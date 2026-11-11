@@ -20,7 +20,7 @@
 .thread {
   flex: 1 0 auto;
   width: 100%;
-  max-width: 48rem;
+  max-width: var(--thread-max-width);
   margin: 0 auto;
   padding: var(--space-6) var(--space-6) var(--space-8);
 }

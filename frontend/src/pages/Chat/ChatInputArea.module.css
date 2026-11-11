@@ -6,7 +6,7 @@
 .composerArea {
   position: relative;
   width: 100%;
-  max-width: calc(48rem - var(--space-12));
+  max-width: calc(var(--thread-max-width) - var(--space-12));
   margin: 0 auto;
 }
 
@@ -99,6 +99,7 @@
   font-size: var(--font-size-xs);
   overflow: hidden;
   -webkit-box-orient: vertical;
+  line-clamp: 2;
   -webkit-line-clamp: 2;
 }
 
