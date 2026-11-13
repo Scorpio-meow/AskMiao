@@ -72,7 +72,7 @@ const LlmConnectionsCard = ({ isAdmin }) => {
     <div className={styles.card}>
       <div className={styles.cardHeader}>
         <h2 className={styles.cardTitle}>
-          <Icon name="key" size={20} />
+          <Icon name="key" size={17} />
           <span>我的 API 連線</span>
         </h2>
         <Button
@@ -88,8 +88,8 @@ const LlmConnectionsCard = ({ isAdmin }) => {
       <p className={styles.sectionHint}>
         對話時使用你自己的 API 金鑰與模型，其他帳號看不到也用不到。金鑰加密存放，儲存後不會再顯示。
       </p>
-      {notice && <Alert severity="success" onClose={() => setNotice('')} style={{ marginBottom: '16px' }}>{notice}</Alert>}
-      {loadError && <Alert severity="error" style={{ marginBottom: '16px' }}>{loadError}</Alert>}
+      {notice && <Alert severity="success" onClose={() => setNotice('')} className={styles.pageAlert}>{notice}</Alert>}
+      {loadError && <Alert severity="error" className={styles.pageAlert}>{loadError}</Alert>}
       {data === null && !loadError ? (
         <Spinner size={24} color="var(--color-primary)" />
       ) : data && (
@@ -195,10 +195,7 @@ const ProfilePage = () => {
   return (
     <div className={styles.container}>
       <div className={styles.header}>
-        <h1 className={styles.title}>
-          <Icon name="person" size={28} />
-          <span>個人資料</span>
-        </h1>
+        <h1 className={styles.title}>個人資料</h1>
         <p className={styles.subtitle}>管理您的帳號資訊和安全設定</p>
       </div>
       <div className={styles.card}>
@@ -263,8 +260,8 @@ const ProfilePage = () => {
         save={instructionsService.savePersonal}
       />
       <div className={styles.card}>
-        <h2 className={styles.cardTitle} style={{ marginBottom: '16px' }}>
-          <Icon name="lock" size={20} />
+        <h2 className={`${styles.cardTitle} ${styles.cardTitleSpaced}`}>
+          <Icon name="lock" size={17} />
           <span>安全設定</span>
         </h2>
         <Button
@@ -277,10 +274,12 @@ const ProfilePage = () => {
         </Button>
       </div>
       <Button
-        variant="danger"
+        variant="secondary"
         fullWidth
         onClick={handleLogout}
         size="lg"
+        className={styles.logoutButton}
+        startIcon={<Icon name="logout" size={17} />}
       >
         登出
       </Button>

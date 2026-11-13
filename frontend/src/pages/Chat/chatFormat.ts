@@ -49,6 +49,8 @@ export const describeAttachmentType = (filename: string): { kind: AttachmentKind
 };
 export const isImeComposition = (event: { isComposing: boolean; keyCode: number }): boolean =>
   event.isComposing || event.keyCode === 229;
+export const isCompositionEchoEnter = (msSinceCompositionEnd: number, guardMs: number): boolean =>
+  msSinceCompositionEnd >= 0 && msSinceCompositionEnd < guardMs;
 export const skillSuggestionsFor = (
   value: string,
   skills: EnabledSkill[],

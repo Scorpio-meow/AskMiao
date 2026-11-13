@@ -3,23 +3,59 @@
   align-items: center;
   gap: var(--space-2);
   max-width: 100%;
-  padding: var(--space-1) var(--space-1) var(--space-1) var(--space-3);
+  min-height: 40px;
+  padding: var(--space-1) var(--space-1) var(--space-1) var(--space-2);
   border: 1px solid var(--border-default);
-  border-radius: var(--radius-sm);
-  background-color: var(--bg-surface);
+  border-radius: var(--radius-md);
+  background-color: var(--bg-surface-elevated);
   color: var(--text-primary);
   font-size: var(--font-size-sm);
+  box-shadow: var(--shadow-xs);
+  transition: border-color var(--dur-1) var(--ease-out), opacity var(--dur-3) var(--ease-out);
+}
+
+[data-entering] .card {
+  @starting-style {
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .card {
+    transition: border-color var(--dur-1) var(--ease-out), opacity var(--dur-3) var(--ease-out), scale var(--dur-spring) var(--spring);
+  }
+
+  [data-entering] .card {
+    @starting-style {
+      opacity: 0;
+      scale: 0.94;
+    }
+  }
+}
+
+.card:hover {
+  border-color: var(--border-strong);
 }
 
 .badge {
+  display: inline-flex;
   flex: none;
+  align-items: center;
+  justify-content: center;
+  min-width: 34px;
+  height: 24px;
+  padding: 0 6px;
+  border-radius: var(--radius-xs);
+  background-color: var(--bg-surface-secondary);
   color: var(--text-secondary);
+  font-family: var(--font-mono);
   font-size: var(--font-size-xs);
-  font-weight: var(--font-weight-semibold);
+  font-weight: var(--font-weight-medium);
 }
 
 .name {
   min-width: 0;
+  font-weight: var(--font-weight-medium);
   overflow-wrap: anywhere;
 }
 
@@ -27,6 +63,13 @@
   flex: none;
   color: var(--text-tertiary);
   font-size: var(--font-size-xs);
+  font-variant-numeric: tabular-nums;
+}
+
+.deleted {
+  box-shadow: none;
+  background-color: transparent;
+  border-style: dashed;
 }
 
 .deleted .name {

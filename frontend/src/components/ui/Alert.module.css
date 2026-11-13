@@ -1,17 +1,22 @@
 .alert {
+  --tone: var(--color-info);
+  --tone-text: var(--color-info-text);
   display: flex;
   align-items: flex-start;
   gap: var(--space-3);
   padding: var(--space-3) var(--space-4);
+  border: 1px solid color-mix(in oklab, var(--tone) 24%, transparent);
   border-radius: var(--radius-md);
+  background-color: color-mix(in oklab, var(--bg-surface-elevated) 93%, var(--tone));
+  color: var(--text-primary);
   font-size: var(--font-size-sm);
   line-height: var(--line-height-normal);
-  border: 1px solid transparent;
 }
 
 .icon {
   flex-shrink: 0;
   margin-top: 1px;
+  color: var(--tone-text);
 }
 
 .message {
@@ -20,12 +25,20 @@
   overflow-wrap: anywhere;
 }
 
+.message a {
+  color: var(--tone-text);
+  font-weight: var(--font-weight-medium);
+  text-decoration: underline;
+  text-decoration-color: color-mix(in oklab, currentColor 40%, transparent);
+  text-underline-offset: 3px;
+}
+
 .action {
-  margin-left: auto;
-  padding-left: var(--space-2);
   display: flex;
   align-items: center;
   gap: var(--space-2);
+  margin-left: auto;
+  padding-left: var(--space-2);
 }
 
 .closeButton {
@@ -39,38 +52,40 @@
   border: none;
   border-radius: var(--radius-sm);
   background: transparent;
-  color: currentColor;
+  color: var(--text-secondary);
   cursor: pointer;
+  transition: background-color var(--dur-1) var(--ease-out), color var(--dur-1) var(--ease-out);
 }
 
 .closeButton:hover {
-  background-color: rgba(0, 0, 0, 0.06);
+  background-color: var(--bg-surface-hover);
+  color: var(--text-primary);
 }
 
-[data-theme="dark"] .closeButton:hover {
-  background-color: rgba(255, 255, 255, 0.08);
+@media (pointer: coarse) {
+  .closeButton {
+    width: 40px;
+    height: 40px;
+    margin: -10px -12px -10px 0;
+  }
 }
 
 .success {
-  background-color: var(--color-success-bg);
-  color: var(--color-success-text);
-  border-color: rgba(34, 197, 94, 0.25);
+  --tone: var(--color-success);
+  --tone-text: var(--color-success-text);
 }
 
 .warning {
-  background-color: var(--color-warning-bg);
-  color: var(--color-warning-text);
-  border-color: rgba(245, 158, 11, 0.25);
+  --tone: var(--color-warning);
+  --tone-text: var(--color-warning-text);
 }
 
 .error {
-  background-color: var(--color-error-bg);
-  color: var(--color-error-text);
-  border-color: rgba(239, 68, 68, 0.25);
+  --tone: var(--color-error);
+  --tone-text: var(--color-error-text);
 }
 
 .info {
-  background-color: var(--color-info-bg);
-  color: var(--color-info-text);
-  border-color: rgba(2, 132, 199, 0.25);
+  --tone: var(--color-info);
+  --tone-text: var(--color-info-text);
 }

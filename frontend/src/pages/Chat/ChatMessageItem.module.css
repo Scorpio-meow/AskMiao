@@ -5,7 +5,11 @@
   width: 100%;
 }
 
-.row+.row {
+.row + .row {
+  margin-top: var(--space-8);
+}
+
+.rowUser + .rowAssistant {
   margin-top: var(--space-6);
 }
 
@@ -18,42 +22,124 @@
   contain-intrinsic-size: auto 160px;
 }
 
+.rowEnter.rowUser .userColumn {
+  transform-origin: 100% 100%;
+}
+
+.rowEnter .userColumn,
+.rowEnter .assistantColumn,
+.rowEnter .assistantMark {
+  transition: opacity var(--dur-3) var(--ease-out);
+
+  @starting-style {
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .rowEnter .userColumn {
+    transition:
+      opacity var(--dur-3) var(--ease-out),
+      translate var(--dur-spring) var(--spring),
+      scale var(--dur-spring) var(--spring);
+
+    @starting-style {
+      opacity: 0;
+      translate: 0 24px;
+      scale: 0.96;
+    }
+  }
+
+  .rowEnter .assistantColumn {
+    transition: opacity var(--dur-4) var(--ease-out) 80ms, translate var(--dur-5) var(--ease-out-expo) 80ms;
+
+    @starting-style {
+      opacity: 0;
+      translate: 0 8px;
+    }
+  }
+}
+
 .userColumn {
   display: flex;
   flex-direction: column;
   align-items: flex-end;
-  max-width: min(85%, 36rem);
+  max-width: min(85%, 38rem);
   min-width: 0;
 }
 
 .userBubble {
   max-width: 100%;
-  padding: var(--space-2) var(--space-4);
-  border-radius: var(--radius-lg);
-  background-color: var(--bg-surface-secondary);
+  padding: 10px var(--space-4);
+  border-radius: 20px 20px 6px 20px;
+  background-color: var(--bg-user-bubble);
   color: var(--text-primary);
   overflow-wrap: break-word;
   word-break: break-word;
 }
 
 .userText {
-  padding: 2px 0;
   font-size: var(--font-size-base);
-  line-height: 1.6;
+  line-height: 1.65;
   white-space: pre-wrap;
 }
 
 .assistantMark {
+  position: relative;
   display: inline-flex;
   flex: none;
   align-items: center;
   justify-content: center;
   width: 28px;
   height: 28px;
+  margin-top: 1px;
   border: 1px solid var(--border-default);
-  border-radius: var(--radius-full);
-  background-color: var(--bg-surface);
-  color: var(--color-primary-text);
+  border-radius: 10px;
+  background-color: var(--bg-surface-elevated);
+}
+
+.assistantMark img {
+  width: 20px;
+  height: 20px;
+  object-fit: contain;
+}
+
+[data-theme='dark'] .assistantMark {
+  border-color: transparent;
+  background-color: var(--bg-mark-plate);
+}
+
+.assistantMark::after {
+  position: absolute;
+  inset: -3px;
+  border: 1.5px solid var(--color-primary);
+  border-radius: 13px;
+  content: '';
+  opacity: 0;
+  transition: opacity var(--dur-3) var(--ease-out);
+}
+
+.assistantMarkLive::after {
+  opacity: 0.55;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .assistantMarkLive::after {
+    animation: livePulse 1.6s var(--ease-in-out) infinite;
+  }
+}
+
+@keyframes livePulse {
+  0%,
+  100% {
+    opacity: 0.15;
+    scale: 0.96;
+  }
+
+  50% {
+    opacity: 0.7;
+    scale: 1.04;
+  }
 }
 
 .assistantColumn {
@@ -62,16 +148,58 @@
   flex-direction: column;
   gap: var(--space-3);
   min-width: 0;
-  padding-top: 2px;
+  padding-top: 3px;
 }
 
 .pending {
   display: flex;
   align-items: center;
-  gap: var(--space-2);
-  min-height: 24px;
+  gap: var(--space-3);
+  min-height: 26px;
   color: var(--text-secondary);
   font-size: var(--font-size-sm);
+}
+
+.typingDots {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.typingDots span {
+  width: 6px;
+  height: 6px;
+  border-radius: var(--radius-full);
+  background-color: var(--text-tertiary);
+  opacity: 0.6;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .typingDots span {
+    animation: typing 1.2s var(--ease-in-out) infinite;
+  }
+
+  .typingDots span:nth-child(2) {
+    animation-delay: 0.15s;
+  }
+
+  .typingDots span:nth-child(3) {
+    animation-delay: 0.3s;
+  }
+}
+
+@keyframes typing {
+  0%,
+  60%,
+  100% {
+    opacity: 0.3;
+    translate: 0 0;
+  }
+
+  30% {
+    opacity: 1;
+    translate: 0 -3px;
+  }
 }
 
 .errorBlock {
@@ -79,8 +207,9 @@
   flex-wrap: wrap;
   align-items: center;
   gap: var(--space-2) var(--space-3);
-  padding: var(--space-3);
-  border-radius: var(--radius-sm);
+  padding: var(--space-3) var(--space-3) var(--space-3) var(--space-4);
+  border: 1px solid color-mix(in oklab, var(--color-error) 24%, transparent);
+  border-radius: var(--radius-md);
   background-color: var(--color-error-bg);
   color: var(--color-error-text);
   font-size: var(--font-size-sm);
@@ -94,13 +223,14 @@
 .errorText {
   flex: 1 1 12em;
   min-width: 0;
+  color: var(--text-primary);
 }
 
 .stoppedNote {
   display: flex;
   align-items: flex-start;
   gap: var(--space-2);
-  color: var(--text-secondary);
+  color: var(--text-tertiary);
   font-size: var(--font-size-xs);
   line-height: var(--line-height-normal);
 }
@@ -114,8 +244,8 @@
   display: flex;
   align-items: center;
   gap: var(--space-2);
-  min-height: 28px;
   min-width: 0;
+  min-height: 28px;
 }
 
 .userColumn .footer {
@@ -137,12 +267,30 @@
 .modelName {
   min-width: 0;
   overflow: hidden;
+  font-family: var(--font-mono);
   text-overflow: ellipsis;
 }
 
 .copyButton {
   flex: none;
   color: var(--text-tertiary);
+}
+
+@media (hover: hover) {
+  .footer .meta,
+  .copyButton {
+    opacity: 0;
+    transition: opacity var(--dur-2) var(--ease-out);
+  }
+
+  .row:hover .footer .meta,
+  .row:hover .copyButton,
+  .row:focus-within .footer .meta,
+  .row:focus-within .copyButton,
+  .row:last-child .footer .meta,
+  .row:last-child .copyButton {
+    opacity: 1;
+  }
 }
 
 .attachmentGallery {
@@ -164,23 +312,29 @@
   display: inline-flex;
   max-width: 100%;
   padding: 0;
+  overflow: hidden;
   border: none;
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-md);
   background: transparent;
   cursor: zoom-in;
 }
 
 .messageImage {
-  max-width: min(220px, 100%);
-  max-height: 180px;
+  max-width: min(240px, 100%);
+  max-height: 200px;
   border: 1px solid var(--border-default);
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-md);
   object-fit: cover;
-  transition: border-color var(--transition-fast);
 }
 
-.imageButton:hover .messageImage {
-  border-color: var(--border-strong);
+@media (prefers-reduced-motion: no-preference) {
+  .messageImage {
+    transition: scale var(--dur-4) var(--ease-out);
+  }
+
+  .imageButton:hover .messageImage {
+    scale: 1.025;
+  }
 }
 
 .fileCard {
@@ -190,7 +344,7 @@
   max-width: 100%;
   padding: var(--space-1) var(--space-3);
   border: 1px solid var(--border-default);
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-md);
   background-color: var(--bg-surface);
   color: var(--text-primary);
   font-size: var(--font-size-sm);
@@ -199,6 +353,7 @@
 .fileBadge {
   flex: none;
   color: var(--text-secondary);
+  font-family: var(--font-mono);
   font-size: var(--font-size-xs);
   font-weight: var(--font-weight-semibold);
 }
@@ -209,29 +364,52 @@
 }
 
 .lightboxDialog {
-  max-width: 90vw;
-  max-height: 90vh;
-  max-height: 90dvh;
+  max-width: 92vw;
+  max-height: 92vh;
+  max-height: 92dvh;
   margin: auto;
   padding: 0;
+  overflow: visible;
   border: none;
   background: transparent;
-  overflow: visible;
   outline: none;
+  opacity: 1;
+  transition: opacity var(--dur-3) var(--ease-out);
+
+  @starting-style {
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .lightboxDialog {
+    transition: opacity var(--dur-3) var(--ease-out), scale var(--dur-spring) var(--spring);
+
+    @starting-style {
+      opacity: 0;
+      scale: 0.94;
+    }
+  }
 }
 
 .lightboxDialog::backdrop {
-  background-color: color-mix(in srgb, var(--neutral-950) 88%, transparent);
+  background-color: var(--bg-media-scrim);
   cursor: zoom-out;
-  animation: lightboxFadeIn var(--transition-fast);
+  transition: opacity var(--dur-3) var(--ease-out);
+}
+
+.lightboxDialog[open]::backdrop {
+  @starting-style {
+    opacity: 0;
+  }
 }
 
 .lightboxImage {
   display: block;
-  max-width: 90vw;
-  max-height: 90vh;
-  max-height: 90dvh;
-  border-radius: var(--radius-sm);
+  max-width: 92vw;
+  max-height: 92vh;
+  max-height: 92dvh;
+  border-radius: var(--radius-md);
   object-fit: contain;
   cursor: default;
 }
@@ -247,27 +425,22 @@
   height: 44px;
   border: none;
   border-radius: var(--radius-full);
-  background-color: color-mix(in srgb, var(--neutral-950) 70%, transparent);
-  color: var(--neutral-0);
+  background-color: var(--bg-media-control);
+  color: var(--text-on-media);
   cursor: pointer;
+  transition: background-color var(--dur-1) var(--ease-out);
 }
 
 .lightboxClose:hover {
-  background-color: var(--neutral-950);
-}
-
-@keyframes lightboxFadeIn {
-  from {
-    opacity: 0;
-  }
-
-  to {
-    opacity: 1;
-  }
+  background-color: var(--bg-media-control-hover);
 }
 
 @media (max-width: 599px) {
-  .row+.row {
+  .row + .row {
+    margin-top: var(--space-6);
+  }
+
+  .rowUser + .rowAssistant {
     margin-top: var(--space-5);
   }
 

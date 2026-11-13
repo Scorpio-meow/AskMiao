@@ -12,7 +12,6 @@ export const Collapse: React.FC<CollapseProps> = ({ in: isOpen, children, classN
       id={id}
       className={`${styles.collapseContainer} ${isOpen ? styles.collapseExpanded : ''} ${className}`}
     >
-      { }
       <div className={styles.collapseInner} inert={!isOpen}>
         {children}
       </div>

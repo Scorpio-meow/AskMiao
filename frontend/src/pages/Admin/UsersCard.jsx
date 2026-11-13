@@ -58,8 +58,8 @@ export default function UsersCard({ users, currentUserId, onUsersChanged, onAcce
           </Button>
         </div>
       </div>
-      {notice && <Alert severity="success" onClose={() => setNotice('')} style={{ marginBottom: '16px' }}>{notice}</Alert>}
-      {error && <Alert severity="error" onClose={() => setError('')} style={{ marginBottom: '16px' }}>{error}</Alert>}
+      {notice && <Alert severity="success" onClose={() => setNotice('')} className={styles.pageAlert}>{notice}</Alert>}
+      {error && <Alert severity="error" onClose={() => setError('')} className={styles.pageAlert}>{error}</Alert>}
       <div className={styles.tableWrapper}>
         <table className={styles.table} aria-labelledby="admin-users-title">
           <thead>
@@ -108,7 +108,7 @@ export default function UsersCard({ users, currentUserId, onUsersChanged, onAcce
                         </Button>
                       )}
                       {!isSelf && (
-                        <Button size="sm" variant="danger" onClick={() => setPendingDelete(user)}>
+                        <Button size="sm" variant="text" className={styles.dangerText} onClick={() => setPendingDelete(user)}>
                           刪除<span className="sr-only">使用者 {user.username}</span>
                         </Button>
                       )}

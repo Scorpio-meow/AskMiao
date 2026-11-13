@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useLayoutEffect, useRef, useState } from 'react';
 import styles from './Tabs.module.css';
 export interface TabsProps {
   value: number | string;
@@ -7,8 +7,32 @@ export interface TabsProps {
   className?: string;
 }
 export const Tabs: React.FC<TabsProps> = ({ value, onChange, children, className = '' }) => {
+  const listRef = useRef<HTMLDivElement>(null);
+  const [indicator, setIndicator] = useState<{ x: number; width: number } | null>(null);
+  const [settled, setSettled] = useState(false);
+  useLayoutEffect(() => {
+    const list = listRef.current;
+    if (!list) return undefined;
+    const measure = () => {
+      const active = list.querySelector<HTMLElement>('[role="tab"][aria-selected="true"]');
+      setIndicator(active ? { x: active.offsetLeft, width: active.offsetWidth } : null);
+    };
+    measure();
+    const frame = requestAnimationFrame(() => setSettled(true));
+    const observer = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(measure);
+    observer?.observe(list);
+    return () => {
+      cancelAnimationFrame(frame);
+      observer?.disconnect();
+    };
+  }, [value]);
   return (
-    <div className={`${styles.tabsContainer} ${className}`} role="tablist">
+    <div
+      ref={listRef}
+      className={`${styles.tabsContainer} ${settled ? styles.settled : ''} ${className}`}
+      role="tablist"
+      style={indicator ? ({ '--indicator-x': `${indicator.x}px`, '--indicator-w': indicator.width } as React.CSSProperties) : undefined}
+    >
       {React.Children.map(children, (child, index) => {
         if (!React.isValidElement(child)) return null;
         const tabChild = child as React.ReactElement<any>;
@@ -22,6 +46,7 @@ export const Tabs: React.FC<TabsProps> = ({ value, onChange, children, className
           },
         });
       })}
+      {indicator && <span className={styles.indicator} aria-hidden="true" />}
     </div>
   );
 };
@@ -46,7 +71,7 @@ export const Tab: React.FC<TabProps> = ({
       className={`${styles.tab} ${active ? styles.tabActive : ''} ${className}`}
       {...props}
     >
-      {icon && <span style={{ display: 'inline-flex', flexShrink: 0 }}>{icon}</span>}
+      {icon && <span className={styles.tabIcon}>{icon}</span>}
       <span>{label}</span>
     </button>
   );

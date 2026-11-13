@@ -1,9 +1,13 @@
 .card {
+  overflow: hidden;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-lg);
   background-color: var(--bg-surface);
   color: var(--text-primary);
-  border-radius: var(--radius-lg);
-  transition: box-shadow var(--transition-fast), background-color var(--transition-fast), border-color var(--transition-fast);
-  overflow: hidden;
+  transition:
+    box-shadow var(--dur-2) var(--ease-out),
+    background-color var(--dur-2) var(--ease-out),
+    border-color var(--dur-2) var(--ease-out);
 }
 
 .elevation0 {
@@ -11,23 +15,23 @@
 }
 
 .elevation1 {
-  box-shadow: var(--shadow-sm);
+  box-shadow: var(--shadow-xs);
 }
 
 .elevation2 {
-  box-shadow: var(--shadow-md);
+  box-shadow: var(--shadow-sm);
 }
 
 .elevation3 {
-  box-shadow: var(--shadow-lg);
+  box-shadow: var(--shadow-md);
 }
 
 .elevation4 {
-  box-shadow: var(--shadow-xl);
+  box-shadow: var(--shadow-lg);
 }
 
 .outlined {
-  border: 1px solid var(--border-default);
+  border-color: var(--border-default);
 }
 
 .paddingNone {

@@ -1,15 +1,15 @@
 .avatar {
   display: inline-flex;
+  flex-shrink: 0;
   align-items: center;
   justify-content: center;
-  border-radius: var(--radius-full);
-  background-color: var(--color-primary);
-  color: var(--text-on-primary);
-  font-weight: var(--font-weight-semibold);
-  font-size: var(--font-size-sm);
   overflow: hidden;
+  border-radius: var(--radius-full);
+  background-color: var(--btn-primary-bg);
+  color: var(--btn-primary-text);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
   user-select: none;
-  flex-shrink: 0;
 }
 
 .img {
@@ -27,7 +27,6 @@
 .sizeMd {
   width: 36px;
   height: 36px;
-  font-size: var(--font-size-sm);
 }
 
 .sizeLg {

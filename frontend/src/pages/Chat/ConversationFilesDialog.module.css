@@ -7,7 +7,9 @@
 
 .empty {
   margin: 0;
-  color: var(--text-secondary);
+  padding: var(--space-6) 0;
+  color: var(--text-tertiary);
+  text-align: center;
 }
 
 .list {
@@ -23,13 +25,15 @@
   display: flex;
   flex-direction: column;
   align-items: flex-start;
-  gap: var(--space-1);
+  gap: 6px;
 }
 
 .details {
   display: flex;
   flex-wrap: wrap;
   gap: var(--space-3);
+  padding-left: var(--space-2);
   color: var(--text-tertiary);
   font-size: var(--font-size-xs);
+  font-variant-numeric: tabular-nums;
 }

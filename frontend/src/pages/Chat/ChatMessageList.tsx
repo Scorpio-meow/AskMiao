@@ -3,6 +3,7 @@ import { ChatMessageListProps } from './types';
 import ChatMessageItem from './ChatMessageItem';
 import { approvalHeadline, completionAnnouncement, messageKey } from './chatFormat';
 import { Button, Spinner, Icon } from '../../components/ui';
+import markUrl from '../../assets/brand/askmiao-mark.png';
 import styles from './ChatMessageList.module.css';
 const NEAR_BOTTOM_THRESHOLD_PX = 80;
 const EAGER_RENDER_TAIL = 6;
@@ -12,23 +13,25 @@ const SUGGESTED_PROMPTS = [
   '請解釋大型語言模型與 RAG 技術的運作原理',
   '幫我撰寫一份專案規劃與技術選型建議',
 ];
+const SKELETON_BLOCKS: Array<{ kind: 'user' | 'assistant'; lines: number; short?: boolean }> = [
+  { kind: 'user', lines: 1 },
+  { kind: 'assistant', lines: 3 },
+  { kind: 'user', lines: 1, short: true },
+  { kind: 'assistant', lines: 2 },
+];
 const ThreadSkeleton: React.FC = () => (
   <div className={styles.skeleton} aria-hidden="true">
-    <div className={styles.skeletonUser}>
-      <span className={styles.skeletonBubble} />
-    </div>
-    <div className={styles.skeletonAssistant}>
-      <span className={styles.skeletonLine} />
-      <span className={styles.skeletonLine} />
-      <span className={styles.skeletonLine} />
-    </div>
-    <div className={styles.skeletonUser}>
-      <span className={`${styles.skeletonBubble} ${styles.skeletonBubbleShort}`} />
-    </div>
-    <div className={styles.skeletonAssistant}>
-      <span className={styles.skeletonLine} />
-      <span className={styles.skeletonLine} />
-    </div>
+    {SKELETON_BLOCKS.map((block, blockIndex) => (
+      <div key={blockIndex} className={block.kind === 'user' ? styles.skeletonUser : styles.skeletonAssistant}>
+        {Array.from({ length: block.lines }, (_, lineIndex) => (
+          <span
+            key={lineIndex}
+            className={block.kind === 'user' ? `${styles.skeletonBubble} ${block.short ? styles.skeletonBubbleShort : ''}` : styles.skeletonLine}
+            style={{ '--i': blockIndex * 2 + lineIndex } as React.CSSProperties}
+          />
+        ))}
+      </div>
+    ))}
   </div>
 );
 export const ChatMessageList: React.FC<ChatMessageListProps> = ({
@@ -136,6 +139,7 @@ export const ChatMessageList: React.FC<ChatMessageListProps> = ({
     return () => cancelAnimationFrame(frame);
   }, [messages, firstMessageKey, streamingMessageId, loadingMore, scrollToBottom, updateJumpButton]);
   const deferBefore = messages.length - EAGER_RENDER_TAIL;
+  const streamingIndex = streamingMessage ? messages.indexOf(streamingMessage) : -1;
   return (
     <div className={styles.wrapper}>
       <div
@@ -166,7 +170,7 @@ export const ChatMessageList: React.FC<ChatMessageListProps> = ({
           ) : isEmpty ? (
             <div className={styles.emptyState}>
               <span className={styles.emptyMark} aria-hidden="true">
-                <Icon name="bot" size={22} />
+                <img src={markUrl} alt="" width="56" height="56" />
               </span>
               <h2 className={styles.emptyTitle}>開始新的對話</h2>
               <p className={styles.emptyDesc}>
@@ -174,11 +178,12 @@ export const ChatMessageList: React.FC<ChatMessageListProps> = ({
               </p>
               <p className={styles.suggestTitle} id={promptsTitleId}>試試這些問題</p>
               <div className={styles.suggestList} role="group" aria-labelledby={promptsTitleId}>
-                {SUGGESTED_PROMPTS.map((prompt) => (
+                {SUGGESTED_PROMPTS.map((prompt, promptIndex) => (
                   <button
                     key={prompt}
                     type="button"
                     className={styles.suggestButton}
+                    style={{ '--i': promptIndex } as React.CSSProperties}
                     onClick={() => {
                       if (onSelectPrompt) {
                         onSelectPrompt(prompt);
@@ -187,8 +192,8 @@ export const ChatMessageList: React.FC<ChatMessageListProps> = ({
                       }
                     }}
                   >
-                    <Icon name="chat" size={16} className={styles.suggestIcon} />
-                    <span>{prompt}</span>
+                    <span className={styles.suggestText}>{prompt}</span>
+                    <Icon name="arrow-up" size={15} className={styles.suggestIcon} />
                   </button>
                 ))}
               </div>
@@ -202,6 +207,7 @@ export const ChatMessageList: React.FC<ChatMessageListProps> = ({
                   message={msg}
                   thinkId={thinkId}
                   isStreaming={msg.id !== undefined && msg.id === streamingMessageId}
+                  entering={streamingIndex !== -1 && (index === streamingIndex || index === streamingIndex - 1)}
                   isThinkingOpen={Boolean(thinkOpenArr[thinkId])}
                   deferRendering={index < deferBefore}
                   onToggleThinking={onToggleThinking}
@@ -225,7 +231,7 @@ export const ChatMessageList: React.FC<ChatMessageListProps> = ({
       )}
       {showJumpButton && !isEmpty && (
         <button type="button" className={styles.jumpButton} onClick={() => scrollToBottom('smooth')}>
-          <Icon name="arrow-down" size={16} />
+          <Icon name="arrow-down" size={15} />
           <span>{sending ? '最新回答' : '回到最新訊息'}</span>
         </button>
       )}

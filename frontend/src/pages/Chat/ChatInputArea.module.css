@@ -3,34 +3,45 @@
   background-color: var(--bg-surface);
 }
 
+@media (min-width: 600px) and (min-height: 560px) {
+  [data-layout='empty'] .container {
+    margin-bottom: auto;
+    padding-bottom: var(--space-10);
+  }
+}
+
 .composerArea {
   position: relative;
   width: 100%;
   max-width: calc(var(--thread-max-width) - var(--space-12));
   margin: 0 auto;
+  view-transition-name: composer;
 }
 
 .composer {
   position: relative;
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr) auto;
   grid-template-areas:
-    "attachments attachments attachments"
-    "input input input"
-    "attach . send";
+    "attachments attachments"
+    "input input"
+    "attach send";
   align-items: end;
   column-gap: var(--space-2);
   padding: var(--space-2);
   border: 1px solid var(--border-strong);
-  border-radius: var(--radius-lg);
+  border-radius: var(--radius-xl);
   background-color: var(--bg-input);
   box-shadow: var(--shadow-sm);
-  transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
+  transition:
+    border-color var(--dur-2) var(--ease-out),
+    box-shadow var(--dur-3) var(--ease-out),
+    background-color var(--dur-2) var(--ease-out);
 }
 
 .composer:focus-within {
-  border-color: var(--color-primary);
-  box-shadow: 0 0 0 3px var(--color-primary-light);
+  border-color: color-mix(in oklab, var(--border-focus) 70%, var(--border-strong));
+  box-shadow: var(--shadow-sm), 0 0 0 4px oklch(from var(--border-focus) l c h / 0.12);
 }
 
 .composerDisabled {
@@ -48,13 +59,18 @@
   align-items: center;
   justify-content: center;
   gap: var(--space-2);
-  border: 2px dashed var(--color-primary);
+  border: 1.5px dashed var(--color-primary);
   border-radius: inherit;
-  background-color: color-mix(in srgb, var(--bg-surface) 92%, transparent);
+  background-color: color-mix(in oklab, var(--bg-surface) 90%, var(--color-primary));
   color: var(--color-primary-text);
   font-size: var(--font-size-sm);
   font-weight: var(--font-weight-medium);
   pointer-events: none;
+  transition: opacity var(--dur-2) var(--ease-out);
+
+  @starting-style {
+    opacity: 0;
+  }
 }
 
 .skillSuggestions {
@@ -66,12 +82,29 @@
   max-height: 280px;
   margin: 0;
   padding: var(--space-1);
+  overflow-y: auto;
   border: 1px solid var(--border-default);
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-lg);
   background-color: var(--bg-surface-elevated);
   box-shadow: var(--shadow-lg);
   list-style: none;
-  overflow-y: auto;
+  transform-origin: 50% 100%;
+  transition: opacity var(--dur-2) var(--ease-out);
+
+  @starting-style {
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .skillSuggestions {
+    transition: opacity var(--dur-2) var(--ease-out), translate var(--dur-spring) var(--spring);
+
+    @starting-style {
+      opacity: 0;
+      translate: 0 8px;
+    }
+  }
 }
 
 .skillOption {
@@ -81,10 +114,11 @@
   padding: var(--space-2) var(--space-3);
   border-radius: var(--radius-sm);
   cursor: pointer;
+  transition: background-color var(--dur-1) var(--ease-out);
 }
 
 .skillOptionActive {
-  background-color: var(--color-primary-light);
+  background-color: var(--bg-surface-active);
 }
 
 .skillOptionName {
@@ -95,9 +129,9 @@
 
 .skillOptionDescription {
   display: -webkit-box;
+  overflow: hidden;
   color: var(--text-secondary);
   font-size: var(--font-size-xs);
-  overflow: hidden;
   -webkit-box-orient: vertical;
   line-clamp: 2;
   -webkit-line-clamp: 2;
@@ -110,18 +144,38 @@
   gap: var(--space-2);
   margin: 0 0 var(--space-1);
   padding: var(--space-1) var(--space-1) var(--space-2);
-  border-bottom: 1px solid var(--border-default);
   list-style: none;
+}
+
+.imagePreview,
+.filePreview {
+  transition: opacity var(--dur-2) var(--ease-out);
+
+  @starting-style {
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .imagePreview,
+  .filePreview {
+    transition: opacity var(--dur-2) var(--ease-out), scale var(--dur-spring) var(--spring);
+
+    @starting-style {
+      opacity: 0;
+      scale: 0.85;
+    }
+  }
 }
 
 .imagePreview {
   position: relative;
   flex: none;
-  width: 56px;
-  height: 56px;
-  border: 1px solid var(--border-default);
-  border-radius: var(--radius-sm);
+  width: 60px;
+  height: 60px;
   overflow: hidden;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
 }
 
 .imagePreviewThumb {
@@ -133,20 +187,20 @@
 
 .removeImageButton {
   position: absolute;
-  top: 2px;
-  right: 2px;
+  top: 3px;
+  right: 3px;
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 24px;
-  height: 24px;
+  width: 22px;
+  height: 22px;
   padding: 0;
   border: none;
   border-radius: var(--radius-full);
-  background-color: color-mix(in srgb, var(--neutral-950) 70%, transparent);
-  color: var(--neutral-0);
+  background-color: var(--bg-media-control);
+  color: var(--text-on-media);
   cursor: pointer;
-  transition: background-color var(--transition-fast);
+  transition: background-color var(--dur-1) var(--ease-out);
 }
 
 .removeImageButton:hover {
@@ -157,23 +211,29 @@
   display: inline-flex;
   align-items: center;
   gap: var(--space-2);
-  max-width: 240px;
-  min-height: 44px;
+  max-width: 260px;
+  min-height: 48px;
   padding: var(--space-1) var(--space-1) var(--space-1) var(--space-2);
   border: 1px solid var(--border-default);
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-md);
   background-color: var(--bg-surface);
   color: var(--text-primary);
 }
 
 .fileBadge {
+  display: inline-flex;
   flex: none;
-  padding: 2px 6px;
-  border-radius: var(--radius-xs);
+  align-items: center;
+  justify-content: center;
+  min-width: 36px;
+  height: 32px;
+  padding: 0 6px;
+  border-radius: var(--radius-sm);
   background-color: var(--bg-surface-secondary);
   color: var(--text-secondary);
+  font-family: var(--font-mono);
   font-size: var(--font-size-xs);
-  font-weight: var(--font-weight-semibold);
+  font-weight: var(--font-weight-medium);
 }
 
 .badgePdf {
@@ -209,9 +269,9 @@
 }
 
 .fileName {
+  overflow: hidden;
   font-size: var(--font-size-sm);
   font-weight: var(--font-weight-medium);
-  overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -219,6 +279,7 @@
 .fileSize {
   color: var(--text-tertiary);
   font-size: var(--font-size-xs);
+  font-variant-numeric: tabular-nums;
 }
 
 .removeFileButton {
@@ -230,11 +291,11 @@
   height: 28px;
   padding: 0;
   border: none;
-  border-radius: var(--radius-xs);
+  border-radius: var(--radius-sm);
   background: transparent;
   color: var(--text-tertiary);
   cursor: pointer;
-  transition: color var(--transition-fast), background-color var(--transition-fast);
+  transition: color var(--dur-1) var(--ease-out), background-color var(--dur-1) var(--ease-out);
 }
 
 .removeFileButton:hover {
@@ -249,9 +310,10 @@
 .textarea {
   grid-area: input;
   width: 100%;
-  min-height: 44px;
-  max-height: 200px;
+  min-height: 48px;
+  max-height: 240px;
   padding: var(--space-2) var(--space-2) var(--space-1);
+  overflow-y: auto;
   border: none;
   background: transparent;
   color: var(--text-primary);
@@ -261,8 +323,6 @@
   outline: none;
   resize: none;
   field-sizing: content;
-  overflow-y: auto;
-  scrollbar-width: thin;
 }
 
 .textarea::placeholder {
@@ -273,26 +333,13 @@
   cursor: not-allowed;
 }
 
-.attachButton,
-.sendButton {
-  display: inline-flex;
-  flex: none;
-  align-items: center;
-  justify-content: center;
-  width: 36px;
-  height: 36px;
-  padding: 0;
-  border: none;
-  border-radius: var(--radius-sm);
-  cursor: pointer;
-  transition: background-color var(--transition-fast), color var(--transition-fast);
-}
-
 .toolSlot {
   display: inline-flex;
   grid-area: attach;
+  flex-wrap: wrap;
   align-items: center;
-  gap: var(--space-1);
+  gap: 6px;
+  min-width: 0;
 }
 
 .attachSlot {
@@ -304,12 +351,29 @@
   grid-area: send;
 }
 
+.attachButton,
+.sendButton {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-full);
+  cursor: pointer;
+}
+
 .attachButton {
+  border: 1px solid var(--border-default);
   background: transparent;
   color: var(--text-secondary);
+  transition: background-color var(--dur-1) var(--ease-out), color var(--dur-1) var(--ease-out), border-color var(--dur-1) var(--ease-out);
 }
 
 .attachButton:hover:not(:disabled) {
+  border-color: var(--border-strong);
   background-color: var(--bg-surface-hover);
   color: var(--text-primary);
 }
@@ -319,13 +383,23 @@
   cursor: not-allowed;
 }
 
+@media (prefers-reduced-motion: no-preference) {
+  .attachButton svg {
+    transition: rotate var(--dur-4) var(--ease-out-expo);
+  }
+
+  .attachButton:hover:not(:disabled) svg {
+    rotate: 90deg;
+  }
+}
+
 .webToggle {
   display: inline-flex;
   flex: none;
   align-items: center;
-  gap: var(--space-1);
-  height: 36px;
-  padding: 0 var(--space-3);
+  gap: 5px;
+  height: 34px;
+  padding: 0 var(--space-3) 0 10px;
   border: 1px solid var(--border-default);
   border-radius: var(--radius-full);
   background: transparent;
@@ -333,17 +407,18 @@
   font-size: var(--font-size-sm);
   font-weight: var(--font-weight-medium);
   cursor: pointer;
-  transition: background-color var(--transition-fast), border-color var(--transition-fast), color var(--transition-fast);
+  transition: background-color var(--dur-1) var(--ease-out), border-color var(--dur-1) var(--ease-out), color var(--dur-1) var(--ease-out);
 }
 
 .webToggle:hover:not(:disabled) {
+  border-color: var(--border-strong);
   background-color: var(--bg-surface-hover);
   color: var(--text-primary);
 }
 
 .webToggleOn,
 .webToggleOn:hover:not(:disabled) {
-  border-color: var(--color-primary);
+  border-color: var(--color-primary-line);
   background-color: var(--color-primary-light);
   color: var(--color-primary-text);
 }
@@ -353,18 +428,117 @@
   cursor: not-allowed;
 }
 
-.sendButton {
+.modeSwitch {
+  position: relative;
+  display: inline-grid;
+  grid-template-columns: 1fr 1fr;
+  height: 34px;
+  padding: 3px;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-full);
   background-color: var(--bg-surface-secondary);
+}
+
+.modeThumb {
+  position: absolute;
+  top: 3px;
+  bottom: 3px;
+  left: 3px;
+  width: calc(50% - 3px);
+  border-radius: var(--radius-full);
+  background-color: var(--bg-surface-elevated);
+  box-shadow: var(--shadow-xs), 0 0 0 1px var(--border-default);
+}
+
+[data-mode='agent'] > .modeThumb {
+  translate: 100% 0;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .modeThumb {
+    transition: translate var(--dur-spring) var(--spring);
+  }
+}
+
+.modeOption {
+  position: relative;
+  z-index: 1;
+  min-width: 48px;
+  padding: 0 var(--space-3);
+  border: none;
+  border-radius: var(--radius-full);
+  background: transparent;
   color: var(--text-tertiary);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  cursor: pointer;
+  transition: color var(--dur-2) var(--ease-out);
+}
+
+.modeOption:hover:not(:disabled) {
+  color: var(--text-primary);
+}
+
+.modeOptionActive {
+  color: var(--text-primary);
+}
+
+.modeOption:focus-visible {
+  outline-offset: 0;
+}
+
+.modeOption:disabled {
+  cursor: not-allowed;
+}
+
+.sendButton {
+  background-color: var(--bg-surface-active);
+  color: var(--text-tertiary);
+  transition: background-color var(--dur-2) var(--ease-out), color var(--dur-2) var(--ease-out), opacity var(--dur-2) var(--ease-out);
+
+  @starting-style {
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .sendButton {
+    transition:
+      background-color var(--dur-2) var(--ease-out),
+      color var(--dur-2) var(--ease-out),
+      opacity var(--dur-2) var(--ease-out),
+      scale var(--dur-spring) var(--spring),
+      rotate var(--dur-spring) var(--spring);
+
+    @starting-style {
+      opacity: 0;
+      scale: 0.6;
+      rotate: -45deg;
+    }
+  }
+
+  .sendButtonActive:active,
+  .stopButton:active {
+    scale: 0.9;
+    transition-duration: var(--dur-1);
+  }
+
+  .sendButtonActive svg {
+    transition: translate var(--dur-3) var(--ease-out-expo);
+  }
+
+  .sendButtonActive:hover svg {
+    translate: 0 -2px;
+  }
 }
 
 .sendButtonActive {
-  background-color: var(--color-primary-solid);
-  color: var(--text-on-primary);
+  background-color: var(--btn-primary-bg);
+  color: var(--btn-primary-text);
 }
 
 .sendButtonActive:hover {
-  background-color: var(--color-primary-solid-hover);
+  background-color: var(--btn-primary-bg-hover);
 }
 
 .sendButton:disabled {
@@ -373,12 +547,12 @@
 }
 
 .stopButton {
-  background-color: var(--text-primary);
-  color: var(--bg-surface);
+  background-color: var(--btn-primary-bg);
+  color: var(--btn-primary-text);
 }
 
 .stopButton:hover {
-  background-color: var(--text-secondary);
+  background-color: var(--btn-primary-bg-hover);
 }
 
 .hintRow {
@@ -386,7 +560,7 @@
   justify-content: space-between;
   gap: var(--space-3);
   margin-top: var(--space-2);
-  padding: 0 var(--space-1);
+  padding: 0 var(--space-3);
 }
 
 .hint {
@@ -397,6 +571,11 @@
 
 .hintActive {
   color: var(--text-secondary);
+  transition: opacity var(--dur-3) var(--ease-out);
+
+  @starting-style {
+    opacity: 0;
+  }
 }
 
 .keyboardHint {
@@ -405,7 +584,7 @@
 
 @media (max-width: 599px) {
   .container {
-    padding: var(--space-2) var(--space-3) var(--space-3);
+    padding: var(--space-2) var(--space-2) calc(var(--space-2) + env(safe-area-inset-bottom));
   }
 
   .composerArea {
@@ -413,15 +592,12 @@
   }
 
   .composer {
-    grid-template-areas:
-      "attachments attachments attachments"
-      "attach input send";
-    padding: var(--space-1);
+    border-radius: var(--radius-lg);
   }
 
   .textarea {
     min-height: 44px;
-    padding: 10px var(--space-1);
+    padding: 10px var(--space-2) var(--space-1);
   }
 
   .hintRow {
@@ -430,26 +606,34 @@
 
   .webToggle {
     justify-content: center;
-    width: 36px;
+    width: 34px;
     padding: 0;
   }
 
   .webToggleLabel {
     display: none;
   }
+
+  .modeOption {
+    min-width: 0;
+    padding: 0 10px;
+  }
 }
 
 @media (pointer: coarse) {
-
   .attachButton,
   .sendButton {
     width: 44px;
     height: 44px;
   }
 
+  .webToggle,
+  .modeSwitch {
+    height: 44px;
+  }
+
   .webToggle {
     min-width: 44px;
-    height: 44px;
   }
 
   .removeImageButton {

@@ -3,16 +3,33 @@
   flex-direction: column;
   gap: var(--space-3);
   padding: var(--space-4);
-  border: 1px solid var(--color-primary);
-  border-radius: var(--radius-sm);
-  background-color: var(--bg-surface);
+  border: 1px solid var(--color-primary-line);
+  border-radius: var(--radius-lg);
+  background-color: color-mix(in oklab, var(--bg-surface) 95%, var(--color-primary));
+  box-shadow: var(--shadow-sm);
+  transition: opacity var(--dur-3) var(--ease-out);
+
+  @starting-style {
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .card {
+    transition: opacity var(--dur-3) var(--ease-out), translate var(--dur-spring) var(--spring);
+
+    @starting-style {
+      opacity: 0;
+      translate: 0 10px;
+    }
+  }
 }
 
 .header {
   display: flex;
   align-items: center;
   gap: var(--space-2);
-  color: var(--color-primary);
+  color: var(--color-primary-text);
   font-size: var(--font-size-sm);
   font-weight: var(--font-weight-semibold);
 }
@@ -24,6 +41,7 @@
 .question {
   margin: 0;
   color: var(--text-primary);
+  font-size: var(--font-size-base);
   line-height: var(--line-height-normal);
   overflow-wrap: anywhere;
   text-wrap: pretty;
@@ -43,8 +61,8 @@
 
 .hint {
   margin: 0;
-  color: var(--text-secondary);
-  font-size: var(--font-size-sm);
+  color: var(--text-tertiary);
+  font-size: var(--font-size-xs);
   line-height: var(--line-height-normal);
 }
 

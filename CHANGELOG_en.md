@@ -6,6 +6,7 @@ All notable changes to AskMiao are documented in this file. The format is based 
 
 | Version | Release date | Highlights |
 |---|---|---|
+| [8.14.0](#8140---2026-11-14) | 2026-11-14 | Frontend redesign: one design and motion system across every page, and the chat mode switch moves into the input box; an Enter that some Chinese input methods send right after choosing a character no longer sends the message |
 | [8.13.0](#8130---2026-11-13) | 2026-11-13 | Answer-level evaluation; research mode searches the knowledge base at most 6 times per question, so questions with no answer no longer take minutes; knowledge-base results carry the neighbouring text, so the model can read articles and tables that chunking cut apart |
 | [8.12.2](#8122---2026-11-11) | 2026-11-11 | The research assistant always searches the knowledge base before answering, instead of relying only on AI document outlines and summaries or on attached images |
 | [8.12.1](#8121---2026-11-11) | 2026-11-11 | The conversation column widens with the window on wide screens (48rem to 72rem); the input box and the no-model notice match its width |
@@ -52,6 +53,29 @@ All notable changes to AskMiao are documented in this file. The format is based 
 ---
 
 ## [Unreleased]
+
+## [8.14.0] - 2026-11-14
+
+### Changed
+
+- **Frontend redesign**: every page now uses one design. Light mode sits on a warm paper tone and dark mode on a deep night-sky tone, primary buttons are ink black, and blue is the only accent colour. Colours are defined in OKLCH in `frontend/src/styles/tokens.css`, and components no longer hard-code colours or font sizes. Latin text uses the bundled Geist and Geist Mono fonts (SIL OFL licence, in `frontend/src/assets/fonts/`, never loaded from outside), and Chinese text keeps the system fonts. The top bar and the chat page use the AskMiao cat mark. Panels are separated by hairline borders, and only floating elements such as menus, dialogs, and notifications cast shadows.
+- **Chat mode switch moves into the input box**: 「查證」 (research) and 「代理」 (agent) move from the drop-down at the top of the chat page to a switch below the input box, which the arrow keys can also toggle.
+- **Motion**:
+  - Menus, dialogs, notifications, and the mobile conversation list animate when they open and close, and are removed only after the closing animation ends.
+  - In an empty conversation the input box sits in the middle; when the first message is sent or a conversation is opened, it slides to the bottom.
+  - Switching pages or switching between light and dark modes cross-fades.
+  - New messages, research steps, plan progress, and upload progress have matching animations.
+  - Animations only change position, size, and opacity, so they never push the layout around. With the system setting "reduce motion", movement and scaling are turned off and only the fades remain.
+- **Chat page details**:
+  - A streaming answer shows a caret at its end, and bouncing dots show while waiting for an answer.
+  - The research trace title animates when it moves to the next step, and the steps are joined by a timeline.
+  - The citation preview card shows a bar next to the relevance.
+  - The suggested questions in an empty conversation are cards.
+- **Other pages**: the knowledge base, AI tools, admin dashboard, profile, login, and registration pages use the new layout. Admin dashboard counts have thousands separators, and knowledge-base documents show their type as an extension label.
+
+### Fixed
+
+- **Enter after choosing a character in a Chinese input method**: some input methods send an Enter right after the character is chosen, which used to send the message; an Enter within 150 ms after composition ends no longer sends it.
 
 ## [8.13.0] - 2026-11-13
 

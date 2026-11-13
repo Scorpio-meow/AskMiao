@@ -205,9 +205,9 @@ const MARKDOWN_COMPONENTS: Components = {
     return <li {...props}>{children}</li>;
   },
 };
-export const MarkdownContent = memo(function MarkdownContent({ content, citations }: { content: string; citations?: SourceDetail[] }) {
+export const MarkdownContent = memo(function MarkdownContent({ content, citations, streaming = false }: { content: string; citations?: SourceDetail[]; streaming?: boolean }) {
   return (
-    <div className={styles.markdownBody}>
+    <div className={`${styles.markdownBody} ${streaming ? styles.streaming : ''}`}>
       <CitationContext.Provider value={citations}>
         <ReactMarkdown remarkPlugins={REMARK_PLUGINS} components={MARKDOWN_COMPONENTS}>
           {content}

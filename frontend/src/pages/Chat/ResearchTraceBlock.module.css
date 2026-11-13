@@ -1,13 +1,14 @@
 .container {
-  border: 1px solid var(--border-default);
-  border-radius: var(--radius-sm);
-  background-color: var(--bg-surface);
   overflow: hidden;
-  transition: border-color var(--transition-fast);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-lg);
+  background-color: var(--bg-surface);
+  transition: border-color var(--dur-3) var(--ease-out), box-shadow var(--dur-3) var(--ease-out);
 }
 
 .containerActive {
-  border-color: var(--color-primary);
+  border-color: var(--color-primary-line);
+  box-shadow: 0 0 0 3px oklch(from var(--color-primary) l c h / 0.07);
 }
 
 .header {
@@ -25,7 +26,7 @@
   font-weight: var(--font-weight-medium);
   text-align: left;
   cursor: pointer;
-  transition: background-color var(--transition-fast);
+  transition: background-color var(--dur-1) var(--ease-out);
 }
 
 .header:hover {
@@ -42,15 +43,41 @@
   align-items: center;
   justify-content: center;
   width: 16px;
-  color: var(--text-secondary);
+  color: var(--text-tertiary);
+}
+
+.titleViewport {
+  display: flex;
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
 }
 
 .titleText {
-  flex: 1 1 auto;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  transition: opacity var(--dur-3) var(--ease-out);
+}
+
+[data-entering] .titleText {
+  @starting-style {
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .titleText {
+    transition: opacity var(--dur-3) var(--ease-out), translate var(--dur-4) var(--ease-out-expo);
+  }
+
+  [data-entering] .titleText {
+    @starting-style {
+      opacity: 0;
+      translate: 0 70%;
+    }
+  }
 }
 
 .failedCount {
@@ -72,89 +99,181 @@
   width: 6px;
   height: 6px;
   border-radius: var(--radius-full);
-  background-color: var(--border-strong);
+  background-color: var(--text-tertiary);
+  opacity: 0.55;
+  transition: background-color var(--dur-3) var(--ease-out), opacity var(--dur-3) var(--ease-out);
+}
+
+[data-entering] .stepDot {
+  @starting-style {
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .stepDot {
+    transition:
+      background-color var(--dur-3) var(--ease-out),
+      opacity var(--dur-3) var(--ease-out),
+      scale var(--dur-spring) var(--spring);
+  }
+
+  [data-entering] .stepDot {
+    @starting-style {
+      opacity: 0;
+      scale: 0;
+    }
+  }
 }
 
 .stepDotRunning {
   background-color: var(--color-primary);
-  animation: stepPulse 1.4s ease-in-out infinite;
+  opacity: 1;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .stepDotRunning {
+    animation: dotPulse 1.4s var(--ease-in-out) infinite;
+  }
+}
+
+@keyframes dotPulse {
+  50% {
+    opacity: 0.35;
+    scale: 0.8;
+  }
 }
 
 .stepDotError {
   background-color: var(--color-error);
-}
-
-@keyframes stepPulse {
-
-  0%,
-  100% {
-    opacity: 1;
-  }
-
-  50% {
-    opacity: 0.35;
-  }
+  opacity: 1;
 }
 
 .chevron {
   display: inline-flex;
   flex: none;
   color: var(--text-tertiary);
-  transition: transform var(--transition-fast);
 }
 
 .chevronOpen {
-  transform: rotate(180deg);
+  rotate: 180deg;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .chevron {
+    transition: rotate var(--dur-4) var(--ease-out-expo);
+  }
 }
 
 .stepList {
   display: flex;
   flex-direction: column;
   margin: 0;
-  padding: 0 var(--space-3);
-  border-top: 1px solid var(--border-default);
+  padding: var(--space-1) var(--space-3) var(--space-3);
   list-style: none;
 }
 
 .stepItem {
+  position: relative;
   display: grid;
-  grid-template-columns: 16px minmax(0, 1fr);
+  grid-template-columns: 20px minmax(0, 1fr);
   gap: var(--space-3);
-  padding: var(--space-3) 0;
+  padding: var(--space-2) 0;
+  transition: opacity var(--dur-3) var(--ease-out);
 }
 
-.stepItem+.stepItem {
-  border-top: 1px solid var(--border-subtle);
+[data-entering] .stepItem {
+  @starting-style {
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .stepItem {
+    transition: opacity var(--dur-3) var(--ease-out), translate var(--dur-5) var(--ease-out-expo);
+  }
+
+  [data-entering] .stepItem {
+    @starting-style {
+      opacity: 0;
+      translate: 0 6px;
+    }
+  }
+}
+
+.stepRail {
+  position: absolute;
+  top: calc(var(--space-2) + 24px);
+  bottom: calc(var(--space-2) * -1 + 4px);
+  left: 9.5px;
+  width: 1px;
+  background-color: var(--border-default);
+}
+
+.stepItem:last-child .stepRail {
+  display: none;
 }
 
 .stepStatus {
+  position: relative;
+  z-index: 1;
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  width: 20px;
   height: 20px;
+  border-radius: var(--radius-full);
+}
+
+.statusSettled {
+  transition: opacity var(--dur-2) var(--ease-out);
+}
+
+[data-entering] .statusSettled {
+  @starting-style {
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .statusSettled {
+    transition: opacity var(--dur-2) var(--ease-out), scale var(--dur-spring) var(--spring);
+  }
+
+  [data-entering] .statusSettled {
+    @starting-style {
+      opacity: 0;
+      scale: 0.4;
+    }
+  }
 }
 
 .statusRunning {
-  color: var(--color-primary);
+  background-color: var(--bg-surface);
 }
 
 .statusSuccess {
-  color: var(--color-success-text);
+  background-color: var(--btn-primary-bg);
+  color: var(--btn-primary-text);
 }
 
 .statusError {
-  color: var(--color-error-text);
+  background-color: var(--color-error);
+  color: var(--neutral-0);
 }
 
 .statusUnknown {
+  border: 1px dashed var(--border-strong);
+  background-color: var(--bg-surface);
   color: var(--text-tertiary);
 }
 
 .stepBody {
   display: flex;
   flex-direction: column;
-  gap: var(--space-1);
+  gap: 2px;
   min-width: 0;
+  padding-top: 1px;
 }
 
 .stepHeader {
@@ -168,10 +287,10 @@
 .stepTitle {
   display: inline-flex;
   align-items: center;
-  gap: var(--space-2);
+  gap: 6px;
   min-width: 0;
-  color: var(--text-primary);
-  font-size: var(--font-size-sm);
+  color: var(--text-secondary);
+  font-size: var(--font-size-xs);
   font-weight: var(--font-weight-medium);
 }
 
@@ -183,24 +302,30 @@
 .duration {
   flex: none;
   color: var(--text-tertiary);
+  font-family: var(--font-mono);
   font-size: var(--font-size-xs);
   font-variant-numeric: tabular-nums;
 }
 
 .agent {
-  margin: 0 0 var(--space-1);
-  color: var(--color-primary);
+  margin: 0;
+  color: var(--color-primary-text);
   font-size: var(--font-size-xs);
   font-weight: var(--font-weight-medium);
   overflow-wrap: anywhere;
 }
 
 .note {
-  margin: 0 0 var(--space-1);
+  margin: 0;
   color: var(--text-primary);
   font-size: var(--font-size-sm);
   line-height: var(--line-height-normal);
   overflow-wrap: anywhere;
+}
+
+.stepItemRunning .note {
+  color: var(--text-primary);
+  font-weight: var(--font-weight-medium);
 }
 
 .queryText {
@@ -216,10 +341,12 @@
 }
 
 .outputPreview {
-  max-height: 96px;
+  max-height: 104px;
   margin: var(--space-1) 0 0;
-  padding: var(--space-2);
-  border-radius: var(--radius-xs);
+  padding: var(--space-2) var(--space-3);
+  overflow-y: auto;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
   background-color: var(--bg-surface-secondary);
   color: var(--text-secondary);
   font-family: var(--font-mono);
@@ -227,17 +354,10 @@
   line-height: var(--line-height-normal);
   white-space: pre-wrap;
   overflow-wrap: anywhere;
-  overflow-y: auto;
 }
 
 @media (max-width: 599px) {
   .stepDots {
     display: none;
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .stepDotRunning {
-    animation: none;
   }
 }

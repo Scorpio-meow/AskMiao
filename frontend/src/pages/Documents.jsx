@@ -485,6 +485,7 @@ function Documents() {
       <div className={styles.header}>
         <div className={styles.titleRow}>
           <h1 className={styles.title}>知識庫管理</h1>
+          <span className={styles.titleCount}>{documents.length} 份文件</span>
           {loading && (
             <span className={styles.refreshing}>
               <Spinner size={16} color="var(--color-primary)" aria-hidden="true" />
@@ -513,7 +514,7 @@ function Documents() {
       {fetchError && (
         <Alert
           severity="error"
-          style={{ marginBottom: '16px' }}
+          className={styles.pageAlert}
           onClose={clearFetchError}
           action={
             <Button size="sm" variant="outline" onClick={fetchDocuments}>
@@ -525,25 +526,26 @@ function Documents() {
         </Alert>
       )}
       {localError && (
-        <Alert severity="error" style={{ marginBottom: '16px' }} onClose={() => setLocalError('')}>
+        <Alert severity="error" className={styles.pageAlert} onClose={() => setLocalError('')}>
           {localError}
         </Alert>
       )}
       {success && (
-        <Alert severity="success" style={{ marginBottom: '16px' }} onClose={() => setSuccess('')}>
+        <Alert severity="success" className={styles.pageAlert} onClose={() => setSuccess('')}>
           {success}
         </Alert>
       )}
       <div className={styles.card}>
         <div className={styles.cardHeader}>
           <h2 className={styles.cardTitle}>
-            已上傳的文件 ({documents.length})
+            已上傳的文件
+            <span className={styles.cardCount}>{documents.length}</span>
           </h2>
         </div>
         {documents.length === 0 ? (
           <div className={styles.emptyState}>
             <div className={styles.emptyIcon}>
-              <Icon name="description" size={64} />
+              <Icon name="description" size={26} />
             </div>
             <h3 className={styles.emptyTitle}>還沒有上傳任何文件</h3>
             <p className={styles.emptySubtitle}>開始上傳文件來建立您的知識庫</p>
@@ -556,13 +558,14 @@ function Documents() {
                 <li key={doc.id} className={styles.docItem} aria-busy={isDeleting || undefined}>
                   <div className={styles.docMain}>
                     <div className={styles.docTitleRow}>
-                      <Icon name="description" size={20} color="var(--color-primary)" />
+                      <span className={`${styles.fileBadge} ${getFileBadgeClass(getFileTypeLabel(doc.file_type, doc.filename))}`}>
+                        {getFileTypeLabel(doc.file_type, doc.filename)}
+                      </span>
                       <span className={styles.docFilename}>{doc.filename}</span>
-                      <Chip label={getFileTypeLabel(doc.file_type, doc.filename)} size="sm" variant="outlined" />
                       {doc.is_processed ? (
-                        <Chip label="已處理" size="sm" color="success" variant="outlined" />
+                        <Chip label="已處理" size="sm" color="success" />
                       ) : (
-                        <Chip label="處理中" size="sm" color="warning" variant="outlined" />
+                        <Chip label="處理中" size="sm" color="warning" icon={<Spinner size={11} color="currentColor" aria-hidden="true" />} />
                       )}
                     </div>
                     {doc.description && (
@@ -626,7 +629,7 @@ function Documents() {
                       aria-label={`預覽「${doc.filename}」`}
                       title="預覽文件"
                     >
-                      <Icon name="visibility" size={18} color="var(--color-primary)" />
+                      <Icon name="visibility" size={17} />
                     </IconButton>
                     <IconButton
                       size="sm"
@@ -636,22 +639,23 @@ function Documents() {
                       title="重新生成 AI 大綱"
                     >
                       {regeneratingStatus[doc.id] ? (
-                        <Spinner size={16} color="var(--color-primary)" aria-hidden="true" />
+                        <Spinner size={16} color="currentColor" aria-hidden="true" />
                       ) : (
-                        <Icon name="sparkles" size={18} color="var(--color-primary)" />
+                        <Icon name="sparkles" size={17} />
                       )}
                     </IconButton>
                     <IconButton
                       size="sm"
+                      className={styles.deleteAction}
                       onClick={() => setPendingDelete({ id: doc.id, filename: doc.filename })}
                       disabled={isDeleting}
                       aria-label={`刪除「${doc.filename}」`}
                       title="刪除文件"
                     >
                       {isDeleting ? (
-                        <Spinner size={16} color="var(--color-error)" aria-hidden="true" />
+                        <Spinner size={16} color="currentColor" aria-hidden="true" />
                       ) : (
-                        <Icon name="delete" size={18} color="var(--color-error)" />
+                        <Icon name="delete" size={17} />
                       )}
                     </IconButton>
                   </div>
@@ -699,7 +703,7 @@ function Documents() {
             disabled={uploadLoading}
           >
             <span className={styles.dropZoneIconWrap}>
-              <Icon name="upload" size={28} />
+              <Icon name="upload" size={24} />
             </span>
             <span className={styles.dropZoneTitle}>
               {isDragging ? '放開以新增檔案' : '拖曳檔案至此處，或點擊選擇檔案'}
@@ -812,7 +816,7 @@ function Documents() {
                             aria-valuemax={100}
                             aria-label={`${f.name} 上傳進度`}
                           >
-                            <div className={styles.progressFill} style={{ width: `${item.progress}%` }} />
+                            <div className={styles.progressFill} style={{ '--progress': item.progress / 100 }} />
                           </div>
                           <div className={styles.progressMeta}>
                             <span>{item.progress < 100 ? '上傳中...' : '正在切塊與建立向量索引...'}</span>

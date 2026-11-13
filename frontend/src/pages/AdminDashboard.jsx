@@ -26,6 +26,8 @@ const cache = {
 const CACHE_TTL = 3 * 60 * 1000;
 let loadingPromise = null;
 const formatDate = (value) => parseServerDate(value).toLocaleDateString('zh-TW');
+const countFormatter = new Intl.NumberFormat('zh-TW');
+const formatCount = (value) => countFormatter.format(value || 0);
 function AdminDashboard() {
   const { user: currentUser } = useAuth();
   const [statistics, setStatistics] = useState(null);
@@ -148,46 +150,46 @@ function AdminDashboard() {
         )}
       </div>
       {error && (
-        <Alert severity="error" style={{ marginBottom: '16px' }} onClose={() => setError('')}>
+        <Alert severity="error" className={styles.pageAlert} onClose={() => setError('')}>
           {error}
         </Alert>
       )}
       <div className={styles.statsGrid}>
         <div className={styles.statCard}>
-          <div className={styles.statIcon}>
-            <Icon name="people" size={24} />
+          <div className={styles.statHead}>
+            <span className={styles.statLabel}>使用者總數</span>
+            <span className={styles.statIcon}>
+              <Icon name="people" size={16} />
+            </span>
           </div>
-          <div>
-            <div className={styles.statValue}>{statistics?.users?.total || 0}</div>
-            <div className={styles.statLabel}>使用者總數</div>
-          </div>
+          <div className={styles.statValue}>{formatCount(statistics?.users?.total)}</div>
         </div>
         <div className={styles.statCard}>
-          <div className={styles.statIcon}>
-            <Icon name="chat" size={24} />
+          <div className={styles.statHead}>
+            <span className={styles.statLabel}>對話總數</span>
+            <span className={styles.statIcon}>
+              <Icon name="chat" size={16} />
+            </span>
           </div>
-          <div>
-            <div className={styles.statValue}>{statistics?.conversations?.total || 0}</div>
-            <div className={styles.statLabel}>對話總數</div>
-          </div>
+          <div className={styles.statValue}>{formatCount(statistics?.conversations?.total)}</div>
         </div>
         <div className={styles.statCard}>
-          <div className={styles.statIcon}>
-            <Icon name="description" size={24} />
+          <div className={styles.statHead}>
+            <span className={styles.statLabel}>文件數量</span>
+            <span className={styles.statIcon}>
+              <Icon name="description" size={16} />
+            </span>
           </div>
-          <div>
-            <div className={styles.statValue}>{statistics?.documents?.total || 0}</div>
-            <div className={styles.statLabel}>文件數量</div>
-          </div>
+          <div className={styles.statValue}>{formatCount(statistics?.documents?.total)}</div>
         </div>
         <div className={styles.statCard}>
-          <div className={styles.statIcon}>
-            <Icon name="speed" size={24} />
+          <div className={styles.statHead}>
+            <span className={styles.statLabel}>近 7 天訊息</span>
+            <span className={styles.statIcon}>
+              <Icon name="speed" size={16} />
+            </span>
           </div>
-          <div>
-            <div className={styles.statValue}>{statistics?.messages?.recent_7_days || 0}</div>
-            <div className={styles.statLabel}>近 7 天訊息</div>
-          </div>
+          <div className={styles.statValue}>{formatCount(statistics?.messages?.recent_7_days)}</div>
         </div>
       </div>
       <UsersCard
@@ -244,7 +246,8 @@ function AdminDashboard() {
                   <td>
                     <Button
                       size="sm"
-                      variant="danger"
+                      variant="text"
+                      className={styles.dangerText}
                       onClick={() => setPendingDelete(doc)}
                     >
                       刪除<span className="sr-only">文件 {doc.filename}</span>

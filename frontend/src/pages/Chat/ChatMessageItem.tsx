@@ -10,7 +10,8 @@ import QuestionCard from './QuestionCard';
 import MarkdownContent from './MarkdownContent';
 import ConversationFileCard from './ConversationFileCard';
 import { describeAttachmentType, formatMessageTime, isImageAttachment, splitThinkContent } from './chatFormat';
-import { Tooltip, IconButton, Spinner, Icon, Button, useModalDialog } from '../../components/ui';
+import { Tooltip, IconButton, Icon, Button, useModalDialog } from '../../components/ui';
+import markUrl from '../../assets/brand/askmiao-mark.png';
 import styles from './ChatMessageItem.module.css';
 const NO_TRACE: ResearchTraceStep[] = [];
 const ImageLightbox: React.FC<{ src: string; alt: string; onClose: () => void }> = ({ src, alt, onClose }) => {
@@ -35,6 +36,7 @@ const ChatMessageItemView: React.FC<ChatMessageItemProps> = ({
   message,
   thinkId,
   isStreaming,
+  entering = false,
   isThinkingOpen,
   deferRendering,
   onToggleThinking,
@@ -110,14 +112,14 @@ const ChatMessageItemView: React.FC<ChatMessageItemProps> = ({
             className={styles.copyButton}
             aria-label="複製訊息內容"
           >
-            <Icon name="copy" size={14} />
+            <Icon name="copy" size={15} />
           </IconButton>
         </Tooltip>
       )}
     </div>
   );
   return (
-    <div className={`${styles.row} ${isUser ? styles.rowUser : styles.rowAssistant} ${deferRendering ? styles.deferred : ''}`}>
+    <div className={`${styles.row} ${isUser ? styles.rowUser : styles.rowAssistant} ${deferRendering ? styles.deferred : ''} ${entering ? styles.rowEnter : ''}`} data-entering={entering || undefined}>
       {isUser ? (
         <div className={styles.userColumn}>
           <div className={styles.userBubble}>
@@ -129,8 +131,8 @@ const ChatMessageItemView: React.FC<ChatMessageItemProps> = ({
         </div>
       ) : (
         <>
-          <span className={styles.assistantMark} aria-hidden="true">
-            <Icon name="bot" size={16} />
+          <span className={`${styles.assistantMark} ${isStreaming && !isSettled ? styles.assistantMarkLive : ''}`} aria-hidden="true">
+            <img src={markUrl} alt="" width="20" height="20" />
           </span>
           <div className={styles.assistantColumn}>
             <span className="sr-only">AskMiao 回覆：</span>
@@ -151,16 +153,20 @@ const ChatMessageItemView: React.FC<ChatMessageItemProps> = ({
               <ThinkBlock thinkContent={thinkContent} isOpen={isThinkingOpen} onToggle={() => onToggleThinking(thinkId)} />
             )}
             {!hasText && !hasTrace && !isSettled ? (
-              <div className={styles.pending}>
-                <Spinner size={14} color="var(--color-primary)" />
+              <div className={styles.pending} role="status">
+                <span className={styles.typingDots} aria-hidden="true">
+                  <span />
+                  <span />
+                  <span />
+                </span>
                 <span>AI 正在分析您的問題...</span>
               </div>
             ) : hasText ? (
-              <MarkdownContent content={mainContent} citations={message.sources_detail} />
+              <MarkdownContent content={mainContent} citations={message.sources_detail} streaming={isStreaming && !isSettled} />
             ) : null}
             {message.error && (
               <div className={styles.errorBlock}>
-                <Icon name="error" size={16} className={styles.errorIcon} />
+                <Icon name="error" size={17} className={styles.errorIcon} />
                 <span className={styles.errorText}>{message.error}</span>
                 {onRetry && (
                   <Button size="sm" variant="outline" onClick={() => onRetry(message)} startIcon={<Icon name="refresh" size={14} />}>

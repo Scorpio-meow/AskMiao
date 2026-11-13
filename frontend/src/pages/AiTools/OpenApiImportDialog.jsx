@@ -186,8 +186,8 @@ export default function OpenApiImportDialog({ onClose, onImported }) {
                   <strong className={styles.parseTitle}>{parseResult.title}</strong>
                 </div>
                 <span className={styles.parseMeta}>
-                  {endpointTotal} 個可匯入項目
-                  {parseResult.base_url && <> · <span className={styles.mono}>{parseResult.base_url}</span></>}
+                  <span>{endpointTotal} 個可匯入項目</span>
+                  {parseResult.base_url && <span className={styles.mono}>{parseResult.base_url}</span>}
                 </span>
               </div>
               <Button variant="secondary" size="sm" onClick={() => setParseResult(null)} startIcon={<Icon name="arrow-back" size={16} />}>

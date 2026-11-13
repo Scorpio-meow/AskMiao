@@ -5,6 +5,7 @@ import { useDocumentTitle } from '../hooks/useDocumentTitle';
 import { useRegistrationStatus } from '../hooks/useRegistrationStatus';
 import { APP_NAME, APP_TAGLINE } from '../config/brand';
 import { TextField, Button, Alert, IconButton, Icon, Spinner } from '../components/ui';
+import markUrl from '../assets/brand/askmiao-mark.png';
 import styles from './Auth.module.css';
 const RegisterPage = () => {
   const navigate = useNavigate();
@@ -71,7 +72,7 @@ const RegisterPage = () => {
         <div className={styles.card}>
           <div className={styles.header}>
             <div className={styles.headerIcon}>
-              <Icon name="person-add" size={48} />
+              <img src={markUrl} alt="" width="44" height="44" />
             </div>
             <h1 className={styles.title}>建立新帳號</h1>
           </div>
@@ -80,7 +81,7 @@ const RegisterPage = () => {
               <Spinner size={24} color="var(--color-primary)" />
             </div>
           ) : (
-            <Alert severity="info" style={{ marginBottom: '16px' }}>
+            <Alert severity="info" className={styles.alert}>
               目前不開放註冊，請聯絡管理員建立帳號
             </Alert>
           )}
@@ -92,7 +93,8 @@ const RegisterPage = () => {
           </div>
         </div>
         <p className={styles.copyright}>
-          {APP_NAME} · {APP_TAGLINE}
+          <span>{APP_NAME}</span>
+        <span>{APP_TAGLINE}</span>
         </p>
       </div>
     );
@@ -115,13 +117,13 @@ const RegisterPage = () => {
       <div className={styles.card}>
         <div className={styles.header}>
           <div className={styles.headerIcon}>
-            <Icon name="person-add" size={48} />
+            <img src={markUrl} alt="" width="44" height="44" />
           </div>
           <h1 className={styles.title}>建立新帳號</h1>
           <p className={styles.subtitle}>填寫以下資料完成註冊</p>
         </div>
         {error && (
-          <Alert severity="error" style={{ marginBottom: '16px' }}>
+          <Alert severity="error" className={styles.alert}>
             {error}
           </Alert>
         )}
@@ -219,7 +221,8 @@ const RegisterPage = () => {
         </div>
       </div>
       <p className={styles.copyright}>
-        {APP_NAME} · {APP_TAGLINE}
+        <span>{APP_NAME}</span>
+        <span>{APP_TAGLINE}</span>
       </p>
     </div>
   );

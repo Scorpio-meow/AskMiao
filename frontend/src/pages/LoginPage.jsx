@@ -5,6 +5,7 @@ import { useDocumentTitle } from '../hooks/useDocumentTitle';
 import { useRegistrationStatus } from '../hooks/useRegistrationStatus';
 import { APP_NAME, APP_TAGLINE } from '../config/brand';
 import { TextField, Button, Alert, IconButton, Icon } from '../components/ui';
+import markUrl from '../assets/brand/askmiao-mark.png';
 import styles from './Auth.module.css';
 const LoginPage = () => {
   const navigate = useNavigate();
@@ -45,18 +46,18 @@ const LoginPage = () => {
       <div className={styles.card}>
         <div className={styles.header}>
           <div className={styles.headerIcon}>
-            <Icon name="login" size={48} />
+            <img src={markUrl} alt="" width="44" height="44" />
           </div>
           <h1 className={styles.title}>登入 {APP_NAME}</h1>
           <p className={styles.subtitle}>使用您的帳號登入系統</p>
         </div>
         {notice && !error && (
-          <Alert severity={notice.severity} style={{ marginBottom: '16px' }}>
+          <Alert severity={notice.severity} className={styles.alert}>
             {notice.message}
           </Alert>
         )}
         {error && (
-          <Alert severity="error" style={{ marginBottom: '16px' }}>
+          <Alert severity="error" className={styles.alert}>
             {error}
           </Alert>
         )}
@@ -112,7 +113,8 @@ const LoginPage = () => {
         )}
       </div>
       <p className={styles.copyright}>
-        {APP_NAME} · {APP_TAGLINE}
+        <span>{APP_NAME}</span>
+        <span>{APP_TAGLINE}</span>
       </p>
     </div>
   );

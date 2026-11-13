@@ -6,6 +6,8 @@ import { useTheme } from '../contexts/ThemeContext';
 import { APP_NAME } from '../config/brand';
 import NetworkStatus from './NetworkStatus';
 import { Avatar, Menu, MenuItem, MenuDivider, MenuGroup, Icon } from './ui';
+import { runViewTransition } from '../utils/viewTransition';
+import markUrl from '../assets/brand/askmiao-mark.png';
 import styles from './Layout.module.css';
 const THEME_OPTIONS = [
   { value: 'light', label: '淺色', icon: 'sun' },
@@ -45,8 +47,9 @@ function Layout() {
     navigate('/profile');
   };
   const handleSelectTheme = (value) => {
-    setTheme(value);
     handleMenuClose();
+    if (value === theme) return;
+    runViewTransition('theme', () => setTheme(value));
   };
   const handleLogout = async () => {
     handleMenuClose();
@@ -58,19 +61,30 @@ function Layout() {
       <a href="#main-content" className={styles.skipLink}>跳到主要內容</a>
       <header className={styles.appBar}>
         <div className={styles.toolbar}>
-          <div className={styles.brand}>{APP_NAME}</div>
+          <div className={styles.brand}>
+            <img src={markUrl} alt="" className={styles.brandMark} width="28" height="28" />
+            <span className={styles.brandName}>{APP_NAME}</span>
+          </div>
           <div className={styles.navGroup}>
             <nav aria-label="主要功能">
               <ul className={styles.navList}>
-                {navItems.map((item) => (
+                {navItems.map((item, index) => (
                   <li key={item.to}>
                     <NavLink
                       to={item.to}
                       title={item.label}
+                      viewTransition
                       className={({ isActive }) => `${styles.navButton} ${isActive ? styles.navButtonActive : ''}`}
                     >
-                      <Icon name={item.icon} size={18} />
-                      <span className={styles.navLabel}>{item.label}</span>
+                      {({ isActive }) => (
+                        <>
+                          {isActive && <span className={styles.navIndicator} aria-hidden="true" />}
+                          <span className={styles.navContent} style={{ viewTransitionName: `nav-item-${index}` }}>
+                            <Icon name={item.icon} size={17} />
+                            <span className={styles.navLabel}>{item.label}</span>
+                          </span>
+                        </>
+                      )}
                     </NavLink>
                   </li>
                 ))}
@@ -85,7 +99,7 @@ function Layout() {
               aria-expanded={open}
               aria-controls={open ? menuId : undefined}
             >
-              <Avatar size={34} style={{ backgroundColor: 'var(--color-primary-light)', color: 'var(--color-primary-text)' }}>
+              <Avatar size={30}>
                 {user?.username?.[0]?.toUpperCase() || <Icon name="account-circle" size={20} />}
               </Avatar>
             </button>

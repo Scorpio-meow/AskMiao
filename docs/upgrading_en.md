@@ -4,6 +4,7 @@
 
 > How to upgrade an existing deployment to a new release, with rollback steps and troubleshooting. See the [CHANGELOG](../CHANGELOG_en.md) for the full list of changes in each version.
 
+- [Upgrading from 8.13.0 to 8.14.0](#upgrading-from-8130-to-8140)
 - [Upgrading from 8.12.2 to 8.13.0](#upgrading-from-8122-to-8130)
 - [Upgrading from 8.12.1 to 8.12.2](#upgrading-from-8121-to-8122)
 - [Upgrading from 8.12.0 to 8.12.1](#upgrading-from-8120-to-8121)
@@ -55,6 +56,20 @@
   - [Step 5: verify the upgrade](#step-5-verify-the-upgrade)
   - [Rolling back to 2.2.x](#rolling-back-to-22x)
   - [Troubleshooting](#troubleshooting)
+
+---
+
+## Upgrading from 8.13.0 to 8.14.0
+
+For upgrading from 8.13.0 to 8.14.0 (2026-11-14); see the [CHANGELOG](../CHANGELOG_en.md#8140---2026-11-14) for the full list of changes. Only the frontend changes: no `.env` changes, no backend, database, or API changes, and no index rebuild; with `deploy/`, rebuild the images as usual.
+
+| Item | 8.13.0 | 8.14.0 | What to do |
+|---|---|---|---|
+| Chat mode switch | Drop-down at the top of the chat page | 「查證」 / 「代理」 switch below the input box | Tell users where it moved |
+| Browsers | Any current browser | Colours are written with OKLCH and `color-mix()` and need Chrome and Edge 111, Safari 16.2, or Firefox 113 or later; older browsers show wrong colours. Opening animations and page transitions need newer versions, and without support the elements simply appear with nothing lost | Check the browser versions your users run |
+| Fonts | System fonts | Latin text uses the bundled Geist, and Chinese text keeps the system fonts | Nothing; the fonts ship with the frontend and need no outside connection |
+
+To roll back to 8.13.0, switch back to the older frontend; the backend and data are unaffected.
 
 ---
 

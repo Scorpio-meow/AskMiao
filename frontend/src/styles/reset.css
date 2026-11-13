@@ -6,14 +6,28 @@
   padding: 0;
 }
 
+* {
+  scrollbar-width: thin;
+}
+
 html {
   -webkit-text-size-adjust: 100%;
-  font-family: var(--font-family);
+  text-size-adjust: 100%;
+  font-family: var(--font-sans);
   font-size: 16px;
   line-height: var(--line-height-normal);
+  font-synthesis-weight: none;
   color: var(--text-primary);
   background-color: var(--bg-app);
-  scroll-behavior: smooth;
+  accent-color: var(--color-primary);
+  scrollbar-color: var(--scrollbar-thumb) transparent;
+  -webkit-tap-highlight-color: transparent;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  html {
+    scroll-behavior: smooth;
+  }
 }
 
 html:has(dialog:modal) {
@@ -29,6 +43,7 @@ body {
   color: var(--text-primary);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
 }
 
 #root {
@@ -44,6 +59,7 @@ textarea,
 select {
   font: inherit;
   color: inherit;
+  letter-spacing: inherit;
 }
 
 button {
@@ -61,6 +77,10 @@ button {
   outline: none;
 }
 
+::selection {
+  background-color: oklch(from var(--color-primary) l c h / 0.22);
+}
+
 .sr-only {
   position: absolute;
   width: 1px;
@@ -68,18 +88,19 @@ button {
   padding: 0;
   margin: -1px;
   overflow: hidden;
-  clip: rect(0, 0, 0, 0);
+  clip-path: inset(50%);
   white-space: nowrap;
   border: 0;
 }
 
 a {
-  color: var(--color-primary);
+  color: var(--color-primary-text);
   text-decoration: none;
 }
 
 a:hover {
   text-decoration: underline;
+  text-underline-offset: 3px;
 }
 
 img,
@@ -101,32 +122,59 @@ h6 {
   overflow-wrap: break-word;
 }
 
-::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
+h1,
+h2,
+h3 {
+  text-wrap: balance;
+  letter-spacing: var(--tracking-tight);
 }
 
-::-webkit-scrollbar-track {
-  background: transparent;
+p {
+  text-wrap: pretty;
 }
 
-::-webkit-scrollbar-thumb {
-  background: var(--border-strong);
-  border-radius: var(--radius-full);
+@supports not (scrollbar-color: auto) {
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    border: 3px solid transparent;
+    border-radius: var(--radius-full);
+    background: var(--scrollbar-thumb) padding-box;
+  }
 }
 
-::-webkit-scrollbar-thumb:hover {
-  background: var(--text-tertiary);
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation-duration: var(--dur-3);
+  animation-timing-function: var(--ease-out);
+}
+
+::view-transition-group(nav-indicator) {
+  animation-duration: var(--dur-4);
+  animation-timing-function: var(--ease-out-expo);
 }
 
 @media (prefers-reduced-motion: reduce) {
-
-  *,
-  *::before,
-  *::after {
-    animation-duration: 0.01ms !important;
-    animation-iteration-count: 1 !important;
-    transition-duration: 0.01ms !important;
-    scroll-behavior: auto !important;
+  ::view-transition-group(*),
+  ::view-transition-old(*),
+  ::view-transition-new(*) {
+    animation: none !important;
   }
+}
+
+@media (forced-colors: active) {
+  :focus-visible {
+    outline-color: Highlight;
+  }
+}
+
+[data-icon] [stroke-width='2'] {
+  stroke-width: 1.75;
 }

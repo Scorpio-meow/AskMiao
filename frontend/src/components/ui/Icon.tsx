@@ -73,7 +73,9 @@ export type IconName =
   | 'arrow-down'
   | 'monitor'
   | 'maximize'
-  | 'minimize';
+  | 'minimize'
+  | 'arrow-up'
+  | 'panel-left';
 interface IconProps extends React.SVGProps<SVGSVGElement> {
   name: IconName;
   size?: number | string;
@@ -536,6 +538,20 @@ export const Icon: React.FC<IconProps> = ({
         return (
           <rect x="6" y="6" width="12" height="12" rx="2" stroke="currentColor" strokeWidth="2" fill="currentColor" />
         );
+      case 'arrow-up':
+        return (
+          <>
+            <line x1="12" y1="19" x2="12" y2="5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+            <polyline points="5 12 12 5 19 12" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" fill="none" />
+          </>
+        );
+      case 'panel-left':
+        return (
+          <>
+            <rect x="3" y="4" width="18" height="16" rx="3" stroke="currentColor" strokeWidth="2" fill="none" />
+            <line x1="9.5" y1="4" x2="9.5" y2="20" stroke="currentColor" strokeWidth="2" />
+          </>
+        );
       case 'arrow-down':
         return (
           <>
@@ -600,6 +616,7 @@ export const Icon: React.FC<IconProps> = ({
       height={size}
       className={className}
       style={{ display: 'inline-block', verticalAlign: 'middle', flexShrink: 0, color }}
+      data-icon={name}
       aria-hidden="true"
       {...props}
     >

@@ -7,6 +7,7 @@ import {
   formatFileSize,
   formatMessageTime,
   groupConversations,
+  isCompositionEchoEnter,
   isImageAttachment,
   isImeComposition,
   messageKey,
@@ -73,6 +74,14 @@ describe('isImeComposition', () => {
     expect(isImeComposition({ isComposing: true, keyCode: 13 })).toBe(true);
     expect(isImeComposition({ isComposing: false, keyCode: 229 })).toBe(true);
     expect(isImeComposition({ isComposing: false, keyCode: 13 })).toBe(false);
+  });
+});
+describe('isCompositionEchoEnter', () => {
+  it('swallows only the Enter that arrives right after a composition ends', () => {
+    expect(isCompositionEchoEnter(0, 150)).toBe(true);
+    expect(isCompositionEchoEnter(149, 150)).toBe(true);
+    expect(isCompositionEchoEnter(150, 150)).toBe(false);
+    expect(isCompositionEchoEnter(2000, 150)).toBe(false);
   });
 });
 describe('skillSuggestionsFor', () => {

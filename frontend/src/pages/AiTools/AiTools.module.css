@@ -128,13 +128,12 @@
 }
 
 .filterTabActive {
-  color: var(--color-primary-text);
-  font-weight: var(--font-weight-semibold);
-  box-shadow: inset 0 -2px 0 var(--color-primary);
+  color: var(--text-primary);
+  box-shadow: inset 0 -2px 0 var(--text-primary);
 }
 
 .filterTabActive:hover {
-  color: var(--color-primary-text);
+  color: var(--text-primary);
 }
 
 .filterCount {
@@ -151,8 +150,8 @@
 }
 
 .filterTabActive .filterCount {
-  background: var(--color-primary-light);
-  color: var(--color-primary-text);
+  background: var(--bg-surface-active);
+  color: var(--text-primary);
 }
 
 .searchBox {
@@ -174,7 +173,7 @@
   width: 100%;
   height: 36px;
   padding: 0 var(--space-3) 0 36px;
-  border: 1px solid var(--border-default);
+  border: 1px solid var(--border-strong);
   border-radius: var(--radius-md);
   background: var(--bg-input);
   color: var(--text-primary);
@@ -194,7 +193,7 @@
 
 .searchInput:focus {
   border-color: var(--border-focus);
-  box-shadow: 0 0 0 3px var(--color-primary-light);
+  box-shadow: 0 0 0 3px oklch(from var(--border-focus) l c h / 0.18);
 }
 
 @media (max-width: 1179px) {
@@ -239,7 +238,7 @@
   border: 1px solid var(--border-default);
   border-radius: var(--radius-lg);
   background: var(--bg-surface);
-  box-shadow: var(--shadow-sm);
+  box-shadow: var(--shadow-xs);
 }
 
 .sectionHeader {
@@ -807,13 +806,14 @@
 }
 
 .exampleButton:hover {
-  border-color: var(--color-primary);
-  color: var(--color-primary-text);
+  border-color: var(--border-strong);
+  background: var(--bg-surface-hover);
+  color: var(--text-primary);
 }
 
 .exampleIcon {
   flex-shrink: 0;
-  color: var(--color-primary-text);
+  color: var(--text-secondary);
 }
 
 .entryList {
@@ -1017,7 +1017,7 @@
 .input:focus,
 .select:focus {
   border-color: var(--border-focus);
-  box-shadow: 0 0 0 3px var(--color-primary-light);
+  box-shadow: 0 0 0 3px oklch(from var(--border-focus) l c h / 0.18);
 }
 
 .input:disabled {
@@ -1203,9 +1203,9 @@ textarea.input {
 }
 
 .stepCurrent .stepMarker {
-  border-color: var(--color-primary-solid);
-  background: var(--color-primary-solid);
-  color: var(--text-on-primary);
+  border-color: var(--btn-primary-bg);
+  background: var(--btn-primary-bg);
+  color: var(--btn-primary-text);
 }
 
 .stepDone {
@@ -1250,6 +1250,9 @@ textarea.input {
 }
 
 .parseMeta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px var(--space-3);
   font-size: var(--font-size-xs);
   color: var(--text-tertiary);
   overflow-wrap: anywhere;

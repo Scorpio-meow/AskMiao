@@ -16,8 +16,6 @@ export const ChatHeader: React.FC<ChatHeaderProps> = ({
   onSelectChoice,
   reasoningEffort,
   onSelectReasoningEffort,
-  chatMode,
-  onSelectChatMode,
   modelsLoading,
   onRefreshModels,
   currentConversation,
@@ -42,22 +40,23 @@ export const ChatHeader: React.FC<ChatHeaderProps> = ({
             aria-expanded={sidebarOpen}
             aria-controls={sidebarOpen ? sidebarId : undefined}
           >
-            <Icon name="menu" size={20} />
+            <Icon name="panel-left" size={18} />
           </IconButton>
         )}
-        <h1 className={styles.title} title={title}>
+        <h1 key={title} className={styles.title} title={title}>
           {title}
         </h1>
         {onOpenFiles && (
-          <Tooltip title="對話檔案" placement="bottom">
+          <Tooltip title="對話檔案" placement="bottom" className={styles.filesSlot}>
             <IconButton size="sm" onClick={onOpenFiles} aria-label="對話檔案" className={styles.filesButton}>
-              <Icon name="folder" size={18} />
+              <Icon name="folder" size={17} />
             </IconButton>
           </Tooltip>
         )}
       </div>
       <div className={styles.controls} role="group" aria-label="模型設定">
         <div className={`${styles.selectWrapper} ${styles.modelSelect}`}>
+          <Icon name="sparkles" size={15} className={styles.selectLead} />
           <select
             className={styles.select}
             value={currentChoice}
@@ -85,27 +84,12 @@ export const ChatHeader: React.FC<ChatHeaderProps> = ({
             )}
           </select>
           <span className={styles.selectIcon} aria-hidden="true">
-            <Icon name="expand-more" size={16} />
+            <Icon name="expand-more" size={15} />
           </span>
         </div>
-        <Tooltip title="查證：查資料後回答；代理：規劃並完成多步驟的任務" placement="bottom" className={styles.modeSelect}>
-          <div className={styles.selectWrapper}>
-            <select
-              className={styles.select}
-              value={chatMode}
-              onChange={(e) => onSelectChatMode(e.target.value === 'agent' ? 'agent' : 'research')}
-              aria-label="選擇對話模式"
-            >
-              <option value="research">查證</option>
-              <option value="agent">代理</option>
-            </select>
-            <span className={styles.selectIcon} aria-hidden="true">
-              <Icon name="expand-more" size={16} />
-            </span>
-          </div>
-        </Tooltip>
         <Tooltip title="設定模型思考與推理深度 (Reasoning Effort)" placement="bottom" className={styles.effortSelect}>
           <div className={styles.selectWrapper}>
+            <Icon name="lightbulb" size={15} className={styles.selectLead} />
             <select
               className={styles.select}
               value={reasoningEffort}
@@ -124,11 +108,11 @@ export const ChatHeader: React.FC<ChatHeaderProps> = ({
               ))}
             </select>
             <span className={styles.selectIcon} aria-hidden="true">
-              <Icon name="expand-more" size={16} />
+              <Icon name="expand-more" size={15} />
             </span>
           </div>
         </Tooltip>
-        <Tooltip title="重新整理可用模型清單" placement="bottom">
+        <Tooltip title="重新整理可用模型清單" placement="bottom" className={styles.refreshSlot}>
           <IconButton
             size="sm"
             onClick={onRefreshModels}
@@ -137,9 +121,9 @@ export const ChatHeader: React.FC<ChatHeaderProps> = ({
             className={styles.refreshButton}
           >
             {modelsLoading ? (
-              <Spinner size={18} aria-hidden="true" />
+              <Spinner size={16} aria-hidden="true" />
             ) : (
-              <Icon name="refresh" size={18} />
+              <Icon name="refresh" size={16} />
             )}
           </IconButton>
         </Tooltip>

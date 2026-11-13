@@ -1,24 +1,36 @@
 .iconButton {
   display: inline-flex;
+  flex-shrink: 0;
   align-items: center;
   justify-content: center;
-  border-radius: var(--radius-md);
-  color: var(--text-secondary);
-  background: transparent;
-  border: 1px solid transparent;
-  cursor: pointer;
   padding: 0;
-  flex-shrink: 0;
-  transition: background-color var(--transition-fast), color var(--transition-fast), border-color var(--transition-fast), transform var(--transition-fast);
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition:
+    background-color var(--dur-1) var(--ease-out),
+    color var(--dur-1) var(--ease-out),
+    border-color var(--dur-1) var(--ease-out);
+
+  @media (prefers-reduced-motion: no-preference) {
+    transition:
+      background-color var(--dur-1) var(--ease-out),
+      color var(--dur-1) var(--ease-out),
+      border-color var(--dur-1) var(--ease-out),
+      scale var(--dur-2) var(--ease-out);
+
+    &:active:not(:disabled) {
+      scale: 0.92;
+      transition-duration: var(--dur-1);
+    }
+  }
 }
 
 .iconButton:hover:not(:disabled) {
   background-color: var(--bg-surface-hover);
   color: var(--text-primary);
-}
-
-.iconButton:active:not(:disabled) {
-  transform: scale(0.94);
 }
 
 .iconButton:disabled {
@@ -27,8 +39,8 @@
 }
 
 .sizeSm {
-  width: 28px;
-  height: 28px;
+  width: 30px;
+  height: 30px;
 }
 
 .sizeMd {
@@ -39,6 +51,7 @@
 .sizeLg {
   width: 44px;
   height: 44px;
+  border-radius: var(--radius-md);
 }
 
 .rounded {
@@ -63,7 +76,7 @@
 }
 
 .filled:hover:not(:disabled) {
-  background-color: var(--bg-surface-hover);
+  background-color: var(--bg-surface-active);
 }
 
 .outline {

@@ -1,21 +1,25 @@
 .chip {
+  --tone: var(--text-secondary);
   display: inline-flex;
   align-items: center;
-  gap: var(--space-1);
+  gap: 5px;
   max-width: 100%;
+  padding: 3px 9px;
+  border: 1px solid transparent;
   border-radius: var(--radius-full);
+  background-color: var(--bg-surface-secondary);
+  color: var(--text-secondary);
   font-family: inherit;
   font-size: var(--font-size-xs);
   font-weight: var(--font-weight-medium);
-  line-height: 1.2;
-  padding: 4px 10px;
-  background-color: var(--bg-surface-secondary);
-  color: var(--text-secondary);
-  border: 1px solid transparent;
-  user-select: none;
+  line-height: 1.35;
   white-space: nowrap;
   text-decoration: none;
-  transition: background-color var(--transition-fast), color var(--transition-fast), border-color var(--transition-fast);
+  user-select: none;
+  transition:
+    background-color var(--dur-1) var(--ease-out),
+    color var(--dur-1) var(--ease-out),
+    border-color var(--dur-1) var(--ease-out);
 }
 
 .icon {
@@ -32,15 +36,15 @@
 }
 
 .clickable:hover {
-  background-color: var(--bg-surface-hover);
+  background-color: var(--bg-surface-active);
   color: var(--text-primary);
   text-decoration: none;
 }
 
 .wrap {
+  border-radius: var(--radius-sm);
   white-space: normal;
   text-align: left;
-  border-radius: var(--radius-md);
 }
 
 .wrap .label {
@@ -48,60 +52,63 @@
 }
 
 .sizeSm {
-  padding: 3px 8px;
-  font-size: var(--font-size-xs);
+  padding: 2px 8px;
 }
 
 .sizeMd {
-  padding: 4px 10px;
-  font-size: var(--font-size-xs);
+  padding: 3px 9px;
+}
+
+.primary,
+.success,
+.warning,
+.error,
+.info {
+  border-color: color-mix(in oklab, var(--tone) 22%, transparent);
+  background-color: color-mix(in oklab, var(--bg-surface) 90%, var(--tone));
+  color: var(--tone-text);
 }
 
 .primary {
-  background-color: var(--color-primary-light);
-  color: var(--color-primary-text);
-  border-color: rgba(37, 99, 235, 0.2);
+  --tone: var(--color-primary);
+  --tone-text: var(--color-primary-text);
 }
 
 .success {
-  background-color: var(--color-success-bg);
-  color: var(--color-success-text);
-  border-color: rgba(34, 197, 94, 0.2);
+  --tone: var(--color-success);
+  --tone-text: var(--color-success-text);
 }
 
 .warning {
-  background-color: var(--color-warning-bg);
-  color: var(--color-warning-text);
-  border-color: rgba(245, 158, 11, 0.2);
+  --tone: var(--color-warning);
+  --tone-text: var(--color-warning-text);
 }
 
 .error {
-  background-color: var(--color-error-bg);
-  color: var(--color-error-text);
-  border-color: rgba(239, 68, 68, 0.2);
+  --tone: var(--color-error);
+  --tone-text: var(--color-error-text);
 }
 
 .info {
-  background-color: var(--color-info-bg);
-  color: var(--color-info-text);
-  border-color: rgba(2, 132, 199, 0.2);
+  --tone: var(--color-info);
+  --tone-text: var(--color-info-text);
 }
 
 .outlined {
-  background-color: transparent;
   border-color: var(--border-strong);
+  background-color: transparent;
 }
 
 .labelButton {
   display: inline-flex;
   align-items: center;
-  gap: var(--space-1);
+  gap: 5px;
   min-width: 0;
   padding: 0;
-  font: inherit;
-  color: inherit;
-  background: transparent;
   border: none;
+  background: transparent;
+  color: inherit;
+  font: inherit;
   cursor: pointer;
 }
 
@@ -111,18 +118,20 @@
   justify-content: center;
   width: 20px;
   height: 20px;
-  margin: -4px -6px -4px 0;
-  background: transparent;
-  border: none;
+  margin: -3px -6px -3px 0;
   padding: 0;
-  color: currentColor;
-  opacity: 0.75;
-  cursor: pointer;
+  border: none;
   border-radius: var(--radius-full);
+  background: transparent;
+  color: currentColor;
+  opacity: 0.7;
+  cursor: pointer;
+  transition: opacity var(--dur-1) var(--ease-out), background-color var(--dur-1) var(--ease-out);
 }
 
 .deleteButton:hover,
 .deleteButton:focus-visible {
+  background-color: var(--bg-surface-hover);
   opacity: 1;
 }
 

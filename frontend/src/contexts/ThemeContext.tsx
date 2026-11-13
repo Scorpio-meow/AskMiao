@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useEffect, useState } from 'react';
+import React, { createContext, useContext, useEffect, useLayoutEffect, useState } from 'react';
 type Theme = 'light' | 'dark' | 'system';
 interface ThemeContextType {
   theme: Theme;
@@ -31,7 +31,7 @@ export const ThemeProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     return () => mediaQuery.removeEventListener('change', handleChange);
   }, []);
   const resolvedTheme = theme === 'system' ? systemTheme : theme;
-  useEffect(() => {
+  useLayoutEffect(() => {
     document.documentElement.setAttribute('data-theme', resolvedTheme);
     localStorage.setItem(THEME_STORAGE_KEY, theme);
   }, [theme, resolvedTheme]);

@@ -16,6 +16,7 @@ import ConversationFilesDialog from './ConversationFilesDialog';
 import FilePreviewPanel from '../../components/FilePreviewPanel';
 import type { FileCardInfo } from './ConversationFileCard';
 import { findRetryQuestion } from './chatFormat';
+import { runViewTransition } from '../../utils/viewTransition';
 import { Snackbar, Alert, ConfirmDialog } from '../../components/ui';
 import styles from './Chat.module.css';
 const describeSendError = (err: unknown): string => {
@@ -95,6 +96,7 @@ export const ChatPage: React.FC = () => {
     deleteConversation,
     startNewConversation,
   } = useChat((message) => showSnackbar(message, 'error'));
+  const isEmptyThread = messages.length === 0 && !conversationLoading;
   const previewFile = preview && preview.conversationId === currentConversation?.id ? preview.file : null;
   const previewSource = useMemo(() => (previewFile ? chatService.conversationFilePreview(previewFile) : null), [previewFile]);
   const openPreview = useCallback((file: FileCardInfo) => {
@@ -199,10 +201,13 @@ export const ChatPage: React.FC = () => {
     }
     const toSend = newMessage;
     const toSendAttachments = [...attachments];
-    setNewMessage('');
-    setAttachments([]);
+    const startSending = () => {
+      setNewMessage('');
+      setAttachments([]);
+      return sendChatMessage(toSend, selectedModel, effectiveReasoningEffort, chatMode, allowWeb, toSendAttachments);
+    };
     try {
-      await sendChatMessage(toSend, selectedModel, effectiveReasoningEffort, chatMode, allowWeb, toSendAttachments);
+      await (isEmptyThread ? runViewTransition('composer', startSending) : startSending());
     } catch (err) {
       setNewMessage((current) => current || toSend);
       setAttachments((current) => (current.length > 0 ? current : toSendAttachments));
@@ -224,6 +229,20 @@ export const ChatPage: React.FC = () => {
   const handleSelectConversation = useCallback(async (id: number) => {
     await fetchConversation(id);
   }, [fetchConversation]);
+  const selectConversationFromSidebar = (id: number) => {
+    if (isEmptyThread) {
+      runViewTransition('composer', () => handleSelectConversation(id));
+    } else {
+      handleSelectConversation(id);
+    }
+  };
+  const handleNewConversation = () => {
+    if (isEmptyThread) {
+      startNewConversation();
+      return;
+    }
+    runViewTransition('composer', startNewConversation);
+  };
   const handleRequestDelete = (id: number) => {
     setPendingDelete(conversations.find((c) => c.id === id) ?? null);
   };
@@ -263,22 +282,20 @@ export const ChatPage: React.FC = () => {
         onClose={() => setMobileSidebarOpen(false)}
         conversations={conversations}
         currentConversation={currentConversation}
-        onSelectConversation={handleSelectConversation}
-        onNewConversation={startNewConversation}
+        onSelectConversation={selectConversationFromSidebar}
+        onNewConversation={handleNewConversation}
         onDeleteConversation={handleRequestDelete}
         loading={conversationsLoading}
         loadError={conversationsError}
         onRetryLoad={fetchConversations}
       />
-      <div className={styles.mainArea}>
+      <div className={styles.mainArea} data-layout={isEmptyThread ? 'empty' : 'thread'}>
         <ChatHeader
           connections={connections || []}
           selectedChoice={selectedChoice}
           onSelectChoice={handleSelectChoice}
           reasoningEffort={effectiveReasoningEffort}
           onSelectReasoningEffort={handleSelectReasoningEffort}
-          chatMode={chatMode}
-          onSelectChatMode={handleSelectChatMode}
           modelsLoading={modelsLoading}
           onRefreshModels={loadAvailableModels}
           currentConversation={currentConversation}
@@ -324,6 +341,8 @@ export const ChatPage: React.FC = () => {
           webSearchAvailable={webSearchEnabled}
           allowWeb={allowWeb}
           onToggleAllowWeb={handleToggleAllowWeb}
+          chatMode={chatMode}
+          onSelectChatMode={handleSelectChatMode}
         />
       </div>
       {previewFile && previewSource && (

@@ -82,8 +82,8 @@ export default function SystemModelsCard({ refreshKey }) {
       <p className={styles.cardHint}>
         文件摘要與掃描 PDF 辨識由系統代為呼叫模型，費用算在所選的共用 API 連線上。思考程度越高越慢，小型本機模型建議選「無」，以免逾時。
       </p>
-      {notice && <Alert severity="success" onClose={() => setNotice('')} style={{ marginBottom: '16px' }}>{notice}</Alert>}
-      {error && <Alert severity="error" onClose={() => setError('')} style={{ marginBottom: '16px' }}>{error}</Alert>}
+      {notice && <Alert severity="success" onClose={() => setNotice('')} className={styles.pageAlert}>{notice}</Alert>}
+      {error && <Alert severity="error" onClose={() => setError('')} className={styles.pageAlert}>{error}</Alert>}
       {values === null && !error ? (
         <Spinner size={24} color="var(--color-primary)" />
       ) : values && (

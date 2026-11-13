@@ -1,36 +1,42 @@
 .container {
   display: flex;
   justify-content: center;
-  padding: var(--space-10) var(--space-4);
+  padding: var(--space-16) var(--space-4);
 }
 
 .card {
-  max-width: 440px;
   width: 100%;
+  max-width: 440px;
   padding: var(--space-8);
-  text-align: center;
-  background-color: var(--bg-surface);
   border: 1px solid var(--border-default);
   border-radius: var(--radius-xl);
+  background-color: var(--bg-surface);
   box-shadow: var(--shadow-sm);
+  text-align: center;
 }
 
 .icon {
-  display: flex;
+  display: inline-flex;
+  align-items: center;
   justify-content: center;
+  width: 56px;
+  height: 56px;
   margin-bottom: var(--space-4);
+  border: 1px solid var(--border-default);
+  border-radius: 18px;
+  background-color: var(--bg-surface-secondary);
   color: var(--text-secondary);
 }
 
 .title {
-  font-size: var(--font-size-xl);
-  font-weight: var(--font-weight-bold);
-  color: var(--text-primary);
   margin-bottom: var(--space-2);
+  color: var(--text-primary);
+  font-size: var(--font-size-xl);
+  font-weight: var(--font-weight-semibold);
 }
 
 .description {
-  font-size: var(--font-size-sm);
-  color: var(--text-secondary);
   margin-bottom: var(--space-6);
+  color: var(--text-secondary);
+  font-size: var(--font-size-sm);
 }

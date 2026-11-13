@@ -1,6 +1,7 @@
 import React, { useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useOverlayBehavior } from './useOverlayBehavior';
+import { useHeldWhileClosing, usePresence } from './usePresence';
 import { Icon } from './Icon';
 import styles from './Menu.module.css';
 type Placement = 'bottom-start' | 'bottom-end' | 'top-start' | 'top-end';
@@ -12,7 +13,7 @@ function useAnchoredPosition(
   placement: Placement,
   panelRef: React.RefObject<HTMLDivElement | null>
 ) {
-  const [coords, setCoords] = useState<{ top: number; left: number }>({ top: 0, left: 0 });
+  const [coords, setCoords] = useState<{ top: number; left: number; origin: string }>({ top: 0, left: 0, origin: 'top left' });
   useLayoutEffect(() => {
     if (!open || !anchorEl) return;
     const update = () => {
@@ -31,7 +32,9 @@ function useAnchoredPosition(
         top = rect.top - panelHeight - ANCHOR_GAP;
       }
       top = Math.max(top, VIEWPORT_PADDING);
-      setCoords({ top, left });
+      const vertical = top + panelHeight / 2 < rect.top + rect.height / 2 ? 'bottom' : 'top';
+      const anchorX = Math.min(Math.max(rect.left + rect.width / 2 - left, 0), panelWidth);
+      setCoords({ top, left, origin: `${anchorX}px ${vertical}` });
     };
     update();
     window.addEventListener('resize', update);
@@ -68,8 +71,11 @@ export const Menu: React.FC<MenuProps> = ({
 }) => {
   const menuRef = useRef<HTMLDivElement>(null);
   const coords = useAnchoredPosition(open, anchorEl, placement, menuRef);
+  const mounted = usePresence(open, menuRef);
+  const content = useHeldWhileClosing(open, children);
+  const anchor = useHeldWhileClosing(open, anchorEl);
   useOverlayBehavior(open, menuRef, onClose, (menu) => getMenuItems(menu)[0] ?? null);
-  if (!open || !anchorEl) return null;
+  if (!mounted || !anchor) return null;
   const handleKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
     const items = getMenuItems(menuRef.current);
     if (items.length === 0) return;
@@ -93,21 +99,23 @@ export const Menu: React.FC<MenuProps> = ({
   };
   return createPortal(
     <>
-      <div className={styles.menuBackdrop} onClick={onClose} />
+      {open && <div className={styles.menuBackdrop} onClick={onClose} />}
       <div
         ref={menuRef}
         id={id}
         role="menu"
         aria-label={ariaLabel}
         className={`${styles.menuContainer} ${className}`}
-        style={{ top: `${coords.top}px`, left: `${coords.left}px` }}
+        style={{ top: `${coords.top}px`, left: `${coords.left}px`, transformOrigin: coords.origin }}
+        data-state={open ? 'open' : 'closed'}
+        inert={!open || undefined}
         tabIndex={-1}
         onKeyDown={handleKeyDown}
       >
-        {children}
+        {content}
       </div>
     </>,
-    getPortalTarget(anchorEl)
+    getPortalTarget(anchor)
   );
 };
 export interface MenuItemProps extends React.ButtonHTMLAttributes<HTMLButtonElement> {
@@ -170,22 +178,28 @@ export const Popover: React.FC<PopoverProps> = ({
 }) => {
   const panelRef = useRef<HTMLDivElement>(null);
   const coords = useAnchoredPosition(open, anchorEl, placement, panelRef);
+  const mounted = usePresence(open, panelRef);
+  const content = useHeldWhileClosing(open, children);
+  const anchor = useHeldWhileClosing(open, anchorEl);
+  const label = useHeldWhileClosing(open, ariaLabel);
   useOverlayBehavior(open, panelRef, onClose, 'container');
-  if (!open || !anchorEl) return null;
+  if (!mounted || !anchor) return null;
   return createPortal(
     <>
-      <div className={styles.menuBackdrop} onClick={onClose} />
+      {open && <div className={styles.menuBackdrop} onClick={onClose} />}
       <div
         ref={panelRef}
         role="dialog"
-        aria-label={ariaLabel}
-        className={`${styles.menuContainer} ${className}`}
-        style={{ top: `${coords.top}px`, left: `${coords.left}px` }}
+        aria-label={label}
+        className={`${styles.menuContainer} ${styles.popover} ${className}`}
+        style={{ top: `${coords.top}px`, left: `${coords.left}px`, transformOrigin: coords.origin }}
+        data-state={open ? 'open' : 'closed'}
+        inert={!open || undefined}
         tabIndex={-1}
       >
-        {children}
+        {content}
       </div>
     </>,
-    getPortalTarget(anchorEl)
+    getPortalTarget(anchor)
   );
 };

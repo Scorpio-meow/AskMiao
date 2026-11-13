@@ -1,6 +1,7 @@
 .container {
+  overflow: hidden;
   border: 1px solid var(--border-default);
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-lg);
   background-color: var(--bg-surface);
 }
 
@@ -17,7 +18,7 @@
 
 .headerIcon {
   flex: none;
-  color: var(--text-secondary);
+  color: var(--text-tertiary);
 }
 
 .title {
@@ -27,8 +28,34 @@
 .progress {
   flex: none;
   color: var(--text-secondary);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
   font-weight: var(--font-weight-normal);
   font-variant-numeric: tabular-nums;
+}
+
+.meter {
+  display: block;
+  height: 2px;
+  margin: 0 var(--space-3) var(--space-2);
+  overflow: hidden;
+  border-radius: var(--radius-full);
+  background-color: var(--border-subtle);
+}
+
+.meterFill {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background-color: var(--color-primary);
+  transform: scaleX(var(--progress));
+  transform-origin: 0 50%;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .meterFill {
+    transition: transform var(--dur-5) var(--ease-out-expo);
+  }
 }
 
 .list {
@@ -36,16 +63,17 @@
   flex-direction: column;
   gap: var(--space-2);
   margin: 0;
-  padding: 0 var(--space-3) var(--space-3);
+  padding: var(--space-1) var(--space-3) var(--space-3);
   list-style: none;
 }
 
 .item {
   display: flex;
   align-items: flex-start;
-  gap: var(--space-2);
+  gap: var(--space-3);
   font-size: var(--font-size-sm);
   line-height: 1.5;
+  transition: color var(--dur-3) var(--ease-out);
 }
 
 .marker {
@@ -53,14 +81,14 @@
   flex: none;
   align-items: center;
   justify-content: center;
-  width: 16px;
+  width: 18px;
   height: 21px;
 }
 
 .dot,
 .dotActive {
-  width: 8px;
-  height: 8px;
+  width: 9px;
+  height: 9px;
   border: 1.5px solid var(--border-strong);
   border-radius: var(--radius-full);
 }
@@ -70,13 +98,44 @@
   background-color: var(--color-primary);
 }
 
+.check {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  border-radius: var(--radius-full);
+  background-color: var(--btn-primary-bg);
+  color: var(--btn-primary-text);
+  transition: opacity var(--dur-2) var(--ease-out);
+}
+
+[data-entering] .check {
+  @starting-style {
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .check {
+    transition: opacity var(--dur-2) var(--ease-out), scale var(--dur-spring) var(--spring);
+  }
+
+  [data-entering] .check {
+    @starting-style {
+      opacity: 0;
+      scale: 0.4;
+    }
+  }
+}
+
 .step {
   min-width: 0;
   overflow-wrap: anywhere;
 }
 
 .pending {
-  color: var(--text-secondary);
+  color: var(--text-tertiary);
 }
 
 .in_progress {
@@ -88,6 +147,7 @@
   color: var(--text-secondary);
 }
 
-.completed .marker {
-  color: var(--color-success-text);
+.completed .step {
+  text-decoration: line-through;
+  text-decoration-color: color-mix(in oklab, currentColor 45%, transparent);
 }

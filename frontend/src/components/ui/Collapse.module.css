@@ -1,13 +1,34 @@
 .collapseContainer {
   display: grid;
   grid-template-rows: 0fr;
-  transition: grid-template-rows var(--transition-normal);
+  transition: grid-template-rows 0s linear var(--dur-2);
 }
 
 .collapseExpanded {
   grid-template-rows: 1fr;
+  transition-delay: 0s;
 }
 
 .collapseInner {
+  min-height: 0;
   overflow: hidden;
+  opacity: 0;
+  transition: opacity var(--dur-2) var(--ease-exit);
+}
+
+.collapseExpanded > .collapseInner {
+  opacity: 1;
+  transition: opacity var(--dur-3) var(--ease-out);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .collapseInner {
+    translate: 0 -4px;
+    transition: opacity var(--dur-2) var(--ease-exit), translate var(--dur-2) var(--ease-exit);
+  }
+
+  .collapseExpanded > .collapseInner {
+    translate: 0 0;
+    transition: opacity var(--dur-3) var(--ease-out), translate var(--dur-4) var(--ease-out-expo);
+  }
 }

@@ -2,7 +2,7 @@
 
 [繁體中文](architecture.md) | [English](architecture_en.md)
 
-> The architecture of AskMiao **8.13.0**: layers, startup, data model, document processing and retrieval, the agentic RAG research loop, the LLM layer, external tool integration, authentication and security, and the frontend (see the [changelog](../CHANGELOG_en.md#8122---2026-11-11) for this release's changes). The trade-offs behind these designs are recorded in the [Architecture Decision Records](adr/README_en.md).
+> The architecture of AskMiao **8.14.0**: layers, startup, data model, document processing and retrieval, the agentic RAG research loop, the LLM layer, external tool integration, authentication and security, and the frontend (see the [changelog](../CHANGELOG_en.md#8122---2026-11-11) for this release's changes). The trade-offs behind these designs are recorded in the [Architecture Decision Records](adr/README_en.md).
 
 ## Contents
 
@@ -512,7 +512,7 @@ Every piece of text sent to the model lives in `backend/app/prompts.py`: the sys
 
 ### Agent mode
 
-When `mode` in `POST /api/chat/send` is `agent` (「代理」 at the top of the chat page), the research loop works toward finishing a task. Tools, approvals, citations, and URL provenance work as in research mode; the differences:
+When `mode` in `POST /api/chat/send` is `agent` (「代理」 in the switch below the chat input), the research loop works toward finishing a task. Tools, approvals, citations, and URL provenance work as in research mode; the differences:
 
 | Item | Research mode | Agent mode |
 |---|---|---|

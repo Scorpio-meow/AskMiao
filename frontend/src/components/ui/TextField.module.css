@@ -1,8 +1,8 @@
 .container {
+  position: relative;
   display: inline-flex;
   flex-direction: column;
-  gap: var(--space-1);
-  position: relative;
+  gap: 6px;
   font-family: inherit;
 }
 
@@ -11,9 +11,9 @@
 }
 
 .label {
-  font-size: var(--font-size-xs);
-  font-weight: var(--font-weight-medium);
   color: var(--text-secondary);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
 }
 
 .labelError {
@@ -24,23 +24,26 @@
   display: flex;
   align-items: center;
   gap: var(--space-2);
-  background-color: var(--bg-input);
-  border: 1px solid var(--border-default);
-  border-radius: var(--radius-md);
+  min-height: 38px;
   padding: 0 var(--space-3);
-  min-height: 40px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  background-color: var(--bg-input);
   color: var(--text-primary);
-  transition: border-color var(--transition-fast), box-shadow var(--transition-fast), background-color var(--transition-fast);
+  box-shadow: var(--shadow-xs);
+  transition:
+    border-color var(--dur-1) var(--ease-out),
+    box-shadow var(--dur-2) var(--ease-out),
+    background-color var(--dur-1) var(--ease-out);
 }
 
 .inputWrapper:hover:not(.disabled) {
-  border-color: var(--border-strong);
-  background-color: var(--bg-input-hover);
+  border-color: color-mix(in oklab, var(--border-strong), var(--text-primary) 18%);
 }
 
 .inputWrapper.focused {
   border-color: var(--border-focus);
-  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.15);
+  box-shadow: 0 0 0 3px oklch(from var(--border-focus) l c h / 0.18);
 }
 
 .inputWrapper.hasError {
@@ -48,24 +51,25 @@
 }
 
 .inputWrapper.hasError.focused {
-  box-shadow: 0 0 0 3px rgba(239, 68, 68, 0.15);
+  box-shadow: 0 0 0 3px oklch(from var(--color-error) l c h / 0.18);
 }
 
 .inputWrapper.disabled {
-  opacity: 0.5;
+  opacity: 0.55;
   cursor: not-allowed;
   background-color: var(--bg-surface-secondary);
+  box-shadow: none;
 }
 
 .input {
   flex: 1;
   width: 100%;
+  padding: var(--space-2) 0;
   border: none;
   background: transparent;
   color: inherit;
   font-size: var(--font-size-sm);
   outline: none;
-  padding: var(--space-2) 0;
 }
 
 .input::placeholder {
@@ -77,28 +81,32 @@
 }
 
 @media (pointer: coarse) {
+  .inputWrapper {
+    min-height: 44px;
+  }
+
   .input {
     font-size: var(--font-size-base);
   }
 }
 
 .textarea {
-  resize: vertical;
-  min-height: 80px;
+  min-height: 84px;
   line-height: var(--line-height-normal);
+  resize: vertical;
 }
 
 .adornment {
   display: flex;
+  flex-shrink: 0;
   align-items: center;
   color: var(--text-tertiary);
-  flex-shrink: 0;
 }
 
 .helperText {
-  font-size: var(--font-size-xs);
   color: var(--text-tertiary);
-  margin-top: 2px;
+  font-size: var(--font-size-xs);
+  line-height: var(--line-height-normal);
 }
 
 .helperTextError {

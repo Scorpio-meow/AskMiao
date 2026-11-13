@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useId, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { useModalDialog } from './useModalDialog';
+import { useHeldWhileClosing, usePresence } from './usePresence';
 import { IconButton } from './IconButton';
 import { Icon } from './Icon';
 import styles from './Dialog.module.css';
@@ -25,8 +26,10 @@ export const Dialog: React.FC<DialogProps> = ({
 }) => {
   const dialogRef = useRef<HTMLDialogElement>(null);
   const titleId = useId();
-  const dialogHandlers = useModalDialog(dialogRef, open, onClose);
-  if (!open) return null;
+  const mounted = usePresence(open, dialogRef);
+  const content = useHeldWhileClosing(open, children);
+  const dialogHandlers = useModalDialog(dialogRef, mounted, open ? onClose : undefined);
+  if (!mounted) return null;
   const maxWidthClass =
     maxWidth === 'xs'
       ? styles.maxWidthXs
@@ -43,9 +46,11 @@ export const Dialog: React.FC<DialogProps> = ({
       aria-label={ariaLabel}
       aria-labelledby={ariaLabel ? undefined : titleId}
       className={`${styles.dialog} ${maxWidthClass} ${fullWidth ? styles.fullWidth : ''} ${className}`}
+      data-state={open ? 'open' : 'closed'}
+      inert={!open || undefined}
       {...dialogHandlers}
     >
-      <DialogTitleIdContext.Provider value={titleId}>{children}</DialogTitleIdContext.Provider>
+      <DialogTitleIdContext.Provider value={titleId}>{content}</DialogTitleIdContext.Provider>
     </dialog>,
     document.body
   );

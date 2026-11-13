@@ -4,28 +4,59 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  max-width: calc(100vw - 32px);
+  max-width: min(480px, calc(100vw - 32px));
   pointer-events: none;
-  transition: transform var(--transition-fast), opacity var(--transition-fast);
+  opacity: 1;
+  transition-property: opacity, translate, scale;
+  transition-duration: var(--dur-3), var(--dur-spring), var(--dur-spring);
+  transition-timing-function: var(--ease-out), var(--spring), var(--spring);
+
+  @starting-style {
+    opacity: 0;
+  }
 }
 
-.snackbar>* {
+.snackbar > * {
   pointer-events: auto;
   box-shadow: var(--shadow-lg);
 }
 
-.defaultMessage {
-  padding: var(--space-3) var(--space-4);
-  border-radius: var(--radius-md);
-  background-color: var(--neutral-900);
-  color: var(--neutral-0);
-  font-size: var(--font-size-sm);
-  line-height: var(--line-height-normal);
+.snackbar[data-state='closed'] {
+  opacity: 0;
+  transition-duration: var(--dur-2);
+  transition-timing-function: var(--ease-exit);
 }
 
-[data-theme="dark"] .defaultMessage {
-  background-color: var(--neutral-100);
-  color: var(--neutral-950);
+.snackbar[data-state='closed'] > * {
+  pointer-events: none;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .fromBottom {
+    translate: 0 0;
+
+    @starting-style {
+      translate: 0 16px;
+      scale: 0.98;
+    }
+  }
+
+  .fromTop {
+    translate: 0 0;
+
+    @starting-style {
+      translate: 0 -16px;
+      scale: 0.98;
+    }
+  }
+
+  .fromBottom[data-state='closed'] {
+    translate: 0 8px;
+  }
+
+  .fromTop[data-state='closed'] {
+    translate: 0 -8px;
+  }
 }
 
 .bottomCenter {
@@ -35,8 +66,8 @@
 }
 
 .bottomRight {
-  bottom: calc(24px + env(safe-area-inset-bottom));
   right: 24px;
+  bottom: calc(24px + env(safe-area-inset-bottom));
 }
 
 .bottomLeft {
@@ -45,17 +76,17 @@
 }
 
 .topCenter {
-  top: calc(24px + env(safe-area-inset-top));
+  top: calc(16px + env(safe-area-inset-top));
   left: 50%;
   transform: translateX(-50%);
 }
 
 .topRight {
-  top: calc(24px + env(safe-area-inset-top));
+  top: calc(16px + env(safe-area-inset-top));
   right: 24px;
 }
 
 .topLeft {
-  top: calc(24px + env(safe-area-inset-top));
+  top: calc(16px + env(safe-area-inset-top));
   left: 24px;
 }

@@ -4,9 +4,9 @@
   align-items: center;
   justify-content: space-between;
   gap: var(--space-2) var(--space-4);
-  min-height: 60px;
-  padding: var(--space-3) var(--space-6);
-  border-bottom: 1px solid var(--border-default);
+  min-height: 56px;
+  padding: var(--space-2) var(--space-3) var(--space-2) var(--space-5);
+  border-bottom: 1px solid var(--border-subtle);
   background-color: var(--bg-surface);
 }
 
@@ -14,7 +14,7 @@
   display: flex;
   flex: 1 1 200px;
   align-items: center;
-  gap: var(--space-2);
+  gap: var(--space-1);
   min-width: 0;
 }
 
@@ -22,24 +22,41 @@
   display: flex;
   flex: none;
   margin-left: calc(var(--space-2) * -1);
-  color: var(--text-secondary);
 }
 
 .title {
   min-width: 0;
+  overflow: hidden;
   color: var(--text-primary);
-  font-size: var(--font-size-base);
+  font-size: var(--font-size-md);
   font-weight: var(--font-weight-semibold);
   line-height: var(--line-height-tight);
-  overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+
+  @media (prefers-reduced-motion: no-preference) {
+    transition: opacity var(--dur-3) var(--ease-out), translate var(--dur-4) var(--ease-out-expo);
+
+    @starting-style {
+      opacity: 0;
+      translate: 0 4px;
+    }
+  }
+}
+
+.filesSlot {
+  flex: none;
+}
+
+.filesButton,
+.refreshButton {
+  color: var(--text-tertiary);
 }
 
 .controls {
   display: flex;
   align-items: center;
-  gap: var(--space-2);
+  gap: 2px;
   min-width: 0;
 }
 
@@ -50,28 +67,35 @@
   min-width: 0;
 }
 
+.selectLead {
+  position: absolute;
+  left: 10px;
+  color: var(--text-tertiary);
+  pointer-events: none;
+}
+
 .modelSelect .select {
-  max-width: 18rem;
+  max-width: 17rem;
 }
 
 .effortSelect,
-.modeSelect {
+.refreshSlot {
   display: inline-flex;
+  flex: none;
   min-width: 0;
 }
 
-.effortSelect .selectWrapper,
-.modeSelect .selectWrapper {
+.effortSelect .selectWrapper {
   width: 100%;
 }
 
 .select {
   width: 100%;
-  min-height: 36px;
-  padding: 0 var(--space-8) 0 var(--space-3);
-  border: 1px solid var(--border-default);
+  min-height: 32px;
+  padding: 0 28px 0 31px;
+  border: 1px solid transparent;
   border-radius: var(--radius-sm);
-  background-color: var(--bg-input);
+  background-color: transparent;
   color: var(--text-primary);
   font-family: inherit;
   font-size: var(--font-size-sm);
@@ -80,17 +104,22 @@
   appearance: none;
   cursor: pointer;
   outline: none;
-  transition: border-color var(--transition-fast), background-color var(--transition-fast);
+  transition: background-color var(--dur-1) var(--ease-out), border-color var(--dur-1) var(--ease-out);
+}
+
+.select option,
+.select optgroup {
+  background-color: var(--bg-surface-elevated);
+  color: var(--text-primary);
 }
 
 .select:hover:not(:disabled) {
-  border-color: var(--border-strong);
-  background-color: var(--bg-input-hover);
+  background-color: var(--bg-surface-hover);
 }
 
 .select:focus-visible {
-  border-color: var(--color-primary);
-  box-shadow: 0 0 0 2px var(--border-focus);
+  border-color: var(--border-focus);
+  box-shadow: 0 0 0 3px oklch(from var(--border-focus) l c h / 0.18);
 }
 
 .select:disabled {
@@ -100,16 +129,10 @@
 
 .selectIcon {
   position: absolute;
-  right: var(--space-2);
+  right: 8px;
   display: inline-flex;
   color: var(--text-tertiary);
   pointer-events: none;
-}
-
-.refreshButton,
-.filesButton {
-  flex: none;
-  color: var(--text-secondary);
 }
 
 @media (min-width: 900px) {
@@ -121,28 +144,24 @@
 @media (max-width: 599px) {
   .header {
     min-height: 0;
-    padding: var(--space-2) var(--space-3);
+    padding: var(--space-2) var(--space-2) var(--space-2) var(--space-3);
   }
 
   .menuButton {
-    margin-left: 0;
+    margin-left: calc(var(--space-1) * -1);
   }
 
   .controls {
     flex: 1 1 100%;
-    flex-wrap: wrap;
+    margin: 0 calc(var(--space-1) * -1);
   }
 
   .modelSelect {
-    flex: 1 1 100%;
-  }
-
-  .effortSelect {
     flex: 1 1 0;
   }
 
-  .modeSelect {
-    flex: none;
+  .effortSelect {
+    flex: 0 1 auto;
   }
 
   .modelSelect .select {

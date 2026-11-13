@@ -9,7 +9,7 @@ const Forbidden = () => {
     <div className={styles.container}>
       <div className={styles.card}>
         <div className={styles.icon}>
-          <Icon name="lock" size={40} />
+          <Icon name="lock" size={26} />
         </div>
         <h1 className={styles.title}>沒有權限檢視此頁面</h1>
         <p className={styles.description}>這個頁面只開放給管理員。如需權限，請聯絡系統管理員。</p>

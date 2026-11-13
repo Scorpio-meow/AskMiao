@@ -1,10 +1,11 @@
-import React, { useEffect, useId, useRef } from 'react';
+import React, { useEffect, useId, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { ChatSidebarProps } from './types';
 import { groupConversations } from './chatFormat';
-import { Button, IconButton, Tooltip, Icon, useModalDialog } from '../../components/ui';
+import { Button, IconButton, Tooltip, Icon, useModalDialog, usePresence } from '../../components/ui';
 import styles from './ChatSidebar.module.css';
 const SKELETON_ROWS = 5;
+const NEW_ROW_SETTLE_MS = 800;
 export const ChatSidebar: React.FC<ChatSidebarProps> = ({
   id,
   open,
@@ -19,7 +20,19 @@ export const ChatSidebar: React.FC<ChatSidebarProps> = ({
   onRetryLoad,
 }) => {
   const drawerRef = useRef<HTMLDialogElement>(null);
-  const drawerHandlers = useModalDialog(drawerRef, open, onClose);
+  const drawerMounted = usePresence(open, drawerRef);
+  const drawerHandlers = useModalDialog(drawerRef, drawerMounted, open ? onClose : undefined);
+  const [knownIds, setKnownIds] = useState<ReadonlySet<number> | null>(null);
+  const [sawLoading, setSawLoading] = useState(loading);
+  if (loading && !sawLoading) setSawLoading(true);
+  if (sawLoading && !loading && !loadError && knownIds === null) {
+    setKnownIds(new Set(conversations.map((conv) => conv.id)));
+  }
+  useEffect(() => {
+    if (!knownIds || conversations.every((conv) => knownIds.has(conv.id))) return;
+    const timer = setTimeout(() => setKnownIds(new Set(conversations.map((conv) => conv.id))), NEW_ROW_SETTLE_MS);
+    return () => clearTimeout(timer);
+  }, [conversations, knownIds]);
   useEffect(() => {
     if (!open) return;
     const desktopQuery = window.matchMedia('(min-width: 900px)');
@@ -36,8 +49,9 @@ export const ChatSidebar: React.FC<ChatSidebarProps> = ({
       <div className={styles.sidebarTop}>
         <Button
           fullWidth
-          variant="primary"
-          startIcon={<Icon name="add" size={18} />}
+          variant="secondary"
+          className={styles.newButton}
+          startIcon={<Icon name="add" size={17} />}
           onClick={() => {
             onNewConversation();
             if (inDrawer) onClose();
@@ -63,7 +77,7 @@ export const ChatSidebar: React.FC<ChatSidebarProps> = ({
           <>
             <ul className={styles.skeletonList} aria-hidden="true">
               {Array.from({ length: SKELETON_ROWS }, (_, idx) => (
-                <li key={idx} className={styles.skeletonRow} />
+                <li key={idx} className={styles.skeletonRow} style={{ '--i': idx } as React.CSSProperties} />
               ))}
             </ul>
             <span className="sr-only">正在載入對話清單...</span>
@@ -84,10 +98,11 @@ export const ChatSidebar: React.FC<ChatSidebarProps> = ({
                   {group.conversations.map((conv, idx) => {
                     const isSelected = currentConversation?.id === conv.id;
                     const title = conv.title || '未命名對話';
+                    const isNew = knownIds !== null && !knownIds.has(conv.id);
                     return (
                       <li
                         key={conv.id ? `conv-${conv.id}` : `conv-${idx}`}
-                        className={`${styles.conversationItem} ${isSelected ? styles.conversationSelected : ''}`}
+                        className={`${styles.conversationItem} ${isSelected ? styles.conversationSelected : ''} ${isNew ? styles.conversationNew : ''}`}
                       >
                         <button
                           type="button"
@@ -101,7 +116,7 @@ export const ChatSidebar: React.FC<ChatSidebarProps> = ({
                         >
                           <span className={styles.conversationTitle}>{title}</span>
                         </button>
-                        <Tooltip title="刪除此對話">
+                        <Tooltip title="刪除此對話" className={styles.deleteSlot}>
                           <IconButton
                             size="sm"
                             onClick={(e) => {
@@ -111,7 +126,7 @@ export const ChatSidebar: React.FC<ChatSidebarProps> = ({
                             className={styles.deleteButton}
                             aria-label={`刪除對話「${title}」`}
                           >
-                            <Icon name="delete" size={16} />
+                            <Icon name="delete" size={15} />
                           </IconButton>
                         </Tooltip>
                       </li>
@@ -130,13 +145,15 @@ export const ChatSidebar: React.FC<ChatSidebarProps> = ({
       <aside className={styles.desktopSidebar} aria-label="對話清單">
         {renderContent(false)}
       </aside>
-      {open &&
+      {drawerMounted &&
         createPortal(
           <dialog
             ref={drawerRef}
             id={id}
             className={styles.mobileDrawer}
             aria-label="對話清單"
+            data-state={open ? 'open' : 'closed'}
+            inert={!open || undefined}
             {...drawerHandlers}
           >
             {renderContent(true)}

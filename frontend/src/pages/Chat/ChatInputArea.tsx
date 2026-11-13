@@ -1,8 +1,8 @@
 import React, { useRef, useEffect, useLayoutEffect, useState, useCallback, useId } from 'react';
 import { ChatInputAreaProps, ChatAttachment } from './types';
 import { Tooltip, Icon } from '../../components/ui';
-import { skillService, EnabledSkill } from '../../services/api';
-import { AttachmentKind, describeAttachmentType, formatFileSize, isImageAttachment, isImeComposition, skillSuggestionsFor } from './chatFormat';
+import { skillService, EnabledSkill, ChatMode } from '../../services/api';
+import { AttachmentKind, describeAttachmentType, formatFileSize, isCompositionEchoEnter, isImageAttachment, isImeComposition, skillSuggestionsFor } from './chatFormat';
 import styles from './ChatInputArea.module.css';
 const ATTACHMENT_KIND_CLASS: Record<AttachmentKind, string> = {
   pdf: styles.badgePdf,
@@ -15,6 +15,11 @@ const ATTACHMENT_KIND_CLASS: Record<AttachmentKind, string> = {
 const canAutoFocus = () => window.matchMedia('(pointer: fine)').matches;
 const supportsFieldSizing = typeof CSS !== 'undefined' && CSS.supports('field-sizing', 'content');
 const MAX_SKILL_SUGGESTIONS = 8;
+const IME_ENTER_GUARD_MS = 150;
+const CHAT_MODES: Array<{ value: ChatMode; label: string }> = [
+  { value: 'research', label: '查證' },
+  { value: 'agent', label: '代理' },
+];
 const MAX_ATTACHMENT_BYTES = 15 * 1024 * 1024;
 export const ChatInputArea: React.FC<ChatInputAreaProps> = ({
   value,
@@ -31,6 +36,8 @@ export const ChatInputArea: React.FC<ChatInputAreaProps> = ({
   webSearchAvailable,
   allowWeb,
   onToggleAllowWeb,
+  chatMode,
+  onSelectChatMode,
 }) => {
   const suggestionsId = useId();
   const hintId = useId();
@@ -40,6 +47,7 @@ export const ChatInputArea: React.FC<ChatInputAreaProps> = ({
   const [skills, setSkills] = useState<EnabledSkill[]>([]);
   const [activeSkillIndex, setActiveSkillIndex] = useState(0);
   const [dismissedCommand, setDismissedCommand] = useState<string | null>(null);
+  const compositionEndedAtRef = useRef(0);
   useEffect(() => {
     let cancelled = false;
     skillService.getEnabledSkills()
@@ -92,6 +100,14 @@ export const ChatInputArea: React.FC<ChatInputAreaProps> = ({
   const canSend = hasContent && !sending && !disabled;
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (isImeComposition({ isComposing: e.nativeEvent.isComposing, keyCode: e.keyCode })) return;
+    if (e.key === 'Enter' && compositionEndedAtRef.current > 0) {
+      const sinceComposition = performance.now() - compositionEndedAtRef.current;
+      compositionEndedAtRef.current = 0;
+      if (isCompositionEchoEnter(sinceComposition, IME_ENTER_GUARD_MS)) {
+        e.preventDefault();
+        return;
+      }
+    }
     if (suggestionsOpen) {
       if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
         e.preventDefault();
@@ -266,6 +282,9 @@ export const ChatInputArea: React.FC<ChatInputAreaProps> = ({
               setActiveSkillIndex(0);
             }}
             onKeyDown={handleKeyDown}
+            onCompositionEnd={() => {
+              compositionEndedAtRef.current = performance.now();
+            }}
             aria-autocomplete={skills.length > 0 ? 'list' : undefined}
             aria-controls={suggestionsOpen ? suggestionsId : undefined}
             aria-activedescendant={suggestionsOpen ? optionId(skillSuggestions[highlightedSkill].name) : undefined}
@@ -289,7 +308,7 @@ export const ChatInputArea: React.FC<ChatInputAreaProps> = ({
                 disabled={disabled}
                 aria-label="上傳檔案或圖片"
               >
-                <Icon name="upload" size={18} />
+                <Icon name="add" size={19} />
               </button>
             </Tooltip>
             {webSearchAvailable && (
@@ -310,6 +329,40 @@ export const ChatInputArea: React.FC<ChatInputAreaProps> = ({
                 </button>
               </Tooltip>
             )}
+            {chatMode && onSelectChatMode && (
+              <Tooltip title="查證：查資料後回答；代理：規劃並完成多步驟的任務" className={styles.attachSlot}>
+                <div
+                  className={styles.modeSwitch}
+                  role="radiogroup"
+                  aria-label="對話模式"
+                  data-mode={chatMode}
+                  onKeyDown={(e) => {
+                    if (!['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(e.key)) return;
+                    e.preventDefault();
+                    const next = chatMode === 'agent' ? 'research' : 'agent';
+                    onSelectChatMode(next);
+                    e.currentTarget.querySelector<HTMLButtonElement>(`[data-value="${next}"]`)?.focus();
+                  }}
+                >
+                  <span className={styles.modeThumb} aria-hidden="true" />
+                  {CHAT_MODES.map((mode) => (
+                    <button
+                      key={mode.value}
+                      type="button"
+                      role="radio"
+                      aria-checked={chatMode === mode.value}
+                      tabIndex={chatMode === mode.value ? 0 : -1}
+                      data-value={mode.value}
+                      className={`${styles.modeOption} ${chatMode === mode.value ? styles.modeOptionActive : ''}`}
+                      onClick={() => onSelectChatMode(mode.value)}
+                      disabled={disabled}
+                    >
+                      {mode.label}
+                    </button>
+                  ))}
+                </div>
+              </Tooltip>
+            )}
           </div>
           {streamingHere ? (
             <Tooltip title="停止產生回答" className={styles.sendSlot}>
@@ -319,7 +372,7 @@ export const ChatInputArea: React.FC<ChatInputAreaProps> = ({
                 onClick={onStop}
                 aria-label="停止產生回答"
               >
-                <Icon name="stop" size={16} />
+                <Icon name="stop" size={14} />
               </button>
             </Tooltip>
           ) : (
@@ -331,7 +384,7 @@ export const ChatInputArea: React.FC<ChatInputAreaProps> = ({
                 disabled={!canSend}
                 aria-label="發送訊息"
               >
-                <Icon name="send" size={18} />
+                <Icon name="arrow-up" size={18} />
               </button>
             </Tooltip>
           )}

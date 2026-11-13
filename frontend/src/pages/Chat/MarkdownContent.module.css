@@ -1,16 +1,16 @@
 .markdownBody {
-  font-size: var(--font-size-base);
-  line-height: 1.7;
   color: var(--text-primary);
+  font-size: var(--font-size-base);
+  line-height: 1.75;
   overflow-wrap: break-word;
   word-break: break-word;
 }
 
-.markdownBody> :first-child {
+.markdownBody > :first-child {
   margin-top: 0;
 }
 
-.markdownBody> :last-child {
+.markdownBody > :last-child {
   margin-bottom: 0;
 }
 
@@ -22,7 +22,7 @@
 .markdownBody h2,
 .markdownBody h3,
 .markdownBody h4 {
-  margin: var(--space-5) 0 var(--space-2);
+  margin: var(--space-6) 0 var(--space-2);
   color: var(--text-primary);
   font-weight: var(--font-weight-semibold);
   line-height: var(--line-height-tight);
@@ -39,15 +39,16 @@
 }
 
 .markdownBody hr {
-  margin: var(--space-5) 0;
+  margin: var(--space-6) 0;
   border: none;
   border-top: 1px solid var(--border-default);
 }
 
 .markdownBody blockquote {
   margin: var(--space-3) 0;
-  padding: 0 0 0 var(--space-4);
-  border-left: 3px solid var(--border-strong);
+  padding: var(--space-2) var(--space-4);
+  border-radius: var(--radius-md);
+  background-color: var(--bg-surface-secondary);
   color: var(--text-secondary);
 }
 
@@ -62,14 +63,23 @@
 .markdownBody ul,
 .markdownBody ol {
   margin: var(--space-2) 0 var(--space-3);
-  padding-left: var(--space-6);
+  padding-left: 1.4em;
 }
 
 .markdownBody li {
   margin-bottom: var(--space-1);
+  padding-left: 0.2em;
 }
 
-.markdownBody li>p {
+.markdownBody li::marker {
+  color: var(--text-tertiary);
+}
+
+.markdownBody ol > li::marker {
+  font-variant-numeric: tabular-nums;
+}
+
+.markdownBody li > p {
   margin-bottom: var(--space-1);
 }
 
@@ -78,25 +88,26 @@
 }
 
 .markdownBody code {
-  padding: 1px 6px;
+  padding: 1px 5px;
   border: 1px solid var(--border-default);
   border-radius: var(--radius-xs);
   background-color: var(--bg-surface-secondary);
   color: var(--text-primary);
   font-family: var(--font-mono);
-  font-size: var(--font-size-sm);
+  font-size: 0.875em;
 }
 
 .markdownBody pre {
   margin: var(--space-3) 0;
   padding: var(--space-3) var(--space-4);
+  overflow-x: auto;
   border: 1px solid var(--border-default);
-  border-radius: var(--radius-sm);
-  background-color: var(--neutral-900);
-  color: var(--neutral-50);
+  border-radius: var(--radius-md);
+  background-color: var(--bg-code);
+  color: var(--text-code);
   font-size: var(--font-size-sm);
   line-height: var(--line-height-normal);
-  overflow-x: auto;
+  color-scheme: dark;
 }
 
 .markdownBody pre code {
@@ -110,9 +121,9 @@
 .tableContainer {
   width: 100%;
   margin: var(--space-3) 0;
-  border: 1px solid var(--border-default);
-  border-radius: var(--radius-sm);
   overflow-x: auto;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
 }
 
 .markdownBody table {
@@ -128,14 +139,14 @@
   border-bottom: 1px solid var(--border-default);
   background-color: var(--bg-surface-secondary);
   color: var(--text-secondary);
-  font-weight: var(--font-weight-semibold);
+  font-weight: var(--font-weight-medium);
   text-align: left;
   white-space: nowrap;
 }
 
 .markdownBody td {
   padding: var(--space-2) var(--space-3);
-  border-bottom: 1px solid var(--border-default);
+  border-bottom: 1px solid var(--border-subtle);
   color: var(--text-primary);
   vertical-align: top;
 }
@@ -148,10 +159,10 @@
   color: var(--color-primary-text);
   font-weight: var(--font-weight-medium);
   text-decoration: underline;
+  text-decoration-color: color-mix(in oklab, currentColor 35%, transparent);
   text-decoration-thickness: 1px;
-  text-decoration-color: color-mix(in srgb, currentColor 40%, transparent);
   text-underline-offset: 3px;
-  transition: text-decoration-color var(--transition-fast);
+  transition: text-decoration-color var(--dur-2) var(--ease-out);
 }
 
 .markdownLink:hover {
@@ -178,12 +189,13 @@
   line-height: var(--line-height-normal);
   text-decoration: none;
   vertical-align: middle;
-  transition: border-color var(--transition-fast), background-color var(--transition-fast);
+  transition: border-color var(--dur-1) var(--ease-out), background-color var(--dur-1) var(--ease-out);
 }
 
 .postLinkBadge:hover {
   border-color: var(--border-strong);
   background-color: var(--bg-surface-active);
+  text-decoration: none;
 }
 
 .socialPostCard {
@@ -193,7 +205,7 @@
   margin: var(--space-2) 0;
   padding: var(--space-3) var(--space-4);
   border: 1px solid var(--border-default);
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-md);
   background-color: var(--bg-surface);
   list-style: none;
 }
@@ -255,25 +267,72 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-width: 20px;
-  height: 20px;
-  margin: 0 1px;
-  padding: 0 var(--space-1);
+  min-width: 18px;
+  height: 18px;
+  margin: 0 2px;
+  padding: 0 5px;
   border: none;
-  border-radius: var(--radius-xs);
-  background-color: var(--bg-surface-secondary);
+  border-radius: var(--radius-full);
+  background-color: var(--bg-surface-active);
   color: var(--text-secondary);
+  font-family: var(--font-mono);
   font-size: var(--font-size-xs);
-  font-weight: var(--font-weight-semibold);
+  font-weight: var(--font-weight-medium);
   font-variant-numeric: tabular-nums;
   line-height: 1;
-  vertical-align: 0.15em;
+  vertical-align: 0.18em;
   cursor: pointer;
-  transition: background-color var(--transition-fast), color var(--transition-fast);
+  transition: background-color var(--dur-1) var(--ease-out), color var(--dur-1) var(--ease-out);
 }
 
 .citationRef:hover,
-.citationRef[aria-expanded="true"] {
-  background-color: var(--color-primary-light);
-  color: var(--color-primary-text);
+.citationRef[aria-expanded='true'] {
+  background-color: var(--color-primary);
+  color: var(--text-on-color-primary);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .citationRef {
+    transition:
+      background-color var(--dur-1) var(--ease-out),
+      color var(--dur-1) var(--ease-out),
+      scale var(--dur-3) var(--spring);
+  }
+
+  .citationRef:active {
+    scale: 0.9;
+  }
+}
+
+@media (pointer: coarse) {
+  .citationRef {
+    min-width: 24px;
+    height: 22px;
+  }
+}
+
+.streaming > :is(p, h1, h2, h3, h4, blockquote):last-child::after,
+.streaming > :is(ul, ol):last-child > li:last-child::after {
+  display: inline-block;
+  width: 0.5em;
+  height: 1.05em;
+  margin-left: 3px;
+  border-radius: 2px;
+  background-color: var(--color-primary);
+  content: '';
+  vertical-align: -0.16em;
+  opacity: 0.85;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .streaming > :is(p, h1, h2, h3, h4, blockquote):last-child::after,
+  .streaming > :is(ul, ol):last-child > li:last-child::after {
+    animation: caret 1.05s steps(1, end) infinite;
+  }
+}
+
+@keyframes caret {
+  50% {
+    opacity: 0.15;
+  }
 }

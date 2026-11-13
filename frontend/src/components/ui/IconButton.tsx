@@ -12,7 +12,7 @@ export const IconButton = forwardRef<HTMLButtonElement, IconButtonProps>(
       children,
       size = 'md',
       variant = 'default',
-      rounded = true,
+      rounded = false,
       className = '',
       color,
       style,

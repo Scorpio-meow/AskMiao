@@ -1,12 +1,12 @@
 import React, { useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
+import { useHeldWhileClosing, usePresence } from './usePresence';
 import styles from './Snackbar.module.css';
 export interface SnackbarProps {
   open: boolean;
   autoHideDuration?: number;
   onClose?: (event?: React.SyntheticEvent | Event, reason?: string) => void;
-  message?: React.ReactNode;
-  children?: React.ReactNode;
+  children: React.ReactNode;
   anchorOrigin?: {
     vertical: 'top' | 'bottom';
     horizontal: 'left' | 'center' | 'right';
@@ -17,12 +17,14 @@ export const Snackbar: React.FC<SnackbarProps> = ({
   open,
   autoHideDuration = 4000,
   onClose,
-  message,
   children,
   anchorOrigin = { vertical: 'bottom', horizontal: 'center' },
   className = '',
 }) => {
   const onCloseRef = useRef(onClose);
+  const rootRef = useRef<HTMLDivElement>(null);
+  const mounted = usePresence(open, rootRef);
+  const content = useHeldWhileClosing(open, children);
   useEffect(() => {
     onCloseRef.current = onClose;
   });
@@ -32,8 +34,8 @@ export const Snackbar: React.FC<SnackbarProps> = ({
       onCloseRef.current?.(undefined, 'timeout');
     }, autoHideDuration);
     return () => clearTimeout(timer);
-  }, [open, autoHideDuration, message]);
-  if (!open) return null;
+  }, [open, autoHideDuration]);
+  if (!mounted) return null;
   const { vertical, horizontal } = anchorOrigin;
   const positionClass =
     vertical === 'top'
@@ -48,12 +50,12 @@ export const Snackbar: React.FC<SnackbarProps> = ({
           ? styles.bottomRight
           : styles.bottomCenter;
   return createPortal(
-    <div className={`${styles.snackbar} ${positionClass} ${className}`}>
-      {children || (
-        <div className={styles.defaultMessage} role="status">
-          {message}
-        </div>
-      )}
+    <div
+      ref={rootRef}
+      className={`${styles.snackbar} ${positionClass} ${vertical === 'top' ? styles.fromTop : styles.fromBottom} ${className}`}
+      data-state={open ? 'open' : 'closed'}
+    >
+      {content}
     </div>,
     document.body
   );

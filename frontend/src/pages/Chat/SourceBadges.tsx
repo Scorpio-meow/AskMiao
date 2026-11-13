@@ -149,12 +149,17 @@ export const SourcePopover: React.FC<{ detail: SourceDetail | null; anchorEl: HT
           <div className={styles.popoverMeta}>
             {detail.chunk !== undefined && <span>段落 {detail.chunk}</span>}
             {detail.score !== undefined && detail.score !== null && (
-              <span className={styles.score}>相關度 {Math.round(detail.score * 100)}%</span>
+              <span className={styles.score}>
+                <span className={styles.scoreMeter} aria-hidden="true">
+                  <span className={styles.scoreFill} style={{ '--score': Math.min(Math.max(detail.score, 0), 1) } as React.CSSProperties} />
+                </span>
+                相關度 {Math.round(detail.score * 100)}%
+              </span>
             )}
           </div>
         )}
         {detail.snippet && (
-          <div className={styles.snippet}>
+          <div className={styles.snippet} tabIndex={0}>
             {detail.snippet}
           </div>
         )}

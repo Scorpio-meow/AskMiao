@@ -1,8 +1,8 @@
 .container {
-  border: 1px solid var(--border-default);
-  border-radius: var(--radius-sm);
-  background-color: var(--bg-surface);
   overflow: hidden;
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-lg);
+  background-color: var(--bg-surface);
 }
 
 .header {
@@ -14,17 +14,18 @@
   padding: var(--space-2) var(--space-3);
   border: none;
   background: transparent;
-  color: var(--text-primary);
+  color: var(--text-secondary);
   font: inherit;
   font-size: var(--font-size-sm);
   font-weight: var(--font-weight-medium);
   text-align: left;
   cursor: pointer;
-  transition: background-color var(--transition-fast);
+  transition: background-color var(--dur-1) var(--ease-out), color var(--dur-1) var(--ease-out);
 }
 
 .header:hover {
   background-color: var(--bg-surface-hover);
+  color: var(--text-primary);
 }
 
 .header:focus-visible {
@@ -33,7 +34,7 @@
 
 .icon {
   flex: none;
-  color: var(--text-secondary);
+  color: var(--text-tertiary);
 }
 
 .title {
@@ -45,24 +46,27 @@
   display: inline-flex;
   flex: none;
   color: var(--text-tertiary);
-  transition: transform var(--transition-fast);
 }
 
 .chevronOpen {
-  transform: rotate(180deg);
+  rotate: 180deg;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .chevron {
+    transition: rotate var(--dur-4) var(--ease-out-expo);
+  }
 }
 
 .body {
-  padding: var(--space-3);
-  border-top: 1px solid var(--border-default);
-  background-color: var(--bg-surface-secondary);
+  padding: var(--space-1) var(--space-4) var(--space-4) calc(var(--space-3) + 24px);
 }
 
 .text {
   margin: 0;
   color: var(--text-secondary);
-  font-family: var(--font-mono);
-  font-size: var(--font-size-xs);
+  font-family: var(--font-sans);
+  font-size: var(--font-size-sm);
   line-height: var(--line-height-relaxed);
   white-space: pre-wrap;
   overflow-wrap: anywhere;

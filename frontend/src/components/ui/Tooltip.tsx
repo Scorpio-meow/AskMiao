@@ -94,7 +94,7 @@ export const Tooltip: React.FC<TooltipProps> = ({
       )}
       {portalTarget &&
         createPortal(
-          <div ref={positionTooltip} className={styles.tooltip} aria-hidden="true">
+          <div ref={positionTooltip} className={styles.tooltip} data-placement={placement} aria-hidden="true">
             {title}
           </div>,
           portalTarget

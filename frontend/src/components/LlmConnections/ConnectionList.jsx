@@ -14,7 +14,7 @@ export default function ConnectionList({ connections, providers, label, describe
           {describeAccess && <span className={styles.itemMeta}>{describeAccess(connection)}</span>}
           <div className={styles.models} aria-label="模型">
             {connection.models.map((model) => (
-              <Chip key={model} label={model} size="sm" color="info" />
+              <Chip key={model} label={model} size="sm" />
             ))}
           </div>
           {(onTest || onEdit || onDelete) && (
@@ -30,7 +30,7 @@ export default function ConnectionList({ connections, providers, label, describe
                 </Button>
               )}
               {onDelete && (
-                <Button size="sm" variant="danger" onClick={() => onDelete(connection)}>
+                <Button size="sm" variant="text" className={styles.dangerText} onClick={() => onDelete(connection)}>
                   刪除<span className="sr-only">連線 {connection.name}</span>
                 </Button>
               )}

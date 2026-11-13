@@ -6,6 +6,7 @@ export * from './Dialog';
 export * from './ConfirmDialog';
 export * from './useOverlayBehavior';
 export * from './useModalDialog';
+export * from './usePresence';
 export * from './Tooltip';
 export * from './Menu';
 export * from './Alert';

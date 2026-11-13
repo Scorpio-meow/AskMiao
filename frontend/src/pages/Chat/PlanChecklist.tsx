@@ -12,7 +12,7 @@ const STATUS_LABELS: Record<PlanItem['status'], string> = {
   completed: '已完成',
 };
 const PlanMarker: React.FC<{ status: PlanItem['status']; isStreaming: boolean }> = ({ status, isStreaming }) => {
-  if (status === 'completed') return <Icon name="check-circle" size={16} />;
+  if (status === 'completed') return <span className={styles.check}><Icon name="check" size={11} /></span>;
   if (status === 'in_progress' && isStreaming) return <Spinner size={14} color="var(--color-primary)" aria-hidden="true" />;
   return <span className={status === 'in_progress' ? styles.dotActive : styles.dot} />;
 };
@@ -21,18 +21,21 @@ export const PlanChecklist: React.FC<PlanChecklistProps> = ({ plan, isStreaming 
   return (
     <section className={styles.container} aria-label="任務計畫">
       <div className={styles.header}>
-        <Icon name="timeline" size={16} className={styles.headerIcon} />
+        <Icon name="timeline" size={15} className={styles.headerIcon} />
         <span className={styles.title}>計畫</span>
         <span className={styles.progress}>
           {completed}/{plan.length}
           <span className="sr-only"> 步已完成</span>
         </span>
       </div>
+      <span className={styles.meter} aria-hidden="true">
+        <span className={styles.meterFill} style={{ '--progress': plan.length > 0 ? completed / plan.length : 0 } as React.CSSProperties} />
+      </span>
       <ol className={styles.list}>
         {plan.map((item, index) => (
           <li key={index} className={`${styles.item} ${styles[item.status]}`}>
             <span className={styles.marker} aria-hidden="true">
-              <PlanMarker status={item.status} isStreaming={isStreaming} />
+              <PlanMarker key={item.status} status={item.status} isStreaming={isStreaming} />
             </span>
             <span className={styles.step}>{item.step}</span>
             <span className="sr-only">（{STATUS_LABELS[item.status]}）</span>

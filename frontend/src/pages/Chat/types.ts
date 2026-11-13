@@ -32,8 +32,6 @@ export interface ChatHeaderProps {
   onSelectChoice: (choice: string) => void;
   reasoningEffort: string;
   onSelectReasoningEffort: (effort: string) => void;
-  chatMode: ChatMode;
-  onSelectChatMode: (mode: ChatMode) => void;
   modelsLoading: boolean;
   onRefreshModels: () => void;
   currentConversation: Conversation | null;
@@ -59,6 +57,7 @@ export interface ChatMessageItemProps {
   message: Message;
   thinkId: number | string;
   isStreaming: boolean;
+  entering?: boolean;
   isThinkingOpen: boolean;
   deferRendering: boolean;
   onToggleThinking: (id: number | string) => void;
@@ -104,6 +103,8 @@ export interface ChatInputAreaProps {
   webSearchAvailable: boolean;
   allowWeb: boolean;
   onToggleAllowWeb: () => void;
+  chatMode?: ChatMode;
+  onSelectChatMode?: (mode: ChatMode) => void;
 }
 export interface SourceBadgesProps {
   sources?: string[];

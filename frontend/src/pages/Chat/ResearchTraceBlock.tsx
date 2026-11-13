@@ -70,23 +70,23 @@ const StepStatus: React.FC<{ status: ResearchTraceStep['status'] }> = ({ status 
   }
   if (status === 'error') {
     return (
-      <span className={`${styles.stepStatus} ${styles.statusError}`}>
-        <Icon name="error" size={16} />
+      <span className={`${styles.stepStatus} ${styles.statusError} ${styles.statusSettled}`}>
+        <Icon name="close" size={12} />
         <span className="sr-only">失敗</span>
       </span>
     );
   }
   if (status === 'interrupted') {
     return (
-      <span className={`${styles.stepStatus} ${styles.statusUnknown}`}>
-        <Icon name="help" size={16} />
+      <span className={`${styles.stepStatus} ${styles.statusUnknown} ${styles.statusSettled}`}>
+        <Icon name="help" size={13} />
         <span className="sr-only">結果不明</span>
       </span>
     );
   }
   return (
-    <span className={`${styles.stepStatus} ${styles.statusSuccess}`}>
-      <Icon name="check-circle" size={16} />
+    <span className={`${styles.stepStatus} ${styles.statusSuccess} ${styles.statusSettled}`}>
+      <Icon name="check" size={12} />
       <span className="sr-only">完成</span>
     </span>
   );
@@ -120,6 +120,9 @@ export const ResearchTraceBlock: React.FC<ResearchTraceBlockProps> = ({
   const activeStep = ordered.filter(s => s.status === 'running').pop() || ordered[ordered.length - 1];
   const activeToolInfo = activeStep ? getToolDisplayInfo(activeStep.tool) : null;
   const failedCount = trace.filter(s => s.status === 'error').length;
+  const headerLabel = hasRunningStep
+    ? `研究中：${activeStep.note || activeToolInfo?.label || '執行中'}（步驟 ${activeStep.step}）`
+    : `研究過程（${trace.length} 個步驟）`;
   return (
     <div className={`${styles.container} ${hasRunningStep ? styles.containerActive : ''}`}>
       <button
@@ -133,39 +136,40 @@ export const ResearchTraceBlock: React.FC<ResearchTraceBlockProps> = ({
           {hasRunningStep ? (
             <Spinner size={14} color="var(--color-primary)" />
           ) : (
-            <Icon name="search" size={16} />
+            <Icon name="timeline" size={15} />
           )}
         </span>
-        <span className={styles.titleText}>
-          {hasRunningStep
-            ? `研究中：${activeStep.note || activeToolInfo?.label || '執行中'}（步驟 ${activeStep.step}）`
-            : `研究過程（${trace.length} 個步驟）`}
+        <span className={styles.titleViewport}>
+          <span key={headerLabel} className={styles.titleText}>
+            {headerLabel}
+          </span>
         </span>
         {!hasRunningStep && failedCount > 0 && (
           <span className={styles.failedCount}>{failedCount} 個失敗</span>
         )}
         <span className={styles.stepDots} aria-hidden="true">
-          {ordered.map((step, idx) => (
+          {ordered.map((step) => (
             <span
-              key={idx}
+              key={step.step}
               className={`${styles.stepDot} ${step.status === 'running' ? styles.stepDotRunning : ''} ${step.status === 'error' ? styles.stepDotError : ''}`}
             />
           ))}
         </span>
         <span className={`${styles.chevron} ${isOpen ? styles.chevronOpen : ''}`} aria-hidden="true">
-          <Icon name="expand-more" size={16} />
+          <Icon name="expand-more" size={15} />
         </span>
       </button>
       <Collapse in={isOpen} id={stepListId}>
         <ol className={styles.stepList} role="list">
-          {ordered.map((step: ResearchTraceStep, index: number) => {
+          {ordered.map((step: ResearchTraceStep) => {
             const toolInfo = getToolDisplayInfo(step.tool);
             const queryParam = formatStepQueryParam(step);
             const outputPreview = toDisplayText(step.output_preview);
             const isStepRunning = step.status === 'running';
             return (
-              <li key={index} className={styles.stepItem}>
-                <StepStatus status={step.status} />
+              <li key={step.step} className={`${styles.stepItem} ${isStepRunning ? styles.stepItemRunning : ''}`}>
+                <span className={styles.stepRail} aria-hidden="true" />
+                <StepStatus key={step.status} status={step.status} />
                 <div className={styles.stepBody}>
                   {step.agent && <p className={styles.agent}>{step.agent}</p>}
                   {step.note && <p className={styles.note}>{step.note}</p>}
