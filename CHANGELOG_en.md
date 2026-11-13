@@ -6,6 +6,7 @@ All notable changes to AskMiao are documented in this file. The format is based 
 
 | Version | Release date | Highlights |
 |---|---|---|
+| [8.14.1](#8141---2026-11-14) | 2026-11-14 | opentelemetry-api upgraded to 1.45.2, fixing `traceparent` header parsing that could be used for denial of service |
 | [8.14.0](#8140---2026-11-14) | 2026-11-14 | Frontend redesign: one design and motion system across every page, and the chat mode switch moves into the input box; an Enter that some Chinese input methods send right after choosing a character no longer sends the message |
 | [8.13.0](#8130---2026-11-13) | 2026-11-13 | Answer-level evaluation; research mode searches the knowledge base at most 6 times per question, so questions with no answer no longer take minutes; knowledge-base results carry the neighbouring text, so the model can read articles and tables that chunking cut apart |
 | [8.12.2](#8122---2026-11-11) | 2026-11-11 | The research assistant always searches the knowledge base before answering, instead of relying only on AI document outlines and summaries or on attached images |
@@ -53,6 +54,12 @@ All notable changes to AskMiao are documented in this file. The format is based 
 ---
 
 ## [Unreleased]
+
+## [8.14.1] - 2026-11-14
+
+### Security
+
+- **opentelemetry-api upgraded to 1.45.2**: fixes `traceparent` header parsing whose time grows with the square of the header length, which could be used for denial of service (GHSA-mf5v-w3w3-f6cg). The package comes in through anthropic and FastAPI; AskMiao does not configure OpenTelemetry, so FastAPI never parses the `traceparent` of incoming requests and the app is not affected today. The upgrade keeps it safe if tracing is turned on later.
 
 ## [8.14.0] - 2026-11-14
 
