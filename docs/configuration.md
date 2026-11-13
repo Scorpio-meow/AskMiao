@@ -2,7 +2,7 @@
 
 [繁體中文](configuration.md) | [English](configuration_en.md)
 
-> 本文件逐一說明後端 `backend/.env` 與前端 `frontend/.env` 的每個設定、預設值與實際作用，適用於 **8.12.2**（從 8.12.1 升級見 [升級指南](upgrading.md#從-8121-升級到-8122)）。設定以 `backend/app/core/config.py` 的 `Settings` 為準，範本見 [`backend/.env.example`](../backend/.env.example)。
+> 本文件逐一說明後端 `backend/.env` 與前端 `frontend/.env` 的每個設定、預設值與實際作用，適用於 **8.13.0**（從 8.12.2 升級見 [升級指南](upgrading.md#從-8122-升級到-8130)）。設定以 `backend/app/core/config.py` 的 `Settings` 為準，範本見 [`backend/.env.example`](../backend/.env.example)。
 
 - [讀取規則](#讀取規則)
 - [必填設定](#必填設定)
@@ -96,7 +96,7 @@ python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().d
 
 新增連線時，表單依供應商預先帶入官方 API 位址與下列模型清單，可以再增刪：
 
-| 供應商 | 預先帶入的模型（8.12.2） |
+| 供應商 | 預先帶入的模型（8.13.0） |
 |---|---|
 | OpenAI | `gpt-6.1-sol`、`gpt-6-sol`、`gpt-6-luna`、`gpt-6-astra`、`gpt-5.6-sol`、`gpt-5.6-luna`、`gpt-5.6-terra`、`gpt-5.4`、`gpt-5.4-mini` |
 | Anthropic | `claude-opus-5-5`、`claude-fable-5-1`、`claude-sonnet-5-5`、`claude-haiku-5-5`、`claude-sonnet-5`、`claude-opus-5`、`claude-fable-5`、`claude-opus-4-8`、`claude-haiku-4-5` |
@@ -643,6 +643,17 @@ OOXML 的檢查在解析前進行，依 ZIP 成員宣告的大小計算。python
 ```bash
 python scripts/evaluate_retrieval.py --corpus eval/corpus --golden eval/corpus_golden.jsonl --k 1 3 5
 ```
+
+**評估最後的回答**：`scripts/evaluate_answers.py` 同樣以 `--corpus` 在暫存環境建立知識庫，再用你指定的模型跑完整的研究迴圈（不上網），依答案事實、引用、有沒有查知識庫與評分模型判分，判分方式見 [系統架構：答案評估](architecture.md#6-混合檢索與重排)。模型連線由參數指定，不讀資料庫中的 API 連線；需要金鑰時，把金鑰放在環境變數，再以 `--api-key-env` 傳入變數名稱。每題重跑幾次、同時問幾題、評分用哪個模型都要明確指定：
+
+```bash
+python scripts/evaluate_answers.py --corpus eval/corpus --golden eval/answer_golden.jsonl \
+  --provider vllm --api-base http://<vLLM 主機>:8000/v1 --model <模型名稱> \
+  --mode research --reasoning-effort medium --runs 3 --concurrency 6 \
+  --judge-model <模型名稱> --judge-reasoning-effort low --output answers.json
+```
+
+`--only` 只跑問題含有指定文字的題目，適合修改後先驗證少數題目；`--min-pass-rate 0.95` 在整體通過率未達標時以結束碼 1 結束。報表的「時過時不過」代表同一題重跑結果不一致，數字、期限這類硬事實建議跑 10 次以上再下結論。
 
 ## 前端環境變數
 

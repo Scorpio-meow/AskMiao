@@ -10,7 +10,7 @@ AskMiao answers with hybrid retrieval (FAISS + BM25 + Cross-Encoder) and agentic
 
 [繁體中文](README.md) | [English](README_en.md)
 
-[![Version](https://img.shields.io/badge/version-8.12.2-2563eb?style=flat)](CHANGELOG_en.md)
+[![Version](https://img.shields.io/badge/version-8.13.0-2563eb?style=flat)](CHANGELOG_en.md)
 [![Python](https://img.shields.io/badge/Python-3.12+-3776AB?style=flat&logo=python&logoColor=white)](https://www.python.org/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-005571?style=flat&logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
 [![React](https://img.shields.io/badge/React-19.3-61DAFB?style=flat&logo=react&logoColor=black)](https://react.dev/)
@@ -110,7 +110,7 @@ flowchart LR
 - **Both tracks always run**: chunks found by only one track still reach the reranker, so proper nouns and codes are no longer drowned out.
 - **The threshold reads the reranker probability**: exact URL, post ID, and date matches are exempt and ranked first.
 - **The database is the source of truth**: chunks live in the `rag_chunks` table, and FAISS (`IndexIDMap2`) and BM25 are keyed by chunk_id; startup reconciles both indexes automatically, and deleting a document removes only its vectors.
-- **Measurable**: `scripts/evaluate_retrieval.py` computes hit@k, recall@k, MRR, and the negative rejection rate from a golden set, adds chunk-level precision@k, nDCG@k, and candidate recall when verbatim snippets are labelled, and compares several thresholds at once; `--corpus` compares retrieval settings on the built-in benchmark corpus in a temporary environment.
+- **Measurable**: `scripts/evaluate_retrieval.py` computes hit@k, recall@k, MRR, and the negative rejection rate from a golden set, adds chunk-level precision@k, nDCG@k, and candidate recall when verbatim snippets are labelled, and compares several thresholds at once; `--corpus` compares retrieval settings on the built-in benchmark corpus in a temporary environment. `scripts/evaluate_answers.py` runs the full research loop with a real model and judges the final answers on their facts, citations, and a judge model, with per-question stability across repeated runs.
 
 ### Multi-provider LLM
 
@@ -620,6 +620,7 @@ Run them from `backend/` with `python scripts/<script>`:
 |---|---|
 | `create_user.py` | Create an account (including the first admin): `--username` and `--email` are required, `--admin` creates an admin, and the password is entered interactively; see [Create the first admin](#4-create-the-first-admin) |
 | `evaluate_retrieval.py` | Evaluate retrieval quality with a golden set and compare relevance thresholds (read-only, safe to run alongside the backend; `--corpus` builds a knowledge base from given files in a temporary environment instead); see [calibrating the relevance threshold](docs/configuration_en.md#calibrating-the-relevance-threshold) |
+| `evaluate_answers.py` | Run the full research loop with a given model and grade the final answers (facts, citations, whether the knowledge base was searched, a judge model), repeating each question to measure stability; builds a knowledge base from the `--corpus` files in a temporary environment; see [evaluating the final answers](docs/configuration_en.md#calibrating-the-relevance-threshold) |
 | `reprocess_existing_docs.py` | Runs the same rebuild as Rebuild index, offline: re-extract text, generate summaries for documents without one (existing summaries are kept), re-chunk, and re-index. Stop the backend first |
 | `reset_faiss.py` | Delete the index files that `FAISS_INDEX_PATH`, `METADATA_PATH`, and `BM25_INDEX_DIR` point to, then recompute them from `rag_chunks` (asks for confirmation first) |
 | `docx_to_txt.py` | Convert `.docx` files in the upload directory to `.txt` |
@@ -637,7 +638,7 @@ Common problems such as the backend failing to start, sign-in being paused, the 
 | [Configuration Reference](docs/configuration_en.md) | Defaults and effects of every environment variable, provider routing, threshold calibration, frontend settings |
 | [Deployment Guide](docs/deployment_en.md) | Deploying on a host with Docker Compose, HTTPS, backups, and updates |
 | [Troubleshooting](docs/troubleshooting_en.md) | Common errors at startup, sign-in, in the frontend, and with tools, and how to fix them |
-| [Upgrade Guide](docs/upgrading_en.md) | Steps from 2.x to 3.0.0 and every release since (up to 8.12.1 to 8.12.2), rollback, and troubleshooting |
+| [Upgrade Guide](docs/upgrading_en.md) | Steps from 2.x to 3.0.0 and every release since (up to 8.12.2 to 8.13.0), rollback, and troubleshooting |
 | [Architecture Decision Records](docs/adr/README_en.md) | Context, trade-offs, and amendments of major design decisions |
 | [llms_en.txt](llms_en.txt) | File map, system constraints, and verification steps for AI agents |
 | [Changelog](CHANGELOG_en.md) | What was added, changed, removed, and fixed in each release |
@@ -645,7 +646,7 @@ Common problems such as the backend failing to start, sign-in being paused, the 
 
 ## Versioning
 
-- **Current version**: 8.12.2 (2026-11-11); see the [changelog](CHANGELOG_en.md).
+- **Current version**: 8.13.0 (2026-11-13); see the [changelog](CHANGELOG_en.md).
 - **Policy**: [Semantic Versioning](https://semver.org/). Incompatible changes, such as new required settings or changes to API permissions or the index format, bump the major version.
 - **Where the version lives**: `__version__` in `backend/app/__init__.py` (used by the OpenAPI document and the MCP handshake) and `frontend/package.json`, updated together with `CHANGELOG.md` for each release.
 

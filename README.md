@@ -10,7 +10,7 @@
 
 [繁體中文](README.md) | [English](README_en.md)
 
-[![Version](https://img.shields.io/badge/version-8.12.2-2563eb?style=flat)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-8.13.0-2563eb?style=flat)](CHANGELOG.md)
 [![Python](https://img.shields.io/badge/Python-3.12+-3776AB?style=flat&logo=python&logoColor=white)](https://www.python.org/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-005571?style=flat&logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
 [![React](https://img.shields.io/badge/React-19.3-61DAFB?style=flat&logo=react&logoColor=black)](https://react.dev/)
@@ -110,7 +110,7 @@ flowchart LR
 - **兩軌必跑**：只有單一軌道找到的片段也能進入重排候選，專有名詞與代碼查詢不再被淹沒。
 - **相關性門檻看重排機率**：精確比對到網址、貼文 ID、日期的片段不受門檻限制，並排在最前面。
 - **以資料庫為準**：片段存放在 `rag_chunks` 資料表，FAISS（`IndexIDMap2`）與 BM25 都以 chunk_id 對應；後端啟動時自動校正兩份索引，刪除文件只移除該文件的向量。
-- **可量測**：`scripts/evaluate_retrieval.py` 以問答集計算 hit@k、recall@k、MRR 與反例拒絕率，標註原文片段時另計片段層級的 precision@k、nDCG@k 與候選召回，並能一次比較多個門檻；`--corpus` 以內建基準語料在暫存環境比較檢索設定。
+- **可量測**：`scripts/evaluate_retrieval.py` 以問答集計算 hit@k、recall@k、MRR 與反例拒絕率，標註原文片段時另計片段層級的 precision@k、nDCG@k 與候選召回，並能一次比較多個門檻；`--corpus` 以內建基準語料在暫存環境比較檢索設定。`scripts/evaluate_answers.py` 用真實模型跑完整的研究迴圈，依答案事實、引用與評分模型判定最後的回答對不對，並列出每題重跑的穩定度。
 
 ### 多供應商 LLM
 
@@ -620,6 +620,7 @@ bun run build        # 產出 build/
 |---|---|
 | `create_user.py` | 建立帳號（含第一位管理員）：`--username`、`--email` 必填，`--admin` 建立管理員，密碼以互動方式輸入；見 [建立第一位管理員](#4-建立第一位管理員) |
 | `evaluate_retrieval.py` | 以問答集評估檢索品質並比較相關性門檻（唯讀，可與後端同時執行；`--corpus` 改在暫存環境以指定文件建立知識庫），見 [校準相關性門檻](docs/configuration.md#校準相關性門檻) |
+| `evaluate_answers.py` | 用指定的模型跑完整的研究迴圈，評估最後的回答（答案事實、引用、有沒有查知識庫、評分模型），每題可重跑多次看穩定度；在暫存環境以 `--corpus` 的文件建立知識庫，見 [評估最後的回答](docs/configuration.md#校準相關性門檻) |
 | `reprocess_existing_docs.py` | 離線執行與「重建索引」相同的重建：重新擷取文字、替沒有摘要的文件生成摘要（既有摘要保留）、切塊並寫入索引。請先停止後端 |
 | `reset_faiss.py` | 刪除 `FAISS_INDEX_PATH`、`METADATA_PATH` 與 `BM25_INDEX_DIR` 指向的索引檔，再依 `rag_chunks` 重新計算（會先詢問確認） |
 | `docx_to_txt.py` | 把上傳目錄中的 `.docx` 轉成 `.txt` |
@@ -637,7 +638,7 @@ bun run build        # 產出 build/
 | [設定參考](docs/configuration.md) | 每個環境變數的預設值與作用、供應商路由、門檻校準、前端設定 |
 | [部署指南](docs/deployment.md) | 以 Docker Compose 部署到主機、HTTPS、備份與更新 |
 | [疑難排解](docs/troubleshooting.md) | 啟動、登入、前端與工具的常見錯誤與處理方式 |
-| [升級指南](docs/upgrading.md) | 從 2.x 升級到 3.0.0，以及之後各版（到 8.12.1 升級到 8.12.2）的步驟、回退方式與常見問題 |
+| [升級指南](docs/upgrading.md) | 從 2.x 升級到 3.0.0，以及之後各版（到 8.12.2 升級到 8.13.0）的步驟、回退方式與常見問題 |
 | [架構決策紀錄（ADR）](docs/adr/README.md) | 重大設計的背景、取捨與後續修訂 |
 | [llms.txt](llms.txt) | 給 AI Agent 讀的檔案地圖、系統約束與驗證方式 |
 | [版本變更紀錄](CHANGELOG.md) | 每個版本的新增、變更、移除與修正 |
@@ -645,7 +646,7 @@ bun run build        # 產出 build/
 
 ## 版本資訊
 
-- **目前版本**：8.12.2（2026-11-11），變更內容見 [CHANGELOG](CHANGELOG.md)。
+- **目前版本**：8.13.0（2026-11-13），變更內容見 [CHANGELOG](CHANGELOG.md)。
 - **版本規則**：遵循 [語意化版本](https://semver.org/lang/zh-TW/)。不相容的變更（例如新增必填設定、改變 API 權限或索引格式）升主版號。
 - **版本號位置**：後端 `backend/app/__init__.py` 的 `__version__`（OpenAPI 文件與 MCP 交握都引用它）、前端 `frontend/package.json`，發行時與 `CHANGELOG.md` 一併更新。
 

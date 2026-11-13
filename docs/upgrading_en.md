@@ -4,6 +4,7 @@
 
 > How to upgrade an existing deployment to a new release, with rollback steps and troubleshooting. See the [CHANGELOG](../CHANGELOG_en.md) for the full list of changes in each version.
 
+- [Upgrading from 8.12.2 to 8.13.0](#upgrading-from-8122-to-8130)
 - [Upgrading from 8.12.1 to 8.12.2](#upgrading-from-8121-to-8122)
 - [Upgrading from 8.12.0 to 8.12.1](#upgrading-from-8120-to-8121)
 - [Upgrading from 8.11.0 to 8.12.0](#upgrading-from-8110-to-8120)
@@ -54,6 +55,21 @@
   - [Step 5: verify the upgrade](#step-5-verify-the-upgrade)
   - [Rolling back to 2.2.x](#rolling-back-to-22x)
   - [Troubleshooting](#troubleshooting)
+
+---
+
+## Upgrading from 8.12.2 to 8.13.0
+
+For upgrading from 8.12.2 to 8.13.0 (2026-11-13); see the [CHANGELOG](../CHANGELOG_en.md#8130---2026-11-13) for the full list of changes. No `.env` changes, no database or API changes, and no index rebuild; with `deploy/`, rebuild the images as usual. See [ADR-0008](adr/0008-answer-level-evaluation-and-search-guards_en.md) for the design and measurements.
+
+| Item | 8.12.2 | 8.13.0 | What to do |
+|---|---|---|---|
+| Knowledge-base searches in research mode | Unlimited | At most 6 per question (`MAX_RESEARCH_KNOWLEDGE_SEARCHES`), and a search with the same arguments is not run again but still counts; blocked searches show as failed steps in the research trace | Nothing; use agent mode for work that needs many searches, as agent mode has no limit |
+| `search_knowledge_base` results | Only the matched chunk | Chunks of text documents also carry `context_before` and `context_after` (the neighbouring text) | Nothing; with very large `top_k` and `CHUNK_SIZE`, a tool result may exceed `MAX_TOOL_RESULT_CHARS` and be truncated |
+| `query` of `search_knowledge_base` | A blank query searched for an empty string | A blank query returns an error | Nothing |
+| Answer evaluation | Retrieval evaluation only | New `scripts/evaluate_answers.py` and question set `backend/eval/answer_golden.jsonl` | Optional; see [Configuration: evaluating the final answers](configuration_en.md#calibrating-the-relevance-threshold) |
+
+To roll back to 8.12.2, switch back to the older code; no index rebuild is needed.
 
 ---
 

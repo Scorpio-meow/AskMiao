@@ -14,6 +14,7 @@ from app.core.limits import (
     CHAT_ATTACHMENT_EXTRACTION_LIMITS,
     MAX_AGENT_TURNS,
     MAX_ATTACHMENT_TEXT_CHARS,
+    MAX_RESEARCH_KNOWLEDGE_SEARCHES,
     MAX_SUBAGENT_TURNS,
 )
 from app.models import AGENT_MODE, RESEARCH_MODE
@@ -35,7 +36,7 @@ from app import prompts
 from app.core.llm_client import LlmEndpoint, chat_completion, stream_completion
 from app.rag.file_tools import FILE_TOOL_NAMES
 from app.services.file_builders import extraction_slots
-from app.rag.tools import WEB_TOOL_NAMES, ResearchToolRegistry
+from app.rag.tools import KNOWLEDGE_TOOL_NAMES, WEB_TOOL_NAMES, ResearchToolRegistry
 from app.services.agent_skills import SKILL_NAME_PATTERN
 from app.rag.research_session import ResearchSession, ToolResultFilter, strip_citations, strip_tool_result_blocks
 from app.rag.tool_approval import approval_broker
@@ -324,6 +325,8 @@ class ResearchAgent:
         )
         if not allow_web:
             session.block_web()
+        if not agent_mode:
+            session.limit_knowledge_searches(MAX_RESEARCH_KNOWLEDGE_SEARCHES)
         if explicit_skill and research_trace[0]["status"] == "success":
             session.record_tool_output("activate_skill", skill_output)
         final_answer = ""
@@ -472,6 +475,8 @@ class ResearchAgent:
                         error_id = log_and_get_error_id(logger, f"工具 {fn_name} 執行失敗", e)
                         tool_output = {"error": f"工具執行失敗，請檢查參數格式後再試（錯誤代碼：{error_id}）"}
                     session.record_tool_output(fn_name, tool_output)
+                    if fn_name in KNOWLEDGE_TOOL_NAMES and "error" in tool_output:
+                        session.forget_knowledge_call(fn_name, args)
                 tool_duration = round(time.time() - tool_start, 2)
                 if skipped_status:
                     logger.info("工具呼叫未執行 %s", log_fields(tool=fn_name, status=skipped_status, duration_ms=round(tool_duration * 1000)))
@@ -501,6 +506,9 @@ class ResearchAgent:
                     "content": prompts.ASK_USER_ANSWER.format(answer=user_answer) if user_answer is not None
                     else session.tool_message_content(fn_name, tool_output)
                 })
+            if session.knowledge_searches_exhausted:
+                messages.append({"role": "user", "content": prompts.ANSWER_NOW})
+                break
         if not final_answer:
             if agent_mode:
                 clear_old_tool_results(messages, AGENT_TOOL_RESULT_BUDGET_CHARS)

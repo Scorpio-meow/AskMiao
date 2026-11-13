@@ -24,6 +24,8 @@ class StaticRetriever:
     def smart_search(self, query, target_document=None):
         doc = Document(page_content="特休依年資計算", metadata={"source": "leave.txt", "chunk_index": 0, "chunk_id": 7})
         return [RetrievedChunk(document=doc, score=0.9, relevance=0.9, pinned=False)]
+    def adjacent_texts(self, documents):
+        return [("", "") for _ in documents]
 class EmptyRetriever:
     def smart_search(self, query, target_document=None):
         return []
@@ -336,7 +338,7 @@ def test_knowledge_base_catalog_stays_within_its_limit(tmp_path, monkeypatch):
         session.commit()
     monkeypatch.setattr(database_module, "SessionLocal", Session)
     description, filenames = ResearchToolRegistry()._build_knowledge_base_description()
-    assert len(description) < MAX_KB_CATALOG_CHARS + 300
+    assert len(description) < len(prompts.KNOWLEDGE_BASE_SEARCH) + MAX_KB_CATALOG_CHARS + 300
     assert "《doc-0.txt》" in description
     assert "份文件未列出" in description
     assert filenames == []

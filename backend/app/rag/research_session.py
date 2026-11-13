@@ -7,7 +7,7 @@ from app import prompts
 from app.core.config import settings
 from app.core.limits import MAX_TOOL_RESULT_CHARS
 from app.rag.file_tools import DELETE_FILE_TOOL_NAME
-from app.rag.tools import MCP_CATALOG_TOOL_NAMES, SKILL_SCRIPT_TOOL_NAME, SKILL_TOOL_NAMES, WEB_TOOL_NAMES
+from app.rag.tools import KNOWLEDGE_TOOL_NAMES, MCP_CATALOG_TOOL_NAMES, SKILL_SCRIPT_TOOL_NAME, SKILL_TOOL_NAMES, WEB_TOOL_NAMES
 CITATION_NUMBERS = r"\d+(?:\s*[,，、]\s*\d+)*"
 CITATION_PATTERN = re.compile(rf"\[({CITATION_NUMBERS})\]")
 CITATION_SEPARATOR = re.compile(r"\s*[,，、]\s*")
@@ -88,6 +88,10 @@ class ResearchSession:
         self.boundary_id = secrets.token_hex(4)
         self.kb_content_returned = False
         self.web_blocked = False
+        self.knowledge_search_limit: Optional[int] = None
+        self.knowledge_searches = 0
+        self.knowledge_searches_exhausted = False
+        self._knowledge_calls: Set[str] = set()
         self._url_sources: Set[str] = set()
         for text in user_texts:
             if text:
@@ -108,7 +112,28 @@ class ResearchSession:
         return name in self.preapproved_tools or approval_key(name, arguments) in self.preapproved_tools
     def block_web(self) -> None:
         self.web_blocked = True
+    def limit_knowledge_searches(self, limit: int) -> None:
+        self.knowledge_search_limit = limit
+    @staticmethod
+    def _knowledge_key(name: str, arguments: Dict[str, Any]) -> str:
+        return json.dumps([name, {k: v.strip() if isinstance(v, str) else v for k, v in arguments.items()}], ensure_ascii=False, sort_keys=True)
+    def _refuse_knowledge_call(self, name: str, arguments: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        if self.knowledge_search_limit is None:
+            return None
+        if self.knowledge_searches >= self.knowledge_search_limit:
+            self.knowledge_searches_exhausted = True
+            return {"error": prompts.KNOWLEDGE_SEARCH_LIMIT.format(limit=self.knowledge_search_limit)}
+        self.knowledge_searches += 1
+        key = self._knowledge_key(name, arguments)
+        if key in self._knowledge_calls:
+            return {"error": prompts.KNOWLEDGE_SEARCH_REPEATED}
+        self._knowledge_calls.add(key)
+        return None
+    def forget_knowledge_call(self, name: str, arguments: Dict[str, Any]) -> None:
+        self._knowledge_calls.discard(self._knowledge_key(name, arguments))
     def refuse_tool_call(self, name: str, arguments: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        if name in KNOWLEDGE_TOOL_NAMES:
+            return self._refuse_knowledge_call(name, arguments)
         if name in WEB_TOOL_NAMES and self.web_blocked:
             return {"error": prompts.WEB_TURNED_OFF_TOOL}
         if name in WEB_TOOL_NAMES and settings.BLOCK_WEB_TOOLS_AFTER_KB and self.kb_content_returned:

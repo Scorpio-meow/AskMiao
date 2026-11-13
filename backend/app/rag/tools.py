@@ -27,7 +27,8 @@ WEB_TOOL_NAMES = ("web_search", "web_fetch")
 SKILL_TOOL_NAMES = ("activate_skill", "read_skill_resource")
 MCP_CATALOG_TOOL_NAMES = ("read_mcp_resource", "get_mcp_prompt")
 SKILL_SCRIPT_TOOL_NAME = "run_skill_script"
-BUILTIN_TOOL_NAMES = ("search_knowledge_base", "filter_and_count_records") + WEB_TOOL_NAMES + SKILL_TOOL_NAMES
+KNOWLEDGE_TOOL_NAMES = ("search_knowledge_base", "filter_and_count_records")
+BUILTIN_TOOL_NAMES = KNOWLEDGE_TOOL_NAMES + WEB_TOOL_NAMES + SKILL_TOOL_NAMES
 MCP_TOOL_PREFIX = "mcp_"
 def _tool_kind(name: str) -> str:
     if name in BUILTIN_TOOL_NAMES:
@@ -164,18 +165,25 @@ class ResearchToolRegistry:
                     "message": message
                 }
             effective_k = max(top_k, sum(1 for r in results if r.pinned))
+            selected = results[:effective_k]
+            adjacent = await asyncio.to_thread(self.retriever.adjacent_texts, [r.document for r in selected])
             docs_info = []
-            for result in results[:effective_k]:
+            for result, (before, after) in zip(selected, adjacent):
                 doc = result.document
-                docs_info.append({
+                info = {
                     "chunk_id": doc.metadata["chunk_id"],
                     "source": doc.metadata.get("source", "未知文件"),
                     "chunk_index": doc.metadata.get("chunk_index", 0),
                     "score": round(result.score, 4),
                     "label": doc.metadata.get("label"),
                     "links": doc.metadata.get("links", []),
-                    "content": doc.page_content.strip()
-                })
+                }
+                if before.strip():
+                    info["context_before"] = before.strip()
+                info["content"] = doc.page_content.strip()
+                if after.strip():
+                    info["context_after"] = after.strip()
+                docs_info.append(info)
             return {
                 "query": query,
                 "target_document": target_document,
@@ -894,7 +902,9 @@ class ResearchToolRegistry:
         if name in WEB_TOOL_NAMES and not settings.ENABLE_WEB_SEARCH:
             return {"error": f"聯網工具已停用（ENABLE_WEB_SEARCH=false）: {name}"}
         if name == "search_knowledge_base":
-            query = arguments.get("query", "")
+            query = arguments.get("query")
+            if not isinstance(query, str) or not query.strip():
+                return {"error": prompts.SEARCH_QUERY_REQUIRED}
             top_k = int(arguments.get("top_k", 3))
             target_document = arguments.get("target_document")
             return await self.search_knowledge_base(query, top_k, target_document)

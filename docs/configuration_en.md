@@ -2,7 +2,7 @@
 
 [繁體中文](configuration.md) | [English](configuration_en.md)
 
-> Every setting in the backend `backend/.env` and the frontend `frontend/.env`, with its default and what it actually does, as of **8.12.2** (to upgrade from 8.12.1, see the [upgrade guide](upgrading_en.md#upgrading-from-8121-to-8122)). The source of truth is `Settings` in `backend/app/core/config.py`; the template is [`backend/.env.example`](../backend/.env.example).
+> Every setting in the backend `backend/.env` and the frontend `frontend/.env`, with its default and what it actually does, as of **8.13.0** (to upgrade from 8.12.2, see the [upgrade guide](upgrading_en.md#upgrading-from-8122-to-8130)). The source of truth is `Settings` in `backend/app/core/config.py`; the template is [`backend/.env.example`](../backend/.env.example).
 
 - [How settings are read](#how-settings-are-read)
 - [Required settings](#required-settings)
@@ -96,7 +96,7 @@ Each account can only chat through two kinds of connection, and the model menu g
 
 When a new connection is created, the form fills in the provider's official API address and the models below, which can be edited:
 
-| Provider | Prefilled models (8.12.2) |
+| Provider | Prefilled models (8.13.0) |
 |---|---|
 | OpenAI | `gpt-6.1-sol`, `gpt-6-sol`, `gpt-6-luna`, `gpt-6-astra`, `gpt-5.6-sol`, `gpt-5.6-luna`, `gpt-5.6-terra`, `gpt-5.4`, `gpt-5.4-mini` |
 | Anthropic | `claude-opus-5-5`, `claude-fable-5-1`, `claude-sonnet-5-5`, `claude-haiku-5-5`, `claude-sonnet-5`, `claude-opus-5`, `claude-fable-5`, `claude-opus-4-8`, `claude-haiku-4-5` |
@@ -643,6 +643,17 @@ Other options: `--min-mrr 0.6` or `--min-passage-ndcg 0.8` exits with code 1 whe
 ```bash
 python scripts/evaluate_retrieval.py --corpus eval/corpus --golden eval/corpus_golden.jsonl --k 1 3 5
 ```
+
+**Evaluating the final answers**: `scripts/evaluate_answers.py` also builds a temporary knowledge base from `--corpus`, then runs the full research loop (without the web) with the model you name, and grades each answer on its facts, citations, whether it searched the knowledge base, and a judge model; see [Architecture: answer evaluation](architecture_en.md#6-hybrid-retrieval-and-reranking) for how. The model connection comes from the arguments, not from the API connections in the database; when a key is needed, put it in an environment variable and pass the variable's name with `--api-key-env`. The number of runs per question, the number of questions asked at once, and the judge model must all be given explicitly:
+
+```bash
+python scripts/evaluate_answers.py --corpus eval/corpus --golden eval/answer_golden.jsonl \
+  --provider vllm --api-base http://<vLLM host>:8000/v1 --model <model name> \
+  --mode research --reasoning-effort medium --runs 3 --concurrency 6 \
+  --judge-model <model name> --judge-reasoning-effort low --output answers.json
+```
+
+`--only` runs just the questions containing the given text, which is handy for checking a few questions after a change; `--min-pass-rate 0.95` exits with code 1 when the overall pass rate falls short. "Sometimes passes" in the report means the same question gave different results across runs; for hard facts such as numbers and deadlines, run 10 times or more before drawing conclusions.
 
 ## Frontend environment variables
 

@@ -19,6 +19,8 @@ class MockRetriever:
             RetrievedChunk(document=doc1, score=0.95, relevance=0.95, pinned=False),
             RetrievedChunk(document=doc2, score=0.82, relevance=0.82, pinned=False),
         ]
+    def adjacent_texts(self, documents):
+        return [("", "") for _ in documents]
 @pytest.mark.asyncio
 async def test_research_tool_registry(monkeypatch):
     monkeypatch.setattr(settings, "ENABLE_WEB_SEARCH", True)

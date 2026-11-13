@@ -24,6 +24,20 @@ class RetrievedChunk:
     score: float
     relevance: float
     pinned: bool
+def is_text_chunk(doc: Document) -> bool:
+    metadata = doc.metadata
+    return (
+        isinstance(metadata.get("document_id"), int)
+        and isinstance(metadata.get("chunk_index"), int)
+        and not metadata.get("preserve_whole")
+        and "record_index" not in metadata
+        and "qa_index" not in metadata
+    )
+def overlap_length(head: str, tail: str) -> int:
+    for size in range(min(len(head), len(tail)), 0, -1):
+        if head.endswith(tail[:size]):
+            return size
+    return 0
 def matches_target_document(doc: Document, target_document: str) -> bool:
     target = target_document.strip().lower()
     return (
@@ -261,3 +275,25 @@ class HybridRetriever:
         return [r for r in ranked if r.pinned or r.relevance >= relevance_threshold][: self.final_k]
     def smart_search(self, query: str, target_document: Optional[str] = None) -> List[RetrievedChunk]:
         return self.select(self.rank(query, target_document), self.relevance_threshold)
+    def adjacent_texts(self, documents: Sequence[Document]) -> List[Tuple[str, str]]:
+        wanted = {
+            (doc.metadata.get("document_id"), doc.metadata.get("chunk_index") + step)
+            for doc in documents if is_text_chunk(doc)
+            for step in (-1, 1)
+        }
+        found: Dict[Tuple[int, int], str] = {}
+        with self.vector_store.lock:
+            for chunk in self.vector_store.chunks.values():
+                key = (chunk.metadata.get("document_id"), chunk.metadata.get("chunk_index"))
+                if key in wanted and is_text_chunk(chunk):
+                    found[key] = chunk.page_content
+        texts: List[Tuple[str, str]] = []
+        for doc in documents:
+            if not is_text_chunk(doc):
+                texts.append(("", ""))
+                continue
+            document_id, index = doc.metadata["document_id"], doc.metadata["chunk_index"]
+            before = found.get((document_id, index - 1), "")
+            after = found.get((document_id, index + 1), "")
+            texts.append((before[:len(before) - overlap_length(before, doc.page_content)], after[overlap_length(doc.page_content, after):]))
+        return texts

@@ -17,6 +17,7 @@ This directory records the major architectural decisions behind AskMiao: the pro
 | [ADR-0005](./0005-chunk-id-index-and-database-source-of-truth_en.md) | Chunk Index Keyed by Database chunk_id | Accepted | 2026-09-24 | 3.0.0 | Chunks live in the `rag_chunks` table, FAISS (`IndexIDMap2`) and BM25 are keyed by chunk_id and reconciled against the database at startup, replacing list-position alignment and daily rebuilds; extends ADR-0001 |
 | [ADR-0006](./0006-tool-call-approval_en.md) | In-Chat Approval for Tools with Side Effects | Accepted | 2026-09-27 | 4.0.0 | Custom API tools and MCP servers gain a `requires_approval` flag; the agent pauses before calling them until the asking user approves in the chat, and nothing runs on a timeout or without an approver; extends ADR-0003 and ADR-0004 |
 | [ADR-0007](./0007-han-ngram-bm25-and-passage-level-evaluation_en.md) | Han Unigram and Bigram Fields in BM25, Evaluated with a Chunk-Level Benchmark | Accepted | 2026-11-01 | 8.0.0 | BM25 indexes single Han characters and Han bigrams alongside jieba words, so chunks are still retrieved when jieba mis-segments; evaluation gains chunk-level metrics labelled with verbatim snippets and a built-in benchmark corpus, and records the tweaks that were tried and rejected; extends ADR-0003 |
+| [ADR-0008](./0008-answer-level-evaluation-and-search-guards_en.md) | Answer-Level Evaluation, a Knowledge-Base Search Limit in Research Mode, and Neighbouring Text | Accepted | 2026-11-13 | 8.13.0 | Grades the final answers by running the full research loop with a real model; research mode allows at most 6 knowledge-base searches per question and blocks repeated ones; knowledge-base results carry the neighbouring text; extends ADR-0003 and ADR-0007 |
 
 ```mermaid
 flowchart LR
@@ -27,6 +28,8 @@ flowchart LR
     A4 -->|call time extended| A6["ADR-0006<br/>Tool call approval"]
     A3 -->|known risk mitigated| A6
     A3 -->|BM25 tokenization and evaluation extended| A7["ADR-0007<br/>Han n-gram BM25 and chunk-level evaluation"]
+    A7 -->|answer-level evaluation extended| A8["ADR-0008<br/>Answer evaluation, search limit, neighbouring text"]
+    A3 -->|research loop extended| A8
 ```
 
 ---

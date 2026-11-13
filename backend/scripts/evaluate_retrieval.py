@@ -1,4 +1,5 @@
 import argparse
+import gc
 import json
 import mimetypes
 import shutil
@@ -131,6 +132,8 @@ def main() -> int:
     finally:
         if rag is not None and rag.bm25_store.bm25_searcher is not None:
             rag.bm25_store.bm25_searcher.close()
+        rag = None
+        gc.collect()
         shutil.rmtree(work_dir, ignore_errors=True)
     print_report(report, args.k)
     if sweep:

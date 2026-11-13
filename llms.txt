@@ -2,7 +2,7 @@
 
 [繁體中文](llms.txt) | [English](llms_en.txt)
 
-> 會自己查證、答案附出處的企業知識庫對話系統（版本 8.12.2）。FastAPI 後端以混合檢索（FAISS + BM25 + Cross-Encoder）與 ReAct 研究 Agent 回答問題，答案以 `[n]` 對應實際引用的片段或網頁；React 前端以 SSE 串流顯示研究歷程與引用來源。
+> 會自己查證、答案附出處的企業知識庫對話系統（版本 8.13.0）。FastAPI 後端以混合檢索（FAISS + BM25 + Cross-Encoder）與 ReAct 研究 Agent 回答問題，答案以 `[n]` 對應實際引用的片段或網頁；React 前端以 SSE 串流顯示研究歷程與引用來源。
 
 本檔給 AI Agent 使用：修改程式前先讀「系統約束」，修改後依「驗證」執行檢查。
 
@@ -25,6 +25,7 @@
 - [backend/app/services/file_preview.py](backend/app/services/file_preview.py): 對話檔案與知識庫文件的預覽（PDF 逐頁轉圖、Word／Excel／PowerPoint 轉成結構化 JSON）；網頁檔以短效權杖在 `sandbox allow-scripts` 的 CSP 下開啟
 - [backend/app/services/conversation_files.py](backend/app/services/conversation_files.py) 與 [backend/app/services/file_builders.py](backend/app/services/file_builders.py): 對話檔案的儲存、權限、版本與每位使用者 200 MiB 空間（`storage_lock`），以及 md、txt、csv、json、docx、xlsx、pptx、pdf 的產生、修改與讀取
 - [backend/app/rag/evaluator.py](backend/app/rag/evaluator.py) 與 [backend/scripts/evaluate_retrieval.py](backend/scripts/evaluate_retrieval.py): 檢索評估與相關性門檻校準
+- [backend/app/rag/answer_evaluator.py](backend/app/rag/answer_evaluator.py) 與 [backend/scripts/evaluate_answers.py](backend/scripts/evaluate_answers.py): 用真實模型跑完整研究迴圈的答案評估（答案事實、引用、評分模型），題組在 `backend/eval/answer_golden.jsonl`
 - [backend/config/domain_profile.json](backend/config/domain_profile.json): 領域詞、記錄日期欄位與摘要備援規則，由 `app/core/domain_profile.py` 嚴格驗證
 
 ### 核心與服務
@@ -102,7 +103,7 @@
 
 - **後端測試**：在 `backend/` 執行 `python -m pytest`。版本庫沒有 `backend/.env`，必填設定需以環境變數提供：`ENABLE_WEB_SEARCH=true`、`CONVERSATION_HISTORY_MESSAGES=6`、`DATABASE_URL`（拋棄式的 SQLite，Windows 請用 `sqlite:///C:/...` 形式；測試會清空 `agent_skills` 等資料表，不要指向開發或正式資料庫）、`LOG_DIR=logs`、`SKILLS_DIR=data/skills`、`RRF_K=60`、`RERANK_RELEVANCE_THRESHOLD=0.2`、`WEB_FETCH_ALLOWED_DOMAINS=*`、`BLOCK_WEB_TOOLS_AFTER_KB=true`、`DOMAIN_PROFILE_PATH=config/domain_profile.json`、`ALLOW_REGISTRATION=false`、`LOGIN_MAX_FAILURES_PER_ACCOUNT=5`、`LOGIN_MAX_FAILURES_PER_ADDRESS=20`、`LOGIN_FAILURE_WINDOW_SECONDS=900`、`LOGIN_LOCKOUT_SECONDS=900`、`HOST=127.0.0.1`、`RELOAD=false`、`COOKIE_SECURE=false`、`ENABLE_API_DOCS=false`，以及有效的 Fernet 金鑰 `TOOL_SECRETS_KEY`（以 `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"` 產生）。匯入 `jwt_auth.py` 時會載入 `backend/keys/` 的 RSA 金鑰（不存在時自動產生），該目錄必須可寫入。以舊版結構建立的 SQLite 測試資料庫請先刪除，避免缺少新欄位。部分測試會載入實際的嵌入與重排模型；Windows 使用者目錄含非 ASCII 字元時加上 `--basetemp=<ASCII 路徑>`，否則 FAISS 寫檔失敗。
 - **前端檢查**：在 `frontend/` 執行 `bun run test --run`（Vitest）、`bun run lint`（只涵蓋 JS / JSX）與 `bun x tsc --noEmit`。
-- **檢索品質**：`python scripts/evaluate_retrieval.py --golden <問答集> --k 1 3 5 --relevance-thresholds 0.1 0.2 0.3`（唯讀，可與後端同時執行）；改動檢索程式時以 `--corpus eval/corpus --golden eval/corpus_golden.jsonl` 跑內建基準比較前後的片段層級 nDCG 與候選召回。
+- **檢索品質**：`python scripts/evaluate_retrieval.py --golden <問答集> --k 1 3 5 --relevance-thresholds 0.1 0.2 0.3`（唯讀，可與後端同時執行）；改動檢索程式時以 `--corpus eval/corpus --golden eval/corpus_golden.jsonl` 跑內建基準比較前後的片段層級 nDCG 與候選召回；改動提示詞或研究迴圈時以 `python scripts/evaluate_answers.py --corpus eval/corpus --golden eval/answer_golden.jsonl …` 比較最後回答的通過率。
 
 ## 詳細文件
 
@@ -112,7 +113,7 @@
 - [設定參考](docs/configuration.md): 每個環境變數的預設值與作用、供應商路由、門檻校準、資源上限
 - [部署指南](docs/deployment.md): Docker Compose 部署、HTTPS、備份與更新
 - [疑難排解](docs/troubleshooting.md): 啟動、登入、前端與工具的常見錯誤
-- [升級指南](docs/upgrading.md): 2.x 升級到 3.0.0、3.0.0 升級到 4.0.0、4.0.0 升級到 5.0.0、5.0.0 升級到 6.0.0、6.0.0 升級到 7.0.0、7.0.0 升級到 8.0.0、8.0.x 升級到 8.1.0、8.1.0 升級到 8.2.0、8.2.0 升級到 8.2.1、8.2.1 升級到 8.2.2、8.2.2 升級到 8.3.0、8.3.0 升級到 8.4.0、8.4.0 升級到 8.5.0、8.5.0 升級到 8.5.1、8.5.1 升級到 8.6.0、8.6.0 升級到 8.7.0、8.7.0 升級到 8.8.0、8.8.0 升級到 8.9.0、8.9.0 升級到 8.9.1、8.9.1 升級到 8.10.0、8.10.0 升級到 8.11.0、8.11.0 升級到 8.12.0、8.12.0 升級到 8.12.1、8.12.1 升級到 8.12.2 的步驟與回退
+- [升級指南](docs/upgrading.md): 2.x 升級到 3.0.0、3.0.0 升級到 4.0.0、4.0.0 升級到 5.0.0、5.0.0 升級到 6.0.0、6.0.0 升級到 7.0.0、7.0.0 升級到 8.0.0、8.0.x 升級到 8.1.0、8.1.0 升級到 8.2.0、8.2.0 升級到 8.2.1、8.2.1 升級到 8.2.2、8.2.2 升級到 8.3.0、8.3.0 升級到 8.4.0、8.4.0 升級到 8.5.0、8.5.0 升級到 8.5.1、8.5.1 升級到 8.6.0、8.6.0 升級到 8.7.0、8.7.0 升級到 8.8.0、8.8.0 升級到 8.9.0、8.9.0 升級到 8.9.1、8.9.1 升級到 8.10.0、8.10.0 升級到 8.11.0、8.11.0 升級到 8.12.0、8.12.0 升級到 8.12.1、8.12.1 升級到 8.12.2、8.12.2 升級到 8.13.0 的步驟與回退
 - [架構決策紀錄](docs/adr/README.md): ADR-0001 至 ADR-0007
 - [版本變更紀錄](CHANGELOG.md): 各版本變更
 - [貢獻指南](.github/CONTRIBUTING.md): 分支與 Commit 訊息、測試、相依套件、文件雙語與介紹頁同步

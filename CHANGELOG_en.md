@@ -6,6 +6,7 @@ All notable changes to AskMiao are documented in this file. The format is based 
 
 | Version | Release date | Highlights |
 |---|---|---|
+| [8.13.0](#8130---2026-11-13) | 2026-11-13 | Answer-level evaluation; research mode searches the knowledge base at most 6 times per question, so questions with no answer no longer take minutes; knowledge-base results carry the neighbouring text, so the model can read articles and tables that chunking cut apart |
 | [8.12.2](#8122---2026-11-11) | 2026-11-11 | The research assistant always searches the knowledge base before answering, instead of relying only on AI document outlines and summaries or on attached images |
 | [8.12.1](#8121---2026-11-11) | 2026-11-11 | The conversation column widens with the window on wide screens (48rem to 72rem); the input box and the no-model notice match its width |
 | [8.12.0](#8120---2026-11-10) | 2026-11-10 | Web page previews fill the panel and gain a desktop layout, a source tab, and reload; when a link cannot open, one click returns to the page |
@@ -51,6 +52,19 @@ All notable changes to AskMiao are documented in this file. The format is based 
 ---
 
 ## [Unreleased]
+
+## [8.13.0] - 2026-11-13
+
+### Added
+
+- **Answer-level evaluation**: `scripts/evaluate_answers.py` and `app/rag/answer_evaluator.py` run the full research loop with a given real model and grade the final answers rather than only the retrieval results. Each answer is graded on four things: answer facts (a number must not run into other digits, so "500" does not match "5,500"), whether the citations include a correct document, whether the knowledge base was searched, and a judge model (required, because only the judge can grade negative questions). The judge gets the full text of the correct passages and of the chunks the answer cites. Each question can be repeated, and the report lists pass rates by question kind, failure reasons, and per-question stability. The bundled set `backend/eval/answer_golden.jsonl` has 136 questions: all 118 retrieval benchmark questions, plus calculations, comparisons, multi-document questions, false premises, counting, abbreviations, and negative questions that invite answers from general knowledge. See [ADR-0008](docs/adr/0008-answer-level-evaluation-and-search-guards_en.md) for the design and measurements.
+
+### Changed
+
+- **Neighbouring text in knowledge-base results**: chunks of text documents returned by `search_knowledge_base` also carry `context_before` and `context_after`, the text right before and after them in the same document with the overlap removed. The model can now connect a fine stated at the start of an article with an offence listed in the next chunk, or the halves of a table that the split cut apart; citation numbers still point at the matched chunk. Structured records and Q&A chunks kept whole do not get them.
+- **Knowledge-base search limit in research mode**: each question may call the knowledge-base tools at most 6 times (`MAX_RESEARCH_KNOWLEDGE_SEARCHES`), and a call with the same arguments as an earlier one is not run again but still counts; the code blocks these calls, and once the budget is spent the loop has the model answer from what it has without calling more tools. A search that fails to run may be retried with the same arguments. Questions the knowledge base cannot answer used to be re-queried with single characters, up to 31 searches and 5 minutes; questions it can answer never needed more than 4 searches and are unaffected. Agent mode has no limit.
+- **Prompts**: when nothing is found, search again once or twice with wording the documents may use (full names, formal terms, Chinese) and then say plainly that nothing was found; this rule is in both the system prompt and the tool description. When the knowledge base has nothing on the item asked about, say so first, and related rules may be added but not presented as that item. Answers no longer end with a self-made list of sources. The keyword description of `filter_and_count_records` reminds the model to write the full "field: value" when counting by a field, because the value alone also counts records where another field happens to contain it.
+- **`query` is required for `search_knowledge_base`**: a blank query returns an error instead of searching for an empty string.
 
 ## [8.12.2] - 2026-11-11
 
