@@ -1,0 +1,52 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 188" width="320" height="188" role="img" aria-labelledby="relay-scroll-title">
+  <title id="relay-scroll-title">ListenMiao 匯出的會議逐字稿卷軸：產品週會</title>
+  <defs>
+    <linearGradient id="relay-scroll-shade" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#5a4632" stop-opacity="0.22"/>
+      <stop offset="0.12" stop-color="#5a4632" stop-opacity="0"/>
+      <stop offset="0.88" stop-color="#5a4632" stop-opacity="0"/>
+      <stop offset="1" stop-color="#5a4632" stop-opacity="0.22"/>
+    </linearGradient>
+    <linearGradient id="relay-scroll-rod" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#6b5848"/>
+      <stop offset="0.45" stop-color="#3a2f2a"/>
+      <stop offset="1" stop-color="#241c18"/>
+    </linearGradient>
+  </defs>
+  <g id="relay-scroll-paper">
+    <rect x="20" y="12" width="280" height="164" fill="#f6eedc"/>
+    <rect x="20" y="12" width="280" height="164" fill="url(#relay-scroll-shade)"/>
+    <path d="M20.5 12V176M299.5 12V176" stroke="#e2d3b1" stroke-width="1"/>
+    <g id="relay-scroll-mark" opacity="0">
+      <rect x="26" y="68" width="268" height="38" rx="6" fill="#ffe08a" fill-opacity="0.85"/>
+    </g>
+    <g id="relay-scroll-lines">
+      <text x="34" y="38" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="9" fill="#8a7356">[00:00:02] 說話者 2</text>
+      <text x="34" y="54" font-family="'Noto Sans TC', 'PingFang TC', 'Microsoft JhengHei', sans-serif" font-size="11.5" font-weight="500" fill="#3b3226">API 文件，昨天更新了， 熱詞也加好了。</text>
+      <text x="34" y="82" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="9" fill="#8a7356">[00:00:06] 說話者 1</text>
+      <text x="34" y="98" font-family="'Noto Sans TC', 'PingFang TC', 'Microsoft JhengHei', sans-serif" font-size="11.5" font-weight="500" fill="#3b3226">那 Docker 映像檔就下週發佈</text>
+      <text x="34" y="126" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="9" fill="#8a7356">[00:00:09] 說話者 2</text>
+      <text x="34" y="142" font-family="'Noto Sans TC', 'PingFang TC', 'Microsoft JhengHei', sans-serif" font-size="11.5" font-weight="500" fill="#3b3226">測試報告我週五前補上</text>
+    </g>
+    <g id="relay-scroll-cite" opacity="0">
+      <rect x="258" y="86" width="28" height="16" rx="5" fill="#e12933"/>
+      <text x="272" y="97.5" text-anchor="middle" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="9.5" font-weight="700" fill="#ffffff">[1]</text>
+    </g>
+  </g>
+  <g id="relay-scroll-roller-bottom">
+    <rect x="14" y="172" width="292" height="16" rx="8" fill="url(#relay-scroll-rod)"/>
+    <rect x="22" y="175" width="276" height="2.5" rx="1.25" fill="#8a7462" fill-opacity="0.55"/>
+    <circle cx="10" cy="180" r="8" fill="#c8963e"/>
+    <circle cx="310" cy="180" r="8" fill="#c8963e"/>
+    <circle cx="8" cy="177.5" r="2.4" fill="#ebc77a"/>
+    <circle cx="308" cy="177.5" r="2.4" fill="#ebc77a"/>
+  </g>
+  <g id="relay-scroll-roller-top">
+    <rect x="14" y="0" width="292" height="16" rx="8" fill="url(#relay-scroll-rod)"/>
+    <rect x="22" y="3" width="276" height="2.5" rx="1.25" fill="#8a7462" fill-opacity="0.55"/>
+    <circle cx="10" cy="8" r="8" fill="#c8963e"/>
+    <circle cx="310" cy="8" r="8" fill="#c8963e"/>
+    <circle cx="8" cy="5.5" r="2.4" fill="#ebc77a"/>
+    <circle cx="308" cy="5.5" r="2.4" fill="#ebc77a"/>
+  </g>
+</svg>

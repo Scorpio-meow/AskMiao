@@ -1,4 +1,5 @@
 import argparse
+import ast
 import json
 import re
 import sys
@@ -10,6 +11,11 @@ ROOT = Path(__file__).resolve().parents[2]
 PAGE = ROOT / "site" / "index.html"
 CHANGELOG = ROOT / "CHANGELOG.md"
 VERSION_FILE = ROOT / "backend" / "app" / "__init__.py"
+ENV_EXAMPLE = ROOT / "backend" / ".env.example"
+SPLITTER_SOURCE = ROOT / "backend" / "app" / "rag" / "pipeline.py"
+BM25_SOURCE = ROOT / "backend" / "app" / "rag" / "indices" / "bm25_store.py"
+TOKENIZER_SOURCE = ROOT / "backend" / "app" / "rag" / "tokenizers.py"
+RAG_SETTINGS_SLOT = '<script type="application/json" data-rag-settings></script>'
 RELEASE_HEADING = re.compile(r"^## \[(\d+\.\d+\.\d+)\] - (\d{4}-\d{2}-\d{2})$", re.M)
 VERSION_LINE = re.compile(r'^__version__ = "([^"]+)"$', re.M)
 ABSOLUTE_TAG = re.compile(r"<(?:link|meta)\b[^>]*\sdata-absolute\b[^>]*>")
@@ -73,6 +79,50 @@ def stamp_structured_data(base, html, version, date):
     return html[:start] + block + html[end + len(SCRIPT_CLOSE):]
 
 
+def env_example_int(text, key):
+    match = re.search(rf"^{key}=(\d+)$", text, re.M)
+    if not match:
+        fail(f"{ENV_EXAMPLE.name} 找不到 {key}")
+    return int(match.group(1))
+
+
+def module_tree(path):
+    return ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+
+
+def assigned_value(tree, name, source):
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Assign) and any(isinstance(target, ast.Name) and target.id == name for target in node.targets):
+            return node.value
+    fail(f"{source.name} 找不到 {name}")
+
+
+def rag_settings():
+    env = ENV_EXAMPLE.read_text(encoding="utf-8")
+    splitter = next((node for node in ast.walk(module_tree(SPLITTER_SOURCE)) if isinstance(node, ast.FunctionDef) and node.name == "_create_text_splitter"), None)
+    if splitter is None:
+        fail(f"{SPLITTER_SOURCE.name} 找不到 _create_text_splitter")
+    separators = ast.literal_eval(assigned_value(splitter, "separators", SPLITTER_SOURCE))
+    ngram_fields = ast.literal_eval(assigned_value(module_tree(BM25_SOURCE), "HAN_NGRAM_FIELDS", BM25_SOURCE))
+    han_run = assigned_value(module_tree(TOKENIZER_SOURCE), "HAN_RUN", TOKENIZER_SOURCE)
+    if not (isinstance(han_run, ast.Call) and han_run.args and isinstance(han_run.args[0], ast.Constant)):
+        fail(f"{TOKENIZER_SOURCE.name} 的 HAN_RUN 不是 re.compile(字串)")
+    return {
+        "chunkSize": env_example_int(env, "CHUNK_SIZE"),
+        "chunkOverlap": env_example_int(env, "CHUNK_OVERLAP"),
+        "separators": separators,
+        "hanRun": han_run.args[0].value,
+        "hanNgramSizes": sorted(ngram_fields.values()),
+    }
+
+
+def stamp_rag_settings(html):
+    if html.count(RAG_SETTINGS_SLOT) != 1:
+        fail(f"頁面要剛好有一個 {RAG_SETTINGS_SLOT}")
+    payload = json.dumps(rag_settings(), ensure_ascii=False).replace("</", "<\\/")
+    return html.replace(RAG_SETTINGS_SLOT, f'<script type="application/json" data-rag-settings>{payload}</script>')
+
+
 def main():
     parser = argparse.ArgumentParser(description="部署前把版本、發行日期與絕對網址寫進介紹網站，並在 stdout 印出 GitHub Actions 的步驟輸出")
     parser.add_argument("--base-url", required=True)
@@ -93,11 +143,12 @@ def main():
     html, absolute_count = absolutize(base, html)
     html, release_count = fill_release(html, {"version": version, "date": date})
     html = stamp_structured_data(base, html, version, date)
+    html = stamp_rag_settings(html)
     PAGE.write_text(html, encoding="utf-8", newline="")
 
     print(f"version={version}")
     print(f"release_date={date}")
-    print(f"{version}（{date}）：絕對網址 {absolute_count} 處、版本欄位 {release_count} 處、結構化資料 1 處", file=sys.stderr)
+    print(f"{version}（{date}）：絕對網址 {absolute_count} 處、版本欄位 {release_count} 處、結構化資料 1 處、檢索設定 1 處", file=sys.stderr)
 
 
 if __name__ == "__main__":

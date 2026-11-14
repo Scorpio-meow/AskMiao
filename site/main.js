@@ -13,6 +13,53 @@
     });
     return transition;
   };
+  const ticker = (() => {
+    const tasks = new Set();
+    let handle = 0;
+    const tick = (now) => {
+      tasks.forEach((task) => {
+        if (task(now) === false) tasks.delete(task);
+      });
+      handle = tasks.size ? requestAnimationFrame(tick) : 0;
+    };
+    return {
+      add(task) {
+        tasks.add(task);
+        if (!handle) handle = requestAnimationFrame(tick);
+        return () => tasks.delete(task);
+      },
+    };
+  })();
+  const tween = (duration, onFrame) => {
+    const start = performance.now();
+    return ticker.add((now) => {
+      const progress = Math.min(1, (now - start) / duration);
+      onFrame(progress);
+      return progress < 1;
+    });
+  };
+  const onVisible = (() => {
+    const handlers = new Map();
+    const observers = new Map();
+    return (element, handler, options = {}) => {
+      const key = `${options.rootMargin ?? '0px'}|${options.threshold ?? 0}`;
+      if (!observers.has(key)) {
+        observers.set(key, new IntersectionObserver((entries) => {
+          entries.forEach((entry) => handlers.get(entry.target)?.forEach((fn) => fn(entry.isIntersecting, entry)));
+        }, { rootMargin: options.rootMargin ?? '0px', threshold: options.threshold ?? 0 }));
+      }
+      if (!handlers.has(element)) handlers.set(element, new Set());
+      handlers.get(element).add(handler);
+      observers.get(key).observe(element);
+    };
+  })();
+  const reorder = (container, nodes) => {
+    const canMove = typeof container.moveBefore === 'function';
+    nodes.forEach((node) => {
+      if (canMove && node.parentNode === container) container.moveBefore(node, null);
+      else container.append(node);
+    });
+  };
   root.addEventListener('click', (event) => {
     if (!liveTransition || event.target !== root) return;
     liveTransition.skipTransition();
@@ -24,14 +71,15 @@
     const MUSIC_KEY = 'askmiao-site-music';
     const SFX_LEVEL = 0.55;
     const MUSIC_LEVEL = 0.2;
-    const NOTE = { A3: 220, C4: 261.63, D4: 293.66, E4: 329.63, G4: 392, A4: 440, C5: 523.25, D5: 587.33, E5: 659.25, G5: 783.99, A5: 880, C6: 1046.5, D6: 1174.66, E6: 1318.51 };
-    const PENTATONIC = [NOTE.A4, NOTE.C5, NOTE.D5, NOTE.E5, NOTE.G5, NOTE.A5, NOTE.C6, NOTE.D6, NOTE.E6];
+    const NOTE = { A3: 220, C4: 261.63, D4: 293.66, E4: 329.63, A4: 440, C5: 523.25, D5: 587.33, E5: 659.25, FS5: 739.99, G5: 783.99, A5: 880, C6: 1046.5, D6: 1174.66, E6: 1318.51 };
+    const MOTIF = [NOTE.D5, NOTE.FS5, NOTE.A5];
+    const MOTIF_STEP_S = 0.11;
     const button = document.querySelector('[data-sound-btn]');
     const panel = document.querySelector('[data-sound-panel]');
     const sfxSwitch = document.querySelector('[data-sound-sfx]');
     const musicSwitch = document.querySelector('[data-sound-music]');
     const AudioContextClass = window.AudioContext || window.webkitAudioContext;
-    const silent = { play: () => { }, tick: () => { }, duck: () => { } };
+    const silent = { play: () => { }, duck: () => { }, musicLevel: () => null };
     if (!button || !panel || !AudioContextClass) {
       if (button) button.hidden = true;
       return silent;
@@ -72,6 +120,20 @@
     let musicSource = null;
     let musicLoad = null;
     let stopTimer = 0;
+    let analyser = null;
+    let spectrum = null;
+    const ANALYSER_SIZE = 256;
+    const ANALYSER_SMOOTHING = 0.7;
+    const LOW_BAND_HZ = [40, 900];
+    const HIGH_BAND_HZ = [2500, 9000];
+    const bandLevel = ([from, to]) => {
+      const binHz = ctx.sampleRate / ANALYSER_SIZE;
+      const first = Math.max(0, Math.floor(from / binHz));
+      const last = Math.min(spectrum.length - 1, Math.ceil(to / binHz));
+      let sum = 0;
+      for (let index = first; index <= last; index += 1) sum += spectrum[index];
+      return sum / ((last - first + 1) * 255);
+    };
     const ensure = () => {
       if (!ctx) {
         ctx = new AudioContextClass();
@@ -96,6 +158,11 @@
         musicBus = ctx.createGain();
         musicBus.gain.value = 0;
         musicBus.connect(ctx.destination);
+        analyser = ctx.createAnalyser();
+        analyser.fftSize = ANALYSER_SIZE;
+        analyser.smoothingTimeConstant = ANALYSER_SMOOTHING;
+        musicBus.connect(analyser);
+        spectrum = new Uint8Array(analyser.frequencyBinCount);
       }
       if (ctx.state === 'suspended' && !document.hidden) ctx.resume();
       return ctx;
@@ -147,13 +214,9 @@
       oscillator.stop(at + duration + 0.05);
     };
     const CUES = {
-      tap: (t) => blip(NOTE.E5, t, 0.08, 0.12, 'sine'),
-      open: (t) => { blip(NOTE.A4, t, 0.12, 0.12, 'sine'); blip(NOTE.E5, t + 0.05, 0.16, 0.12, 'sine'); },
-      close: (t) => { blip(NOTE.E5, t, 0.12, 0.11, 'sine'); blip(NOTE.A4, t + 0.05, 0.16, 0.11, 'sine'); },
-      on: (t) => { blip(NOTE.C5, t, 0.12, 0.14, 'triangle'); blip(NOTE.G5, t + 0.07, 0.2, 0.14, 'triangle'); },
-      off: (t) => { blip(NOTE.G5, t, 0.12, 0.12, 'triangle'); blip(NOTE.C5, t + 0.07, 0.2, 0.12, 'triangle'); },
-      night: (t) => { bell(NOTE.E6, t, 0.9, 0.08); bell(NOTE.A5, t + 0.09, 1.1, 0.06); },
-      day: (t) => { bell(NOTE.C6, t, 0.7, 0.08); bell(NOTE.E6, t + 0.08, 0.8, 0.06); },
+      motif: (t) => MOTIF.forEach((frequency, index) => bell(frequency, t + index * MOTIF_STEP_S, index === MOTIF.length - 1 ? 1.4 : 0.7, 0.08)),
+      on: (t) => { blip(NOTE.D5, t, 0.12, 0.14, 'triangle'); blip(NOTE.A5, t + 0.07, 0.2, 0.14, 'triangle'); },
+      off: (t) => { blip(NOTE.A5, t, 0.12, 0.12, 'triangle'); blip(NOTE.D5, t + 0.07, 0.2, 0.12, 'triangle'); },
       cite: (t) => { bell(NOTE.E6, t, 0.8, 0.09); bell(NOTE.A5, t + 0.04, 0.6, 0.04); },
       approve: (t) => [NOTE.C5, NOTE.E5, NOTE.G5, NOTE.C6].forEach((frequency, index) => bell(frequency, t + index * 0.075, 0.9, 0.08)),
       deny: (t) => { thud(NOTE.E4, NOTE.C4, t, 0.22, 0.2); thud(NOTE.C4, NOTE.A3, t + 0.12, 0.3, 0.18); },
@@ -163,9 +226,8 @@
       more: (t) => blip(NOTE.E5, t, 0.14, 0.1, 'triangle'),
       fewer: (t) => blip(NOTE.C5, t, 0.14, 0.1, 'triangle'),
       copy: (t) => { blip(NOTE.E5, t, 0.1, 0.12, 'sine'); blip(NOTE.A5, t + 0.06, 0.18, 0.12, 'sine'); },
-      research: (t) => { bell(NOTE.E5, t, 0.5, 0.07); bell(NOTE.A4, t + 0.07, 0.6, 0.06); },
-      agent: (t) => [NOTE.C5, NOTE.E5, NOTE.G5].forEach((frequency, index) => bell(frequency, t + index * 0.06, 0.6, 0.06)),
       remember: (t) => [NOTE.C5, NOTE.E5, NOTE.G5, NOTE.C6, NOTE.E6].forEach((frequency, index) => bell(frequency, t + index * 0.07, 0.9, 0.07)),
+      void: (t) => { bell(NOTE.A4, t, 0.9, 0.05); bell(NOTE.E4, t + 0.14, 1.1, 0.04); },
     };
     const play = (name) => {
       if (!sfxOn || !CUES[name]) return;
@@ -175,17 +237,6 @@
         return;
       }
       ctx.resume().then(() => CUES[name](ctx.currentTime + 0.01));
-    };
-    let lastTick = 0;
-    const tick = (ratio) => {
-      if (!sfxOn || reduceMotion.matches) return;
-      const now = performance.now();
-      if (now - lastTick < 60) return;
-      lastTick = now;
-      ensure();
-      if (ctx.state !== 'running') return;
-      const frequency = PENTATONIC[Math.round(Math.min(1, Math.max(0, ratio)) * (PENTATONIC.length - 1))];
-      blip(frequency, ctx.currentTime + 0.005, 0.05, 0.06, 'sine');
     };
     const reflect = () => {
       button.dataset.state = sfxOn || musicOn ? 'on' : 'off';
@@ -214,6 +265,7 @@
       }
       return musicLoad;
     };
+    const announce = () => document.dispatchEvent(new CustomEvent('askmiao:music'));
     const rampMusic = (level, seconds) => {
       const now = ctx.currentTime;
       musicBus.gain.cancelScheduledValues(now);
@@ -237,6 +289,7 @@
           musicSource.start(0, musicLoop.start);
         }
         rampMusic(ducked ? 0 : MUSIC_LEVEL, 2.5);
+        announce();
       }).catch(() => {
         musicLoad = null;
         musicOn = false;
@@ -258,15 +311,15 @@
     };
     button.addEventListener('click', () => {
       if (musicState === 'armed') startMusic();
-      play(panel.matches(':popover-open') ? 'close' : 'open');
     });
     sfxSwitch.addEventListener('change', () => {
+      if (!sfxSwitch.checked) play('off');
       sfxOn = sfxSwitch.checked;
       writePref(SFX_KEY, sfxOn);
       reflect();
       if (sfxOn) {
         ensure();
-        play('on');
+        play('motif');
       }
     });
     musicSwitch.addEventListener('change', () => {
@@ -287,6 +340,7 @@
       } else if (sfxOn || musicState === 'playing') {
         ctx.resume().then(() => {
           if (musicState === 'playing' && musicSource) rampMusic(ducked ? 0 : MUSIC_LEVEL, 1.2);
+          announce();
         });
       }
     });
@@ -303,10 +357,15 @@
     reflect();
     return {
       play,
-      tick,
+      musicLevel() {
+        if (musicState !== 'playing' || !musicSource || ducked || !analyser || ctx.state !== 'running') return null;
+        analyser.getByteFrequencyData(spectrum);
+        return { low: bandLevel(LOW_BAND_HZ), high: bandLevel(HIGH_BAND_HZ) };
+      },
       duck(on) {
         ducked = on;
         if (ctx && musicSource && musicState === 'playing') rampMusic(on ? 0 : MUSIC_LEVEL, on ? 0.6 : 2);
+        announce();
       },
     };
   })();
@@ -349,16 +408,41 @@
   applyScheme(readStoredScheme());
   const themeToggle = document.querySelector('[data-theme-toggle]');
   if (themeToggle) {
+    const NIGHTFALL_MS = 2600;
+    const FLARE_MS = 1100;
+    const flare = document.createElement('span');
+    flare.className = 'sky-flare';
+    flare.setAttribute('aria-hidden', 'true');
+    document.body.append(flare);
+    let nightfallTimer = 0;
+    const horizon = (target, x, y) => {
+      flare.dataset.kind = target === 'dark' ? 'sunset' : 'sunrise';
+      flare.style.setProperty('--fx', `${x}px`);
+      flare.style.setProperty('--fy', `${y}px`);
+      flare.getAnimations().forEach((animation) => animation.cancel());
+      flare.animate([{ opacity: 0.95, scale: 0.15 }, { opacity: 0.6, scale: 3, offset: 0.35 }, { opacity: 0, scale: 9 }], { duration: FLARE_MS, easing: 'cubic-bezier(0.16, 1, 0.3, 1)' });
+    };
+    const nightfall = (target) => {
+      clearTimeout(nightfallTimer);
+      root.classList.remove('is-nightfall');
+      if (target !== 'dark' || !motionAllowed()) return;
+      void root.offsetWidth;
+      root.classList.add('is-nightfall');
+      nightfallTimer = setTimeout(() => root.classList.remove('is-nightfall'), NIGHTFALL_MS);
+    };
     themeToggle.addEventListener('click', () => {
       const target = renderedScheme() === 'dark' ? 'light' : 'dark';
       const stored = target === systemScheme() ? null : target;
       writeStoredScheme(stored);
-      sound.play(target === 'dark' ? 'night' : 'day');
-      const swap = () => applyScheme(stored);
+      const swap = () => {
+        applyScheme(stored);
+        nightfall(target);
+      };
       if (document.startViewTransition && motionAllowed()) {
         const rect = themeToggle.getBoundingClientRect();
         const x = rect.left + rect.width / 2;
         const y = rect.top + rect.height / 2;
+        horizon(target, x, y);
         const radius = Math.hypot(Math.max(x, window.innerWidth - x), Math.max(y, window.innerHeight - y));
         root.style.setProperty('--vt-x', `${x}px`);
         root.style.setProperty('--vt-y', `${y}px`);
@@ -387,11 +471,9 @@
     menuOpen.addEventListener('click', () => {
       menu.showModal();
       menuOpen.setAttribute('aria-expanded', 'true');
-      sound.play('open');
     });
     menu.addEventListener('close', () => {
       menuOpen.setAttribute('aria-expanded', 'false');
-      sound.play('close');
     });
     menu.querySelector('[data-menu-close]').addEventListener('click', () => menu.close());
     menu.querySelectorAll('a').forEach((link) => link.addEventListener('click', () => menu.close()));
@@ -425,17 +507,22 @@
   document.querySelectorAll('main > section[id]').forEach((section) => spy.observe(section));
   const hero = document.querySelector('[data-spotlight]');
   if (hero) {
-    let frame = 0;
+    let pointer = null;
+    let queued = false;
     hero.addEventListener('pointermove', (event) => {
       if (!pointerEffects()) return;
-      cancelAnimationFrame(frame);
-      frame = requestAnimationFrame(() => {
+      pointer = event;
+      if (queued) return;
+      queued = true;
+      ticker.add(() => {
+        queued = false;
         const rect = hero.getBoundingClientRect();
-        hero.style.setProperty('--mx', `${event.clientX - rect.left}px`);
-        hero.style.setProperty('--my', `${event.clientY - rect.top}px`);
+        hero.style.setProperty('--mx', `${pointer.clientX - rect.left}px`);
+        hero.style.setProperty('--my', `${pointer.clientY - rect.top}px`);
         hero.classList.add('is-lit');
+        return false;
       });
-    });
+    }, { passive: true });
     hero.addEventListener('pointerleave', () => hero.classList.remove('is-lit'));
   }
   document.querySelectorAll('[data-magnetic]').forEach((element) => {
@@ -555,7 +642,6 @@
     const label = marqueeToggle.querySelector('[data-marquee-label]');
     const icon = marqueeToggle.querySelector('use');
     marqueeToggle.addEventListener('click', () => {
-      sound.play('tap');
       const paused = marquee.classList.toggle('is-paused');
       marqueeToggle.setAttribute('aria-pressed', String(paused));
       label.textContent = paused ? '繼續捲動' : '暫停捲動';
@@ -596,14 +682,12 @@
         story.dataset.mode = input.value;
         swapText(hintMode, hintText(input.value));
         traceTitle.textContent = traceText(input.value);
-        sound.play(input.value);
       });
     });
     webToggle.addEventListener('click', () => {
       const allowed = webToggle.getAttribute('aria-pressed') !== 'true';
       webToggle.setAttribute('aria-pressed', String(allowed));
       swapText(hintWeb, hintText(allowed ? 'web-on' : 'web-off'));
-      sound.play(allowed ? 'on' : 'off');
     });
   }
   const plan = document.querySelector('[data-plan]');
@@ -620,7 +704,44 @@
     const detail = citeDemo.querySelector('[data-cite-detail]');
     const cites = Array.from(citeDemo.querySelectorAll('.cite[data-cite]'));
     const sources = Array.from(citeDemo.querySelectorAll('[data-src]'));
+    const tracer = citeDemo.querySelector('[data-tracer]');
+    const tracerLine = tracer.firstElementChild;
+    const TRACE_DELAY_MS = 160;
+    const TRACE_MS = 520;
     let shown = null;
+    let traced = false;
+    const offsetWithin = (element) => {
+      let x = 0;
+      let y = 0;
+      let node = element;
+      while (node && node !== citeDemo) {
+        x += node.offsetLeft;
+        y += node.offsetTop;
+        node = node.offsetParent;
+      }
+      return { x, y, width: element.offsetWidth, height: element.offsetHeight };
+    };
+    const trace = (animate) => {
+      const cite = cites.find((item) => item.dataset.cite === shown);
+      const target = detail.querySelector('[data-trace-target]');
+      if (!cite || !target) return;
+      const from = offsetWithin(cite);
+      const to = offsetWithin(target);
+      const x1 = from.x + from.width / 2;
+      const y1 = from.y + from.height;
+      const x2 = Math.min(Math.max(x1, to.x + 14), to.x + to.width - 14);
+      const y2 = to.y + 2;
+      const length = Math.hypot(x2 - x1, y2 - y1);
+      tracer.style.setProperty('--x', `${x1}px`);
+      tracer.style.setProperty('--y', `${y1}px`);
+      tracer.style.setProperty('--len', `${length}px`);
+      tracer.style.setProperty('--angle', `${Math.atan2(y2 - y1, x2 - x1)}rad`);
+      tracer.classList.add('is-on');
+      if (!animate || !motionAllowed()) return;
+      tracerLine.getAnimations().forEach((animation) => animation.cancel());
+      tracerLine.animate([{ scale: '0 1' }, { scale: '1 1' }], { duration: TRACE_MS, delay: TRACE_DELAY_MS, easing: 'cubic-bezier(0.16, 1, 0.3, 1)', fill: 'backwards' });
+      tracer.lastElementChild.animate([{ opacity: 0, scale: 0.2 }, { opacity: 1, scale: 1 }], { duration: TRACE_MS / 2, delay: TRACE_DELAY_MS + TRACE_MS * 0.7, easing: 'cubic-bezier(0.34, 1.56, 0.64, 1)', fill: 'backwards' });
+    };
     const show = (number, animate) => {
       if (number === shown) return;
       const direction = Number(number) > Number(shown) ? 'is-next' : 'is-prev';
@@ -633,6 +754,7 @@
         detail.classList.remove('is-next', 'is-prev');
         restartAnimation(detail, direction);
       }
+      if (traced) trace(animate);
     };
     cites.forEach((cite) => {
       cite.addEventListener('click', () => {
@@ -643,7 +765,16 @@
         if (finePointer.matches && cite.getAttribute('aria-pressed') !== 'true') show(cite.dataset.cite, true);
       });
     });
-    show(cites[0].dataset.cite, false);
+    show((cites.find((cite) => cite.getAttribute('aria-pressed') === 'true') ?? cites[0]).dataset.cite, false);
+    onVisible(citeDemo, (visible) => {
+      if (!visible || traced) return;
+      traced = true;
+      citeDemo.classList.add('is-traced');
+      trace(true);
+    }, { threshold: 0.6 });
+    new ResizeObserver(() => {
+      if (traced) trace(false);
+    }).observe(citeDemo);
   }
   const APPROVAL_TIMEOUT_SECONDS = 300;
   const approval = document.querySelector('[data-approval]');
@@ -806,7 +937,112 @@
   const rrf = document.querySelector('[data-rrf]');
   const rrfData = document.getElementById('rrf-data');
   if (rrf && rrfData) {
-    const { rerankWeight, finalK, chunks, queries } = JSON.parse(rrfData.textContent);
+    const { rerankWeight, finalK, chunks, queries, space } = JSON.parse(rrfData.textContent);
+    const FLIP_MS = 460;
+    const ENTER_MS = 320;
+    const ENTER_STAGGER_MS = 40;
+    const LINK_DELAY_MS = 480;
+    const LINK_STAGGER_MS = 90;
+    const EASE_OUT = 'cubic-bezier(0.16, 1, 0.3, 1)';
+    const flip = (container, nodes) => {
+      const before = new Map();
+      Array.from(container.children).forEach((node) => {
+        node.getAnimations().forEach((animation) => animation.cancel());
+        before.set(node, node.getBoundingClientRect().top);
+      });
+      Array.from(container.children).filter((node) => !nodes.includes(node)).forEach((node) => node.remove());
+      reorder(container, nodes);
+      if (!motionAllowed()) return;
+      nodes.forEach((node, index) => {
+        if (before.has(node)) {
+          const delta = before.get(node) - node.getBoundingClientRect().top;
+          if (Math.abs(delta) > 1) node.animate([{ translate: `0 ${delta}px` }, { translate: '0 0' }], { duration: FLIP_MS, easing: EASE_OUT });
+          return;
+        }
+        node.animate([{ opacity: 0, translate: '0 8px' }, { opacity: 1, translate: '0 0' }], { duration: ENTER_MS, delay: index * ENTER_STAGGER_MS, easing: EASE_OUT, fill: 'backwards' });
+      });
+    };
+    const laneRows = { vector: new Map(), bm25: new Map() };
+    const buildLaneRow = (id) => {
+      const item = document.createElement('li');
+      item.dataset.chunk = id;
+      item.title = chunks[id].text;
+      const rank = document.createElement('span');
+      rank.className = 'rrf__rank';
+      const bar = document.createElement('span');
+      bar.className = 'lanebar';
+      bar.setAttribute('aria-hidden', 'true');
+      bar.append(document.createElement('span'));
+      const value = document.createElement('small');
+      value.className = 'lanebar__v';
+      item.append(rank, nameMarkup(id), bar, value);
+      return { item, rank, bar, value };
+    };
+    const spaceMap = rrf.querySelector('[data-space-map]');
+    const spaceList = rrf.querySelector('[data-space-list]');
+    const SVG_NS = 'http://www.w3.org/2000/svg';
+    const svgEl = (tag, attrs) => {
+      const element = document.createElementNS(SVG_NS, tag);
+      Object.entries(attrs).forEach(([key, value]) => element.setAttribute(key, String(value)));
+      return element;
+    };
+    const spacePoints = new Map();
+    const spaceLinks = [];
+    let spaceMarker = null;
+    let spaceQuery = null;
+    if (spaceMap && space) {
+      const linkLayer = svgEl('g', { class: 'space__links' });
+      const pointLayer = svgEl('g', { class: 'space__points' });
+      Object.entries(space.chunks).forEach(([id, [x, y]]) => {
+        const group = svgEl('g', { class: 'space__pt', 'data-chunk': id, transform: `translate(${x} ${y})` });
+        const dot = svgEl('circle', { class: 'space__dot', r: 4.5 });
+        const glow = svgEl('circle', { class: 'space__glow', r: 7.5 });
+        const label = svgEl('text', { class: 'space__label', x: 0, y: -12, 'text-anchor': 'middle' });
+        label.textContent = space.short[id];
+        const rank = svgEl('text', { class: 'space__rank', x: 0, y: 3, 'text-anchor': 'middle' });
+        group.append(dot, glow, rank, label);
+        pointLayer.append(group);
+        spacePoints.set(id, { group, rank, x, y });
+      });
+      for (let index = 0; index < 5; index += 1) {
+        const line = svgEl('line', { class: 'space__link', x1: 0, y1: 0, x2: 0, y2: 0 });
+        linkLayer.append(line);
+        spaceLinks.push(line);
+      }
+      spaceMarker = svgEl('g', { class: 'space__q' });
+      const halo = svgEl('circle', { class: 'space__q-halo', r: 12 });
+      const core = svgEl('path', { class: 'space__q-core', d: 'M0 -7 L1.9 -2.2 L7 -2.2 L2.9 0.9 L4.4 6 L0 3 L-4.4 6 L-2.9 0.9 L-7 -2.2 L-1.9 -2.2 Z' });
+      const label = svgEl('text', { class: 'space__q-label', x: 0, y: 23, 'text-anchor': 'middle' });
+      label.textContent = '問題';
+      spaceMarker.append(halo, core, label);
+      spaceMap.append(linkLayer, pointLayer, spaceMarker);
+    }
+    const renderSpace = (queryKey, query) => {
+      if (!spaceMarker) return;
+      const [qx, qy] = space.queries[queryKey];
+      const moved = spaceQuery !== queryKey;
+      spaceQuery = queryKey;
+      spaceMarker.style.translate = `${qx}px ${qy}px`;
+      spacePoints.forEach((point, id) => {
+        const rank = query.vector.indexOf(id);
+        point.group.classList.toggle('is-near', rank >= 0);
+        point.rank.textContent = rank >= 0 ? String(rank + 1) : '';
+      });
+      query.vector.forEach((id, index) => {
+        const { x, y } = spacePoints.get(id);
+        const line = spaceLinks[index];
+        line.setAttribute('x1', qx);
+        line.setAttribute('y1', qy);
+        line.setAttribute('x2', x);
+        line.setAttribute('y2', y);
+        line.style.transformOrigin = `${qx}px ${qy}px`;
+        if (moved && motionAllowed()) {
+          line.getAnimations().forEach((animation) => animation.cancel());
+          line.animate([{ scale: 0, opacity: 0 }, { scale: 1, opacity: 1 }], { duration: ENTER_MS + index * LINK_STAGGER_MS, delay: LINK_DELAY_MS, easing: EASE_OUT, fill: 'backwards' });
+        }
+      });
+      spaceList.textContent = query.vector.map((id, index) => `${index + 1}. ${chunks[id].doc}${chunks[id].part}`).join('、');
+    };
     const kInput = rrf.querySelector('[data-rrf-k]');
     const tInput = rrf.querySelector('[data-rrf-t]');
     const kOutput = rrf.querySelector('[data-out-k]');
@@ -866,7 +1102,8 @@
       input.style.setProperty('--fill', `${(ratio * 100).toFixed(2)}%`);
     };
     const render = () => {
-      const query = queries[queryInputs.find((input) => input.checked).value];
+      const queryKey = queryInputs.find((input) => input.checked).value;
+      const query = queries[queryKey];
       const k = Number(kInput.value);
       const threshold = Number(tInput.value);
       kOutput.textContent = String(k);
@@ -874,17 +1111,17 @@
       [kInput, tInput].forEach(paintSlider);
       caption.textContent = query.caption;
       Object.entries(lanes).forEach(([lane, list]) => {
-        list.replaceChildren(...query[lane].map((id, index) => {
-          const item = document.createElement('li');
-          item.dataset.chunk = id;
-          item.title = chunks[id].text;
-          const rank = document.createElement('span');
-          rank.className = 'rrf__rank';
-          rank.textContent = String(index + 1);
-          item.append(rank, nameMarkup(id));
-          return item;
-        }));
+        const nodes = query[lane].map((id, index) => {
+          if (!laneRows[lane].has(id)) laneRows[lane].set(id, buildLaneRow(id));
+          const row = laneRows[lane].get(id);
+          row.rank.textContent = String(index + 1);
+          row.bar.style.setProperty('--p', ((k + 1) / (k + index + 1)).toFixed(4));
+          row.value.textContent = (1 / (k + index + 1)).toFixed(4);
+          return row.item;
+        });
+        flip(list, nodes);
       });
+      renderSpace(queryKey, query);
       const fused = fuse([query.vector, query.bm25], k);
       const topScore = fused[0].score;
       const ranked = fused.map((item, index) => {
@@ -897,11 +1134,6 @@
           pass: relevance >= threshold,
         };
       }).sort((a, b) => b.mixed - a.mixed);
-      const before = new Map();
-      Array.from(results.children).forEach((item) => {
-        item.getAnimations().forEach((animation) => animation.cancel());
-        before.set(item.dataset.chunk, item.getBoundingClientRect().top);
-      });
       const ordered = ranked.map((row) => {
         if (!rows.has(row.id)) rows.set(row.id, buildRow(row.id));
         const entry = rows.get(row.id);
@@ -918,20 +1150,9 @@
         return entry.item;
       });
       Array.from(results.children).filter((item) => !ordered.includes(item)).forEach((item) => {
-        item.remove();
         rows.get(item.dataset.chunk).pass = null;
       });
-      ordered.forEach((item) => results.append(item));
-      if (motionAllowed()) {
-        ordered.forEach((item, index) => {
-          if (before.has(item.dataset.chunk)) {
-            const delta = before.get(item.dataset.chunk) - item.getBoundingClientRect().top;
-            if (Math.abs(delta) > 1) item.animate([{ translate: `0 ${delta}px` }, { translate: '0 0' }], { duration: 460, easing: 'cubic-bezier(0.16, 1, 0.3, 1)' });
-          } else {
-            item.animate([{ opacity: 0, translate: '0 8px' }, { opacity: 1, translate: '0 0' }], { duration: 320, delay: index * 40, easing: 'cubic-bezier(0.16, 1, 0.3, 1)', fill: 'backwards' });
-          }
-        });
-      }
+      flip(results, ordered);
       const passed = ranked.filter((row) => row.pass).slice(0, finalK);
       const verdictTitle = document.createElement('span');
       const verdictNote = document.createElement('small');
@@ -954,13 +1175,12 @@
       lastPassed = passedCount;
     };
     const verdictCue = (passedCount) => sound.play(passedCount ? 'allow' : 'fewer');
-    const sliderCue = (input) => (passedCount) => {
-      sound.tick((Number(input.value) - Number(input.min)) / (Number(input.max) - Number(input.min)));
+    const sliderCue = (passedCount) => {
       if (passedCount !== lastPassed) sound.play(passedCount > lastPassed ? 'more' : 'fewer');
     };
     queryInputs.forEach((input) => input.addEventListener('change', () => renderWithCue(verdictCue)));
-    kInput.addEventListener('input', () => renderWithCue(sliderCue(kInput)));
-    tInput.addEventListener('input', () => renderWithCue(sliderCue(tInput)));
+    kInput.addEventListener('input', () => renderWithCue(sliderCue));
+    tInput.addEventListener('input', () => renderWithCue(sliderCue));
     let linkedChunk = null;
     const linkChunk = (id) => {
       if (id === linkedChunk) return;
@@ -989,13 +1209,9 @@
         const from = Number(element.dataset.countFrom);
         const to = Number(element.dataset.countTo);
         const digits = Number(element.dataset.countDigits);
-        const start = performance.now();
-        const frame = (now) => {
-          const progress = Math.min(1, (now - start) / DURATION);
+        tween(DURATION, (progress) => {
           element.textContent = (from + (to - from) * easeOut(progress)).toFixed(digits);
-          if (progress < 1) requestAnimationFrame(frame);
-        };
-        requestAnimationFrame(frame);
+        });
       });
     }, { threshold: 0.6 });
     counters.forEach((counter) => countWatcher.observe(counter));
@@ -1067,25 +1283,21 @@
   };
   const scrambleFrames = new WeakMap();
   const SCRAMBLE_GLYPHS = '01<>/[]{}=+#%ABCDEFxz';
+  const SCRAMBLE_MS = 560;
   const scramble = (element, text) => {
-    cancelAnimationFrame(scrambleFrames.get(element));
+    scrambleFrames.get(element)?.();
     if (!motionAllowed()) {
       element.textContent = text;
       return;
     }
-    const start = performance.now();
-    const duration = 560;
-    const frame = (now) => {
-      const progress = Math.min(1, (now - start) / duration);
+    scrambleFrames.set(element, tween(SCRAMBLE_MS, (progress) => {
       const settled = Math.floor(progress * text.length);
       let output = text.slice(0, settled);
       for (let index = settled; index < text.length; index += 1) {
         output += text[index] === ' ' ? ' ' : SCRAMBLE_GLYPHS[Math.floor(Math.random() * SCRAMBLE_GLYPHS.length)];
       }
       element.textContent = output;
-      if (progress < 1) scrambleFrames.set(element, requestAnimationFrame(frame));
-    };
-    scrambleFrames.set(element, requestAnimationFrame(frame));
+    }));
   };
   const inspector = document.querySelector('[data-inspector]');
   if (inspector) {
@@ -1108,11 +1320,6 @@
       }
       restartAnimation(checkList, 'is-sweeping');
       const reached = order.filter((name) => rows.get(name).dataset.state !== 'skip');
-      reached.forEach((name, index) => {
-        sweepTimers.push(window.setTimeout(() => {
-          if (rows.get(name).dataset.state === 'pass') sound.tick(index / order.length);
-        }, index * SWEEP_STEP_MS));
-      });
       sweepTimers.push(window.setTimeout(() => sound.play(verdictCue), reached.length * SWEEP_STEP_MS));
     };
     const verdictVisual = document.createElement('span');
@@ -1208,16 +1415,6 @@
     });
     run();
   }
-  const HANDLED = '[data-sound-btn], [data-theme-toggle], [data-menu-open], [data-menu-close], .cite, [data-approval-decide], [data-url-example], [data-copy], [data-film-play], [data-marquee-toggle], [data-web-toggle], label, input';
-  document.addEventListener('click', (event) => {
-    if (!(event.target instanceof Element) || event.target.closest(HANDLED)) return;
-    const summary = event.target.closest('summary');
-    if (summary) {
-      sound.play(summary.parentElement.open ? 'close' : 'open');
-      return;
-    }
-    if (event.target.closest('button, a[href^="#"]')) sound.play('tap');
-  });
   document.querySelectorAll('[data-copy]').forEach((button) => {
     const label = button.querySelector('span');
     const icon = button.querySelector('use');
@@ -1245,9 +1442,20 @@
   });
   const film = document.querySelector('[data-film]');
   if (film) {
-    film.querySelector('[data-film-play]').addEventListener('click', () => {
-      const video = document.createElement('video');
-      video.src = film.dataset.filmSrc;
+    const chapters = Array.from(document.querySelectorAll('[data-chapter]'));
+    let video = null;
+    const markChapter = () => {
+      const now = video.currentTime;
+      const current = chapters.filter((chapter) => Number(chapter.dataset.chapter) <= now).pop();
+      chapters.forEach((chapter) => {
+        if (chapter === current) chapter.setAttribute('aria-current', 'time');
+        else chapter.removeAttribute('aria-current');
+      });
+    };
+    const ensureVideo = (fragment) => {
+      if (video) return video;
+      video = document.createElement('video');
+      video.src = film.dataset.filmSrc + fragment;
       video.poster = film.dataset.filmPoster;
       video.controls = true;
       video.playsInline = true;
@@ -1255,9 +1463,22 @@
       video.addEventListener('play', () => sound.duck(true));
       video.addEventListener('pause', () => sound.duck(false));
       video.addEventListener('ended', () => sound.duck(false));
+      video.addEventListener('timeupdate', markChapter);
       film.replaceChildren(video);
-      video.play().catch(() => video.focus());
-      video.focus();
-    });
+      return video;
+    };
+    const playFrom = (seconds) => {
+      const fresh = !video;
+      const player = ensureVideo(fresh && seconds !== null ? `#t=${seconds}` : '');
+      if (!fresh && seconds !== null) player.currentTime = seconds;
+      player.play().catch(() => player.focus());
+      player.focus({ preventScroll: true });
+    };
+    film.querySelector('[data-film-play]').addEventListener('click', () => playFrom(null));
+    chapters.forEach((chapter) => chapter.addEventListener('click', () => {
+      playFrom(Number(chapter.dataset.chapter));
+      film.scrollIntoView({ block: 'nearest', behavior: motionAllowed() ? 'smooth' : 'instant' });
+    }));
   }
+  window.askmiao = Object.freeze({ sound, ticker, tween, onVisible, reorder, motionAllowed, finePointer, restartAnimation });
 })();

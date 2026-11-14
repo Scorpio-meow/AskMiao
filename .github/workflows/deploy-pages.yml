@@ -9,6 +9,10 @@ on:
       - "site/**"
       - "CHANGELOG.md"
       - "backend/app/__init__.py"
+      - "backend/.env.example"
+      - "backend/app/rag/pipeline.py"
+      - "backend/app/rag/indices/bm25_store.py"
+      - "backend/app/rag/tokenizers.py"
       - ".github/scripts/stamp_site.py"
       - ".github/workflows/deploy-pages.yml"
   workflow_dispatch:
