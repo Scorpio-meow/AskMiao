@@ -6,6 +6,7 @@ All notable changes to AskMiao are documented in this file. The format is based 
 
 | Version | Release date | Highlights |
 |---|---|---|
+| [8.14.2](#8142---2026-11-14) | 2026-11-14 | dnspython upgraded to 2.9.2, fixing malicious zone files that could use a lot of memory and CPU |
 | [8.14.1](#8141---2026-11-14) | 2026-11-14 | opentelemetry-api upgraded to 1.45.2, fixing `traceparent` header parsing that could be used for denial of service |
 | [8.14.0](#8140---2026-11-14) | 2026-11-14 | Frontend redesign: one design and motion system across every page, and the chat mode switch moves into the input box; an Enter that some Chinese input methods send right after choosing a character no longer sends the message |
 | [8.13.0](#8130---2026-11-13) | 2026-11-13 | Answer-level evaluation; research mode searches the knowledge base at most 6 times per question, so questions with no answer no longer take minutes; knowledge-base results carry the neighbouring text, so the model can read articles and tables that chunking cut apart |
@@ -54,6 +55,12 @@ All notable changes to AskMiao are documented in this file. The format is based 
 ---
 
 ## [Unreleased]
+
+## [8.14.2] - 2026-11-14
+
+### Security
+
+- **dnspython upgraded to 2.9.2**: fixes zone-file parsing that did not check the service number of WKS records, so malicious content could use a lot of memory and CPU (GHSA-vvf4-9x63-8xvv). The package comes in through email-validator, which checks email addresses; AskMiao never parses zone files and is not affected today. The upgrade keeps future uses safe.
 
 ## [8.14.1] - 2026-11-14
 

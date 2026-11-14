@@ -4,6 +4,7 @@
 
 > How to upgrade an existing deployment to a new release, with rollback steps and troubleshooting. See the [CHANGELOG](../CHANGELOG_en.md) for the full list of changes in each version.
 
+- [Upgrading from 8.14.1 to 8.14.2](#upgrading-from-8141-to-8142)
 - [Upgrading from 8.14.0 to 8.14.1](#upgrading-from-8140-to-8141)
 - [Upgrading from 8.13.0 to 8.14.0](#upgrading-from-8130-to-8140)
 - [Upgrading from 8.12.2 to 8.13.0](#upgrading-from-8122-to-8130)
@@ -57,6 +58,12 @@
   - [Step 5: verify the upgrade](#step-5-verify-the-upgrade)
   - [Rolling back to 2.2.x](#rolling-back-to-22x)
   - [Troubleshooting](#troubleshooting)
+
+---
+
+## Upgrading from 8.14.1 to 8.14.2
+
+For upgrading from 8.14.1 to 8.14.2 (2026-11-14); see the [CHANGELOG](../CHANGELOG_en.md#8142---2026-11-14) for the full list of changes. This release only upgrades the backend dependency dnspython to 2.9.2: no `.env` changes, and neither the database nor the API changes. Without Docker, run `pip install -r requirements.txt` in `backend/` to reinstall the backend packages; with `deploy/`, rebuild the images as usual. To roll back to 8.14.1, switch back to the older code.
 
 ---
 
