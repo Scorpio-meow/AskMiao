@@ -4,6 +4,21 @@
   const finePointer = window.matchMedia('(hover: hover) and (pointer: fine)');
   const motionAllowed = () => !reduceMotion.matches;
   const pointerEffects = () => finePointer.matches && motionAllowed();
+  let liveTransition = null;
+  const runTransition = (update) => {
+    const transition = document.startViewTransition(update);
+    liveTransition = transition;
+    transition.finished.finally(() => {
+      if (liveTransition === transition) liveTransition = null;
+    });
+    return transition;
+  };
+  root.addEventListener('click', (event) => {
+    if (!liveTransition || event.target !== root) return;
+    liveTransition.skipTransition();
+    liveTransition = null;
+    document.elementFromPoint(event.clientX, event.clientY)?.closest('a, button, label, summary, input')?.click();
+  });
   const sound = (() => {
     const SFX_KEY = 'askmiao-site-sfx';
     const MUSIC_KEY = 'askmiao-site-music';
@@ -148,12 +163,18 @@
       more: (t) => blip(NOTE.E5, t, 0.14, 0.1, 'triangle'),
       fewer: (t) => blip(NOTE.C5, t, 0.14, 0.1, 'triangle'),
       copy: (t) => { blip(NOTE.E5, t, 0.1, 0.12, 'sine'); blip(NOTE.A5, t + 0.06, 0.18, 0.12, 'sine'); },
+      research: (t) => { bell(NOTE.E5, t, 0.5, 0.07); bell(NOTE.A4, t + 0.07, 0.6, 0.06); },
+      agent: (t) => [NOTE.C5, NOTE.E5, NOTE.G5].forEach((frequency, index) => bell(frequency, t + index * 0.06, 0.6, 0.06)),
+      remember: (t) => [NOTE.C5, NOTE.E5, NOTE.G5, NOTE.C6, NOTE.E6].forEach((frequency, index) => bell(frequency, t + index * 0.07, 0.9, 0.07)),
     };
     const play = (name) => {
       if (!sfxOn || !CUES[name]) return;
       ensure();
-      if (ctx.state !== 'running') return;
-      CUES[name](ctx.currentTime + 0.01);
+      if (ctx.state === 'running') {
+        CUES[name](ctx.currentTime + 0.01);
+        return;
+      }
+      ctx.resume().then(() => CUES[name](ctx.currentTime + 0.01));
     };
     let lastTick = 0;
     const tick = (ratio) => {
@@ -343,7 +364,10 @@
         root.style.setProperty('--vt-y', `${y}px`);
         root.style.setProperty('--vt-r', `${radius}px`);
         root.classList.add('is-theme-swap');
-        document.startViewTransition(swap).finished.finally(() => root.classList.remove('is-theme-swap'));
+        const transition = runTransition(swap);
+        transition.finished.finally(() => {
+          if (liveTransition === null || liveTransition === transition) root.classList.remove('is-theme-swap');
+        });
       } else {
         swap();
       }
@@ -375,16 +399,29 @@
       if (event.matches && menu.open) menu.close();
     });
   }
-  const navLinks = Array.from(document.querySelectorAll('.nav__links a'));
+  const navList = document.querySelector('.nav__links');
+  const navLinks = Array.from(navList.querySelectorAll('a'));
   const linkById = new Map(navLinks.map((link) => [link.hash.slice(1), link]));
+  const placeMarker = () => {
+    const current = navLinks.find((link) => link.getAttribute('aria-current') === 'true');
+    if (!current) {
+      delete navList.dataset.current;
+      return;
+    }
+    navList.style.setProperty('--marker-x', `${current.offsetLeft + current.offsetWidth / 2 - 2}px`);
+    if (navList.dataset.current) navList.dataset.moved = '';
+    navList.dataset.current = current.hash.slice(1);
+  };
   const spy = new IntersectionObserver((entries) => {
     entries.forEach((entry) => {
       if (!entry.isIntersecting) return;
       navLinks.forEach((link) => link.removeAttribute('aria-current'));
       const link = linkById.get(entry.target.id);
       if (link) link.setAttribute('aria-current', 'true');
+      placeMarker();
     });
   }, { rootMargin: '-45% 0px -50% 0px' });
+  window.addEventListener('resize', placeMarker, { passive: true });
   document.querySelectorAll('main > section[id]').forEach((section) => spy.observe(section));
   const hero = document.querySelector('[data-spotlight]');
   if (hero) {
@@ -535,20 +572,66 @@
     }, { rootMargin: '-40% 0px -55% 0px' });
     steps.forEach((step) => stepWatcher.observe(step));
   }
+  const restartAnimation = (element, className) => {
+    element.classList.remove(className);
+    void element.offsetWidth;
+    element.classList.add(className);
+  };
+  const story = document.querySelector('[data-story]');
+  const compose = document.querySelector('[data-compose]');
+  if (story && compose) {
+    const hintMode = compose.querySelector('[data-hint-mode]');
+    const hintWeb = compose.querySelector('[data-hint-web]');
+    const webToggle = compose.querySelector('[data-web-toggle]');
+    const traceTitle = story.querySelector('span[data-trace-title]');
+    const hintText = (key) => compose.querySelector(`template[data-hint="${key}"]`).content.textContent;
+    const traceText = (key) => story.querySelector(`template[data-trace-title="${key}"]`).content.textContent;
+    const swapText = (element, text) => {
+      if (element.textContent === text) return;
+      element.textContent = text;
+      restartAnimation(element, 'is-swap');
+    };
+    compose.querySelectorAll('input[name="chat-mode"]').forEach((input) => {
+      input.addEventListener('change', () => {
+        story.dataset.mode = input.value;
+        swapText(hintMode, hintText(input.value));
+        traceTitle.textContent = traceText(input.value);
+        sound.play(input.value);
+      });
+    });
+    webToggle.addEventListener('click', () => {
+      const allowed = webToggle.getAttribute('aria-pressed') !== 'true';
+      webToggle.setAttribute('aria-pressed', String(allowed));
+      swapText(hintWeb, hintText(allowed ? 'web-on' : 'web-off'));
+      sound.play(allowed ? 'on' : 'off');
+    });
+  }
+  const plan = document.querySelector('[data-plan]');
+  if (plan) {
+    const planWatcher = new IntersectionObserver((entries) => {
+      if (!entries.some((entry) => entry.isIntersecting)) return;
+      planWatcher.disconnect();
+      plan.classList.add('is-played');
+    }, { threshold: 0.6 });
+    planWatcher.observe(plan);
+  }
   const citeDemo = document.querySelector('[data-cite-demo]');
   if (citeDemo) {
     const detail = citeDemo.querySelector('[data-cite-detail]');
     const cites = Array.from(citeDemo.querySelectorAll('.cite[data-cite]'));
     const sources = Array.from(citeDemo.querySelectorAll('[data-src]'));
+    let shown = null;
     const show = (number, animate) => {
+      if (number === shown) return;
+      const direction = Number(number) > Number(shown) ? 'is-next' : 'is-prev';
+      shown = number;
       cites.forEach((cite) => cite.setAttribute('aria-pressed', String(cite.dataset.cite === number)));
       sources.forEach((source) => source.classList.toggle('is-on', source.dataset.src === number));
       const template = citeDemo.querySelector(`template[data-cite-template="${number}"]`);
       detail.replaceChildren(template.content.cloneNode(true));
       if (animate) {
-        detail.classList.remove('is-swap');
-        void detail.offsetWidth;
-        detail.classList.add('is-swap');
+        detail.classList.remove('is-next', 'is-prev');
+        restartAnimation(detail, direction);
       }
     };
     cites.forEach((cite) => {
@@ -572,6 +655,8 @@
     const status = approval.querySelector('[data-approval-status]');
     const resetButton = approval.querySelector('[data-approval-reset]');
     const initialEvents = events.innerHTML;
+    const clock = approval.querySelector('[data-approval-clock]');
+    const decideButtons = Array.from(approval.querySelectorAll('[data-approval-decide]'));
     const OUTCOMES = {
       approve: {
         approved: true,
@@ -592,6 +677,18 @@
         events: [
           ['step_end', '{"step": 3, "status": "error", "output_preview": "使用者未核准執行此工具"}', 'bad'],
           ['token', '{"content": "你沒有核准建立請假單，所以我沒有送出申請…"}', ''],
+          ['done', '{"message_id": 312, "research_trace": […]}', ''],
+        ],
+      },
+      remember: {
+        approved: true,
+        remember: true,
+        icon: '#i-check-circle',
+        title: '這次提問都允許，工具已執行',
+        detail: '這次回答中再呼叫「建立請假單」就不再詢問；下一次提問會重新請你確認。',
+        events: [
+          ['step_end', '{"step": 3, "duration_seconds": 1.27, "status": "success"}', 'ok'],
+          ['token', '{"content": "已送出 11/20 至 11/21 的特休申請…"}', ''],
           ['done', '{"message_id": 312, "research_trace": […]}', ''],
         ],
       },
@@ -620,6 +717,7 @@
       ticker = window.setInterval(() => {
         remaining -= 1;
         timer.textContent = formatTime(remaining);
+        clock.style.setProperty('--left', String(remaining / APPROVAL_TIMEOUT_SECONDS));
         if (remaining <= 0) decide('timeout');
       }, 1000);
     };
@@ -640,28 +738,48 @@
       if (decided) return;
       decided = true;
       stopTimer();
+      decideButtons.forEach((button) => { button.disabled = true; });
       const outcome = OUTCOMES[kind];
-      card.hidden = true;
-      addEvent('approval_resolved', `{"approval_id": "q3VxT0bL8mYc…", "approved": ${outcome.approved}}`, outcome.approved ? 'ok' : 'bad', 0);
-      outcome.events.forEach(([name, data, tone], index) => addEvent(name, data, tone, index + 1));
-      const title = document.createElement('p');
-      title.className = 'approval__outcome';
-      title.innerHTML = `<svg class="icon" aria-hidden="true"><use href="${outcome.icon}"></use></svg>`;
-      title.append(outcome.title);
-      const detail = document.createElement('p');
-      detail.textContent = outcome.detail;
-      result.dataset.kind = kind;
-      result.replaceChildren(title, detail);
-      result.hidden = false;
-      status.textContent = `${outcome.title}。${outcome.detail}`;
-      resetButton.hidden = false;
-      resetButton.focus();
+      const settle = () => {
+        card.hidden = true;
+        card.style.removeProperty('view-transition-name');
+        addEvent('approval_resolved', `{"approval_id": "q3VxT0bL8mYc…", "approved": ${outcome.approved}, "remember": ${outcome.remember === true}}`, outcome.approved ? 'ok' : 'bad', 0);
+        outcome.events.forEach(([name, data, tone], index) => addEvent(name, data, tone, index + 1));
+        const title = document.createElement('p');
+        title.className = 'approval__outcome';
+        title.innerHTML = `<svg class="icon" aria-hidden="true"><use href="${outcome.icon}"></use></svg>`;
+        title.append(outcome.title);
+        const detail = document.createElement('p');
+        detail.textContent = outcome.detail;
+        result.dataset.kind = kind;
+        result.replaceChildren(title, detail);
+        result.hidden = false;
+        status.textContent = `${outcome.title}。${outcome.detail}`;
+        resetButton.hidden = false;
+        resetButton.focus();
+      };
+      if (document.startViewTransition && motionAllowed() && kind !== 'timeout') {
+        card.style.setProperty('view-transition-name', 'approval-panel');
+        result.dataset.morph = '';
+        const morph = runTransition(() => {
+          settle();
+          result.style.setProperty('view-transition-name', 'approval-panel');
+        });
+        morph.finished.finally(() => {
+          result.style.removeProperty('view-transition-name');
+          delete result.dataset.morph;
+        });
+      } else {
+        settle();
+      }
     }
     const reset = () => {
       decided = false;
       remaining = APPROVAL_TIMEOUT_SECONDS;
       timer.textContent = formatTime(remaining);
       events.innerHTML = initialEvents;
+      clock.style.setProperty('--left', '1');
+      decideButtons.forEach((button) => { button.disabled = false; });
       result.hidden = true;
       result.replaceChildren();
       status.textContent = '';
@@ -672,7 +790,7 @@
     };
     approval.querySelectorAll('[data-approval-decide]').forEach((button) => {
       button.addEventListener('click', () => {
-        sound.play(button.dataset.approvalDecide === 'approve' ? 'approve' : 'deny');
+        sound.play({ approve: 'approve', remember: 'remember', deny: 'deny' }[button.dataset.approvalDecide]);
         decide(button.dataset.approvalDecide);
       });
     });
@@ -700,6 +818,32 @@
     const queryInputs = Array.from(rrf.querySelectorAll('input[name="rrf-query"]'));
     const LOG_FLOOR = 0.001;
     const logScale = (value) => Math.min(1, Math.max(0, (Math.log10(Math.max(value, LOG_FLOOR)) - Math.log10(LOG_FLOOR)) / -Math.log10(LOG_FLOOR)));
+    const rows = new Map();
+    const buildRow = (id) => {
+      const item = document.createElement('li');
+      item.dataset.chunk = id;
+      item.title = chunks[id].text;
+      const score = document.createElement('span');
+      score.className = 'rrf-row__rrf';
+      score.append(document.createTextNode(''));
+      const scoreNote = document.createElement('small');
+      score.append(scoreNote);
+      const bar = document.createElement('span');
+      bar.className = 'relbar';
+      bar.setAttribute('aria-hidden', 'true');
+      const fill = document.createElement('span');
+      fill.className = 'relbar__fill';
+      const mark = document.createElement('span');
+      mark.className = 'relbar__mark';
+      bar.append(fill, mark);
+      const state = document.createElement('span');
+      state.className = 'rrf-row__state';
+      state.append(document.createTextNode(''));
+      const value = document.createElement('b');
+      state.append(value);
+      item.append(nameMarkup(id), score, bar, state);
+      return { item, score, scoreNote, bar, state, value, pass: null };
+    };
     const fuse = (rankedLists, k) => {
       const fused = new Map();
       rankedLists.forEach((list) => list.forEach((id, index) => {
@@ -753,37 +897,41 @@
           pass: relevance >= threshold,
         };
       }).sort((a, b) => b.mixed - a.mixed);
-      results.replaceChildren(...ranked.map((row) => {
-        const item = document.createElement('li');
-        item.className = `rrf-row ${row.pass ? 'is-pass' : 'is-fail'}`;
-        item.dataset.chunk = row.id;
-        item.title = chunks[row.id].text;
-        item.style.setProperty('--vt', `rrf-${row.id}`);
-        const score = document.createElement('span');
-        score.className = 'rrf-row__rrf';
-        score.textContent = row.score.toFixed(4);
-        const scoreNote = document.createElement('small');
-        scoreNote.textContent = `融合第 ${row.fusedRank} 名`;
-        score.append(scoreNote);
-        const bar = document.createElement('span');
-        bar.className = 'relbar';
-        bar.setAttribute('aria-hidden', 'true');
-        bar.style.setProperty('--p', logScale(row.relevance).toFixed(4));
-        bar.style.setProperty('--t', logScale(threshold).toFixed(4));
-        const fill = document.createElement('span');
-        fill.className = 'relbar__fill';
-        const mark = document.createElement('span');
-        mark.className = 'relbar__mark';
-        bar.append(fill, mark);
-        const state = document.createElement('span');
-        state.className = 'rrf-row__state';
-        state.textContent = row.pass ? '通過門檻' : '低於門檻';
-        const value = document.createElement('b');
-        value.textContent = row.relevance.toFixed(3);
-        state.append(value);
-        item.append(nameMarkup(row.id), score, bar, state);
-        return item;
-      }));
+      const before = new Map();
+      Array.from(results.children).forEach((item) => {
+        item.getAnimations().forEach((animation) => animation.cancel());
+        before.set(item.dataset.chunk, item.getBoundingClientRect().top);
+      });
+      const ordered = ranked.map((row) => {
+        if (!rows.has(row.id)) rows.set(row.id, buildRow(row.id));
+        const entry = rows.get(row.id);
+        const changed = entry.pass !== row.pass && entry.pass !== null;
+        entry.pass = row.pass;
+        entry.item.className = `rrf-row ${row.pass ? 'is-pass' : 'is-fail'}`;
+        entry.score.firstChild.textContent = row.score.toFixed(4);
+        entry.scoreNote.textContent = `融合第 ${row.fusedRank} 名`;
+        entry.bar.style.setProperty('--p', logScale(row.relevance).toFixed(4));
+        entry.bar.style.setProperty('--t', logScale(threshold).toFixed(4));
+        entry.state.firstChild.textContent = row.pass ? '通過門檻' : '低於門檻';
+        entry.value.textContent = row.relevance.toFixed(3);
+        if (changed) restartAnimation(entry.state, 'is-changed');
+        return entry.item;
+      });
+      Array.from(results.children).filter((item) => !ordered.includes(item)).forEach((item) => {
+        item.remove();
+        rows.get(item.dataset.chunk).pass = null;
+      });
+      ordered.forEach((item) => results.append(item));
+      if (motionAllowed()) {
+        ordered.forEach((item, index) => {
+          if (before.has(item.dataset.chunk)) {
+            const delta = before.get(item.dataset.chunk) - item.getBoundingClientRect().top;
+            if (Math.abs(delta) > 1) item.animate([{ translate: `0 ${delta}px` }, { translate: '0 0' }], { duration: 460, easing: 'cubic-bezier(0.16, 1, 0.3, 1)' });
+          } else {
+            item.animate([{ opacity: 0, translate: '0 8px' }, { opacity: 1, translate: '0 0' }], { duration: 320, delay: index * 40, easing: 'cubic-bezier(0.16, 1, 0.3, 1)', fill: 'backwards' });
+          }
+        });
+      }
       const passed = ranked.filter((row) => row.pass).slice(0, finalK);
       const verdictTitle = document.createElement('span');
       const verdictNote = document.createElement('small');
@@ -810,14 +958,7 @@
       sound.tick((Number(input.value) - Number(input.min)) / (Number(input.max) - Number(input.min)));
       if (passedCount !== lastPassed) sound.play(passedCount > lastPassed ? 'more' : 'fewer');
     };
-    queryInputs.forEach((input) => input.addEventListener('change', () => {
-      if (document.startViewTransition && motionAllowed()) {
-        rrf.classList.add('is-vt');
-        document.startViewTransition(() => renderWithCue(verdictCue)).finished.finally(() => rrf.classList.remove('is-vt'));
-      } else {
-        renderWithCue(verdictCue);
-      }
-    }));
+    queryInputs.forEach((input) => input.addEventListener('change', () => renderWithCue(verdictCue)));
     kInput.addEventListener('input', () => renderWithCue(sliderCue(kInput)));
     tInput.addEventListener('input', () => renderWithCue(sliderCue(tInput)));
     let linkedChunk = null;
@@ -952,7 +1093,28 @@
     const verdict = inspector.querySelector('[data-verdict]');
     const rows = new Map(Array.from(inspector.querySelectorAll('[data-check]')).map((row) => [row.dataset.check, row]));
     const order = Array.from(rows.keys());
+    const checkList = inspector.querySelector('[data-checks]');
     rows.forEach((row) => { row.dataset.idle = row.querySelector('.checks__m').textContent; });
+    order.forEach((name, index) => rows.get(name).style.setProperty('--n', String(index)));
+    const SWEEP_STEP_MS = 70;
+    let sweepTimers = [];
+    const sweep = () => {
+      sweepTimers.forEach((timer) => window.clearTimeout(timer));
+      sweepTimers = [];
+      const verdictCue = { block: 'block', allow: 'allow', server: 'server' }[verdict.dataset.kind];
+      if (!motionAllowed()) {
+        sound.play(verdictCue);
+        return;
+      }
+      restartAnimation(checkList, 'is-sweeping');
+      const reached = order.filter((name) => rows.get(name).dataset.state !== 'skip');
+      reached.forEach((name, index) => {
+        sweepTimers.push(window.setTimeout(() => {
+          if (rows.get(name).dataset.state === 'pass') sound.tick(index / order.length);
+        }, index * SWEEP_STEP_MS));
+      });
+      sweepTimers.push(window.setTimeout(() => sound.play(verdictCue), reached.length * SWEEP_STEP_MS));
+    };
     const verdictVisual = document.createElement('span');
     verdictVisual.setAttribute('aria-hidden', 'true');
     const verdictSpoken = document.createElement('span');
@@ -1041,12 +1203,12 @@
       button.addEventListener('click', () => {
         input.value = button.dataset.urlExample;
         run();
-        sound.play({ block: 'block', allow: 'allow', server: 'server' }[verdict.dataset.kind]);
+        sweep();
       });
     });
     run();
   }
-  const HANDLED = '[data-sound-btn], [data-theme-toggle], [data-menu-open], [data-menu-close], .cite, [data-approval-decide], [data-url-example], [data-copy], [data-film-play], [data-marquee-toggle], label, input';
+  const HANDLED = '[data-sound-btn], [data-theme-toggle], [data-menu-open], [data-menu-close], .cite, [data-approval-decide], [data-url-example], [data-copy], [data-film-play], [data-marquee-toggle], [data-web-toggle], label, input';
   document.addEventListener('click', (event) => {
     if (!(event.target instanceof Element) || event.target.closest(HANDLED)) return;
     const summary = event.target.closest('summary');
@@ -1058,6 +1220,7 @@
   });
   document.querySelectorAll('[data-copy]').forEach((button) => {
     const label = button.querySelector('span');
+    const icon = button.querySelector('use');
     const idleLabel = label.textContent;
     label.setAttribute('aria-live', 'polite');
     let resetTimer = 0;
@@ -1068,12 +1231,14 @@
         await navigator.clipboard.writeText(code);
         sound.play('copy');
         label.textContent = '已複製';
+        icon.setAttribute('href', '#i-check');
         button.classList.add('is-done');
       } catch {
         label.textContent = '無法複製';
       }
       resetTimer = window.setTimeout(() => {
         label.textContent = idleLabel;
+        icon.setAttribute('href', '#i-copy');
         button.classList.remove('is-done');
       }, 1800);
     });
