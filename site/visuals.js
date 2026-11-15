@@ -438,7 +438,7 @@
       const items = chunks.map((chunk, index) => {
         const item = el('li');
         const overlap = index ? overlapOf(chunks[index - 1], chunk) : 0;
-        item.append(el('b', '', `第 ${index + 1} 段・${lab.length(chunk)} 字`));
+        item.append(el('b', '', `第 ${index + 1} 段，${lab.length(chunk)} 字`));
         const body = el('p');
         if (overlap) {
           body.append(el('span', 'sr-only', '和上一段重疊的部分：'), el('mark', '', chunk.slice(0, overlap)), el('span', 'sr-only', '。新內容：'));

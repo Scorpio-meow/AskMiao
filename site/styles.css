@@ -4803,12 +4803,6 @@ pre,
   font-weight: 700;
 }
 
-.sound-panel__note {
-  margin: 10px 0 0;
-  font-size: 0.82rem;
-  line-height: 1.6;
-  color: var(--ink-3);
-}
 
 .switch {
   position: relative;
@@ -4838,12 +4832,6 @@ pre,
 
   b {
     font-size: 0.95rem;
-  }
-
-  small {
-    font-size: 0.8rem;
-    line-height: 1.5;
-    color: var(--ink-3);
   }
 }
 
