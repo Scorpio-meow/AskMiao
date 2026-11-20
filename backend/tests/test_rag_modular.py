@@ -43,7 +43,7 @@ def test_document_and_splitter():
     assert doc.page_content == "這是測試文檔內容"
     assert doc.metadata["document_id"] == 1
     splitter = RecursiveCharacterTextSplitter(chunk_size=10, chunk_overlap=2)
-    chunks = splitter.split_text("神通資訊科技股份有限公司知識庫系統測試")
+    chunks = splitter.split_text("喵喵科技股份有限公司知識庫系統測試")
     assert len(chunks) > 0
 def test_tokenizers():
     configure_tokenizer(None, domain_profile.domain_words)
@@ -65,7 +65,7 @@ def test_rag_facade_lifecycle(session_factory):
             metadata={"source": "差勤管理辦法.docx", "document_id": 101}
         ),
         Document(
-            page_content="神通資訊科技的核心上班時間為早上九點至下午六點，支援彈性上下班半小時。",
+            page_content="喵喵科技的核心上班時間為早上九點至下午六點，支援彈性上下班半小時。",
             metadata={"source": "員工手冊.pdf", "document_id": 102}
         )
     ]

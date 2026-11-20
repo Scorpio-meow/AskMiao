@@ -18,6 +18,7 @@ AskMiao answers with hybrid retrieval (FAISS + BM25 + Cross-Encoder) and agentic
 [![Vite](https://img.shields.io/badge/Vite-8-646CFF?style=flat&logo=vite&logoColor=white)](https://vite.dev/)
 [![Bun](https://img.shields.io/badge/Bun-1.x-000000?style=flat&logo=bun&logoColor=white)](https://bun.sh/)
 [![License](https://img.shields.io/badge/License-MIT-16a34a?style=flat)](LICENSE)
+[![M8ven Score](https://m8ven.ai/badge/mcp/scorpio-meow/askmiao)](https://m8ven.ai/mcp/scorpio-meow/askmiao?s=readme)
 
 [Website](https://scorpio-meow.github.io/AskMiao/) · [Quick Start](#quick-start) · [Documentation](#documentation) · [Changelog](CHANGELOG_en.md) · [Upgrade Guide](docs/upgrading_en.md)
 

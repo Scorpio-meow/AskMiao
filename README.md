@@ -18,6 +18,7 @@
 [![Vite](https://img.shields.io/badge/Vite-8-646CFF?style=flat&logo=vite&logoColor=white)](https://vite.dev/)
 [![Bun](https://img.shields.io/badge/Bun-1.x-000000?style=flat&logo=bun&logoColor=white)](https://bun.sh/)
 [![License](https://img.shields.io/badge/License-MIT-16a34a?style=flat)](LICENSE)
+[![M8ven Score](https://m8ven.ai/badge/mcp/scorpio-meow/askmiao)](https://m8ven.ai/mcp/scorpio-meow/askmiao?s=readme)
 
 [介紹網站](https://scorpio-meow.github.io/AskMiao/) · [快速開始](#快速開始) · [文件導覽](#文件導覽) · [版本變更紀錄](CHANGELOG.md) · [升級指南](docs/upgrading.md)
 
